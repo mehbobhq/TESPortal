@@ -25,22 +25,22 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4 text-center">
             <Avatar className="size-20">
-              <AvatarFallback className="text-xl">MC</AvatarFallback>
+              <AvatarFallback className="text-xl">U</AvatarFallback>
             </Avatar>
             <div className="flex flex-col gap-1">
-              <p className="text-lg font-semibold">Maria Chen</p>
-              <p className="text-muted-foreground text-sm">Compliance Manager</p>
+              <p className="text-lg font-semibold">User Name</p>
+              <p className="text-muted-foreground text-sm">Role</p>
             </div>
-            <Badge variant="secondary">Administrator</Badge>
+            <Badge variant="secondary">User</Badge>
             <Separator />
             <div className="flex w-full flex-col gap-2 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Member since</span>
-                <span className="font-medium">Jan 2023</span>
+                <span className="font-medium">N/A</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Last login</span>
-                <span className="font-medium">Today, 08:41</span>
+                <span className="font-medium">N/A</span>
               </div>
             </div>
           </CardContent>
@@ -56,26 +56,26 @@ export default function ProfilePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="firstName">First name</FieldLabel>
-                  <Input id="firstName" defaultValue="Maria" />
+                  <Input id="firstName" placeholder="First name" />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="lastName">Last name</FieldLabel>
-                  <Input id="lastName" defaultValue="Chen" />
+                  <Input id="lastName" placeholder="Last name" />
                 </Field>
               </div>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" type="email" defaultValue="m.chen@fleetcompliance.example" />
+                <Input id="email" type="email" placeholder="email@example.com" />
                 <FieldDescription>Used for sign-in and system notifications.</FieldDescription>
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="phone">Phone</FieldLabel>
-                  <Input id="phone" type="tel" defaultValue="+1 416 555 0140" />
+                  <Input id="phone" type="tel" placeholder="+1 (555) 000-0000" />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="role">Role / title</FieldLabel>
-                  <Input id="role" defaultValue="Compliance Manager" />
+                  <Input id="role" placeholder="Role / title" />
                 </Field>
               </div>
             </FieldGroup>

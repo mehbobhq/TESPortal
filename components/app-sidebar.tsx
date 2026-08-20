@@ -43,7 +43,7 @@ export function AppSidebar() {
                     TES
                   </span>
                   <span className="text-sidebar-foreground/60 truncate text-xs">
-                    Fleet Compliance
+                    Operational Intelligence
                   </span>
                 </div>
               </Link>

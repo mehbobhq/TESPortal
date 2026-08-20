@@ -103,3 +103,15 @@ export const navGroups = [
     ],
   },
 ]
+
+export function findNavItem(pathname: string) {
+  for (const group of navGroups) {
+    const item = group.items.find((item) => item.url === pathname)
+
+    if (item) {
+      return item
+    }
+  }
+
+  return undefined
+}

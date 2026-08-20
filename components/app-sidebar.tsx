@@ -31,8 +31,10 @@ export function AppSidebar() {
               asChild
               className="group-data-[collapsible=icon]:p-0!"
             >
-              <Link href="/">
-                <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-md">
+              {/* Added explicit flex, items-center, and gap to prevent vertical stacking */}
+              <Link href="/" className="flex items-center gap-2">
+                {/* Added shrink-0 so the logo box doesn't compress */}
+                <div className="bg-sidebar-primary text-sidebar-primary-foreground flex shrink-0 aspect-square size-8 items-center justify-center rounded-md">
                   <span className="text-sm font-bold">TES</span>
                 </div>
 

@@ -27,7 +27,7 @@ export function SiteHeader() {
       <Separator orientation="vertical" className="mr-1 h-5" />
       <Breadcrumb>
         <BreadcrumbList>
-          <BreadcrumbItem className="text-muted-foreground hidden md:block">Meridian</BreadcrumbItem>
+          <BreadcrumbItem className="text-muted-foreground hidden md:block">TES</BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
           <BreadcrumbItem>
             <BreadcrumbPage>{title}</BreadcrumbPage>

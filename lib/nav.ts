@@ -21,7 +21,7 @@ export const navGroups = [
     ],
   },
   {
-    label: "Operations",
+    label: "Reports",
     items: [
       {
         title: "Reports",

@@ -8,13 +8,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 
-const trips = [
-  { id: "TRP-10482", driver: "R. Alvarez", unit: "4471", route: "Toronto, ON → Buffalo, NY", miles: 112, border: "Peace Bridge", status: "Logged", tone: "ok" as const },
-  { id: "TRP-10481", driver: "M. Chen", unit: "4472", route: "Montreal, QC → Albany, NY", miles: 228, border: "Champlain", status: "Logged", tone: "ok" as const },
-  { id: "TRP-10480", driver: "P. Osei", unit: "4488", route: "Windsor, ON → Detroit, MI", miles: 24, border: "Ambassador", status: "Missing odometer", tone: "warn" as const },
-  { id: "TRP-10479", driver: "D. Reeves", unit: "4490", route: "Toronto, ON → Cleveland, OH", miles: 297, border: "Peace Bridge", status: "HOS violation", tone: "danger" as const },
-  { id: "TRP-10478", driver: "S. Malik", unit: "4471", route: "Ottawa, ON → Syracuse, NY", miles: 264, border: "Thousand Islands", status: "Logged", tone: "ok" as const },
-]
+// Added type for Trips to ensure TypeScript stays happy with an empty array
+type Trip = {
+  id: string;
+  driver: string;
+  unit: string;
+  route: string;
+  miles: number;
+  border: string;
+  status: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
+
+// Emptied the sample data array
+const trips: Trip[] = []
 
 export default function TripCompliancePage() {
   return (
@@ -37,10 +44,11 @@ export default function TripCompliancePage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Trips this quarter" value="1,284" icon={Route} hint="across 8 jurisdictions" />
-        <StatCard label="Total miles" value="141,920" icon={MapPin} hint="IFTA reportable" />
-        <StatCard label="Border crossings" value="312" icon={MapPin} hint="US ↔ CA" />
-        <StatCard label="Flagged trips" value="7" icon={Route} hint="need review" trend={{ value: "2", direction: "up", positive: false }} />
+        {/* Reset hardcoded stat values and removed trends */}
+        <StatCard label="Trips this quarter" value="0" icon={Route} hint="across 0 jurisdictions" />
+        <StatCard label="Total miles" value="0" icon={MapPin} hint="IFTA reportable" />
+        <StatCard label="Border crossings" value="0" icon={MapPin} hint="US ↔ CA" />
+        <StatCard label="Flagged trips" value="0" icon={Route} hint="need review" />
       </div>
 
       <Card>
@@ -65,19 +73,28 @@ export default function TripCompliancePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {trips.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell className="pl-6 font-mono text-xs font-medium">{t.id}</TableCell>
-                  <TableCell>{t.driver}</TableCell>
-                  <TableCell className="font-mono text-xs">{t.unit}</TableCell>
-                  <TableCell className="text-muted-foreground">{t.route}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">{t.miles}</TableCell>
-                  <TableCell className="text-muted-foreground">{t.border}</TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge tone={t.tone}>{t.status}</StatusBadge>
+              {/* Added a fallback for when the trips array is empty */}
+              {trips.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                    No trip logs found.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                trips.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="pl-6 font-mono text-xs font-medium">{t.id}</TableCell>
+                    <TableCell>{t.driver}</TableCell>
+                    <TableCell className="font-mono text-xs">{t.unit}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.route}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{t.miles}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.border}</TableCell>
+                    <TableCell className="pr-6">
+                      <StatusBadge tone={t.tone}>{t.status}</StatusBadge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

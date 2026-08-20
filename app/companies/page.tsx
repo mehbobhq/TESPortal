@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Building2, Landmark, ShieldCheck, Plus, Search } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
@@ -7,7 +8,19 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { companies } from "@/lib/data"
+
+// Added type to ensure TypeScript stays happy with an empty array
+type Company = {
+  name: string;
+  kind: string;
+  contact: string;
+  region: string;
+  status: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
+
+// Emptied the sample data
+const companies: Company[] = []
 
 export default function CompaniesPage() {
   const agencies = companies.filter((c) => c.kind === "Government Agency").length
@@ -17,16 +30,19 @@ export default function CompaniesPage() {
     <>
       <PageHeader
         title="Companies"
-        description="Government agencies, insurance brokers and carriers, and registration authorities you work with."
+        description="Master directory of all entities including customers, government agencies, insurers, and service providers."
         actions={
-          <Button>
-            <Plus data-icon="inline-start" />
-            Add company
+          <Button asChild>
+            <Link href="/companies/new">
+              <Plus data-icon="inline-start" />
+              Add company
+            </Link>
           </Button>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* Reset hardcoded stat values */}
         <StatCard label="Total companies" value={String(companies.length)} icon={Building2} hint="all types" />
         <StatCard label="Government agencies" value={String(agencies)} icon={Landmark} hint="CBSA, CBP, etc." />
         <StatCard label="Insurance partners" value={String(insurers)} icon={ShieldCheck} hint="brokers + carriers" />
@@ -36,7 +52,7 @@ export default function CompaniesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Companies</CardTitle>
-          <CardDescription>Agencies, insurers, and authorities — distinct from paying customers.</CardDescription>
+          <CardDescription>Complete roster of all associated entities across your network.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 px-0">
           <div className="px-6">
@@ -58,17 +74,26 @@ export default function CompaniesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {companies.map((c) => (
-                <TableRow key={c.name}>
-                  <TableCell className="pl-6 font-medium">{c.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{c.kind}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
-                  <TableCell className="text-muted-foreground">{c.region}</TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+              {/* Added a fallback for when the array is empty */}
+              {companies.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    No companies found.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                companies.map((c) => (
+                  <TableRow key={c.name}>
+                    <TableCell className="pl-6 font-medium">{c.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.kind}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.region}</TableCell>
+                    <TableCell className="pr-6">
+                      <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

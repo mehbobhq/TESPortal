@@ -8,18 +8,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-const filings = [
-  { name: "IFTA Q1 2026", type: "Fuel Tax", period: "Jan – Mar 2026", amount: "$18,420", due: "Apr 30, 2026", status: "In progress", tone: "warn" as const },
-  { name: "IRP Renewal 2026", type: "Registration", period: "Annual", amount: "$42,100", due: "May 15, 2026", status: "Ready to file", tone: "ok" as const },
-  { name: "HVUT Form 2290", type: "Heavy Vehicle", period: "2025–2026", amount: "$8,250", due: "Aug 31, 2026", status: "Not started", tone: "neutral" as const },
-  { name: "GST/HST Q1 2026", type: "Sales Tax", period: "Jan – Mar 2026", amount: "$11,980", due: "Apr 30, 2026", status: "In progress", tone: "warn" as const },
-]
+// Added type for Open Filings
+type Filing = {
+  name: string;
+  type: string;
+  period: string;
+  amount: string;
+  due: string;
+  status: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
 
-const history = [
-  { name: "IFTA Q4 2025", filed: "Jan 28, 2026", amount: "$17,240", confirmation: "IFTA-2025Q4-8841", tone: "ok" as const },
-  { name: "GST/HST Q4 2025", filed: "Jan 30, 2026", amount: "$10,760", confirmation: "GST-2025Q4-2290", tone: "ok" as const },
-  { name: "IFTA Q3 2025", filed: "Oct 27, 2025", amount: "$19,110", confirmation: "IFTA-2025Q3-7712", tone: "ok" as const },
-]
+// Added type for Filing History
+type History = {
+  name: string;
+  filed: string;
+  amount: string;
+  confirmation: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
+
+// Emptied the sample data arrays
+const filings: Filing[] = []
+const history: History[] = []
 
 export default function TaxFilingPage() {
   return (
@@ -36,10 +47,11 @@ export default function TaxFilingPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Open filings" value="4" icon={ReceiptText} hint="2 due within 30 days" />
-        <StatCard label="Est. liability" value="$80.8k" icon={FileCheck2} hint="current period" />
-        <StatCard label="Next deadline" value="Apr 30" icon={CalendarClock} hint="IFTA Q1 + GST/HST" />
-        <StatCard label="Filed YTD" value="6" icon={FileCheck2} hint="all on time" trend={{ value: "100%", direction: "up", positive: true }} />
+        {/* Reset hardcoded stat values and removed trends */}
+        <StatCard label="Open filings" value="0" icon={ReceiptText} hint="0 due within 30 days" />
+        <StatCard label="Est. liability" value="$0" icon={FileCheck2} hint="current period" />
+        <StatCard label="Next deadline" value="N/A" icon={CalendarClock} hint="No upcoming deadlines" />
+        <StatCard label="Filed YTD" value="0" icon={FileCheck2} hint="all on time" />
       </div>
 
       <Tabs defaultValue="open">
@@ -67,18 +79,27 @@ export default function TaxFilingPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filings.map((f) => (
-                    <TableRow key={f.name}>
-                      <TableCell className="pl-6 font-medium">{f.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{f.type}</TableCell>
-                      <TableCell className="text-muted-foreground">{f.period}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{f.amount}</TableCell>
-                      <TableCell className="text-muted-foreground font-mono tabular-nums">{f.due}</TableCell>
-                      <TableCell className="pr-6">
-                        <StatusBadge tone={f.tone}>{f.status}</StatusBadge>
+                  {/* Added a fallback for when the filings array is empty */}
+                  {filings.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                        No open filings found.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    filings.map((f) => (
+                      <TableRow key={f.name}>
+                        <TableCell className="pl-6 font-medium">{f.name}</TableCell>
+                        <TableCell className="text-muted-foreground">{f.type}</TableCell>
+                        <TableCell className="text-muted-foreground">{f.period}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{f.amount}</TableCell>
+                        <TableCell className="text-muted-foreground font-mono tabular-nums">{f.due}</TableCell>
+                        <TableCell className="pr-6">
+                          <StatusBadge tone={f.tone}>{f.status}</StatusBadge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -103,17 +124,26 @@ export default function TaxFilingPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {history.map((h) => (
-                    <TableRow key={h.name}>
-                      <TableCell className="pl-6 font-medium">{h.name}</TableCell>
-                      <TableCell className="text-muted-foreground font-mono tabular-nums">{h.filed}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{h.amount}</TableCell>
-                      <TableCell className="text-muted-foreground font-mono text-xs">{h.confirmation}</TableCell>
-                      <TableCell className="pr-6">
-                        <StatusBadge tone={h.tone}>Accepted</StatusBadge>
+                  {/* Added a fallback for when the history array is empty */}
+                  {history.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                        No filing history found.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    history.map((h) => (
+                      <TableRow key={h.name}>
+                        <TableCell className="pl-6 font-medium">{h.name}</TableCell>
+                        <TableCell className="text-muted-foreground font-mono tabular-nums">{h.filed}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{h.amount}</TableCell>
+                        <TableCell className="text-muted-foreground font-mono text-xs">{h.confirmation}</TableCell>
+                        <TableCell className="pr-6">
+                          <StatusBadge tone={h.tone}>Accepted</StatusBadge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

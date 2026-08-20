@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation" // <-- Added for routing
 import { AlertCircle, FileText, Save, Upload } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
@@ -28,18 +29,31 @@ const COMPANY_TYPES = [
 ]
 
 export default function AddCompanyPage() {
+  const router = useRouter() // <-- Initialize router
+  
   const [selectedType, setSelectedType] = useState<string>("")
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
   
-  // Simulated frontend fuzzy matching trigger (would be connected to onChange of Company Name)
+  // Generating a realistic ID pattern (e.g., CMP-00001). 
+  // In production, your backend API will fetch the actual "next" ID.
+  const [recordId] = useState("CMP-00001") 
+
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
-    // Placeholder logic for the actual API call
     if (value.toLowerCase() === "progressive") {
       setDuplicateWarning("A similar company exists: Progressive Inc. Are you sure you want to proceed?")
     } else {
       setDuplicateWarning(null)
     }
+  }
+
+  // Handle the save action
+  const handleCreateCompany = () => {
+    // Here is where you will eventually call your POST /api/companies endpoint
+    console.log("Saving company...")
+    
+    // For now, simulate a successful save by redirecting back to the directory
+    router.push("/companies") 
   }
 
   return (
@@ -48,7 +62,7 @@ export default function AddCompanyPage() {
         title="Add Company"
         description="Create a new entity record in the master directory."
         actions={
-          <Button variant="outline" onClick={() => window.history.back()}>
+          <Button variant="outline" onClick={() => router.back()}>
             Cancel
           </Button>
         }
@@ -57,7 +71,6 @@ export default function AddCompanyPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 flex flex-col gap-6">
           
-          {/* Duplicate Warning Alert */}
           {duplicateWarning && (
             <Alert variant="destructive" className="bg-destructive/10 text-destructive border-destructive/20">
               <AlertCircle className="size-4" />
@@ -66,7 +79,6 @@ export default function AddCompanyPage() {
             </Alert>
           )}
 
-          {/* Core Information */}
           <Card>
             <CardHeader>
               <CardTitle>Core Information</CardTitle>
@@ -77,8 +89,9 @@ export default function AddCompanyPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="recordId">Record ID</FieldLabel>
-                    <Input id="recordId" value="CMP-XXXXXX" disabled className="bg-muted" />
-                    <FieldDescription>Auto-generated on save</FieldDescription>
+                    {/* Replaced placeholder with the actual sequence state */}
+                    <Input id="recordId" value={recordId} disabled className="bg-muted font-mono" />
+                    <FieldDescription>Auto-generated identifier</FieldDescription>
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="dateAdded">Date Added</FieldLabel>
@@ -336,7 +349,6 @@ export default function AddCompanyPage() {
             </Card>
           )}
 
-          {/* Address Information */}
           <Card>
             <CardHeader>
               <CardTitle>Location</CardTitle>
@@ -380,10 +392,7 @@ export default function AddCompanyPage() {
           </Card>
         </div>
 
-        {/* Sidebar Column */}
         <div className="flex flex-col gap-6">
-          
-          {/* Contact Details */}
           <Card>
             <CardHeader>
               <CardTitle>Contact Details</CardTitle>
@@ -418,27 +427,25 @@ export default function AddCompanyPage() {
             </CardContent>
           </Card>
 
-          {/* Documents Section */}
           <Card>
             <CardHeader>
               <CardTitle>Documents</CardTitle>
               <CardDescription>Upload contracts, certificates, or agreements.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              <div className="flex items-center justify-center rounded-lg border border-dashed p-6">
+              <div className="flex items-center justify-center rounded-lg border border-dashed p-6 hover:bg-muted/50 transition-colors cursor-pointer">
                 <div className="flex flex-col items-center gap-2 text-center">
                   <span className="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full">
                     <Upload className="size-5" />
                   </span>
                   <div className="text-sm">
-                    <span className="text-primary font-medium hover:underline cursor-pointer">Click to upload</span>
+                    <span className="text-primary font-medium hover:underline">Click to upload</span>
                     <span className="text-muted-foreground"> or drag and drop</span>
                   </div>
                   <p className="text-muted-foreground text-xs">PDF, DOCX up to 10MB</p>
                 </div>
               </div>
 
-              {/* Empty state for documents since no data exists yet */}
               <div className="flex flex-col gap-2">
                 <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">Recent Uploads</p>
                 <div className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm text-muted-foreground bg-muted/50">
@@ -449,7 +456,6 @@ export default function AddCompanyPage() {
             </CardContent>
           </Card>
 
-          {/* Notes */}
           <Card>
             <CardHeader>
               <CardTitle>Internal Notes</CardTitle>
@@ -461,10 +467,13 @@ export default function AddCompanyPage() {
         </div>
       </div>
 
-      {/* Sticky Bottom Actions */}
-      <div className="bg-background/80 supports-backdrop-filter:bg-background/60 border-t sticky bottom-0 z-10 -mx-6 mt-6 flex items-center justify-end gap-4 px-6 py-4 backdrop-blur">
-        <Button variant="outline">Cancel</Button>
-        <Button>
+      <div className="bg-background/80 supports-[backdrop-filter]:bg-background/60 border-t sticky bottom-0 z-10 -mx-6 mt-6 flex items-center justify-end gap-4 px-6 py-4 backdrop-blur">
+        {/* Wired up the Cancel button */}
+        <Button variant="outline" onClick={() => router.back()}>
+          Cancel
+        </Button>
+        {/* Wired up the Save button */}
+        <Button onClick={handleCreateCompany}>
           <Save data-icon="inline-start" className="mr-2 size-4" />
           Create Company
         </Button>

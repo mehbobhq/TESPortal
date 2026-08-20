@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 
 import { navGroups } from "@/lib/nav"
@@ -31,15 +32,20 @@ export function AppSidebar() {
               asChild
               className="group-data-[collapsible=icon]:p-0!"
             >
-              {/* Added explicit flex, items-center, and gap to prevent vertical stacking */}
               <Link href="/" className="flex items-center gap-2">
-                {/* Added shrink-0 so the logo box doesn't compress */}
-                <div className="bg-sidebar-primary text-sidebar-primary-foreground flex shrink-0 aspect-square size-8 items-center justify-center rounded-md">
-                  <span className="text-sm font-bold">TES</span>
+                {/* Image Logo Container */}
+                <div className="flex shrink-0 aspect-square size-8 items-center justify-center rounded-md overflow-hidden">
+                  <Image 
+                    src="/logo.png" 
+                    alt="TES Logo" 
+                    width={32} 
+                    height={32} 
+                    className="size-full object-contain"
+                  />
                 </div>
 
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-semibold tracking-tight">
+                  <span className="truncate font-semibold tracking-tight text-base">
                     TES
                   </span>
                   <span className="text-sidebar-foreground/60 truncate text-xs">

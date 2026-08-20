@@ -11,10 +11,11 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
+// Kept this array as it defines the settings UI options, but set all defaults to false
 const notifications = [
-  { id: "expiry", label: "Expiring credentials & documents", desc: "Alert when licenses, cards, or policies near expiry.", on: true },
-  { id: "filings", label: "Tax filing deadlines", desc: "Reminders for IFTA, IRP, HVUT, and GST/HST due dates.", on: true },
-  { id: "hos", label: "Hours-of-service violations", desc: "Notify when a driver logs an HOS violation.", on: true },
+  { id: "expiry", label: "Expiring credentials & documents", desc: "Alert when licenses, cards, or policies near expiry.", on: false },
+  { id: "filings", label: "Tax filing deadlines", desc: "Reminders for IFTA, IRP, HVUT, and GST/HST due dates.", on: false },
+  { id: "hos", label: "Hours-of-service violations", desc: "Notify when a driver logs an HOS violation.", on: false },
   { id: "customs", label: "Customs manifest status", desc: "Updates when ACE/ACI manifests are accepted or rejected.", on: false },
   { id: "billing", label: "Customer billing events", desc: "Past-due accounts and invoice activity.", on: false },
 ]
@@ -44,24 +45,24 @@ export default function SettingsPage() {
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="orgName">Legal name</FieldLabel>
-                  <Input id="orgName" defaultValue="FleetCompliance Logistics Inc." />
+                  <Input id="orgName" placeholder="Legal company name" />
                 </Field>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="usdot">USDOT number</FieldLabel>
-                    <Input id="usdot" defaultValue="3421889" />
+                    <Input id="usdot" placeholder="USDOT number" />
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="mc">MC number</FieldLabel>
-                    <Input id="mc" defaultValue="MC-1120043" />
+                    <Input id="mc" placeholder="MC number" />
                   </Field>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="baseJurisdiction">Base jurisdiction</FieldLabel>
-                    <Select defaultValue="on">
+                    <Select>
                       <SelectTrigger id="baseJurisdiction">
-                        <SelectValue />
+                        <SelectValue placeholder="Select jurisdiction" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
@@ -76,9 +77,9 @@ export default function SettingsPage() {
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="currency">Default currency</FieldLabel>
-                    <Select defaultValue="cad">
+                    <Select>
                       <SelectTrigger id="currency">
-                        <SelectValue />
+                        <SelectValue placeholder="Select currency" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
@@ -136,9 +137,9 @@ export default function SettingsPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="leadTime">Expiry warning lead time</FieldLabel>
-                    <Select defaultValue="30">
+                    <Select>
                       <SelectTrigger id="leadTime">
-                        <SelectValue />
+                        <SelectValue placeholder="Select lead time" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
@@ -153,7 +154,7 @@ export default function SettingsPage() {
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="scoreTarget">Target compliance score</FieldLabel>
-                    <Input id="scoreTarget" type="number" defaultValue="95" />
+                    <Input id="scoreTarget" type="number" placeholder="e.g., 95" />
                     <FieldDescription>Alert if fleet score drops below this.</FieldDescription>
                   </Field>
                 </div>
@@ -165,7 +166,7 @@ export default function SettingsPage() {
                     </Label>
                     <p className="text-muted-foreground text-sm">Draft IFTA/IRP filings automatically each period.</p>
                   </div>
-                  <Switch id="autoFile" defaultChecked />
+                  <Switch id="autoFile" />
                 </div>
               </FieldGroup>
             </CardContent>

@@ -6,15 +6,21 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
-const reports = [
-  { name: "Quarterly IFTA Summary", category: "Tax", format: "PDF", schedule: "Quarterly", last: "Feb 12, 2026", status: "Ready", tone: "ok" as const },
-  { name: "Fleet Utilization", category: "Operations", format: "XLSX", schedule: "Monthly", last: "Feb 01, 2026", status: "Ready", tone: "ok" as const },
-  { name: "Driver Hours-of-Service", category: "Safety", format: "PDF", schedule: "Weekly", last: "Feb 17, 2026", status: "Generating", tone: "warn" as const },
-  { name: "Credential Expiry Forecast", category: "Compliance", format: "CSV", schedule: "Monthly", last: "Feb 01, 2026", status: "Ready", tone: "ok" as const },
-  { name: "Cross-Border Crossing Log", category: "Customs", format: "PDF", schedule: "On demand", last: "Jan 28, 2026", status: "Ready", tone: "ok" as const },
-  { name: "Insurance Coverage Audit", category: "Insurance", format: "PDF", schedule: "Annual", last: "Dec 15, 2025", status: "Ready", tone: "ok" as const },
-]
+// Added type for Reports to ensure TypeScript stays happy with an empty array
+type Report = {
+  name: string;
+  category: string;
+  format: string;
+  schedule: string;
+  last: string;
+  status: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
 
+// Emptied the sample user report data
+const reports: Report[] = []
+
+// Kept templates as these act as static application features/options
 const templates = [
   { title: "Regulatory filing pack", desc: "Bundle IFTA, IRP, and HVUT summaries for a period." },
   { title: "Customer trip statement", desc: "Per-customer trip and mileage breakdown for billing." },
@@ -85,23 +91,32 @@ export default function ReportsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {reports.map((r) => (
-                <TableRow key={r.name}>
-                  <TableCell className="pl-6 font-medium">{r.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{r.category}</TableCell>
-                  <TableCell className="font-mono text-xs">{r.format}</TableCell>
-                  <TableCell className="text-muted-foreground">{r.schedule}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono tabular-nums">{r.last}</TableCell>
-                  <TableCell>
-                    <StatusBadge tone={r.tone}>{r.status}</StatusBadge>
-                  </TableCell>
-                  <TableCell className="pr-6 text-right">
-                    <Button variant="ghost" size="icon" aria-label={`Download ${r.name}`}>
-                      <Download />
-                    </Button>
+              {/* Added a fallback for when the reports array is empty */}
+              {reports.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                    No saved reports found.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                reports.map((r) => (
+                  <TableRow key={r.name}>
+                    <TableCell className="pl-6 font-medium">{r.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{r.category}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.format}</TableCell>
+                    <TableCell className="text-muted-foreground">{r.schedule}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono tabular-nums">{r.last}</TableCell>
+                    <TableCell>
+                      <StatusBadge tone={r.tone}>{r.status}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <Button variant="ghost" size="icon" aria-label={`Download ${r.name}`}>
+                        <Download />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

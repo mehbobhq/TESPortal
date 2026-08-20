@@ -7,13 +7,19 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
-const authorities = [
-  { name: "FMCSA Operating Authority", number: "MC-884210", type: "Common Carrier", jurisdiction: "US Federal", issued: "Mar 2019", status: "Active", tone: "ok" as const },
-  { name: "USDOT Registration", number: "DOT-2291847", type: "Interstate", jurisdiction: "US Federal", issued: "Mar 2019", status: "Active", tone: "ok" as const },
-  { name: "NSC Safety Fitness", number: "NSC-ON-77120", type: "Carrier Profile", jurisdiction: "Ontario", issued: "Jan 2020", status: "Active", tone: "ok" as const },
-  { name: "CVOR Certificate", number: "CVOR-118-4420", type: "Commercial Vehicle", jurisdiction: "Ontario", issued: "Jan 2020", status: "Review due", tone: "warn" as const },
-  { name: "SAAQ Registration", number: "SAAQ-QC-3318", type: "Carrier", jurisdiction: "Quebec", issued: "Feb 2021", status: "Active", tone: "ok" as const },
-]
+// Added a type to ensure TypeScript stays happy with an empty array
+type Authority = {
+  name: string;
+  number: string;
+  type: string;
+  jurisdiction: string;
+  issued: string;
+  status: string;
+  tone: "ok" | "warn" | "error" | "default";
+}
+
+// Emptied the sample data
+const authorities: Authority[] = []
 
 export default function AuthoritiesPage() {
   return (
@@ -30,9 +36,10 @@ export default function AuthoritiesPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Active authorities" value="5" icon={Landmark} hint="across US & Canada" />
-        <StatCard label="Safety rating" value="Satisfactory" icon={ShieldCheck} hint="FMCSA current" />
-        <StatCard label="Reviews due" value="1" icon={Landmark} hint="CVOR within 60 days" trend={{ value: "1", direction: "up", positive: false }} />
+        {/* Reset hardcoded stat values */}
+        <StatCard label="Active authorities" value="0" icon={Landmark} hint="across US & Canada" />
+        <StatCard label="Safety rating" value="N/A" icon={ShieldCheck} hint="FMCSA current" />
+        <StatCard label="Reviews due" value="0" icon={Landmark} hint="CVOR within 60 days" />
       </div>
 
       <Card>
@@ -53,18 +60,27 @@ export default function AuthoritiesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {authorities.map((a) => (
-                <TableRow key={a.number}>
-                  <TableCell className="pl-6 font-medium">{a.name}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">{a.number}</TableCell>
-                  <TableCell className="text-muted-foreground">{a.type}</TableCell>
-                  <TableCell className="text-muted-foreground">{a.jurisdiction}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono tabular-nums">{a.issued}</TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge tone={a.tone}>{a.status}</StatusBadge>
+              {/* Added a fallback for when the array is empty */}
+              {authorities.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    No authorities found.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                authorities.map((a) => (
+                  <TableRow key={a.number}>
+                    <TableCell className="pl-6 font-medium">{a.name}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-xs">{a.number}</TableCell>
+                    <TableCell className="text-muted-foreground">{a.type}</TableCell>
+                    <TableCell className="text-muted-foreground">{a.jurisdiction}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono tabular-nums">{a.issued}</TableCell>
+                    <TableCell className="pr-6">
+                      <StatusBadge tone={a.tone}>{a.status}</StatusBadge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

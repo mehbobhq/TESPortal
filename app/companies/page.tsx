@@ -33,8 +33,9 @@ export default function CompaniesPage() {
         description="Master directory of all entities including customers, government agencies, insurers, and service providers."
         actions={
           <Button asChild>
-            <Link href="/companies/new">
-              <Plus data-icon="inline-start" />
+            {/* Added flex, items-center, and a gap to keep them aligned horizontally */}
+            <Link href="/companies/new" className="flex items-center gap-2">
+              <Plus className="size-4" />
               Add company
             </Link>
           </Button>

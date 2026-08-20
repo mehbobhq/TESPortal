@@ -10,14 +10,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 
-const contacts = [
-  { name: "Diane Kwan", role: "Claims Adjuster", org: "Aurora Underwriting Co.", orgType: "Company", email: "d.kwan@aurora.example", phone: "+1 416 555 0182", status: "Primary", tone: "ok" as const },
-  { name: "Marcus Feld", role: "Account Manager", org: "NorthBridge Insurance Brokers", orgType: "Company", email: "m.feld@northbridge.example", phone: "+1 905 555 0114", status: "Primary", tone: "ok" as const },
-  { name: "Jenna Ruiz", role: "Logistics Lead", org: "Great Lakes Freight Co.", orgType: "Customer", email: "j.ruiz@glfreight.example", phone: "+1 313 555 0199", status: "Primary", tone: "ok" as const },
-  { name: "Officer Tran", role: "Trade Compliance", org: "Canada Border Services Agency", orgType: "Company", email: "portal@cbsa.example", phone: "—", status: "Reference", tone: "neutral" as const },
-  { name: "Sam Whitfield", role: "Dispatch Manager", org: "Harbor Point Logistics", orgType: "Customer", email: "s.whitfield@harbor.example", phone: "+1 716 555 0143", status: "Billing", tone: "info" as const },
-  { name: "Priya Nair", role: "Operations", org: "Maple Distribution", orgType: "Customer", email: "p.nair@maple.example", phone: "+1 289 555 0177", status: "Primary", tone: "ok" as const },
-]
+// Define the type so TypeScript doesn't complain about an empty array
+type ContactData = {
+  name: string;
+  role: string;
+  org: string;
+  orgType: string;
+  email: string;
+  phone: string;
+  status: string;
+  tone: "ok" | "warn" | "error" | "default" | "info" | "neutral";
+}
+
+// Emptied the sample data
+const contacts: ContactData[] = []
 
 function initials(name: string) {
   return name
@@ -45,6 +51,7 @@ export default function ContactsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* These will dynamically show 0 now */}
         <StatCard label="Total contacts" value={String(contacts.length)} icon={Contact} hint="all organizations" />
         <StatCard label="At companies" value={String(companyContacts)} icon={Building2} hint="agencies + insurers" />
         <StatCard label="At customers" value={String(customerContacts)} icon={Users} hint="client accounts" />
@@ -77,44 +84,53 @@ export default function ContactsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {contacts.map((c) => (
-                <TableRow key={c.name}>
-                  <TableCell className="pl-6">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="size-8">
-                        <AvatarFallback className="text-xs">{initials(c.name)}</AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">{c.name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{c.role}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span>{c.org}</span>
-                      <span className="text-muted-foreground text-xs">
-                        <Badge variant="outline" className="mt-1">
-                          {c.orgType}
-                        </Badge>
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
-                      <Mail className="size-3.5 shrink-0" />
-                      {c.email}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
-                      <Phone className="size-3.5 shrink-0" />
-                      {c.phone}
-                    </span>
-                  </TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+              {/* Added a fallback row for when the list is empty */}
+              {contacts.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    No contacts found.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                contacts.map((c) => (
+                  <TableRow key={c.name}>
+                    <TableCell className="pl-6">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="size-8">
+                          <AvatarFallback className="text-xs">{initials(c.name)}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium">{c.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{c.role}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span>{c.org}</span>
+                        <span className="text-muted-foreground text-xs">
+                          <Badge variant="outline" className="mt-1">
+                            {c.orgType}
+                          </Badge>
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
+                        <Mail className="size-3.5 shrink-0" />
+                        {c.email}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
+                        <Phone className="size-3.5 shrink-0" />
+                        {c.phone}
+                      </span>
+                    </TableCell>
+                    <TableCell className="pr-6">
+                      <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

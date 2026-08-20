@@ -11,7 +11,7 @@ const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'Meridian — Fleet Compliance Portal',
+  title: 'TES — Fleet Compliance Portal',
   description:
     'Manage cross-border trip compliance, tax filing, customs, credentials, and fleet operations from one enterprise portal.',
   generator: 'v0.app',

@@ -65,7 +65,12 @@ export function AppSidebar() {
 
             <SidebarMenu>
               {group.items.map((item) => {
-                const isActive = pathname === item.url
+                // FIXED ACTIVE STATE LOGIC:
+                // If it's the home page ("/"), require an exact match.
+                // Otherwise, check if the current pathname starts with the item's URL.
+                const isActive = item.url === "/" 
+                  ? pathname === "/" 
+                  : pathname.startsWith(item.url)
 
                 return (
                   <SidebarMenuItem key={item.url}>

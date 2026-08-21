@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Building2, Plus, Search, Trash2, Eye } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Building2, Plus, Search, Trash2 } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
@@ -22,9 +23,9 @@ type Customer = {
 }
 
 export default function CustomersPage() {
+  const router = useRouter()
   const [customers, setCustomers] = useState<Customer[]>([])
 
-  // Load only the customers from local storage
   useEffect(() => {
     const savedCustomers = localStorage.getItem("tes_customers")
     if (savedCustomers) {
@@ -32,16 +33,14 @@ export default function CustomersPage() {
     }
   }, [])
 
-  // Temporary function to delete records during development
-  const handleDelete = (idToDelete: string) => {
+  const handleDelete = (e: React.MouseEvent, idToDelete: string) => {
+    e.stopPropagation(); // Prevents the row click from firing
     if (!confirm("Are you sure you want to delete this customer?")) return;
 
-    // Remove from Customers
     const updatedCustomers = customers.filter(c => c.id !== idToDelete);
     setCustomers(updatedCustomers);
     localStorage.setItem("tes_customers", JSON.stringify(updatedCustomers));
 
-    // Also remove from Companies to keep them synced
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]");
     const updatedCompanies = savedCompanies.filter((c: any) => c.id !== idToDelete);
     localStorage.setItem("tes_companies", JSON.stringify(updatedCompanies));
@@ -103,7 +102,11 @@ export default function CustomersPage() {
                 </TableRow>
               ) : (
                 customers.map((c, idx) => (
-                  <TableRow key={idx}>
+                  <TableRow 
+                    key={idx}
+                    onClick={() => router.push(`/companies/${c.id}`)}
+                    className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  >
                     <TableCell className="pl-6 font-mono text-xs text-muted-foreground">{c.id}</TableCell>
                     <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
@@ -112,16 +115,9 @@ export default function CustomersPage() {
                       <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
                     </TableCell>
                     <TableCell className="pr-6 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link href={`/companies/${c.id}`}>
-                            <Eye className="size-4 text-muted-foreground" />
-                          </Link>
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(c.id)}>
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
-                      </div>
+                      <Button variant="ghost" size="icon" onClick={(e) => handleDelete(e, c.id)}>
+                        <Trash2 className="size-4 text-destructive" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))

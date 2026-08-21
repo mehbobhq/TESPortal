@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Bell, Search } from "lucide-react"
 
@@ -18,8 +19,29 @@ import {
 
 export function SiteHeader() {
   const pathname = usePathname()
+  
+  // 1. Try to find an exact match first (works for standard pages)
   const active = findNavItem(pathname)
-  const title = active?.title ?? "Dashboard"
+  let title = active?.title
+  
+  // 2. Setup state for dynamic nested routing
+  let isProfilePage = false
+  let parentPath = ""
+
+  // 3. Fallback logic: If no exact match is found, parse the URL manually
+  if (!title) {
+    if (pathname.startsWith("/companies")) {
+      title = "Companies"
+      parentPath = "/companies"
+      if (pathname.includes("/profile")) isProfilePage = true
+    } else if (pathname.startsWith("/customers")) {
+      title = "Customers"
+      parentPath = "/customers"
+      if (pathname.includes("/profile")) isProfilePage = true
+    } else {
+      title = "Dashboard" // Final safety fallback
+    }
+  }
 
   return (
     <header className="bg-background/80 sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4 backdrop-blur md:px-6">
@@ -29,9 +51,25 @@ export function SiteHeader() {
         <BreadcrumbList>
           <BreadcrumbItem className="text-muted-foreground hidden md:block">TES</BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{title}</BreadcrumbPage>
-          </BreadcrumbItem>
+          
+          {/* Dynamically render Breadcrumbs based on the route depth */}
+          {isProfilePage ? (
+            <>
+              <BreadcrumbItem className="hidden md:block">
+                <Link href={parentPath} className="text-muted-foreground hover:text-foreground transition-colors">
+                  {title}
+                </Link>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block" />
+              <BreadcrumbItem>
+                <BreadcrumbPage>Profile</BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : (
+            <BreadcrumbItem>
+              <BreadcrumbPage>{title}</BreadcrumbPage>
+            </BreadcrumbItem>
+          )}
         </BreadcrumbList>
       </Breadcrumb>
 

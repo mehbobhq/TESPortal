@@ -34,7 +34,7 @@ export default function CustomersPage() {
   }, [])
 
   const handleDelete = (e: React.MouseEvent, idToDelete: string) => {
-    e.stopPropagation(); // Prevents the row click from firing
+    e.stopPropagation(); 
     if (!confirm("Are you sure you want to delete this customer?")) return;
 
     const updatedCustomers = customers.filter(c => c.id !== idToDelete);
@@ -104,7 +104,8 @@ export default function CustomersPage() {
                 customers.map((c, idx) => (
                   <TableRow 
                     key={idx}
-                    onClick={() => router.push(`/companies/${c.id}`)}
+                    // Fixed the routing path here!
+                    onClick={() => router.push(`/companies/${c.id}/profile`)}
                     className="cursor-pointer hover:bg-muted/50 transition-colors"
                   >
                     <TableCell className="pl-6 font-mono text-xs text-muted-foreground">{c.id}</TableCell>

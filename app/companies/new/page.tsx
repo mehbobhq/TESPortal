@@ -2,147 +2,225 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { AlertCircle, File, FileText, Save, Upload, X, ShieldAlert } from "lucide-react"
+import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field"
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Separator } from "@/components/ui/separator"
+import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-// --- Helper Functions for Duplicate Detection ---
-
-// Normalizes a name: removes punctuation, common suffixes, and converts to lowercase
-function normalizeName(name: string): string {
-  return name.toLowerCase()
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "") // Remove punctuation
-    .replace(/\b(inc|llc|corp|ltd|co|incorporated|corporation|company)\b/gi, "") // Remove suffixes
-    .replace(/\s+/g, " ") // Normalize spaces
-    .trim()
-}
-
-// Calculates Levenshtein Distance (how many edits to turn string A into string B)
-function levenshteinDistance(a: string, b: string): number {
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-  const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
-  for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
-  for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
-  for (let j = 1; j <= b.length; j++) {
-    for (let i = 1; i <= a.length; i++) {
-      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
-      matrix[j][i] = Math.min(
-        matrix[j][i - 1] + 1, 
-        matrix[j - 1][i] + 1, 
-        matrix[j - 1][i - 1] + indicator
-      );
+// Standard Levenshtein distance for fuzzy matching
+const getLevenshteinDistance = (a: string, b: string) => {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) { matrix[i] = [i]; }
+  for (let j = 0; j <= a.length; j++) { matrix[0][j] = j; }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) == a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
+      }
     }
   }
   return matrix[b.length][a.length];
 }
 
-const COMPANY_TYPES = [
-  "Customer",
-  "Insurance Broker",
-  "Insurance Company",
-  "Government Agency",
-  "Employer Reference",
-  "Service Provider",
-  "Owner Operator",
-  "Sub Contractor",
-  "Workers Insurance",
-  "Finance/Leasing Company",
-  "Company (Prospect/Lead)",
-  "Other"
-]
+// Smart Address Component (New Page Version - No Initial Data)
+const SmartAddressBlock = ({ title, prefix }: { title: string, prefix: string }) => {
+  const [country, setCountry] = useState("")
+  const [region, setRegion] = useState("")
 
-export default function AddCompanyPage() {
+  const regions = [
+    { code: "AB", name: "Alberta", country: "Canada" },
+    { code: "AK", name: "Alaska", country: "United States" },
+    { code: "AL", name: "Alabama", country: "United States" },
+    { code: "AR", name: "Arkansas", country: "United States" },
+    { code: "AZ", name: "Arizona", country: "United States" },
+    { code: "BC", name: "British Columbia", country: "Canada" },
+    { code: "CA", name: "California", country: "United States" },
+    { code: "CO", name: "Colorado", country: "United States" },
+    { code: "CT", name: "Connecticut", country: "United States" },
+    { code: "DC", name: "District of Columbia", country: "United States" },
+    { code: "DE", name: "Delaware", country: "United States" },
+    { code: "FL", name: "Florida", country: "United States" },
+    { code: "GA", name: "Georgia", country: "United States" },
+    { code: "HI", name: "Hawaii", country: "United States" },
+    { code: "IA", name: "Iowa", country: "United States" },
+    { code: "ID", name: "Idaho", country: "United States" },
+    { code: "IL", name: "Illinois", country: "United States" },
+    { code: "IN", name: "Indiana", country: "United States" },
+    { code: "KS", name: "Kansas", country: "United States" },
+    { code: "KY", name: "Kentucky", country: "United States" },
+    { code: "LA", name: "Louisiana", country: "United States" },
+    { code: "MA", name: "Massachusetts", country: "United States" },
+    { code: "MB", name: "Manitoba", country: "Canada" },
+    { code: "MD", name: "Maryland", country: "United States" },
+    { code: "ME", name: "Maine", country: "United States" },
+    { code: "MI", name: "Michigan", country: "United States" },
+    { code: "MN", name: "Minnesota", country: "United States" },
+    { code: "MO", name: "Missouri", country: "United States" },
+    { code: "MS", name: "Mississippi", country: "United States" },
+    { code: "MT", name: "Montana", country: "United States" },
+    { code: "NB", name: "New Brunswick", country: "Canada" },
+    { code: "NC", name: "North Carolina", country: "United States" },
+    { code: "ND", name: "North Dakota", country: "United States" },
+    { code: "NE", name: "Nebraska", country: "United States" },
+    { code: "NH", name: "New Hampshire", country: "United States" },
+    { code: "NJ", name: "New Jersey", country: "United States" },
+    { code: "NL", name: "Newfoundland and Labrador", country: "Canada" },
+    { code: "NM", name: "New Mexico", country: "United States" },
+    { code: "NS", name: "Nova Scotia", country: "Canada" },
+    { code: "NT", name: "Northwest Territories", country: "Canada" },
+    { code: "NU", name: "Nunavut", country: "Canada" },
+    { code: "NV", name: "Nevada", country: "United States" },
+    { code: "NY", name: "New York", country: "United States" },
+    { code: "OH", name: "Ohio", country: "United States" },
+    { code: "OK", name: "Oklahoma", country: "United States" },
+    { code: "ON", name: "Ontario", country: "Canada" },
+    { code: "OR", name: "Oregon", country: "United States" },
+    { code: "PA", name: "Pennsylvania", country: "United States" },
+    { code: "PE", name: "Prince Edward Island", country: "Canada" },
+    { code: "QC", name: "Quebec", country: "Canada" },
+    { code: "RI", name: "Rhode Island", country: "United States" },
+    { code: "SC", name: "South Carolina", country: "United States" },
+    { code: "SD", name: "South Dakota", country: "United States" },
+    { code: "SK", name: "Saskatchewan", country: "Canada" },
+    { code: "TN", name: "Tennessee", country: "United States" },
+    { code: "TX", name: "Texas", country: "United States" },
+    { code: "UT", name: "Utah", country: "United States" },
+    { code: "VA", name: "Virginia", country: "United States" },
+    { code: "VT", name: "Vermont", country: "United States" },
+    { code: "WA", name: "Washington", country: "United States" },
+    { code: "WI", name: "Wisconsin", country: "United States" },
+    { code: "WV", name: "West Virginia", country: "United States" },
+    { code: "WY", name: "Wyoming", country: "United States" },
+    { code: "YT", name: "Yukon", country: "Canada" }
+  ].sort((a, b) => a.name.localeCompare(b.name))
+
+  const handleRegionChange = (val: string) => {
+    setRegion(val)
+    const selected = regions.find(r => r.code === val)
+    if (selected) {
+      setCountry(selected.country)
+    }
+  }
+
+  return (
+    <div className="space-y-4 border-b pb-6 last:border-0 last:pb-0">
+      <h3 className="font-semibold text-sm text-foreground">{title}</h3>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="space-y-2 lg:col-span-2">
+          <Label>Street Address</Label>
+          <Input name={`${prefix}_street`} placeholder="123 Main St" />
+        </div>
+        <div className="space-y-2">
+          <Label>City</Label>
+          <Input name={`${prefix}_city`} placeholder="City" />
+        </div>
+        
+        {/* State/Province Dropdown */}
+        <div className="space-y-2">
+          <Label>State/Province</Label>
+          <input type="hidden" name={`${prefix}_state`} value={region} />
+          <Select value={region} onValueChange={handleRegionChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select region" />
+            </SelectTrigger>
+            <SelectContent>
+              {regions.map((r) => (
+                <SelectItem key={r.code} value={r.code}>
+                  {r.name} ({r.code})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>ZIP/Postal Code</Label>
+          <Input name={`${prefix}_zip`} placeholder="Postal Code" />
+        </div>
+
+        {/* Auto-filled Country */}
+        <div className="space-y-2">
+          <Label>Country</Label>
+          <Input 
+            name={`${prefix}_country`} 
+            value={country} 
+            onChange={(e) => setCountry(e.target.value)}
+            placeholder="Auto-fills from region"
+            className="bg-muted/30" 
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function NewCompanyPage() {
   const router = useRouter()
-  
+  const [recordId, setRecordId] = useState("")
   const [selectedType, setSelectedType] = useState<string>("")
-  const [recordId, setRecordId] = useState("CMP-00001") 
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+  const [companyName, setCompanyName] = useState("")
   
-  // Duplicate Detection State
+  // Duplicate detection state
   const [exactMatchError, setExactMatchError] = useState<string | null>(null)
-  const [fuzzyWarning, setFuzzyWarning] = useState<string | null>(null)
+  const [fuzzyWarning, setFuzzyWarning] = useState<{name: string, id: string} | null>(null)
   const [overrideFuzzy, setOverrideFuzzy] = useState(false)
-  const [allExistingCompanies, setAllExistingCompanies] = useState<any[]>([])
 
-  // Auto-increment the Record ID and load existing companies
+  // Generate ID on load
   useEffect(() => {
-    const existing = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-    setAllExistingCompanies(existing)
-    const nextNum = existing.length + 1
-    setRecordId(`CMP-${String(nextNum).padStart(5, '0')}`)
+    const randomNum = Math.floor(10000 + Math.random() * 90000)
+    setRecordId(`CMP-${randomNum}`)
   }, [])
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    if (!value) {
-      setExactMatchError(null);
-      setFuzzyWarning(null);
-      setOverrideFuzzy(false);
-      return;
-    }
-
-    const normalizedInput = normalizeName(value)
-    let foundExact = false
-    let foundFuzzy = null
-
-    for (const company of allExistingCompanies) {
-      const normalizedExisting = normalizeName(company.name)
-      
-      // 1. Strict Uniqueness Enforcement
-      if (normalizedInput === normalizedExisting || value.toLowerCase() === company.name.toLowerCase()) {
-        foundExact = true
-        setExactMatchError(`This company already exists: ${company.name} (${company.id}). Select from the list instead.`)
-        setFuzzyWarning(null)
-        break;
-      }
-      
-      // 2. Fuzzy Matching Logic (85% match threshold)
-      const distance = levenshteinDistance(normalizedInput, normalizedExisting)
-      const maxLength = Math.max(normalizedInput.length, normalizedExisting.length)
-      const similarity = ((maxLength - distance) / maxLength) * 100
-
-      if (similarity >= 85) { 
-        foundFuzzy = `Did you mean '${company.name}' (${company.id})? A company with a similar name already exists.`
-      }
-    }
-
-    if (!foundExact) {
+  // Duplicate Check Effect
+  useEffect(() => {
+    if (companyName.trim().length < 3) {
       setExactMatchError(null)
-      if (foundFuzzy) {
-        setFuzzyWarning(foundFuzzy)
-        setOverrideFuzzy(false) 
-      } else {
-        setFuzzyWarning(null)
+      setFuzzyWarning(null)
+      setOverrideFuzzy(false)
+      return
+    }
+
+    const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
+    
+    // 1. Exact Match Check (Blocks creation)
+    const exactMatch = savedCompanies.find((c: any) => c.name.toLowerCase() === companyName.toLowerCase())
+    if (exactMatch) {
+      setExactMatchError(`A company with the exact name "${exactMatch.name}" already exists (ID: ${exactMatch.id}).`)
+      setFuzzyWarning(null)
+      return
+    }
+    setExactMatchError(null)
+
+    // 2. Fuzzy Match Check (Warns user)
+    let foundFuzzy = null
+    for (const c of savedCompanies) {
+      const distance = getLevenshteinDistance(companyName.toLowerCase(), c.name.toLowerCase())
+      const maxLength = Math.max(companyName.length, c.name.length)
+      const similarity = ((maxLength - distance) / maxLength) * 100
+      
+      if (similarity > 80) {
+        foundFuzzy = { name: c.name, id: c.id }
+        break 
       }
     }
-  }
+    
+    setFuzzyWarning(foundFuzzy)
+    if (!foundFuzzy) setOverrideFuzzy(false)
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files!)])
-    }
-  }
+  }, [companyName])
 
-  const removeFile = (indexToRemove: number) => {
-    setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove))
-  }
-
-const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault() 
     
-    // Safety check: Block save if exact match exists, or if fuzzy exists and override isn't checked
     if (exactMatchError || (fuzzyWarning && !overrideFuzzy)) {
-      return;
+      return; // Block save if unresolved duplicates exist
     }
 
     if (!selectedType) {
@@ -153,7 +231,6 @@ const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
     const formData = new FormData(e.currentTarget)
     const formEntries = Object.fromEntries(formData.entries())
     
-    // Capture EVERYTHING from the form, plus our system variables
     const newCompany = {
       ...formEntries,
       id: recordId,
@@ -166,513 +243,307 @@ const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
       createdAt: new Date().toISOString()
     }
 
-    // 1. Save to Master Companies List
     const existingCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     localStorage.setItem("tes_companies", JSON.stringify([newCompany, ...existingCompanies]))
     
-    // 2. If it's a Customer, ALSO save to the Customers List
     if (selectedType === "Customer") {
       const existingCustomers = JSON.parse(localStorage.getItem("tes_customers") || "[]")
       localStorage.setItem("tes_customers", JSON.stringify([newCompany, ...existingCustomers]))
     }
     
-    // Force redirect directly to the new profile page
-    window.location.href = `/companies/${recordId}/profile`
+    router.push(`/companies/${recordId}/profile`)
   }
-  const isSubmitDisabled = !!exactMatchError || (!!fuzzyWarning && !overrideFuzzy)
 
-  const renderAddressCard = (title: string, prefix: string, description?: string, isMandatory: boolean = false, isSpecial: boolean = false) => (
-    <Card className={isSpecial ? "border-primary/50 bg-primary/5" : ""}>
-      <CardHeader>
-        <CardTitle className={isSpecial ? "text-primary" : ""}>{title}</CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`${prefix}-street`} required={isMandatory}>Street Address</FieldLabel>
-            <Input id={`${prefix}-street`} name={`${prefix}_street`} placeholder="123 Main St" required={isMandatory} />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={`${prefix}-city`} required={isMandatory}>City</FieldLabel>
-              <Input id={`${prefix}-city`} name={`${prefix}_city`} placeholder="City" required={isMandatory} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${prefix}-state`} required={isMandatory}>State / Province</FieldLabel>
-              <Input id={`${prefix}-state`} name={`${prefix}_state`} placeholder="State or Province" required={isMandatory} />
-            </Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={`${prefix}-zip`} required={isMandatory}>Postal / ZIP Code</FieldLabel>
-              <Input id={`${prefix}-zip`} name={`${prefix}_zip`} placeholder="Postal Code" required={isMandatory} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${prefix}-country`} required={isMandatory}>Country</FieldLabel>
-              <Select name={`${prefix}_country`} required={isMandatory}>
-                <SelectTrigger id={`${prefix}-country`}>
-                  <SelectValue placeholder="Select country" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CA">Canada</SelectItem>
-                  <SelectItem value="US">United States</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-        </FieldGroup>
-      </CardContent>
-    </Card>
-  )
+  const isCustomer = selectedType === "Customer"
 
   return (
-    <form onSubmit={handleCreateCompany} className="pb-10">
+    <div className="pb-10 flex flex-col gap-6">
       <PageHeader
-        title="Add Company"
-        description="Create a new entity record in the master directory."
+        title="Create Entity Record"
+        description="Add a new company, carrier, or partner to the master directory."
         actions={
-          <Button type="button" variant="outline" onClick={() => router.back()}>
-            Cancel
+          <Button variant="outline" onClick={() => router.back()}>
+            <ArrowLeft className="mr-2 size-4" /> Cancel
           </Button>
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 flex flex-col gap-6">
-          
-          {/* EXACT MATCH BLOCK */}
-          {exactMatchError && (
-            <Alert variant="destructive" className="bg-destructive/10 text-destructive border-destructive/20">
-              <ShieldAlert className="size-4" />
-              <AlertTitle>Duplicate Blocked</AlertTitle>
-              <AlertDescription>{exactMatchError}</AlertDescription>
-            </Alert>
-          )}
+      <form onSubmit={handleCreateCompany} className="flex flex-col gap-6 max-w-5xl">
+        
+        {/* ENTITY SETUP */}
+        <Card className="border-primary/50 shadow-sm">
+          <CardHeader className="bg-primary/5 py-4 border-b">
+            <CardTitle className="text-lg">Entity Setup</CardTitle>
+            <CardDescription>Define the record ID and primary relationship type.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label>System Record ID</Label>
+              <Input value={recordId} disabled className="bg-muted font-mono" />
+              <p className="text-xs text-muted-foreground">Auto-generated unique identifier.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="companyType" className="text-primary font-medium">Company Record Type *</Label>
+              <Select value={selectedType} onValueChange={setSelectedType} required>
+                <SelectTrigger className="border-primary/30 focus:ring-primary/20">
+                  <SelectValue placeholder="Select entity type..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Customer">Customer</SelectItem>
+                  <SelectItem value="Carrier">Carrier</SelectItem>
+                  <SelectItem value="Partner">Partner</SelectItem>
+                  <SelectItem value="Vendor">Vendor</SelectItem>
+                  <SelectItem value="Government">Government / Agency</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* FUZZY MATCH WARNING & OVERRIDE */}
-          {fuzzyWarning && !exactMatchError && (
-            <Alert variant="destructive" className="bg-orange-500/10 text-orange-600 border-orange-500/20 dark:text-orange-400">
-              <AlertCircle className="size-4" />
-              <AlertTitle>Potential Duplicate Detected</AlertTitle>
-              <AlertDescription className="flex flex-col gap-3 mt-2">
-                <p>{fuzzyWarning}</p>
-                <div className="flex items-center space-x-2 bg-orange-500/10 p-2 rounded-md w-fit">
-                  <Checkbox 
-                    id="overrideFuzzy" 
-                    checked={overrideFuzzy} 
-                    onCheckedChange={(checked) => setOverrideFuzzy(checked as boolean)}
-                    className="border-orange-600 data-[state=checked]:bg-orange-600"
-                  />
-                  <label htmlFor="overrideFuzzy" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    I confirm this is a separate, new entity. Add anyway.
-                  </label>
+        {/* CORE INFO */}
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Building2 className="size-4 text-muted-foreground"/> Core Information
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="space-y-2 lg:col-span-2">
+              <Label htmlFor="companyName">Company Name *</Label>
+              <Input 
+                id="companyName" 
+                name="companyName" 
+                placeholder="e.g. Power Way Logistics Inc"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                required 
+              />
+              
+              {exactMatchError && (
+                <div className="flex items-center gap-2 mt-2 text-destructive bg-destructive/10 p-2 rounded text-sm">
+                  <XCircle className="size-4 shrink-0" />
+                  <p>{exactMatchError}</p>
                 </div>
-              </AlertDescription>
-            </Alert>
-          )}
+              )}
+              
+              {fuzzyWarning && !exactMatchError && (
+                <div className="flex flex-col gap-2 mt-2 bg-orange-500/10 border border-orange-500/20 p-3 rounded text-sm">
+                  <div className="flex items-start gap-2 text-orange-600 dark:text-orange-400">
+                    <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                    <p><strong>Potential Duplicate:</strong> "{fuzzyWarning.name}" sounds very similar. Please verify this is a new entity.</p>
+                  </div>
+                  <div className="flex items-center space-x-2 pl-6">
+                    <Checkbox 
+                      id="override" 
+                      checked={overrideFuzzy} 
+                      onCheckedChange={(checked) => setOverrideFuzzy(checked === true)} 
+                    />
+                    <label htmlFor="override" className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-foreground">
+                      I confirm this is a separate company. Proceed anyway.
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Core Information</CardTitle>
-              <CardDescription>Mandatory details and entity classification.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="recordId">Record ID</FieldLabel>
-                    <Input id="recordId" value={recordId} disabled className="bg-muted font-mono" />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="dateAdded">Date Added</FieldLabel>
-                    <Input id="dateAdded" value={new Date().toISOString().split('T')[0]} disabled className="bg-muted" />
-                  </Field>
-                </div>
-                
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="companyName" required>Company Name</FieldLabel>
-                    <Input id="companyName" name="companyName" placeholder="Legal entity name" onChange={handleNameChange} required />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="dba">DBA (Doing Business As)</FieldLabel>
-                    <Input id="dba" name="dba" placeholder="Optional DBA name" />
-                  </Field>
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="dba">DBA</Label>
+              <Input id="dba" name="dba" placeholder="Doing Business As" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contactPerson">Primary Contact</Label>
+              <Input id="contactPerson" name="contactPerson" placeholder="Full Name" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone</Label>
+              <Input id="phone" name="phone" placeholder="+1 (555) 000-0000" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="website">Website</Label>
+              <Input id="website" name="website" placeholder="https://" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Account Email</Label>
+              <Input id="email" name="email" type="email" placeholder="contact@example.com" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="billingEmail">Billing Email</Label>
+              <Input id="billingEmail" name="billingEmail" type="email" placeholder="billing@example.com" />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="opRegion">Operating Region</Label>
+              <Select name="opRegion" defaultValue="Canada Only">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Canada Only">Canada Only</SelectItem>
+                  <SelectItem value="US Only">US Only</SelectItem>
+                  <SelectItem value="Cross-Border">Cross-Border</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="companyType" required>Company Type</FieldLabel>
-                    <Select onValueChange={setSelectedType} name="companyType" required>
-                      <SelectTrigger id="companyType">
-                        <SelectValue placeholder="Select type..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {COMPANY_TYPES.map(type => (
-                            <SelectItem key={type} value={type}>{type}</SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="status" required>Status</FieldLabel>
-                    <Select defaultValue="Active" name="status" required>
-                      <SelectTrigger id="status">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Active">Active</SelectItem>
-                        <SelectItem value="Inactive">Inactive</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </div>
-              </FieldGroup>
-            </CardContent>
-          </Card>
+        {/* SMART ADDRESSES */}
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <MapPin className="size-4 text-muted-foreground"/> Address Information
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 space-y-6">
+            <SmartAddressBlock title="Registered Address" prefix="reg" />
+            <SmartAddressBlock title="Mailing Address" prefix="mail" />
+            <SmartAddressBlock title="Yard Address" prefix="yard" />
+          </CardContent>
+        </Card>
 
-          {selectedType && (
-            <Card className="border-primary/50 bg-primary/5">
-              <CardHeader>
-                <CardTitle className="text-primary">{selectedType} Details</CardTitle>
-                <CardDescription>Specific requirements and data points for this entity type.</CardDescription>
+        {isCustomer && (
+          <>
+            {/* CUSTOMER INFO */}
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Customer Information</CardTitle>
               </CardHeader>
-              <CardContent>
-                <FieldGroup>
-                  {/* --- CUSTOMER FIELDS --- */}
-                  {selectedType === "Customer" && (
-                    <div className="flex flex-col">
-                      <div className="grid gap-4 sm:grid-cols-2 mb-4">
-                        <Field>
-                          <FieldLabel htmlFor="opRegion" required>Operating Region</FieldLabel>
-                          <Select name="opRegion" required>
-                            <SelectTrigger id="opRegion"><SelectValue placeholder="Select region" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="US Only">US Only</SelectItem>
-                              <SelectItem value="Canada Only">Canada Only</SelectItem>
-                              <SelectItem value="Cross-Border">Cross-Border</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="svcType" required>Service Type</FieldLabel>
-                          <Select defaultValue="Basic" name="svcType" required>
-                            <SelectTrigger id="svcType"><SelectValue placeholder="Select service type" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Basic">Basic</SelectItem>
-                              <SelectItem value="Per Service">Per Service</SelectItem>
-                              <SelectItem value="Premium">Premium</SelectItem>
-                              <SelectItem value="Standard">Standard</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                      </div>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                <div className="space-y-2">
+                  <Label>Service Type</Label>
+                  <Select name="svcType" defaultValue="Premium">
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Premium">Premium</SelectItem>
+                      <SelectItem value="Standard">Standard</SelectItem>
+                      <SelectItem value="Basic">Basic</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                      <div className="grid gap-4 sm:grid-cols-2 mb-4">
-                        <Field>
-                          <FieldLabel htmlFor="payMethod" required>Payment Method</FieldLabel>
-                          <Select name="payMethod" required>
-                            <SelectTrigger id="payMethod"><SelectValue placeholder="Select payment method" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Credit Card">Credit Card</SelectItem>
-                              <SelectItem value="Digital Wallets">Digital Wallets</SelectItem>
-                              <SelectItem value="E-Transfer">E-Transfer</SelectItem>
-                              <SelectItem value="ACH/Wire Transfer">ACH/Wire Transfer</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="cargoInfo">Cargo Information</FieldLabel>
-                          <Select name="cargoInfo">
-                            <SelectTrigger id="cargoInfo"><SelectValue placeholder="Select cargo type" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="General Freight">General Freight</SelectItem>
-                              <SelectItem value="Specialized Equipment">Specialized Equipment</SelectItem>
-                              <SelectItem value="Household Goods">Household Goods</SelectItem>
-                              <SelectItem value="Temperature-Controlled & Food">Temperature-Controlled & Food</SelectItem>
-                              <SelectItem value="Hazardous Materials">Hazardous Materials</SelectItem>
-                              <SelectItem value="Bulk & Other">Bulk & Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                      </div>
+                <div className="space-y-2">
+                  <Label>Service Status</Label>
+                  <Select name="status" defaultValue="Active">
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field>
-                          <FieldLabel htmlFor="startDate" required>Start Date</FieldLabel>
-                          <Input id="startDate" name="startDate" type="date" required />
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="endDate">End Date</FieldLabel>
-                          <Input id="endDate" name="endDate" type="date" />
-                        </Field>
-                      </div>
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input name="startDate" type="date" />
+                </div>
+                <div className="space-y-2">
+                  <Label>End Date</Label>
+                  <Input name="endDate" type="date" />
+                </div>
 
-                      <Separator className="my-8 bg-primary/20" />
+                <div className="space-y-2">
+                  <Label>Payment Method</Label>
+                  <Select name="payMethod" defaultValue="E-Transfer">
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="E-Transfer">E-Transfer</SelectItem>
+                      <SelectItem value="Credit Card">Credit Card</SelectItem>
+                      <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                      <SelectItem value="Cheque">Cheque</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-3">Business Information</h4>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                          <Field><FieldLabel>Incorporation No.</FieldLabel><Input name="incorpNo" placeholder="Number" /></Field>
-                          <Field><FieldLabel>Business No.</FieldLabel><Input name="businessNo" placeholder="Number" /></Field>
-                          <Field><FieldLabel>EIN</FieldLabel><Input name="ein" placeholder="EIN" /></Field>
-                          <Field><FieldLabel>GST/HST</FieldLabel><Input name="gstHst" placeholder="Tax ID" /></Field>
-                        </div>
-                      </div>
-
-                      <Separator className="my-8 bg-primary/20" />
-
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-3">Carrier Information</h4>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                          <Field><FieldLabel>USDOT</FieldLabel><Input name="usdot" placeholder="USDOT" /></Field>
-                          <Field><FieldLabel>MC</FieldLabel><Input name="mc" placeholder="MC Number" /></Field>
-                          <Field><FieldLabel>MVID/RIN</FieldLabel><Input name="mvid" placeholder="MVID/RIN" /></Field>
-                          <Field><FieldLabel>NSC/CVOR</FieldLabel><Input name="nsc" placeholder="NSC/CVOR" /></Field>
-                        </div>
-                      </div>
-
-                      <Separator className="my-8 bg-primary/20" />
-
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-3">Accounts</h4>
-                        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                          <Field><FieldLabel>IRP</FieldLabel><Input name="accIrp" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>IFTA</FieldLabel><Input name="accIfta" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>NY HUT</FieldLabel><Input name="accNyhut" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>NM WDT</FieldLabel><Input name="accNm" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>KYU</FieldLabel><Input name="accKyu" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>OR</FieldLabel><Input name="accOr" placeholder="Account #" /></Field>
-                          <Field><FieldLabel>CT DRS</FieldLabel><Input name="accCt" placeholder="Account #" /></Field>
-                        </div>
-                      </div>
-
-                      <Separator className="my-8 bg-primary/20" />
-
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-3">Customs Information</h4>
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <Field><FieldLabel>SCAC</FieldLabel><Input name="scac" placeholder="SCAC Code" /></Field>
-                          <Field><FieldLabel>Carrier Code</FieldLabel><Input name="carrierCode" placeholder="Carrier Code" /></Field>
-                        </div>
-                      </div>
-
-                      <Separator className="my-8 bg-primary/20" />
-
-                      <div>
-                        <h4 className="text-sm font-semibold text-primary mb-3">Fleet Information</h4>
-                        <div className="grid gap-4 sm:grid-cols-3">
-                          <Field><FieldLabel>GPS/ELD Provider</FieldLabel><Input name="gpsProvider" placeholder="Provider" /></Field>
-                          <Field><FieldLabel>Fuel Provider</FieldLabel><Input name="fuelProvider" placeholder="Provider" /></Field>
-                          <Field><FieldLabel>Assessment Date</FieldLabel><Input name="assessmentDate" type="date" /></Field>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* --- OTHER ENTITY TYPES --- */}
-                  {selectedType === "Insurance Broker" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="brokerLicense">Broker License Number</FieldLabel><Input id="brokerLicense" placeholder="License #" /></Field>
-                      <Field><FieldLabel htmlFor="regulator">Regulator</FieldLabel><Input id="regulator" placeholder="e.g., FSRA" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Insurance Company" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="underwriterLicense">Underwriter License Number</FieldLabel><Input id="underwriterLicense" placeholder="License #" /></Field>
-                      <Field><FieldLabel htmlFor="financialRating">Financial Rating</FieldLabel><Input id="financialRating" placeholder="e.g., A.M. Best A+" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Government Agency" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="jurisdiction">Jurisdiction</FieldLabel><Input id="jurisdiction" placeholder="e.g., Ontario, Federal US" /></Field>
-                      <Field><FieldLabel htmlFor="agencyCode">Agency Code</FieldLabel><Input id="agencyCode" placeholder="e.g., FMCSA, CBP" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Employer Reference" && (
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <Field><FieldLabel htmlFor="prevCompany">Previous Company</FieldLabel><Input id="prevCompany" placeholder="Name" /></Field>
-                      <Field><FieldLabel htmlFor="refContact">Contact Person</FieldLabel><Input id="refContact" placeholder="Name" /></Field>
-                      <Field><FieldLabel htmlFor="yearsEmployed">Years Employed</FieldLabel><Input id="yearsEmployed" type="number" placeholder="e.g., 3" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Service Provider" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="spType">Service Type</FieldLabel><Input id="spType" placeholder="e.g., DOT Clinic, Repair Shop" /></Field>
-                      <Field><FieldLabel htmlFor="spSpecialization">Specialization</FieldLabel><Input id="spSpecialization" placeholder="Area of expertise" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Owner Operator" && (
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <Field><FieldLabel htmlFor="ownerName">Owner Name</FieldLabel><Input id="ownerName" placeholder="Full name" /></Field>
-                      <Field><FieldLabel htmlFor="vehicleCount">Vehicle Count</FieldLabel><Input id="vehicleCount" type="number" placeholder="0" /></Field>
-                      <Field><FieldLabel htmlFor="leaseAgreement">Lease Agreement</FieldLabel><Input id="leaseAgreement" placeholder="Agreement ID" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Sub Contractor" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="contractStart">Contract Start Date</FieldLabel><Input id="contractStart" type="date" /></Field>
-                      <Field><FieldLabel htmlFor="contractEnd">Contract End Date</FieldLabel><Input id="contractEnd" type="date" /></Field>
-                      <Field className="sm:col-span-2"><FieldLabel htmlFor="scopeWork">Scope of Work</FieldLabel><Textarea id="scopeWork" placeholder="Brief description of duties..." /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Workers Insurance" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="policyNum">Policy Number</FieldLabel><Input id="policyNum" placeholder="Policy #" /></Field>
-                      <Field><FieldLabel htmlFor="stateFund">State Fund (if applicable)</FieldLabel><Input id="stateFund" placeholder="Fund name" /></Field>
-                      <Field className="sm:col-span-2"><FieldLabel htmlFor="coverageDetails">Coverage Details</FieldLabel><Textarea id="coverageDetails" placeholder="Limits and specifics..." /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Finance/Leasing Company" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field><FieldLabel htmlFor="accNum">Account Number</FieldLabel><Input id="accNum" placeholder="Account #" /></Field>
-                      <Field><FieldLabel htmlFor="leaseTerms">Lease Terms</FieldLabel><Input id="leaseTerms" placeholder="e.g., 48 months" /></Field>
-                    </div>
-                  )}
-                  {selectedType === "Company (Prospect/Lead)" && (
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <Field><FieldLabel htmlFor="leadSource">Lead Source</FieldLabel><Input id="leadSource" placeholder="e.g., Trade Show" /></Field>
-                      <Field><FieldLabel htmlFor="followUp">Follow-Up Date</FieldLabel><Input id="followUp" type="date" /></Field>
-                      <Field>
-                        <FieldLabel htmlFor="priority">Priority</FieldLabel>
-                        <Select>
-                          <SelectTrigger id="priority"><SelectValue placeholder="Select..." /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="High">High</SelectItem>
-                            <SelectItem value="Medium">Medium</SelectItem>
-                            <SelectItem value="Low">Low</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                    </div>
-                  )}
-                </FieldGroup>
+                <div className="space-y-2">
+                  <Label>Cargo Information</Label>
+                  <Input name="cargoInfo" placeholder="e.g. Dry Van, Flatbed" />
+                </div>
               </CardContent>
             </Card>
-          )}
 
-          {renderAddressCard("Registered Address", "reg", "Primary legal address.", true, false)}
+            {/* BUSINESS & CARRIER INFO */}
+            <div className="grid lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader className="bg-muted/30 py-3 border-b">
+                  <CardTitle className="text-sm text-primary">Business Information</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+                  <div className="space-y-2"><Label>Incorporation #</Label><Input name="incorpNo" /></div>
+                  <div className="space-y-2"><Label>Business #</Label><Input name="businessNo" /></div>
+                  <div className="space-y-2"><Label>GST / HST</Label><Input name="gstHst" /></div>
+                  <div className="space-y-2"><Label>EIN #</Label><Input name="ein" /></div>
+                </CardContent>
+              </Card>
 
-          {selectedType === "Customer" && (
-            <>
-              {renderAddressCard("Mailing Address", "mail", "Where physical mail should be sent (if different).", false, true)}
-              {renderAddressCard("Yard Address", "yard", "Physical location of fleet/equipment.", false, true)}
-            </>
-          )}
+              <Card>
+                <CardHeader className="bg-muted/30 py-3 border-b">
+                  <CardTitle className="text-sm text-primary">Carrier Information</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+                  <div className="space-y-2"><Label>MVID / RIN #</Label><Input name="mvid" /></div>
+                  <div className="space-y-2"><Label>NSC / CVOR #</Label><Input name="nsc" /></div>
+                  <div className="space-y-2"><Label>US DOT #</Label><Input name="usdot" /></div>
+                  <div className="space-y-2"><Label>MC #</Label><Input name="mc" /></div>
+                </CardContent>
+              </Card>
+            </div>
 
+            {/* TAX ACCOUNTS */}
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Tax & Compliance Accounts</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-3 gap-6">
+                <div className="space-y-2"><Label>IRP Account #</Label><Input name="accIrp" /></div>
+                <div className="space-y-2"><Label>IFTA Account #</Label><Input name="accIfta" /></div>
+                <div className="space-y-2"><Label>NY HUT Account #</Label><Input name="accNyhut" /></div>
+                <div className="space-y-2"><Label>NM WDT Account #</Label><Input name="accNm" /></div>
+                <div className="space-y-2"><Label>Kentucky KYU #</Label><Input name="accKyu" /></div>
+                <div className="space-y-2"><Label>Oregon Account #</Label><Input name="accOr" /></div>
+                <div className="space-y-2"><Label>CT DRS Account #</Label><Input name="accCt" /></div>
+              </CardContent>
+            </Card>
+
+            {/* CUSTOMS & FLEET */}
+            <div className="grid lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader className="bg-muted/30 py-3 border-b">
+                  <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+                  <div className="space-y-2"><Label>SCAC</Label><Input name="scac" /></div>
+                  <div className="space-y-2"><Label>Carrier Code</Label><Input name="carrierCode" /></div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="bg-muted/30 py-3 border-b">
+                  <CardTitle className="text-sm text-primary">Fleet Information</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+                  <div className="space-y-2"><Label>Truck GPS Provider</Label><Input name="gpsProvider" /></div>
+                  <div className="space-y-2"><Label>Fuel Provider</Label><Input name="fuelProvider" /></div>
+                  <div className="space-y-2 sm:col-span-2"><Label>Assessment Date</Label><Input name="assessmentDate" type="date" /></div>
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-4 mt-2 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm z-10">
+          <Button type="button" variant="outline" onClick={() => router.back()}>
+            Discard
+          </Button>
+          <Button 
+            type="submit" 
+            disabled={!!exactMatchError || (!!fuzzyWarning && !overrideFuzzy)}
+          >
+            <Save className="mr-2 size-4" />
+            Create Record
+          </Button>
         </div>
-
-        <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Contact Details</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="contactPerson">Primary Contact Person</FieldLabel>
-                  <Input id="contactPerson" name="contactPerson" placeholder="Full name" />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="email">Email</FieldLabel>
-                  <Input id="email" name="email" type="email" placeholder="company@example.com" />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="billingEmail">Billing Email</FieldLabel>
-                  <Input id="billingEmail" name="billingEmail" type="email" placeholder="billing@example.com" />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="phone">Phone</FieldLabel>
-                  <Input id="phone" name="phone" type="tel" placeholder="+1 (555) 000-0000" />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="website">Website</FieldLabel>
-                  <Input id="website" name="website" type="url" placeholder="https://www.example.com" />
-                </Field>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Documents</CardTitle>
-              <CardDescription>Upload contracts, certificates, or agreements.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <label htmlFor="file-upload" className="flex items-center justify-center rounded-lg border border-dashed p-6 hover:bg-muted/50 transition-colors cursor-pointer group">
-                <input 
-                  id="file-upload" 
-                  type="file" 
-                  multiple 
-                  className="hidden" 
-                  onChange={handleFileChange}
-                />
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <span className="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full group-hover:scale-110 transition-transform">
-                    <Upload className="size-5" />
-                  </span>
-                  <div className="text-sm">
-                    <span className="text-primary font-medium group-hover:underline">Click to upload</span>
-                    <span className="text-muted-foreground"> or drag and drop</span>
-                  </div>
-                  <p className="text-muted-foreground text-xs">PDF, DOCX up to 10MB</p>
-                </div>
-              </label>
-
-              <div className="flex flex-col gap-2">
-                <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">Recent Uploads</p>
-                
-                {uploadedFiles.length === 0 ? (
-                  <div className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm text-muted-foreground bg-muted/50">
-                    <FileText className="size-4 opacity-50" />
-                    <span>No documents uploaded yet.</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {uploadedFiles.map((file, idx) => (
-                      <div key={idx} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm bg-background">
-                        <div className="flex items-center gap-3 overflow-hidden">
-                          <File className="size-4 text-primary shrink-0" />
-                          <span className="truncate font-medium">{file.name}</span>
-                        </div>
-                        <button 
-                          type="button" 
-                          onClick={() => removeFile(idx)}
-                          className="text-muted-foreground hover:text-destructive shrink-0"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Internal Notes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea name="notes" placeholder="Add any operational notes, payment quirks, or general information here..." className="min-h-[120px]" />
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <div className="bg-background/80 supports-[backdrop-filter]:bg-background/60 border-t sticky bottom-0 z-10 -mx-6 mt-6 flex items-center justify-end gap-4 px-6 py-4 backdrop-blur">
-        <Button type="button" variant="outline" onClick={() => router.back()}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={isSubmitDisabled}>
-          <Save data-icon="inline-start" className="mr-2 size-4" />
-          Create Company
-        </Button>
-      </div>
-    </form>
+      </form>
+    </div>
   )
 }

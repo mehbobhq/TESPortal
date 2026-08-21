@@ -137,7 +137,7 @@ export default function AddCompanyPage() {
     setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove))
   }
 
-  const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
+const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault() 
     
     // Safety check: Block save if exact match exists, or if fuzzy exists and override isn't checked
@@ -151,14 +151,17 @@ export default function AddCompanyPage() {
     }
 
     const formData = new FormData(e.currentTarget)
+    const formEntries = Object.fromEntries(formData.entries())
     
+    // Capture EVERYTHING from the form, plus our system variables
     const newCompany = {
+      ...formEntries,
       id: recordId,
-      name: formData.get("companyName") as string,
+      name: formEntries.companyName as string,
       kind: selectedType,
-      contact: (formData.get("contactPerson") as string) || "N/A",
-      region: (formData.get("opRegion") as string) || "N/A",
-      status: (formData.get("status") as string) || "Active",
+      contact: (formEntries.contactPerson as string) || "N/A",
+      region: (formEntries.opRegion as string) || "N/A",
+      status: (formEntries.status as string) || "Active",
       tone: "ok", 
       createdAt: new Date().toISOString()
     }
@@ -173,10 +176,9 @@ export default function AddCompanyPage() {
       localStorage.setItem("tes_customers", JSON.stringify([newCompany, ...existingCustomers]))
     }
     
-    // Force redirect to show fresh data
-    window.location.href = "/companies"
+    // Force redirect directly to the new profile page
+    window.location.href = `/companies/${recordId}/profile`
   }
-
   const isSubmitDisabled = !!exactMatchError || (!!fuzzyWarning && !overrideFuzzy)
 
   const renderAddressCard = (title: string, prefix: string, description?: string, isMandatory: boolean = false, isSpecial: boolean = false) => (

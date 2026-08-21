@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { AlertCircle, FileText, Save, Upload } from "lucide-react"
+import { AlertCircle, File, FileText, Save, Upload, X } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -35,6 +35,7 @@ export default function AddCompanyPage() {
   const [selectedType, setSelectedType] = useState<string>("")
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
   const [recordId, setRecordId] = useState("CMP-00001") 
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
 
   // Auto-increment the Record ID based on saved local storage records
   useEffect(() => {
@@ -52,9 +53,21 @@ export default function AddCompanyPage() {
     }
   }
 
+  // Handle file selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files!)])
+    }
+  }
+
+  // Remove a selected file
+  const removeFile = (indexToRemove: number) => {
+    setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove))
+  }
+
   // Handle saving the record to Local Storage for testing persistence
   const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault() // Prevent standard HTML form submission
+    e.preventDefault() 
     
     if (!selectedType) {
       alert("Please select a Company Type before saving.")
@@ -71,23 +84,29 @@ export default function AddCompanyPage() {
       contact: (formData.get("contactPerson") as string) || "N/A",
       region: (formData.get("opRegion") as string) || "N/A",
       status: (formData.get("status") as string) || "Active",
-      tone: "ok", // Default tone for the badge
+      tone: "ok", 
       createdAt: new Date().toISOString()
     }
 
-    // Save to Local Storage
-    const existing = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-    localStorage.setItem("tes_companies", JSON.stringify([newCompany, ...existing]))
+    // 1. Save to Master Companies List
+    const existingCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
+    localStorage.setItem("tes_companies", JSON.stringify([newCompany, ...existingCompanies]))
+    
+    // 2. If it's a Customer, ALSO save to the Customers List
+    if (selectedType === "Customer") {
+      const existingCustomers = JSON.parse(localStorage.getItem("tes_customers") || "[]")
+      localStorage.setItem("tes_customers", JSON.stringify([newCompany, ...existingCustomers]))
+    }
     
     // Redirect back to the companies directory
     router.push("/companies") 
   }
 
-  // Reusable Address Block to keep code clean and manage mandatory flags
-  const renderAddressCard = (title: string, prefix: string, description?: string, isMandatory: boolean = false) => (
-    <Card>
+  // Reusable Address Block to keep code clean and manage mandatory flags + special styling
+  const renderAddressCard = (title: string, prefix: string, description?: string, isMandatory: boolean = false, isSpecial: boolean = false) => (
+    <Card className={isSpecial ? "border-primary/50 bg-primary/5" : ""}>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle className={isSpecial ? "text-primary" : ""}>{title}</CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent>
@@ -130,7 +149,6 @@ export default function AddCompanyPage() {
   )
 
   return (
-    // Wrapped the entire page content in a form element to utilize HTML5 validation
     <form onSubmit={handleCreateCompany} className="pb-10">
       <PageHeader
         title="Add Company"
@@ -226,10 +244,10 @@ export default function AddCompanyPage() {
                 <FieldGroup>
                   {/* --- CUSTOMER FIELDS --- */}
                   {selectedType === "Customer" && (
-                    <div className="flex flex-col gap-6">
+                    <div className="flex flex-col">
                       
-                      {/* Mandatory Customer Fields */}
-                      <div className="grid gap-4 sm:grid-cols-2">
+                      {/* Mandatory Customer Fields grouped in rows */}
+                      <div className="grid gap-4 sm:grid-cols-2 mb-4">
                         <Field>
                           <FieldLabel htmlFor="opRegion" required>Operating Region</FieldLabel>
                           <Select name="opRegion" required>
@@ -253,6 +271,9 @@ export default function AddCompanyPage() {
                             </SelectContent>
                           </Select>
                         </Field>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2 mb-4">
                         <Field>
                           <FieldLabel htmlFor="payMethod" required>Payment Method</FieldLabel>
                           <Select name="payMethod" required>
@@ -265,11 +286,7 @@ export default function AddCompanyPage() {
                             </SelectContent>
                           </Select>
                         </Field>
-                      </div>
-
-                      {/* Cargo Information and Dates rearranged */}
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field className="sm:col-span-2">
+                        <Field>
                           <FieldLabel htmlFor="cargoInfo">Cargo Information</FieldLabel>
                           <Select name="cargoInfo">
                             <SelectTrigger id="cargoInfo"><SelectValue placeholder="Select cargo type" /></SelectTrigger>
@@ -283,6 +300,9 @@ export default function AddCompanyPage() {
                             </SelectContent>
                           </Select>
                         </Field>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
                         <Field>
                           <FieldLabel htmlFor="startDate" required>Start Date</FieldLabel>
                           <Input id="startDate" name="startDate" type="date" required />
@@ -293,11 +313,11 @@ export default function AddCompanyPage() {
                         </Field>
                       </div>
 
-                      <Separator className="bg-primary/20" />
+                      <Separator className="my-8 bg-primary/20" />
 
-                      {/* Optional Blocks (Headings removed "Optional") */}
+                      {/* Business Information Section */}
                       <div>
-                        <h4 className="text-sm font-semibold mb-3">Business Information</h4>
+                        <h4 className="text-sm font-semibold text-primary mb-3">Business Information</h4>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                           <Field><FieldLabel>Incorporation No.</FieldLabel><Input name="incorpNo" placeholder="Number" /></Field>
                           <Field><FieldLabel>Business No.</FieldLabel><Input name="businessNo" placeholder="Number" /></Field>
@@ -306,8 +326,11 @@ export default function AddCompanyPage() {
                         </div>
                       </div>
 
+                      <Separator className="my-8 bg-primary/20" />
+
+                      {/* Carrier Information Section */}
                       <div>
-                        <h4 className="text-sm font-semibold mb-3">Carrier Information</h4>
+                        <h4 className="text-sm font-semibold text-primary mb-3">Carrier Information</h4>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                           <Field><FieldLabel>USDOT</FieldLabel><Input name="usdot" placeholder="USDOT" /></Field>
                           <Field><FieldLabel>MC</FieldLabel><Input name="mc" placeholder="MC Number" /></Field>
@@ -316,8 +339,11 @@ export default function AddCompanyPage() {
                         </div>
                       </div>
 
+                      <Separator className="my-8 bg-primary/20" />
+
+                      {/* Accounts Section */}
                       <div>
-                        <h4 className="text-sm font-semibold mb-3">Accounts</h4>
+                        <h4 className="text-sm font-semibold text-primary mb-3">Accounts</h4>
                         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
                           <Field><FieldLabel>IRP</FieldLabel><Input name="accIrp" placeholder="Account #" /></Field>
                           <Field><FieldLabel>IFTA</FieldLabel><Input name="accIfta" placeholder="Account #" /></Field>
@@ -329,16 +355,22 @@ export default function AddCompanyPage() {
                         </div>
                       </div>
 
+                      <Separator className="my-8 bg-primary/20" />
+
+                      {/* Customs Information Section */}
                       <div>
-                        <h4 className="text-sm font-semibold mb-3">Customs Information</h4>
+                        <h4 className="text-sm font-semibold text-primary mb-3">Customs Information</h4>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <Field><FieldLabel>SCAC</FieldLabel><Input name="scac" placeholder="SCAC Code" /></Field>
                           <Field><FieldLabel>Carrier Code</FieldLabel><Input name="carrierCode" placeholder="Carrier Code" /></Field>
                         </div>
                       </div>
 
+                      <Separator className="my-8 bg-primary/20" />
+
+                      {/* Fleet Information Section */}
                       <div>
-                        <h4 className="text-sm font-semibold mb-3">Fleet Information</h4>
+                        <h4 className="text-sm font-semibold text-primary mb-3">Fleet Information</h4>
                         <div className="grid gap-4 sm:grid-cols-3">
                           <Field><FieldLabel>GPS/ELD Provider</FieldLabel><Input name="gpsProvider" placeholder="Provider" /></Field>
                           <Field><FieldLabel>Fuel Provider</FieldLabel><Input name="fuelProvider" placeholder="Provider" /></Field>
@@ -349,19 +381,63 @@ export default function AddCompanyPage() {
                     </div>
                   )}
 
-                  {/* --- OTHER ENTITY TYPES --- */}
+                  {/* --- OTHER ENTITY TYPES (Retained Original Structure) --- */}
                   {selectedType === "Insurance Broker" && (
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field><FieldLabel htmlFor="brokerLicense">Broker License Number</FieldLabel><Input id="brokerLicense" placeholder="License #" /></Field>
                       <Field><FieldLabel htmlFor="regulator">Regulator</FieldLabel><Input id="regulator" placeholder="e.g., FSRA" /></Field>
                     </div>
                   )}
-                  {/* ... (Other entities remain unchanged in logic) ... */}
+                  {selectedType === "Insurance Company" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="underwriterLicense">Underwriter License Number</FieldLabel><Input id="underwriterLicense" placeholder="License #" /></Field>
+                      <Field><FieldLabel htmlFor="financialRating">Financial Rating</FieldLabel><Input id="financialRating" placeholder="e.g., A.M. Best A+" /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Government Agency" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="jurisdiction">Jurisdiction</FieldLabel><Input id="jurisdiction" placeholder="e.g., Ontario, Federal US" /></Field>
+                      <Field><FieldLabel htmlFor="agencyCode">Agency Code</FieldLabel><Input id="agencyCode" placeholder="e.g., FMCSA, CBP" /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Employer Reference" && (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <Field><FieldLabel htmlFor="prevCompany">Previous Company</FieldLabel><Input id="prevCompany" placeholder="Name" /></Field>
+                      <Field><FieldLabel htmlFor="refContact">Contact Person</FieldLabel><Input id="refContact" placeholder="Name" /></Field>
+                      <Field><FieldLabel htmlFor="yearsEmployed">Years Employed</FieldLabel><Input id="yearsEmployed" type="number" placeholder="e.g., 3" /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Service Provider" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="spType">Service Type</FieldLabel><Input id="spType" placeholder="e.g., DOT Clinic, Repair Shop" /></Field>
+                      <Field><FieldLabel htmlFor="spSpecialization">Specialization</FieldLabel><Input id="spSpecialization" placeholder="Area of expertise" /></Field>
+                    </div>
+                  )}
                   {selectedType === "Owner Operator" && (
                     <div className="grid gap-4 sm:grid-cols-3">
                       <Field><FieldLabel htmlFor="ownerName">Owner Name</FieldLabel><Input id="ownerName" placeholder="Full name" /></Field>
                       <Field><FieldLabel htmlFor="vehicleCount">Vehicle Count</FieldLabel><Input id="vehicleCount" type="number" placeholder="0" /></Field>
                       <Field><FieldLabel htmlFor="leaseAgreement">Lease Agreement</FieldLabel><Input id="leaseAgreement" placeholder="Agreement ID" /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Sub Contractor" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="contractStart">Contract Start Date</FieldLabel><Input id="contractStart" type="date" /></Field>
+                      <Field><FieldLabel htmlFor="contractEnd">Contract End Date</FieldLabel><Input id="contractEnd" type="date" /></Field>
+                      <Field className="sm:col-span-2"><FieldLabel htmlFor="scopeWork">Scope of Work</FieldLabel><Textarea id="scopeWork" placeholder="Brief description of duties..." /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Workers Insurance" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="policyNum">Policy Number</FieldLabel><Input id="policyNum" placeholder="Policy #" /></Field>
+                      <Field><FieldLabel htmlFor="stateFund">State Fund (if applicable)</FieldLabel><Input id="stateFund" placeholder="Fund name" /></Field>
+                      <Field className="sm:col-span-2"><FieldLabel htmlFor="coverageDetails">Coverage Details</FieldLabel><Textarea id="coverageDetails" placeholder="Limits and specifics..." /></Field>
+                    </div>
+                  )}
+                  {selectedType === "Finance/Leasing Company" && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field><FieldLabel htmlFor="accNum">Account Number</FieldLabel><Input id="accNum" placeholder="Account #" /></Field>
+                      <Field><FieldLabel htmlFor="leaseTerms">Lease Terms</FieldLabel><Input id="leaseTerms" placeholder="e.g., 48 months" /></Field>
                     </div>
                   )}
                   {selectedType === "Company (Prospect/Lead)" && (
@@ -387,12 +463,12 @@ export default function AddCompanyPage() {
           )}
 
           {/* Addresses */}
-          {renderAddressCard("Registered Address", "reg", "Primary legal address.", true)}
+          {renderAddressCard("Registered Address", "reg", "Primary legal address.", true, false)}
 
           {selectedType === "Customer" && (
             <>
-              {renderAddressCard("Mailing Address", "mail", "Where physical mail should be sent (if different).", false)}
-              {renderAddressCard("Yard Address", "yard", "Physical location of fleet/equipment.", false)}
+              {renderAddressCard("Mailing Address", "mail", "Where physical mail should be sent (if different).", false, true)}
+              {renderAddressCard("Yard Address", "yard", "Physical location of fleet/equipment.", false, true)}
             </>
           )}
 
@@ -436,18 +512,60 @@ export default function AddCompanyPage() {
               <CardDescription>Upload contracts, certificates, or agreements.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              <div className="flex items-center justify-center rounded-lg border border-dashed p-6 hover:bg-muted/50 transition-colors cursor-pointer">
+              
+              {/* Working Upload Area */}
+              <label htmlFor="file-upload" className="flex items-center justify-center rounded-lg border border-dashed p-6 hover:bg-muted/50 transition-colors cursor-pointer group">
+                <input 
+                  id="file-upload" 
+                  type="file" 
+                  multiple 
+                  className="hidden" 
+                  onChange={handleFileChange}
+                />
                 <div className="flex flex-col items-center gap-2 text-center">
-                  <span className="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full">
+                  <span className="bg-primary/10 text-primary flex size-10 items-center justify-center rounded-full group-hover:scale-110 transition-transform">
                     <Upload className="size-5" />
                   </span>
                   <div className="text-sm">
-                    <span className="text-primary font-medium hover:underline">Click to upload</span>
+                    <span className="text-primary font-medium group-hover:underline">Click to upload</span>
                     <span className="text-muted-foreground"> or drag and drop</span>
                   </div>
                   <p className="text-muted-foreground text-xs">PDF, DOCX up to 10MB</p>
                 </div>
+              </label>
+
+              {/* Uploaded Files State */}
+              <div className="flex flex-col gap-2">
+                <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">Recent Uploads</p>
+                
+                {uploadedFiles.length === 0 ? (
+                  // Empty State
+                  <div className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm text-muted-foreground bg-muted/50">
+                    <FileText className="size-4 opacity-50" />
+                    <span>No documents uploaded yet.</span>
+                  </div>
+                ) : (
+                  // File List State
+                  <div className="flex flex-col gap-2">
+                    {uploadedFiles.map((file, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm bg-background">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <File className="size-4 text-primary shrink-0" />
+                          <span className="truncate font-medium">{file.name}</span>
+                        </div>
+                        <button 
+                          type="button" 
+                          onClick={() => removeFile(idx)}
+                          className="text-muted-foreground hover:text-destructive shrink-0"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+
             </CardContent>
           </Card>
 
@@ -466,7 +584,6 @@ export default function AddCompanyPage() {
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
-        {/* Changed to submit button to trigger form validation */}
         <Button type="submit">
           <Save data-icon="inline-start" className="mr-2 size-4" />
           Create Company

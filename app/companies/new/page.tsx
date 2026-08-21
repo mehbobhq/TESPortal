@@ -12,7 +12,6 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-// Standard Levenshtein distance for fuzzy matching
 const getLevenshteinDistance = (a: string, b: string) => {
   const matrix = [];
   for (let i = 0; i <= b.length; i++) { matrix[i] = [i]; }
@@ -29,7 +28,6 @@ const getLevenshteinDistance = (a: string, b: string) => {
   return matrix[b.length][a.length];
 }
 
-// Smart Address Component (New Page Version - No Initial Data)
 const SmartAddressBlock = ({ title, prefix }: { title: string, prefix: string }) => {
   const [country, setCountry] = useState("")
   const [region, setRegion] = useState("")
@@ -122,7 +120,6 @@ const SmartAddressBlock = ({ title, prefix }: { title: string, prefix: string })
           <Input name={`${prefix}_city`} placeholder="City" />
         </div>
         
-        {/* State/Province Dropdown */}
         <div className="space-y-2">
           <Label>State/Province</Label>
           <input type="hidden" name={`${prefix}_state`} value={region} />
@@ -145,7 +142,6 @@ const SmartAddressBlock = ({ title, prefix }: { title: string, prefix: string })
           <Input name={`${prefix}_zip`} placeholder="Postal Code" />
         </div>
 
-        {/* Auto-filled Country */}
         <div className="space-y-2">
           <Label>Country</Label>
           <Input 
@@ -166,19 +162,20 @@ export default function NewCompanyPage() {
   const [recordId, setRecordId] = useState("")
   const [selectedType, setSelectedType] = useState<string>("")
   const [companyName, setCompanyName] = useState("")
+  const [opRegion, setOpRegion] = useState("Canada Only")
   
-  // Duplicate detection state
+  // State for Auto-formatting EIN/BN
+  const [businessNumber, setBusinessNumber] = useState("")
+
   const [exactMatchError, setExactMatchError] = useState<string | null>(null)
   const [fuzzyWarning, setFuzzyWarning] = useState<{name: string, id: string} | null>(null)
   const [overrideFuzzy, setOverrideFuzzy] = useState(false)
 
-  // Generate ID on load
   useEffect(() => {
     const randomNum = Math.floor(10000 + Math.random() * 90000)
     setRecordId(`CMP-${randomNum}`)
   }, [])
 
-  // Duplicate Check Effect
   useEffect(() => {
     if (companyName.trim().length < 3) {
       setExactMatchError(null)
@@ -189,7 +186,6 @@ export default function NewCompanyPage() {
 
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     
-    // 1. Exact Match Check (Blocks creation)
     const exactMatch = savedCompanies.find((c: any) => c.name.toLowerCase() === companyName.toLowerCase())
     if (exactMatch) {
       setExactMatchError(`A company with the exact name "${exactMatch.name}" already exists (ID: ${exactMatch.id}).`)
@@ -198,7 +194,6 @@ export default function NewCompanyPage() {
     }
     setExactMatchError(null)
 
-    // 2. Fuzzy Match Check (Warns user)
     let foundFuzzy = null
     for (const c of savedCompanies) {
       const distance = getLevenshteinDistance(companyName.toLowerCase(), c.name.toLowerCase())
@@ -213,14 +208,28 @@ export default function NewCompanyPage() {
     
     setFuzzyWarning(foundFuzzy)
     if (!foundFuzzy) setOverrideFuzzy(false)
-
   }, [companyName])
+
+  // Handle Business Number / EIN Formatting Dynamically
+  const handleBusinessNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let val = e.target.value.replace(/\D/g, '') // strip non-digits for formatting
+    
+    if (opRegion === "US Only") {
+      if (val.length > 2) {
+        val = val.slice(0, 2) + '-' + val.slice(2, 9)
+      }
+    } else {
+      val = val.slice(0, 9)
+    }
+    
+    setBusinessNumber(val)
+  }
 
   const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault() 
     
     if (exactMatchError || (fuzzyWarning && !overrideFuzzy)) {
-      return; // Block save if unresolved duplicates exist
+      return; 
     }
 
     if (!selectedType) {
@@ -236,8 +245,8 @@ export default function NewCompanyPage() {
       id: recordId,
       name: formEntries.companyName as string,
       kind: selectedType,
+      region: opRegion,
       contact: (formEntries.contactPerson as string) || "N/A",
-      region: (formEntries.opRegion as string) || "N/A",
       status: (formEntries.status as string) || "Active",
       tone: "ok", 
       createdAt: new Date().toISOString()
@@ -254,7 +263,11 @@ export default function NewCompanyPage() {
     router.push(`/companies/${recordId}/profile`)
   }
 
+  // --- Dynamic Visibility Logic ---
   const isCustomer = selectedType === "Customer"
+  const isCanada = opRegion === "Canada Only" || opRegion === "Cross-Border"
+  const isUS = opRegion === "US Only" || opRegion === "Cross-Border"
+  const showCustoms = opRegion === "Cross-Border" // Explicitly hidden if Canada Only or US Only
 
   return (
     <div className="pb-10 flex flex-col gap-6">
@@ -270,7 +283,7 @@ export default function NewCompanyPage() {
 
       <form onSubmit={handleCreateCompany} className="flex flex-col gap-6 max-w-5xl">
         
-{/* ENTITY SETUP */}
+        {/* ENTITY SETUP */}
         <Card className="border-primary/50 shadow-sm">
           <CardHeader className="bg-primary/5 py-4 border-b">
             <CardTitle className="text-lg">Entity Setup</CardTitle>
@@ -290,16 +303,16 @@ export default function NewCompanyPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Customer">Customer</SelectItem>
+                  <SelectItem value="Prospect">Prospect</SelectItem>
+                  <SelectItem value="Owner Operator">Owner Operator</SelectItem>
+                  <SelectItem value="Service Provider">Service Provider</SelectItem>
+                  <SelectItem value="Finance/ Leasing Company">Finance/ Leasing Company</SelectItem>
                   <SelectItem value="Insurance Broker">Insurance Broker</SelectItem>
                   <SelectItem value="Insurance Company">Insurance Company</SelectItem>
-                  <SelectItem value="Government Agency">Government Agency</SelectItem>
-                  <SelectItem value="Employer Reference">Employer Reference</SelectItem>
-                  <SelectItem value="Service Provider">Service Provider</SelectItem>
-                  <SelectItem value="Owner Operator">Owner Operator</SelectItem>
-                  <SelectItem value="Sub Contractor">Sub Contractor</SelectItem>
                   <SelectItem value="Workers Insurance">Workers Insurance</SelectItem>
-                  <SelectItem value="Finance/Leasing Company">Finance/Leasing Company</SelectItem>
-                  <SelectItem value="Prospect">Prospect</SelectItem>
+                  <SelectItem value="Employee Reference">Employee Reference</SelectItem>
+                  <SelectItem value="Government Agency">Government Agency</SelectItem>
+                  <SelectItem value="Sub Contractor">Sub Contractor</SelectItem>
                   <SelectItem value="Other">Other</SelectItem>
                 </SelectContent>
               </Select>
@@ -318,21 +331,18 @@ export default function NewCompanyPage() {
             <div className="space-y-2 lg:col-span-2">
               <Label htmlFor="companyName">Company Name *</Label>
               <Input 
-                id="companyName" 
-                name="companyName" 
+                id="companyName" name="companyName" 
                 placeholder="e.g. Power Way Logistics Inc"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
                 required 
               />
-              
               {exactMatchError && (
                 <div className="flex items-center gap-2 mt-2 text-destructive bg-destructive/10 p-2 rounded text-sm">
                   <XCircle className="size-4 shrink-0" />
                   <p>{exactMatchError}</p>
                 </div>
               )}
-              
               {fuzzyWarning && !exactMatchError && (
                 <div className="flex flex-col gap-2 mt-2 bg-orange-500/10 border border-orange-500/20 p-3 rounded text-sm">
                   <div className="flex items-start gap-2 text-orange-600 dark:text-orange-400">
@@ -340,12 +350,8 @@ export default function NewCompanyPage() {
                     <p><strong>Potential Duplicate:</strong> "{fuzzyWarning.name}" sounds very similar. Please verify this is a new entity.</p>
                   </div>
                   <div className="flex items-center space-x-2 pl-6">
-                    <Checkbox 
-                      id="override" 
-                      checked={overrideFuzzy} 
-                      onCheckedChange={(checked) => setOverrideFuzzy(checked === true)} 
-                    />
-                    <label htmlFor="override" className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-foreground">
+                    <Checkbox id="override" checked={overrideFuzzy} onCheckedChange={(checked) => setOverrideFuzzy(checked === true)} />
+                    <label htmlFor="override" className="text-xs font-medium leading-none text-foreground">
                       I confirm this is a separate company. Proceed anyway.
                     </label>
                   </div>
@@ -353,35 +359,19 @@ export default function NewCompanyPage() {
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="dba">DBA</Label>
-              <Input id="dba" name="dba" placeholder="Doing Business As" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="contactPerson">Primary Contact</Label>
-              <Input id="contactPerson" name="contactPerson" placeholder="Full Name" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" name="phone" placeholder="+1 (555) 000-0000" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="website">Website</Label>
-              <Input id="website" name="website" placeholder="https://" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Account Email</Label>
-              <Input id="email" name="email" type="email" placeholder="contact@example.com" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="billingEmail">Billing Email</Label>
-              <Input id="billingEmail" name="billingEmail" type="email" placeholder="billing@example.com" />
-            </div>
+            <div className="space-y-2"><Label htmlFor="dba">DBA</Label><Input id="dba" name="dba" placeholder="Doing Business As" /></div>
+            <div className="space-y-2"><Label htmlFor="contactPerson">Primary Contact</Label><Input id="contactPerson" name="contactPerson" placeholder="Full Name" /></div>
+            <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" name="phone" placeholder="+1 (555) 000-0000" /></div>
+            <div className="space-y-2"><Label htmlFor="website">Website</Label><Input id="website" name="website" placeholder="https://" /></div>
+            <div className="space-y-2"><Label htmlFor="email">Account Email</Label><Input id="email" name="email" type="email" placeholder="contact@example.com" /></div>
+            <div className="space-y-2"><Label htmlFor="billingEmail">Billing Email</Label><Input id="billingEmail" name="billingEmail" type="email" placeholder="billing@example.com" /></div>
             
             <div className="space-y-2">
-              <Label htmlFor="opRegion">Operating Region</Label>
-              <Select name="opRegion" defaultValue="Canada Only">
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Label htmlFor="opRegion" className="text-primary font-medium">Operating Region *</Label>
+              {/* Added Hidden Input to capture state for form submission */}
+              <input type="hidden" name="opRegion" value={opRegion} />
+              <Select value={opRegion} onValueChange={setOpRegion} required>
+                <SelectTrigger className="border-primary/30"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Canada Only">Canada Only</SelectItem>
                   <SelectItem value="US Only">US Only</SelectItem>
@@ -392,7 +382,7 @@ export default function NewCompanyPage() {
           </CardContent>
         </Card>
 
-        {/* SMART ADDRESSES */}
+        {/* PROGRESSIVE ADDRESSES */}
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -400,21 +390,26 @@ export default function NewCompanyPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
+            {/* Always visible */}
             <SmartAddressBlock title="Registered Address" prefix="reg" />
-            <SmartAddressBlock title="Mailing Address" prefix="mail" />
-            <SmartAddressBlock title="Yard Address" prefix="yard" />
+            
+            {/* Conditionally visible if Customer */}
+            {isCustomer && (
+              <>
+                <SmartAddressBlock title="Mailing Address" prefix="mail" />
+                <SmartAddressBlock title="Yard Address" prefix="yard" />
+              </>
+            )}
           </CardContent>
         </Card>
 
         {isCustomer && (
           <>
-            {/* CUSTOMER INFO */}
             <Card>
               <CardHeader className="bg-muted/30 py-3 border-b">
                 <CardTitle className="text-sm text-primary">Customer Information</CardTitle>
               </CardHeader>
               <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                
                 <div className="space-y-2">
                   <Label>Service Type</Label>
                   <Select name="svcType" defaultValue="Premium">
@@ -426,7 +421,6 @@ export default function NewCompanyPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
                   <Label>Service Status</Label>
                   <Select name="status" defaultValue="Active">
@@ -438,16 +432,8 @@ export default function NewCompanyPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="space-y-2">
-                  <Label>Start Date</Label>
-                  <Input name="startDate" type="date" />
-                </div>
-                <div className="space-y-2">
-                  <Label>End Date</Label>
-                  <Input name="endDate" type="date" />
-                </div>
-
+                <div className="space-y-2"><Label>Start Date</Label><Input name="startDate" type="date" /></div>
+                <div className="space-y-2"><Label>End Date</Label><Input name="endDate" type="date" /></div>
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
                   <Select name="payMethod" defaultValue="E-Transfer">
@@ -460,70 +446,122 @@ export default function NewCompanyPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="space-y-2">
-                  <Label>Cargo Information</Label>
-                  <Input name="cargoInfo" placeholder="e.g. Dry Van, Flatbed" />
-                </div>
+                <div className="space-y-2"><Label>Cargo Information</Label><Input name="cargoInfo" placeholder="e.g. Dry Van, Flatbed" /></div>
               </CardContent>
             </Card>
 
-            {/* BUSINESS & CARRIER INFO */}
             <div className="grid lg:grid-cols-2 gap-6">
+              
+              {/* DYNAMIC BUSINESS INFORMATION */}
               <Card>
                 <CardHeader className="bg-muted/30 py-3 border-b">
                   <CardTitle className="text-sm text-primary">Business Information</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
-                  <div className="space-y-2"><Label>Incorporation #</Label><Input name="incorpNo" /></div>
-                  <div className="space-y-2"><Label>Business #</Label><Input name="businessNo" /></div>
-                  <div className="space-y-2"><Label>GST / HST</Label><Input name="gstHst" /></div>
-                  <div className="space-y-2"><Label>EIN #</Label><Input name="ein" /></div>
+                  
+                  {/* Dynamic Incorp */}
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>{opRegion === "Canada Only" ? "Canadian Corporate Number" : opRegion === "US Only" ? "State File / Charter Number" : "Incorporation # / State File"}</Label>
+                    <Input 
+                      name="incorpNo" 
+                      placeholder={opRegion === "Canada Only" ? "e.g., 1234567-8" : opRegion === "US Only" ? "e.g., 6543210" : ""}
+                      pattern={opRegion === "Canada Only" ? "^[A-Za-z0-9\\s-]{5,15}$" : opRegion === "US Only" ? "^[A-Za-z0-9-]{6,12}$" : undefined}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {opRegion === "Canada Only" ? "Enter your 7-digit Federal Corporation Number or Province-issued Registry Number." : opRegion === "US Only" ? "Enter the Entity/File Number issued by your state's Secretary of State." : "Enter corporate file number."}
+                    </p>
+                  </div>
+
+                  {/* Dynamic BN/EIN */}
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>{opRegion === "Canada Only" ? "CRA Business Number (BN)" : opRegion === "US Only" ? "IRS Employer Identification Number (EIN)" : "Business Number / EIN"}</Label>
+                    <Input 
+                      name="businessNo" 
+                      value={businessNumber}
+                      onChange={handleBusinessNumberChange}
+                      placeholder={opRegion === "Canada Only" ? "123456789" : opRegion === "US Only" ? "12-3456789" : ""}
+                      pattern={opRegion === "Canada Only" ? "^\\d{9}$" : opRegion === "US Only" ? "^\\d{2}-\\d{7}$|^\\d{9}$" : undefined}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {opRegion === "Canada Only" ? "Enter your 9-digit registration number issued by the CRA." : opRegion === "US Only" ? "Enter your 9-digit Federal Tax ID issued by the IRS." : "Enter primary tax ID."}
+                    </p>
+                  </div>
+
+                  {/* Dynamic Tax Reg */}
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>{opRegion === "Canada Only" ? "GST / HST Program Account" : opRegion === "US Only" ? "State Sales Tax ID" : "Tax Registration #"}</Label>
+                    <Input 
+                      name="gstHst" 
+                      placeholder={opRegion === "Canada Only" ? "123456789 RT 0001" : opRegion === "US Only" ? "e.g., ST-123456-A" : ""}
+                      pattern={opRegion === "Canada Only" ? "^\\d{9}\\s*[rR][tT]\\s*\\d{4}$" : opRegion === "US Only" ? "^[A-Za-z0-9-]{4,20}$" : undefined}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {opRegion === "Canada Only" ? "Enter your 15-character GST/HST account number." : opRegion === "US Only" ? "Optional. Enter your state-issued Sales and Use Tax permit." : "Enter sales tax registration."}
+                    </p>
+                  </div>
+
                 </CardContent>
               </Card>
 
+              {/* DYNAMIC CARRIER INFORMATION */}
               <Card>
                 <CardHeader className="bg-muted/30 py-3 border-b">
                   <CardTitle className="text-sm text-primary">Carrier Information</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
-                  <div className="space-y-2"><Label>MVID / RIN #</Label><Input name="mvid" /></div>
-                  <div className="space-y-2"><Label>NSC / CVOR #</Label><Input name="nsc" /></div>
-                  <div className="space-y-2"><Label>US DOT #</Label><Input name="usdot" /></div>
-                  <div className="space-y-2"><Label>MC #</Label><Input name="mc" /></div>
+                  {isCanada && (
+                    <>
+                      <div className="space-y-2"><Label>MVID / RIN #</Label><Input name="mvid" /></div>
+                      <div className="space-y-2"><Label>NSC / CVOR #</Label><Input name="nsc" /></div>
+                    </>
+                  )}
+                  {isUS && (
+                    <>
+                      <div className="space-y-2"><Label>US DOT #</Label><Input name="usdot" /></div>
+                      <div className="space-y-2"><Label>MC #</Label><Input name="mc" /></div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* TAX ACCOUNTS */}
+            {/* DYNAMIC TAX ACCOUNTS */}
             <Card>
               <CardHeader className="bg-muted/30 py-3 border-b">
                 <CardTitle className="text-sm text-primary">Tax & Compliance Accounts</CardTitle>
               </CardHeader>
-              <CardContent className="pt-6 grid sm:grid-cols-3 gap-6">
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-2"><Label>IRP Account #</Label><Input name="accIrp" /></div>
                 <div className="space-y-2"><Label>IFTA Account #</Label><Input name="accIfta" /></div>
-                <div className="space-y-2"><Label>NY HUT Account #</Label><Input name="accNyhut" /></div>
-                <div className="space-y-2"><Label>NM WDT Account #</Label><Input name="accNm" /></div>
-                <div className="space-y-2"><Label>Kentucky KYU #</Label><Input name="accKyu" /></div>
-                <div className="space-y-2"><Label>Oregon Account #</Label><Input name="accOr" /></div>
-                <div className="space-y-2"><Label>CT DRS Account #</Label><Input name="accCt" /></div>
+                
+                {isUS && (
+                  <>
+                    <div className="space-y-2"><Label>NY HUT Account #</Label><Input name="accNyhut" /></div>
+                    <div className="space-y-2"><Label>NM WDT Account #</Label><Input name="accNm" /></div>
+                    <div className="space-y-2"><Label>Kentucky KYU #</Label><Input name="accKyu" /></div>
+                    <div className="space-y-2"><Label>Oregon Account #</Label><Input name="accOr" /></div>
+                    <div className="space-y-2"><Label>CT DRS Account #</Label><Input name="accCt" /></div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
-            {/* CUSTOMS & FLEET */}
             <div className="grid lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader className="bg-muted/30 py-3 border-b">
-                  <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
-                  <div className="space-y-2"><Label>SCAC</Label><Input name="scac" /></div>
-                  <div className="space-y-2"><Label>Carrier Code</Label><Input name="carrierCode" /></div>
-                </CardContent>
-              </Card>
+              {/* DYNAMIC CUSTOMS */}
+              {showCustoms && (
+                <Card>
+                  <CardHeader className="bg-muted/30 py-3 border-b">
+                    <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
+                    <div className="space-y-2"><Label>SCAC</Label><Input name="scac" /></div>
+                    <div className="space-y-2"><Label>Carrier Code</Label><Input name="carrierCode" /></div>
+                  </CardContent>
+                </Card>
+              )}
 
-              <Card>
+              {/* FLEET INFO - Always Visible for Customers */}
+              <Card className={!showCustoms ? "lg:col-span-2" : ""}>
                 <CardHeader className="bg-muted/30 py-3 border-b">
                   <CardTitle className="text-sm text-primary">Fleet Information</CardTitle>
                 </CardHeader>
@@ -537,15 +575,11 @@ export default function NewCompanyPage() {
           </>
         )}
 
-        {/* Action Buttons */}
         <div className="flex justify-end gap-4 mt-2 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm z-10">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Discard
           </Button>
-          <Button 
-            type="submit" 
-            disabled={!!exactMatchError || (!!fuzzyWarning && !overrideFuzzy)}
-          >
+          <Button type="submit" disabled={!!exactMatchError || (!!fuzzyWarning && !overrideFuzzy)}>
             <Save className="mr-2 size-4" />
             Create Record
           </Button>

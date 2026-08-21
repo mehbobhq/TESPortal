@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, MapPin, CheckCircle2, AlertCircle, FileText } from "lucide-react"
+import { ArrowLeft, Building2, MapPin, CheckCircle2, AlertCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusBadge } from "@/components/status-badge"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function CompanyProfilePage() {
   const params = useParams()
@@ -38,7 +37,6 @@ export default function CompanyProfilePage() {
 
   const isCustomer = company.kind === "Customer"
 
-  // Cleaned up FieldDisplay: Removed the edit pencil icon
   const FieldDisplay = ({ label, value }: { label: string, value: any }) => (
     <div className="flex flex-col border-b pb-2">
       <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider mb-1">{label}</p>
@@ -81,7 +79,6 @@ export default function CompanyProfilePage() {
               <h1 className="text-2xl font-bold">{company.name}</h1>
             </div>
           </div>
-          {/* Removed "+ Follow" button here */}
           <div className="flex gap-2">
             <Button variant="outline" size="sm">Edit</Button>
             <Button variant="outline" size="sm">Check Status</Button>
@@ -99,127 +96,102 @@ export default function CompanyProfilePage() {
         </div>
       </div>
 
-      {/* 2. TAB NAVIGATION */}
-      <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="w-full justify-start overflow-x-auto bg-transparent border-b rounded-none h-auto p-0 space-x-6">
-          {/* Removed Dashboard Tab */}
-          <TabsTrigger value="profile" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Profile</TabsTrigger>
-          <TabsTrigger value="contacts" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Contacts</TabsTrigger>
-          
-          {isCustomer && (
-            <>
-              <TabsTrigger value="business" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Business</TabsTrigger>
-              <TabsTrigger value="insurance" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Insurance</TabsTrigger>
-              <TabsTrigger value="transportation" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Transportation</TabsTrigger>
-              <TabsTrigger value="tax" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Tax Programs</TabsTrigger>
-              <TabsTrigger value="customs" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Customs</TabsTrigger>
-              <TabsTrigger value="accounts" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Accounts</TabsTrigger>
-              <TabsTrigger value="employees" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Employees</TabsTrigger>
-              <TabsTrigger value="equipment" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Equipment</TabsTrigger>
-            </>
-          )}
-          <TabsTrigger value="settings" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Settings</TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* 3. MAIN CONTENT GRID */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* 2. MAIN CONTENT (Full Width) */}
+      <div className="flex flex-col gap-6">
         
-        {/* LEFT COLUMN: Data Blocks */}
-        <div className="lg:col-span-2 flex flex-col gap-6">
-          
-          <Card>
-            <CardHeader className="bg-muted/30 py-3 border-b">
-              <CardTitle className="text-sm flex items-center gap-2"><Building2 className="size-4 text-muted-foreground"/> Company Information</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-              <FieldDisplay label="Company Name" value={company.name} />
-              <FieldDisplay label="Company Record Type" value={company.kind} />
-              <FieldDisplay label="DBA" value={company.dba} />
-              <FieldDisplay label="Phone" value={company.phone} />
-              <FieldDisplay label="Website" value={company.website} />
-              <FieldDisplay label="Account Email" value={company.email} />
-              <FieldDisplay label="Billing Email" value={company.billingEmail} />
-              <FieldDisplay label="Primary Contact" value={company.contact} />
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm flex items-center gap-2"><Building2 className="size-4 text-muted-foreground"/> Company Information</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+            <FieldDisplay label="Company Name" value={company.name} />
+            <FieldDisplay label="Company Record Type" value={company.kind} />
+            <FieldDisplay label="DBA" value={company.dba} />
+            <FieldDisplay label="Phone" value={company.phone} />
+            <FieldDisplay label="Website" value={company.website} />
+            <FieldDisplay label="Account Email" value={company.email} />
+            <FieldDisplay label="Billing Email" value={company.billingEmail} />
+            <FieldDisplay label="Primary Contact" value={company.contact} />
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="bg-muted/30 py-3 border-b">
-              <CardTitle className="text-sm flex items-center gap-2"><MapPin className="size-4 text-muted-foreground"/> Address Information</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-              <div className="flex flex-col gap-2 border-b pb-2">
-                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Registered Address</p>
-                {formatAddress('reg') || <p className="text-sm text-muted-foreground">—</p>}
-              </div>
-              <div className="flex flex-col gap-2 border-b pb-2">
-                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Mailing Address</p>
-                {formatAddress('mail') || <p className="text-sm text-muted-foreground">—</p>}
-              </div>
-              <div className="flex flex-col gap-2 border-b pb-2 sm:col-span-2">
-                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Yard Address</p>
-                {formatAddress('yard') || <p className="text-sm text-muted-foreground">—</p>}
-              </div>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm flex items-center gap-2"><MapPin className="size-4 text-muted-foreground"/> Address Information</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 grid sm:grid-cols-3 gap-x-8 gap-y-6">
+            <div className="flex flex-col gap-2 border-b pb-2">
+              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Registered Address</p>
+              {formatAddress('reg') || <p className="text-sm text-muted-foreground">—</p>}
+            </div>
+            <div className="flex flex-col gap-2 border-b pb-2">
+              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Mailing Address</p>
+              {formatAddress('mail') || <p className="text-sm text-muted-foreground">—</p>}
+            </div>
+            <div className="flex flex-col gap-2 border-b pb-2">
+              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Yard Address</p>
+              {formatAddress('yard') || <p className="text-sm text-muted-foreground">—</p>}
+            </div>
+          </CardContent>
+        </Card>
 
-          {isCustomer && (
-            <>
-              <Card>
-                <CardHeader className="bg-muted/30 py-3 border-b">
-                  <CardTitle className="text-sm text-primary">Customer Information</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-                  <FieldDisplay label="Service Type" value={company.svcType} />
-                  <FieldDisplay label="Service Status" value={company.status} />
-                  <FieldDisplay label="Start Date" value={company.startDate} />
-                  <FieldDisplay label="End Date" value={company.endDate} />
-                  <FieldDisplay label="Operating Region" value={company.opRegion} />
-                  <FieldDisplay label="Payment Method" value={company.payMethod} />
-                  <FieldDisplay label="Cargo Information" value={company.cargoInfo} />
-                </CardContent>
-              </Card>
+        {isCustomer && (
+          <>
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Customer Information</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+                <FieldDisplay label="Service Type" value={company.svcType} />
+                <FieldDisplay label="Service Status" value={company.status} />
+                <FieldDisplay label="Start Date" value={company.startDate} />
+                <FieldDisplay label="End Date" value={company.endDate} />
+                <FieldDisplay label="Operating Region" value={company.opRegion} />
+                <FieldDisplay label="Payment Method" value={company.payMethod} />
+                <FieldDisplay label="Cargo Information" value={company.cargoInfo} />
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardHeader className="bg-muted/30 py-3 border-b">
-                  <CardTitle className="text-sm text-primary">Business Information</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-                  <FieldDisplay label="Incorporation #" value={company.incorpNo} />
-                  <FieldDisplay label="Business #" value={company.businessNo} />
-                  <FieldDisplay label="GST / HST" value={company.gstHst} />
-                  <FieldDisplay label="EIN #" value={company.ein} />
-                </CardContent>
-              </Card>
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Business Information</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+                <FieldDisplay label="Incorporation #" value={company.incorpNo} />
+                <FieldDisplay label="Business #" value={company.businessNo} />
+                <FieldDisplay label="GST / HST" value={company.gstHst} />
+                <FieldDisplay label="EIN #" value={company.ein} />
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardHeader className="bg-muted/30 py-3 border-b">
-                  <CardTitle className="text-sm text-primary">Carrier Information</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-                  <FieldDisplay label="MVID / RIN #" value={company.mvid} />
-                  <FieldDisplay label="NSC / CVOR #" value={company.nsc} />
-                  <FieldDisplay label="US DOT #" value={company.usdot} />
-                  <FieldDisplay label="MC #" value={company.mc} />
-                </CardContent>
-              </Card>
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Carrier Information</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+                <FieldDisplay label="MVID / RIN #" value={company.mvid} />
+                <FieldDisplay label="NSC / CVOR #" value={company.nsc} />
+                <FieldDisplay label="US DOT #" value={company.usdot} />
+                <FieldDisplay label="MC #" value={company.mc} />
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardHeader className="bg-muted/30 py-3 border-b">
-                  <CardTitle className="text-sm text-primary">Tax & Compliance Accounts</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-x-8 gap-y-6">
-                  <FieldDisplay label="IRP Account #" value={company.accIrp} />
-                  <FieldDisplay label="IFTA Account #" value={company.accIfta} />
-                  <FieldDisplay label="NY HUT Account #" value={company.accNyhut} />
-                  <FieldDisplay label="NM WDT Account #" value={company.accNm} />
-                  <FieldDisplay label="Kentucky KYU #" value={company.accKyu} />
-                  <FieldDisplay label="Oregon Account #" value={company.accOr} />
-                  <FieldDisplay label="CT DRS Account #" value={company.accCt} />
-                </CardContent>
-              </Card>
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm text-primary">Tax & Compliance Accounts</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+                <FieldDisplay label="IRP Account #" value={company.accIrp} />
+                <FieldDisplay label="IFTA Account #" value={company.accIfta} />
+                <FieldDisplay label="NY HUT Account #" value={company.accNyhut} />
+                <FieldDisplay label="NM WDT Account #" value={company.accNm} />
+                <FieldDisplay label="Kentucky KYU #" value={company.accKyu} />
+                <FieldDisplay label="Oregon Account #" value={company.accOr} />
+                <FieldDisplay label="CT DRS Account #" value={company.accCt} />
+              </CardContent>
+            </Card>
 
+            <div className="grid lg:grid-cols-2 gap-6">
               <Card>
                 <CardHeader className="bg-muted/30 py-3 border-b">
                   <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
@@ -240,44 +212,9 @@ export default function CompanyProfilePage() {
                   <FieldDisplay label="Assessment Date" value={company.assessmentDate} />
                 </CardContent>
               </Card>
-            </>
-          )}
-        </div>
-
-        {/* RIGHT COLUMN: Sidebar (Activity) */}
-        <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader className="py-3 border-b">
-              <Tabs defaultValue="activity" className="w-full">
-                <TabsList className="w-full justify-start bg-transparent p-0">
-                  <TabsTrigger value="activity" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4 py-2">Activity</TabsTrigger>
-                  <TabsTrigger value="chatter" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4 py-2">Chatter</TabsTrigger>
-                  <TabsTrigger value="files" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4 py-2">Files</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </CardHeader>
-            <CardContent className="pt-6">
-              
-              {/* Cleaned up Activity Component */}
-              <div className="flex flex-col gap-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex shrink-0 items-center justify-center size-8 rounded-full border border-primary/20 text-primary bg-primary/5">
-                    <FileText className="size-4" />
-                  </div>
-                  <div className="flex flex-col">
-                    <p className="text-sm font-medium">Record Created</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {company.createdAt ? new Date(company.createdAt).toISOString().split('T')[0] : "Unknown Date"} • Admin
-                    </p>
-                  </div>
-                </div>
-                <Button variant="outline" className="w-full mt-2">View All Activity</Button>
-              </div>
-
-            </CardContent>
-          </Card>
-        </div>
-
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

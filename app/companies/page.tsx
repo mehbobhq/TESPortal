@@ -1,3 +1,6 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Building2, Landmark, ShieldCheck, Plus, Search } from "lucide-react"
 
@@ -9,8 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
-// Added type to ensure TypeScript stays happy with an empty array
 type Company = {
+  id: string;
   name: string;
   kind: string;
   contact: string;
@@ -19,10 +22,18 @@ type Company = {
   tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
 }
 
-// Emptied the sample data
-const companies: Company[] = []
-
 export default function CompaniesPage() {
+  // 1. Set up a state to hold our companies
+  const [companies, setCompanies] = useState<Company[]>([])
+
+  // 2. Read from Local Storage when the page loads
+  useEffect(() => {
+    const savedCompanies = localStorage.getItem("tes_companies")
+    if (savedCompanies) {
+      setCompanies(JSON.parse(savedCompanies))
+    }
+  }, [])
+
   const agencies = companies.filter((c) => c.kind === "Government Agency").length
   const insurers = companies.filter((c) => c.kind.includes("Insurance")).length
 
@@ -33,7 +44,6 @@ export default function CompaniesPage() {
         description="Master directory of all entities including customers, government agencies, insurers, and service providers."
         actions={
           <Button asChild>
-            {/* Added flex, items-center, and a gap to keep them aligned horizontally */}
             <Link href="/companies/new" className="flex items-center gap-2">
               <Plus className="size-4" />
               Add company
@@ -43,7 +53,6 @@ export default function CompaniesPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {/* Reset hardcoded stat values */}
         <StatCard label="Total companies" value={String(companies.length)} icon={Building2} hint="all types" />
         <StatCard label="Government agencies" value={String(agencies)} icon={Landmark} hint="CBSA, CBP, etc." />
         <StatCard label="Insurance partners" value={String(insurers)} icon={ShieldCheck} hint="brokers + carriers" />
@@ -67,7 +76,8 @@ export default function CompaniesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-6">Company</TableHead>
+                <TableHead className="pl-6">Record ID</TableHead>
+                <TableHead>Company</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Region</TableHead>
@@ -75,17 +85,17 @@ export default function CompaniesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {/* Added a fallback for when the array is empty */}
               {companies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                    No companies found.
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    No companies found. Add one to get started.
                   </TableCell>
                 </TableRow>
               ) : (
-                companies.map((c) => (
-                  <TableRow key={c.name}>
-                    <TableCell className="pl-6 font-medium">{c.name}</TableCell>
+                companies.map((c, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="pl-6 font-mono text-xs text-muted-foreground">{c.id}</TableCell>
+                    <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell className="text-muted-foreground">{c.kind}</TableCell>
                     <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
                     <TableCell className="text-muted-foreground">{c.region}</TableCell>

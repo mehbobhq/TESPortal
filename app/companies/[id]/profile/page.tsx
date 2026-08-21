@@ -85,11 +85,16 @@ export default function CompanyProfilePage() {
             </div>
           </div>
 
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm">Edit</Button>
-            <Button variant="outline" size="sm">Check Status</Button>
-            <Button size="sm">New Case</Button>
-          </div>
+        <div className="flex gap-2">
+        <Button 
+        variant="outline" 
+        size="sm" 
+        onClick={() => router.push(`/companies/${company.id}/edit`)}
+        >
+        Edit
+        </Button>
+        <Button variant="outline" size="sm">Check Status</Button>
+        <Button size="sm">New Case</Button>
         </div>
 
         {/* Full-width Horizontal Stats Bar */}

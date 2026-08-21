@@ -1,4 +1,8 @@
-import { Users, Repeat, CircleDollarSign, Plus, Search } from "lucide-react"
+"use client"
+
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { Building2, Plus, Search, Trash2, Eye } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
@@ -7,38 +11,68 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
-import { customers } from "@/lib/data"
+
+type Customer = {
+  id: string;
+  name: string;
+  contact: string;
+  region: string;
+  status: string;
+  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+}
 
 export default function CustomersPage() {
-  const monthly = customers.filter((c) => c.plan === "Monthly").length
-  const oneOff = customers.filter((c) => c.plan === "One-off").length
-  const pastDue = customers.filter((c) => c.status === "Past due").length
+  const [customers, setCustomers] = useState<Customer[]>([])
+
+  // Load only the customers from local storage
+  useEffect(() => {
+    const savedCustomers = localStorage.getItem("tes_customers")
+    if (savedCustomers) {
+      setCustomers(JSON.parse(savedCustomers))
+    }
+  }, [])
+
+  // Temporary function to delete records during development
+  const handleDelete = (idToDelete: string) => {
+    if (!confirm("Are you sure you want to delete this customer?")) return;
+
+    // Remove from Customers
+    const updatedCustomers = customers.filter(c => c.id !== idToDelete);
+    setCustomers(updatedCustomers);
+    localStorage.setItem("tes_customers", JSON.stringify(updatedCustomers));
+
+    // Also remove from Companies to keep them synced
+    const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]");
+    const updatedCompanies = savedCompanies.filter((c: any) => c.id !== idToDelete);
+    localStorage.setItem("tes_companies", JSON.stringify(updatedCompanies));
+  }
+
+  const activeCustomers = customers.filter((c) => c.status === "Active").length
 
   return (
     <>
       <PageHeader
         title="Customers"
-        description="Your paying clients — recurring monthly accounts and one-off project engagements."
+        description="Manage your active client base and service agreements."
         actions={
-          <Button>
-            <Plus data-icon="inline-start" />
-            Add customer
+          <Button asChild>
+            <Link href="/companies/new" className="flex items-center gap-2">
+              <Plus className="size-4" />
+              Add Customer
+            </Link>
           </Button>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total customers" value={String(customers.length)} icon={Users} hint="active accounts" />
-        <StatCard label="Monthly clients" value={String(monthly)} icon={Repeat} hint="recurring revenue" />
-        <StatCard label="One-off projects" value={String(oneOff)} icon={CircleDollarSign} hint="project-based" />
-        <StatCard label="Past due" value={String(pastDue)} icon={CircleDollarSign} hint="needs follow-up" />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard label="Total Customers" value={String(customers.length)} icon={Building2} hint="all time" />
+        <StatCard label="Active Clients" value={String(activeCustomers)} icon={Building2} hint="currently servicing" />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Client accounts</CardTitle>
-          <CardDescription>Monthly and one-off customers, their engagement value, and billing status.</CardDescription>
+          <CardTitle>Client Roster</CardTitle>
+          <CardDescription>All entities actively receiving services.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 px-0">
           <div className="px-6">
@@ -52,29 +86,46 @@ export default function CustomersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-6">Customer</TableHead>
-                <TableHead>Plan</TableHead>
-                <TableHead>Client since</TableHead>
+                <TableHead className="pl-6">Record ID</TableHead>
+                <TableHead>Customer Name</TableHead>
                 <TableHead>Contact</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="pr-6">Status</TableHead>
+                <TableHead>Region</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="pr-6 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {customers.map((c) => (
-                <TableRow key={c.name}>
-                  <TableCell className="pl-6 font-medium">{c.name}</TableCell>
-                  <TableCell>
-                    <Badge variant={c.plan === "Monthly" ? "secondary" : "outline"}>{c.plan}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono tabular-nums">{c.since}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{c.value}</TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+              {customers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    No customers found. Add a company with the type "Customer".
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                customers.map((c, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="pl-6 font-mono text-xs text-muted-foreground">{c.id}</TableCell>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-xs">{c.contact}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.region}</TableCell>
+                    <TableCell>
+                      <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button variant="ghost" size="icon" asChild>
+                          <Link href={`/companies/${c.id}`}>
+                            <Eye className="size-4 text-muted-foreground" />
+                          </Link>
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(c.id)}>
+                          <Trash2 className="size-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

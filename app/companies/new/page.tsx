@@ -98,8 +98,8 @@ export default function AddCompanyPage() {
       localStorage.setItem("tes_customers", JSON.stringify([newCompany, ...existingCustomers]))
     }
     
-    // Redirect back to the companies directory
-    router.push("/companies") 
+    // Force a hard reload so the directory reads the fresh Local Storage data
+    window.location.href = "/companies" 
   }
 
   // Reusable Address Block to keep code clean and manage mandatory flags + special styling

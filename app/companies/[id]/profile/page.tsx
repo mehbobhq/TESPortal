@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, MapPin, CheckCircle2, AlertCircle, FileText, Image as ImageIcon } from "lucide-react"
+import { ArrowLeft, Building2, MapPin, CheckCircle2, AlertCircle, FileText } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -71,7 +71,6 @@ export default function CompanyProfilePage() {
         <div className="flex justify-between items-start">
           
           <div className="flex items-start gap-5">
-            {/* Logo Container (80x80) */}
             <div className="flex shrink-0 size-20 items-center justify-center rounded-lg border bg-muted/30 text-muted-foreground">
               <Building2 className="size-8 opacity-50" />
             </div>
@@ -85,19 +84,19 @@ export default function CompanyProfilePage() {
             </div>
           </div>
 
-        <div className="flex gap-2">
-        <Button 
-        variant="outline" 
-        size="sm" 
-        onClick={() => router.push(`/companies/${company.id}/edit`)}
-        >
-        Edit
-        </Button>
-        <Button variant="outline" size="sm">Check Status</Button>
-        <Button size="sm">New Case</Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => router.push(`/companies/${company.id}/edit`)}
+            >
+              Edit
+            </Button>
+            <Button variant="outline" size="sm">Check Status</Button>
+            <Button size="sm">New Case</Button>
+          </div>
         </div>
 
-        {/* Full-width Horizontal Stats Bar */}
         <div className="flex flex-wrap items-center gap-x-12 gap-y-4 text-sm pt-4 border-t">
           <div><p className="text-muted-foreground text-xs mb-0.5">Operating Region</p><p className="font-medium">{company.region}</p></div>
           <div><p className="text-muted-foreground text-xs mb-0.5">Staff</p><p className="font-medium">0</p></div>
@@ -111,7 +110,7 @@ export default function CompanyProfilePage() {
       {/* 2. MAIN GRID LAYOUT */}
       <div className="grid lg:grid-cols-3 gap-6 items-start">
         
-        {/* LEFT COLUMN: Data Cards (Spans 2 columns) */}
+        {/* LEFT COLUMN */}
         <div className="lg:col-span-2 flex flex-col gap-6">
           
           <Card>
@@ -232,7 +231,7 @@ export default function CompanyProfilePage() {
           )}
         </div>
 
-        {/* RIGHT COLUMN: Sticky Sidebar (Spans 1 column) */}
+        {/* RIGHT COLUMN: Sticky Sidebar */}
         <div className="lg:col-span-1 sticky top-20 flex flex-col gap-6">
           <Card className="shadow-sm">
             <Tabs defaultValue="activity" className="w-full">
@@ -244,7 +243,6 @@ export default function CompanyProfilePage() {
               </CardHeader>
               <CardContent className="p-0">
                 
-                {/* Activity Tab */}
                 <TabsContent value="activity" className="m-0 p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
                     <div className="flex shrink-0 items-center justify-center size-8 rounded-full border border-primary/20 text-primary bg-primary/5">
@@ -260,7 +258,6 @@ export default function CompanyProfilePage() {
                   <Button variant="outline" className="w-full mt-2">View All Activity</Button>
                 </TabsContent>
 
-                {/* Notes Tab */}
                 <TabsContent value="notes" className="m-0 p-5 flex flex-col gap-4">
                   <div className="flex flex-col gap-3">
                     <Textarea 

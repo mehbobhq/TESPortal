@@ -109,7 +109,7 @@ export default function CompaniesPage() {
                 companies.map((c, idx) => (
                   <TableRow 
                     key={idx} 
-                    onClick={() => router.push(`/companies/${c.id}`)}
+                    onClick={() => router.push(`/companies/${c.id}/profile`)}
                     className="cursor-pointer hover:bg-muted/50 transition-colors"
                   >
                     <TableCell className="pl-6 font-mono text-xs text-muted-foreground">{c.id}</TableCell>

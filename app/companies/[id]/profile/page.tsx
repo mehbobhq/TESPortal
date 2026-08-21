@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, MapPin, Mail, Phone, Edit2, CheckCircle2, AlertCircle, FileText } from "lucide-react"
+import { ArrowLeft, Building2, MapPin, CheckCircle2, AlertCircle, FileText } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -38,19 +38,14 @@ export default function CompanyProfilePage() {
 
   const isCustomer = company.kind === "Customer"
 
+  // Cleaned up FieldDisplay: Removed the edit pencil icon
   const FieldDisplay = ({ label, value }: { label: string, value: any }) => (
-    <div className="flex justify-between items-end border-b pb-1">
-      <div>
-        <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">{label}</p>
-        <p className="text-sm font-medium text-foreground mt-0.5">{value || "—"}</p>
-      </div>
-      <button className="text-muted-foreground hover:text-primary transition-colors">
-        <Edit2 className="size-3" />
-      </button>
+    <div className="flex flex-col border-b pb-2">
+      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-sm font-medium text-foreground">{value || "—"}</p>
     </div>
   )
 
-  // Helper to format addresses cleanly
   const formatAddress = (prefix: string) => {
     const street = company[`${prefix}_street`]
     const city = company[`${prefix}_city`]
@@ -86,8 +81,8 @@ export default function CompanyProfilePage() {
               <h1 className="text-2xl font-bold">{company.name}</h1>
             </div>
           </div>
+          {/* Removed "+ Follow" button here */}
           <div className="flex gap-2">
-            <Button variant="outline" size="sm">+ Follow</Button>
             <Button variant="outline" size="sm">Edit</Button>
             <Button variant="outline" size="sm">Check Status</Button>
             <Button size="sm">New Case</Button>
@@ -107,7 +102,7 @@ export default function CompanyProfilePage() {
       {/* 2. TAB NAVIGATION */}
       <Tabs defaultValue="profile" className="w-full">
         <TabsList className="w-full justify-start overflow-x-auto bg-transparent border-b rounded-none h-auto p-0 space-x-6">
-          <TabsTrigger value="dashboard" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Dashboard</TabsTrigger>
+          {/* Removed Dashboard Tab */}
           <TabsTrigger value="profile" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Profile</TabsTrigger>
           <TabsTrigger value="contacts" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-2">Contacts</TabsTrigger>
           
@@ -262,18 +257,23 @@ export default function CompanyProfilePage() {
               </Tabs>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="flex flex-col gap-6">
-                <div className="relative pl-6 border-l-2 border-muted space-y-6">
-                  <div className="relative">
-                    <span className="absolute -left-[33px] bg-background border-2 border-primary rounded-full p-1 text-primary">
-                      <FileText className="size-3" />
-                    </span>
+              
+              {/* Cleaned up Activity Component */}
+              <div className="flex flex-col gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex shrink-0 items-center justify-center size-8 rounded-full border border-primary/20 text-primary bg-primary/5">
+                    <FileText className="size-4" />
+                  </div>
+                  <div className="flex flex-col">
                     <p className="text-sm font-medium">Record Created</p>
-                    <p className="text-xs text-muted-foreground">{new Date(company.createdAt).toLocaleDateString()} • Admin</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {company.createdAt ? new Date(company.createdAt).toISOString().split('T')[0] : "Unknown Date"} • Admin
+                    </p>
                   </div>
                 </div>
-                <Button variant="outline" className="w-full mt-4">View All Activity</Button>
+                <Button variant="outline" className="w-full mt-2">View All Activity</Button>
               </div>
+
             </CardContent>
           </Card>
         </div>

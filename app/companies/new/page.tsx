@@ -1,17 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation" // <-- Added for routing
+import { useRouter } from "next/navigation"
 import { AlertCircle, FileText, Save, Upload } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Separator } from "@/components/ui/separator"
 
 const COMPANY_TYPES = [
   "Customer",
@@ -29,13 +30,10 @@ const COMPANY_TYPES = [
 ]
 
 export default function AddCompanyPage() {
-  const router = useRouter() // <-- Initialize router
+  const router = useRouter()
   
   const [selectedType, setSelectedType] = useState<string>("")
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
-  
-  // Generating a realistic ID pattern (e.g., CMP-00001). 
-  // In production, your backend API will fetch the actual "next" ID.
   const [recordId] = useState("CMP-00001") 
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,14 +45,56 @@ export default function AddCompanyPage() {
     }
   }
 
-  // Handle the save action
   const handleCreateCompany = () => {
-    // Here is where you will eventually call your POST /api/companies endpoint
     console.log("Saving company...")
-    
-    // For now, simulate a successful save by redirecting back to the directory
     router.push("/companies") 
   }
+
+  // Reusable Address Block to keep code clean
+  const renderAddressCard = (title: string, description?: string) => (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`${title}-street`} required>Street Address</FieldLabel>
+            <Input id={`${title}-street`} placeholder="123 Main St" />
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`${title}-city`} required>City</FieldLabel>
+              <Input id={`${title}-city`} placeholder="City" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${title}-state`} required>State / Province</FieldLabel>
+              <Input id={`${title}-state`} placeholder="State or Province" />
+            </Field>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={`${title}-zip`} required>Postal / ZIP Code</FieldLabel>
+              <Input id={`${title}-zip`} placeholder="Postal Code" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${title}-country`} required>Country</FieldLabel>
+              <Select>
+                <SelectTrigger id={`${title}-country`}>
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CA">Canada</SelectItem>
+                  <SelectItem value="US">United States</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+        </FieldGroup>
+      </CardContent>
+    </Card>
+  )
 
   return (
     <div className="pb-10">
@@ -89,9 +129,7 @@ export default function AddCompanyPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="recordId">Record ID</FieldLabel>
-                    {/* Replaced placeholder with the actual sequence state */}
                     <Input id="recordId" value={recordId} disabled className="bg-muted font-mono" />
-                    <FieldDescription>Auto-generated identifier</FieldDescription>
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="dateAdded">Date Added</FieldLabel>
@@ -148,188 +186,176 @@ export default function AddCompanyPage() {
             <Card className="border-primary/50 bg-primary/5">
               <CardHeader>
                 <CardTitle className="text-primary">{selectedType} Details</CardTitle>
-                <CardDescription>Specific requirements for this entity type.</CardDescription>
+                <CardDescription>Specific requirements and data points for this entity type.</CardDescription>
               </CardHeader>
               <CardContent>
                 <FieldGroup>
-                  {/* Customer Fields */}
+                  {/* --- CUSTOMER FIELDS --- */}
                   {selectedType === "Customer" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="opRegion">Operating Region</FieldLabel>
-                        <Select>
-                          <SelectTrigger id="opRegion"><SelectValue placeholder="Select region" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="US Only">US Only</SelectItem>
-                            <SelectItem value="Canada Only">Canada Only</SelectItem>
-                            <SelectItem value="Cross-Border">Cross-Border</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="svcType">Service Type</FieldLabel>
-                        <Input id="svcType" placeholder="e.g., Monthly Retainer" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="payMethod">Payment Method</FieldLabel>
-                        <Input id="payMethod" placeholder="e.g., ACH, Credit Card" />
-                      </Field>
+                    <div className="flex flex-col gap-6">
+                      
+                      {/* Mandatory Customer Fields */}
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field>
+                          <FieldLabel htmlFor="opRegion" required>Operating Region</FieldLabel>
+                          <Select>
+                            <SelectTrigger id="opRegion"><SelectValue placeholder="Select region" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="US Only">US Only</SelectItem>
+                              <SelectItem value="Canada Only">Canada Only</SelectItem>
+                              <SelectItem value="Cross-Border">Cross-Border</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="svcType" required>Service Type</FieldLabel>
+                          <Input id="svcType" placeholder="e.g., Monthly Retainer" />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="payMethod" required>Payment Method</FieldLabel>
+                          <Input id="payMethod" placeholder="e.g., ACH, Credit Card" />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="svcCategory" required>Service Category</FieldLabel>
+                          <Input id="svcCategory" placeholder="e.g., Compliance, Dispatch" />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="startDate" required>Start Date</FieldLabel>
+                          <Input id="startDate" type="date" />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="endDate" required>End Date</FieldLabel>
+                          <Input id="endDate" type="date" />
+                        </Field>
+                        <Field className="sm:col-span-2">
+                          <FieldLabel htmlFor="cargoInfo" required>Cargo Information</FieldLabel>
+                          <Textarea id="cargoInfo" placeholder="Details about usual freight/cargo..." />
+                        </Field>
+                      </div>
+
+                      <Separator className="bg-primary/20" />
+
+                      {/* Optional: Business Information */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Business Information (Optional)</h4>
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                          <Field><FieldLabel>Incorporation No.</FieldLabel><Input placeholder="Number" /></Field>
+                          <Field><FieldLabel>Business No.</FieldLabel><Input placeholder="Number" /></Field>
+                          <Field><FieldLabel>EIN</FieldLabel><Input placeholder="EIN" /></Field>
+                          <Field><FieldLabel>GST/HST</FieldLabel><Input placeholder="Tax ID" /></Field>
+                        </div>
+                      </div>
+
+                      {/* Optional: Carrier Information */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Carrier Information (Optional)</h4>
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                          <Field><FieldLabel>USDOT</FieldLabel><Input placeholder="USDOT" /></Field>
+                          <Field><FieldLabel>MC</FieldLabel><Input placeholder="MC Number" /></Field>
+                          <Field><FieldLabel>MVID/RIN</FieldLabel><Input placeholder="MVID/RIN" /></Field>
+                          <Field><FieldLabel>NSC/CVOR</FieldLabel><Input placeholder="NSC/CVOR" /></Field>
+                        </div>
+                      </div>
+
+                      {/* Optional: Accounts */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Accounts (Optional)</h4>
+                        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                          <Field><FieldLabel>IRP</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>IFTA</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>NY HUT</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>NM WDT</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>KYU</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>OR</FieldLabel><Input placeholder="Account #" /></Field>
+                          <Field><FieldLabel>CT DRS</FieldLabel><Input placeholder="Account #" /></Field>
+                        </div>
+                      </div>
+
+                      {/* Optional: Customs Information */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Customs Information (Optional)</h4>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field><FieldLabel>SCAC</FieldLabel><Input placeholder="SCAC Code" /></Field>
+                          <Field><FieldLabel>Carrier Code</FieldLabel><Input placeholder="Carrier Code" /></Field>
+                        </div>
+                      </div>
+
+                      {/* Optional: Fleet Information */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Fleet Information (Optional)</h4>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field><FieldLabel>GPS/ELD Provider</FieldLabel><Input placeholder="Provider" /></Field>
+                          <Field><FieldLabel>Fuel Provider</FieldLabel><Input placeholder="Provider" /></Field>
+                          <Field><FieldLabel>Assessment Date</FieldLabel><Input type="date" /></Field>
+                        </div>
+                      </div>
+
                     </div>
                   )}
 
-                  {/* Insurance Broker Fields */}
+                  {/* --- OTHER ENTITY TYPES --- */}
                   {selectedType === "Insurance Broker" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="brokerLicense">Broker License Number</FieldLabel>
-                        <Input id="brokerLicense" placeholder="License #" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="regulator">Regulator</FieldLabel>
-                        <Input id="regulator" placeholder="e.g., FSRA" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="brokerLicense">Broker License Number</FieldLabel><Input id="brokerLicense" placeholder="License #" /></Field>
+                      <Field><FieldLabel htmlFor="regulator">Regulator</FieldLabel><Input id="regulator" placeholder="e.g., FSRA" /></Field>
                     </div>
                   )}
-
-                  {/* Insurance Company Fields */}
                   {selectedType === "Insurance Company" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="underwriterLicense">Underwriter License Number</FieldLabel>
-                        <Input id="underwriterLicense" placeholder="License #" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="financialRating">Financial Rating (Optional)</FieldLabel>
-                        <Input id="financialRating" placeholder="e.g., A.M. Best A+" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="underwriterLicense">Underwriter License Number</FieldLabel><Input id="underwriterLicense" placeholder="License #" /></Field>
+                      <Field><FieldLabel htmlFor="financialRating">Financial Rating (Optional)</FieldLabel><Input id="financialRating" placeholder="e.g., A.M. Best A+" /></Field>
                     </div>
                   )}
-
-                  {/* Government Agency Fields */}
                   {selectedType === "Government Agency" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="jurisdiction">Jurisdiction</FieldLabel>
-                        <Input id="jurisdiction" placeholder="e.g., Ontario, Federal US" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="agencyCode">Agency Code</FieldLabel>
-                        <Input id="agencyCode" placeholder="e.g., FMCSA, CBP" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="jurisdiction">Jurisdiction</FieldLabel><Input id="jurisdiction" placeholder="e.g., Ontario, Federal US" /></Field>
+                      <Field><FieldLabel htmlFor="agencyCode">Agency Code</FieldLabel><Input id="agencyCode" placeholder="e.g., FMCSA, CBP" /></Field>
                     </div>
                   )}
-
-                  {/* Employer Reference Fields */}
                   {selectedType === "Employer Reference" && (
                     <div className="grid gap-4 sm:grid-cols-3">
-                      <Field>
-                        <FieldLabel htmlFor="prevCompany">Previous Company</FieldLabel>
-                        <Input id="prevCompany" placeholder="Name" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="refContact">Contact Person</FieldLabel>
-                        <Input id="refContact" placeholder="Name" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="yearsEmployed">Years Employed</FieldLabel>
-                        <Input id="yearsEmployed" type="number" placeholder="e.g., 3" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="prevCompany">Previous Company</FieldLabel><Input id="prevCompany" placeholder="Name" /></Field>
+                      <Field><FieldLabel htmlFor="refContact">Contact Person</FieldLabel><Input id="refContact" placeholder="Name" /></Field>
+                      <Field><FieldLabel htmlFor="yearsEmployed">Years Employed</FieldLabel><Input id="yearsEmployed" type="number" placeholder="e.g., 3" /></Field>
                     </div>
                   )}
-
-                  {/* Service Provider Fields */}
                   {selectedType === "Service Provider" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="spType">Service Type</FieldLabel>
-                        <Input id="spType" placeholder="e.g., DOT Clinic, Repair Shop" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="spSpecialization">Specialization</FieldLabel>
-                        <Input id="spSpecialization" placeholder="Area of expertise" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="spType">Service Type</FieldLabel><Input id="spType" placeholder="e.g., DOT Clinic, Repair Shop" /></Field>
+                      <Field><FieldLabel htmlFor="spSpecialization">Specialization</FieldLabel><Input id="spSpecialization" placeholder="Area of expertise" /></Field>
                     </div>
                   )}
-
-                  {/* Owner Operator Fields */}
                   {selectedType === "Owner Operator" && (
                     <div className="grid gap-4 sm:grid-cols-3">
-                      <Field>
-                        <FieldLabel htmlFor="ownerName">Owner Name</FieldLabel>
-                        <Input id="ownerName" placeholder="Full name" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="vehicleCount">Vehicle Count</FieldLabel>
-                        <Input id="vehicleCount" type="number" placeholder="0" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="leaseAgreement">Lease Agreement</FieldLabel>
-                        <Input id="leaseAgreement" placeholder="Agreement ID" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="ownerName">Owner Name</FieldLabel><Input id="ownerName" placeholder="Full name" /></Field>
+                      <Field><FieldLabel htmlFor="vehicleCount">Vehicle Count</FieldLabel><Input id="vehicleCount" type="number" placeholder="0" /></Field>
+                      <Field><FieldLabel htmlFor="leaseAgreement">Lease Agreement</FieldLabel><Input id="leaseAgreement" placeholder="Agreement ID" /></Field>
                     </div>
                   )}
-
-                  {/* Sub Contractor Fields */}
                   {selectedType === "Sub Contractor" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="contractStart">Contract Start Date</FieldLabel>
-                        <Input id="contractStart" type="date" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="contractEnd">Contract End Date</FieldLabel>
-                        <Input id="contractEnd" type="date" />
-                      </Field>
-                      <Field className="sm:col-span-2">
-                        <FieldLabel htmlFor="scopeWork">Scope of Work</FieldLabel>
-                        <Textarea id="scopeWork" placeholder="Brief description of duties..." />
-                      </Field>
+                      <Field><FieldLabel htmlFor="contractStart">Contract Start Date</FieldLabel><Input id="contractStart" type="date" /></Field>
+                      <Field><FieldLabel htmlFor="contractEnd">Contract End Date</FieldLabel><Input id="contractEnd" type="date" /></Field>
+                      <Field className="sm:col-span-2"><FieldLabel htmlFor="scopeWork">Scope of Work</FieldLabel><Textarea id="scopeWork" placeholder="Brief description of duties..." /></Field>
                     </div>
                   )}
-
-                  {/* Workers Insurance Fields */}
                   {selectedType === "Workers Insurance" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="policyNum">Policy Number</FieldLabel>
-                        <Input id="policyNum" placeholder="Policy #" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="stateFund">State Fund (if applicable)</FieldLabel>
-                        <Input id="stateFund" placeholder="Fund name" />
-                      </Field>
-                      <Field className="sm:col-span-2">
-                        <FieldLabel htmlFor="coverageDetails">Coverage Details</FieldLabel>
-                        <Textarea id="coverageDetails" placeholder="Limits and specifics..." />
-                      </Field>
+                      <Field><FieldLabel htmlFor="policyNum">Policy Number</FieldLabel><Input id="policyNum" placeholder="Policy #" /></Field>
+                      <Field><FieldLabel htmlFor="stateFund">State Fund (if applicable)</FieldLabel><Input id="stateFund" placeholder="Fund name" /></Field>
+                      <Field className="sm:col-span-2"><FieldLabel htmlFor="coverageDetails">Coverage Details</FieldLabel><Textarea id="coverageDetails" placeholder="Limits and specifics..." /></Field>
                     </div>
                   )}
-
-                  {/* Finance / Leasing Fields */}
                   {selectedType === "Finance/Leasing Company" && (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field>
-                        <FieldLabel htmlFor="accNum">Account Number</FieldLabel>
-                        <Input id="accNum" placeholder="Account #" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="leaseTerms">Lease Terms</FieldLabel>
-                        <Input id="leaseTerms" placeholder="e.g., 48 months" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="accNum">Account Number</FieldLabel><Input id="accNum" placeholder="Account #" /></Field>
+                      <Field><FieldLabel htmlFor="leaseTerms">Lease Terms</FieldLabel><Input id="leaseTerms" placeholder="e.g., 48 months" /></Field>
                     </div>
                   )}
-
-                  {/* Prospect / Lead Fields */}
                   {selectedType === "Company (Prospect/Lead)" && (
                     <div className="grid gap-4 sm:grid-cols-3">
-                      <Field>
-                        <FieldLabel htmlFor="leadSource">Lead Source</FieldLabel>
-                        <Input id="leadSource" placeholder="e.g., Trade Show" />
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="followUp">Follow-Up Date</FieldLabel>
-                        <Input id="followUp" type="date" />
-                      </Field>
+                      <Field><FieldLabel htmlFor="leadSource">Lead Source</FieldLabel><Input id="leadSource" placeholder="e.g., Trade Show" /></Field>
+                      <Field><FieldLabel htmlFor="followUp">Follow-Up Date</FieldLabel><Input id="followUp" type="date" /></Field>
                       <Field>
                         <FieldLabel htmlFor="priority">Priority</FieldLabel>
                         <Select>
@@ -343,56 +369,27 @@ export default function AddCompanyPage() {
                       </Field>
                     </div>
                   )}
-                  
                 </FieldGroup>
               </CardContent>
             </Card>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Location</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="street" required>Street Address</FieldLabel>
-                  <Input id="street" placeholder="123 Main St" />
-                </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="city" required>City</FieldLabel>
-                    <Input id="city" placeholder="City" />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="state" required>State / Province</FieldLabel>
-                    <Input id="state" placeholder="State or Province" />
-                  </Field>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="zip" required>Postal / ZIP Code</FieldLabel>
-                    <Input id="zip" placeholder="Postal Code" />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="country" required>Country</FieldLabel>
-                    <Select>
-                      <SelectTrigger id="country">
-                        <SelectValue placeholder="Select country" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="CA">Canada</SelectItem>
-                        <SelectItem value="US">United States</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </div>
-              </FieldGroup>
-            </CardContent>
-          </Card>
+          {/* Registered Address */}
+          {renderAddressCard("Registered Address", "Primary legal address.")}
+
+          {/* Additional Addresses (Customer Only) */}
+          {selectedType === "Customer" && (
+            <>
+              {renderAddressCard("Mailing Address", "Where physical mail should be sent (if different).")}
+              {renderAddressCard("Yard Address", "Physical location of fleet/equipment.")}
+            </>
+          )}
+
         </div>
 
+        {/* Sidebar Column */}
         <div className="flex flex-col gap-6">
+          
           <Card>
             <CardHeader>
               <CardTitle>Contact Details</CardTitle>
@@ -468,11 +465,9 @@ export default function AddCompanyPage() {
       </div>
 
       <div className="bg-background/80 supports-[backdrop-filter]:bg-background/60 border-t sticky bottom-0 z-10 -mx-6 mt-6 flex items-center justify-end gap-4 px-6 py-4 backdrop-blur">
-        {/* Wired up the Cancel button */}
         <Button variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
-        {/* Wired up the Save button */}
         <Button onClick={handleCreateCompany}>
           <Save data-icon="inline-start" className="mr-2 size-4" />
           Create Company

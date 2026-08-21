@@ -11,6 +11,138 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
+// Smart Address Component that handles State -> Country auto-fill
+const SmartAddressBlock = ({ title, prefix, initialData }: { title: string, prefix: string, initialData: any }) => {
+  const [country, setCountry] = useState(initialData[`${prefix}_country`] || "")
+  const [region, setRegion] = useState(initialData[`${prefix}_state`] || "")
+
+  // Alphabetized list of North American regions
+  const regions = [
+    { code: "AB", name: "Alberta", country: "Canada" },
+    { code: "AK", name: "Alaska", country: "United States" },
+    { code: "AL", name: "Alabama", country: "United States" },
+    { code: "AR", name: "Arkansas", country: "United States" },
+    { code: "AZ", name: "Arizona", country: "United States" },
+    { code: "BC", name: "British Columbia", country: "Canada" },
+    { code: "CA", name: "California", country: "United States" },
+    { code: "CO", name: "Colorado", country: "United States" },
+    { code: "CT", name: "Connecticut", country: "United States" },
+    { code: "DC", name: "District of Columbia", country: "United States" },
+    { code: "DE", name: "Delaware", country: "United States" },
+    { code: "FL", name: "Florida", country: "United States" },
+    { code: "GA", name: "Georgia", country: "United States" },
+    { code: "HI", name: "Hawaii", country: "United States" },
+    { code: "IA", name: "Iowa", country: "United States" },
+    { code: "ID", name: "Idaho", country: "United States" },
+    { code: "IL", name: "Illinois", country: "United States" },
+    { code: "IN", name: "Indiana", country: "United States" },
+    { code: "KS", name: "Kansas", country: "United States" },
+    { code: "KY", name: "Kentucky", country: "United States" },
+    { code: "LA", name: "Louisiana", country: "United States" },
+    { code: "MA", name: "Massachusetts", country: "United States" },
+    { code: "MB", name: "Manitoba", country: "Canada" },
+    { code: "MD", name: "Maryland", country: "United States" },
+    { code: "ME", name: "Maine", country: "United States" },
+    { code: "MI", name: "Michigan", country: "United States" },
+    { code: "MN", name: "Minnesota", country: "United States" },
+    { code: "MO", name: "Missouri", country: "United States" },
+    { code: "MS", name: "Mississippi", country: "United States" },
+    { code: "MT", name: "Montana", country: "United States" },
+    { code: "NB", name: "New Brunswick", country: "Canada" },
+    { code: "NC", name: "North Carolina", country: "United States" },
+    { code: "ND", name: "North Dakota", country: "United States" },
+    { code: "NE", name: "Nebraska", country: "United States" },
+    { code: "NH", name: "New Hampshire", country: "United States" },
+    { code: "NJ", name: "New Jersey", country: "United States" },
+    { code: "NL", name: "Newfoundland and Labrador", country: "Canada" },
+    { code: "NM", name: "New Mexico", country: "United States" },
+    { code: "NS", name: "Nova Scotia", country: "Canada" },
+    { code: "NT", name: "Northwest Territories", country: "Canada" },
+    { code: "NU", name: "Nunavut", country: "Canada" },
+    { code: "NV", name: "Nevada", country: "United States" },
+    { code: "NY", name: "New York", country: "United States" },
+    { code: "OH", name: "Ohio", country: "United States" },
+    { code: "OK", name: "Oklahoma", country: "United States" },
+    { code: "ON", name: "Ontario", country: "Canada" },
+    { code: "OR", name: "Oregon", country: "United States" },
+    { code: "PA", name: "Pennsylvania", country: "United States" },
+    { code: "PE", name: "Prince Edward Island", country: "Canada" },
+    { code: "QC", name: "Quebec", country: "Canada" },
+    { code: "RI", name: "Rhode Island", country: "United States" },
+    { code: "SC", name: "South Carolina", country: "United States" },
+    { code: "SD", name: "South Dakota", country: "United States" },
+    { code: "SK", name: "Saskatchewan", country: "Canada" },
+    { code: "TN", name: "Tennessee", country: "United States" },
+    { code: "TX", name: "Texas", country: "United States" },
+    { code: "UT", name: "Utah", country: "United States" },
+    { code: "VA", name: "Virginia", country: "United States" },
+    { code: "VT", name: "Vermont", country: "United States" },
+    { code: "WA", name: "Washington", country: "United States" },
+    { code: "WI", name: "Wisconsin", country: "United States" },
+    { code: "WV", name: "West Virginia", country: "United States" },
+    { code: "WY", name: "Wyoming", country: "United States" },
+    { code: "YT", name: "Yukon", country: "Canada" }
+  ].sort((a, b) => a.name.localeCompare(b.name))
+
+  const handleRegionChange = (val: string) => {
+    setRegion(val)
+    const selected = regions.find(r => r.code === val)
+    if (selected) {
+      setCountry(selected.country)
+    }
+  }
+
+  return (
+    <div className="space-y-4 border-b pb-6 last:border-0 last:pb-0">
+      <h3 className="font-semibold text-sm text-foreground">{title}</h3>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="space-y-2 lg:col-span-2">
+          <Label>Street Address</Label>
+          <Input name={`${prefix}_street`} defaultValue={initialData[`${prefix}_street`] || ""} />
+        </div>
+        <div className="space-y-2">
+          <Label>City</Label>
+          <Input name={`${prefix}_city`} defaultValue={initialData[`${prefix}_city`] || ""} />
+        </div>
+        
+        {/* State/Province Dropdown */}
+        <div className="space-y-2">
+          <Label>State/Province</Label>
+          <input type="hidden" name={`${prefix}_state`} value={region} />
+          <Select value={region} onValueChange={handleRegionChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select region" />
+            </SelectTrigger>
+            <SelectContent>
+              {regions.map((r) => (
+                <SelectItem key={r.code} value={r.code}>
+                  {r.name} ({r.code})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>ZIP/Postal Code</Label>
+          <Input name={`${prefix}_zip`} defaultValue={initialData[`${prefix}_zip`] || ""} />
+        </div>
+
+        {/* Auto-filled Country */}
+        <div className="space-y-2">
+          <Label>Country</Label>
+          <Input 
+            name={`${prefix}_country`} 
+            value={country} 
+            onChange={(e) => setCountry(e.target.value)}
+            className="bg-muted/30" // Slight gray to indicate it's auto-filled
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function EditCompanyPage() {
   const params = useParams()
   const router = useRouter()
@@ -31,7 +163,6 @@ export default function EditCompanyPage() {
     const formData = new FormData(e.currentTarget)
     const formEntries = Object.fromEntries(formData.entries())
     
-    // Merge new form data with the existing company data
     const updatedCompany = {
       ...company,
       ...formEntries,
@@ -41,14 +172,12 @@ export default function EditCompanyPage() {
       status: formEntries.status || company.status,
     }
 
-    // 1. Update Master Companies List
     const existingCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const updatedCompaniesList = existingCompanies.map((c: any) => 
       c.id === company.id ? updatedCompany : c
     )
     localStorage.setItem("tes_companies", JSON.stringify(updatedCompaniesList))
     
-    // 2. Update Customers List (if applicable)
     if (company.kind === "Customer") {
       const existingCustomers = JSON.parse(localStorage.getItem("tes_customers") || "[]")
       const updatedCustomersList = existingCustomers.map((c: any) => 
@@ -64,35 +193,6 @@ export default function EditCompanyPage() {
   if (!company) return <div className="p-10 text-center">Company not found.</div>
 
   const isCustomer = company.kind === "Customer"
-
-  // Helper component for Addresses to keep code clean
-  const AddressBlock = ({ title, prefix }: { title: string, prefix: string }) => (
-    <div className="space-y-4 border-b pb-6 last:border-0 last:pb-0">
-      <h3 className="font-semibold text-sm text-foreground">{title}</h3>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="space-y-2 lg:col-span-2">
-          <Label>Street Address</Label>
-          <Input name={`${prefix}_street`} defaultValue={company[`${prefix}_street`] || ""} />
-        </div>
-        <div className="space-y-2">
-          <Label>City</Label>
-          <Input name={`${prefix}_city`} defaultValue={company[`${prefix}_city`] || ""} />
-        </div>
-        <div className="space-y-2">
-          <Label>State/Province</Label>
-          <Input name={`${prefix}_state`} defaultValue={company[`${prefix}_state`] || ""} />
-        </div>
-        <div className="space-y-2">
-          <Label>ZIP/Postal Code</Label>
-          <Input name={`${prefix}_zip`} defaultValue={company[`${prefix}_zip`] || ""} />
-        </div>
-        <div className="space-y-2">
-          <Label>Country</Label>
-          <Input name={`${prefix}_country`} defaultValue={company[`${prefix}_country`] || ""} />
-        </div>
-      </div>
-    </div>
-  )
 
   return (
     <div className="pb-10 flex flex-col gap-6">
@@ -144,9 +244,18 @@ export default function EditCompanyPage() {
               <Label htmlFor="billingEmail">Billing Email</Label>
               <Input id="billingEmail" name="billingEmail" type="email" defaultValue={company.billingEmail || ""} />
             </div>
+            
+            {/* RESTORED SELECT: Operating Region */}
             <div className="space-y-2">
               <Label htmlFor="opRegion">Operating Region</Label>
-              <Input id="opRegion" name="opRegion" defaultValue={company.region || ""} />
+              <Select name="opRegion" defaultValue={company.region || "Canada Only"}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Canada Only">Canada Only</SelectItem>
+                  <SelectItem value="US Only">US Only</SelectItem>
+                  <SelectItem value="Cross-Border">Cross-Border</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
@@ -159,9 +268,9 @@ export default function EditCompanyPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
-            <AddressBlock title="Registered Address" prefix="reg" />
-            <AddressBlock title="Mailing Address" prefix="mail" />
-            <AddressBlock title="Yard Address" prefix="yard" />
+            <SmartAddressBlock title="Registered Address" prefix="reg" initialData={company} />
+            <SmartAddressBlock title="Mailing Address" prefix="mail" initialData={company} />
+            <SmartAddressBlock title="Yard Address" prefix="yard" initialData={company} />
           </CardContent>
         </Card>
 
@@ -173,15 +282,33 @@ export default function EditCompanyPage() {
                 <CardTitle className="text-sm text-primary">Customer Information</CardTitle>
               </CardHeader>
               <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                {/* RESTORED SELECT: Service Type */}
                 <div className="space-y-2">
                   <Label>Service Type</Label>
-                  <Input name="svcType" defaultValue={company.svcType || ""} />
+                  <Select name="svcType" defaultValue={company.svcType || "Premium"}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Premium">Premium</SelectItem>
+                      <SelectItem value="Standard">Standard</SelectItem>
+                      <SelectItem value="Basic">Basic</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
+                {/* RESTORED SELECT: Status */}
                 <div className="space-y-2">
                   <Label>Service Status</Label>
-                  {/* Using a hidden input to preserve the value if we don't want a full select dropdown here, or just a standard input */}
-                  <Input name="status" defaultValue={company.status || "Active"} />
+                  <Select name="status" defaultValue={company.status || "Active"}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Start Date</Label>
                   <Input name="startDate" type="date" defaultValue={company.startDate || ""} />
@@ -190,10 +317,21 @@ export default function EditCompanyPage() {
                   <Label>End Date</Label>
                   <Input name="endDate" type="date" defaultValue={company.endDate || ""} />
                 </div>
+
+                {/* RESTORED SELECT: Payment Method */}
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
-                  <Input name="payMethod" defaultValue={company.payMethod || ""} />
+                  <Select name="payMethod" defaultValue={company.payMethod || "E-Transfer"}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="E-Transfer">E-Transfer</SelectItem>
+                      <SelectItem value="Credit Card">Credit Card</SelectItem>
+                      <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                      <SelectItem value="Cheque">Cheque</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Cargo Information</Label>
                   <Input name="cargoInfo" defaultValue={company.cargoInfo || ""} />
@@ -271,7 +409,7 @@ export default function EditCompanyPage() {
         )}
 
         {/* Action Buttons */}
-        <div className="flex justify-end gap-4 mt-2 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm">
+        <div className="flex justify-end gap-4 mt-2 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm z-10">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Discard Changes
           </Button>

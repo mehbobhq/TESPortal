@@ -209,15 +209,27 @@ export default function AddCompanyPage() {
                         </Field>
                         <Field>
                           <FieldLabel htmlFor="svcType" required>Service Type</FieldLabel>
-                          <Input id="svcType" placeholder="e.g., Monthly Retainer" />
+                          <Select defaultValue="Basic">
+                            <SelectTrigger id="svcType"><SelectValue placeholder="Select service type" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Basic">Basic</SelectItem>
+                              <SelectItem value="Per Service">Per Service</SelectItem>
+                              <SelectItem value="Premium">Premium</SelectItem>
+                              <SelectItem value="Standard">Standard</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </Field>
                         <Field>
                           <FieldLabel htmlFor="payMethod" required>Payment Method</FieldLabel>
-                          <Input id="payMethod" placeholder="e.g., ACH, Credit Card" />
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="svcCategory" required>Service Category</FieldLabel>
-                          <Input id="svcCategory" placeholder="e.g., Compliance, Dispatch" />
+                          <Select>
+                            <SelectTrigger id="payMethod"><SelectValue placeholder="Select payment method" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Credit Card">Credit Card</SelectItem>
+                              <SelectItem value="Digital Wallets">Digital Wallets</SelectItem>
+                              <SelectItem value="E-Transfer">E-Transfer</SelectItem>
+                              <SelectItem value="ACH/Wire Transfer">ACH/Wire Transfer</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </Field>
                         <Field>
                           <FieldLabel htmlFor="startDate" required>Start Date</FieldLabel>
@@ -229,7 +241,17 @@ export default function AddCompanyPage() {
                         </Field>
                         <Field className="sm:col-span-2">
                           <FieldLabel htmlFor="cargoInfo" required>Cargo Information</FieldLabel>
-                          <Textarea id="cargoInfo" placeholder="Details about usual freight/cargo..." />
+                          <Select>
+                            <SelectTrigger id="cargoInfo"><SelectValue placeholder="Select cargo type" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="General Freight">General Freight</SelectItem>
+                              <SelectItem value="Specialized Equipment">Specialized Equipment</SelectItem>
+                              <SelectItem value="Household Goods">Household Goods</SelectItem>
+                              <SelectItem value="Temperature-Controlled & Food">Temperature-Controlled & Food</SelectItem>
+                              <SelectItem value="Hazardous Materials">Hazardous Materials</SelectItem>
+                              <SelectItem value="Bulk & Other">Bulk & Other</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </Field>
                       </div>
 

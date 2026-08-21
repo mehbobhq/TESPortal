@@ -270,7 +270,7 @@ export default function NewCompanyPage() {
 
       <form onSubmit={handleCreateCompany} className="flex flex-col gap-6 max-w-5xl">
         
-        {/* ENTITY SETUP */}
+{/* ENTITY SETUP */}
         <Card className="border-primary/50 shadow-sm">
           <CardHeader className="bg-primary/5 py-4 border-b">
             <CardTitle className="text-lg">Entity Setup</CardTitle>
@@ -290,10 +290,17 @@ export default function NewCompanyPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Customer">Customer</SelectItem>
-                  <SelectItem value="Carrier">Carrier</SelectItem>
-                  <SelectItem value="Partner">Partner</SelectItem>
-                  <SelectItem value="Vendor">Vendor</SelectItem>
-                  <SelectItem value="Government">Government / Agency</SelectItem>
+                  <SelectItem value="Insurance Broker">Insurance Broker</SelectItem>
+                  <SelectItem value="Insurance Company">Insurance Company</SelectItem>
+                  <SelectItem value="Government Agency">Government Agency</SelectItem>
+                  <SelectItem value="Employer Reference">Employer Reference</SelectItem>
+                  <SelectItem value="Service Provider">Service Provider</SelectItem>
+                  <SelectItem value="Owner Operator">Owner Operator</SelectItem>
+                  <SelectItem value="Sub Contractor">Sub Contractor</SelectItem>
+                  <SelectItem value="Workers Insurance">Workers Insurance</SelectItem>
+                  <SelectItem value="Finance/Leasing Company">Finance/Leasing Company</SelectItem>
+                  <SelectItem value="Prospect">Prospect</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
                 </SelectContent>
               </Select>
             </div>

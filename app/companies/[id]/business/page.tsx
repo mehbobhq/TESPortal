@@ -7,10 +7,8 @@ import { ArrowLeft, Building2, Plus, Archive, FileText, UploadCloud, FileArchive
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function BusinessPage() {
   const params = useParams()
@@ -18,8 +16,10 @@ export default function BusinessPage() {
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [showArchived, setShowArchived] = useState(false)
+  
+  // UI State for inline forms
+  const [showAddShareholder, setShowAddShareholder] = useState(false)
 
-  // Simulated Database States for Sub-records
   const [shareholders, setShareholders] = useState<any[]>([])
   const [annualReturns, setAnnualReturns] = useState<any[]>([])
 
@@ -29,8 +29,6 @@ export default function BusinessPage() {
     const found = savedCompanies.find((c: any) => c.id === id)
     setCompany(found || null)
 
-    // In a real app, you would fetch these from Supabase:
-    // supabase.from('shareholders').select('*').eq('company_id', id)
     setShareholders([
       { id: `${id}-SHR-001`, name: "John Doe", shares: "60%", address: "123 Main St, Calgary, AB, Canada", isArchived: false },
       { id: `${id}-SHR-002`, name: "Jane Smith", shares: "40%", address: "456 West Ave, Edmonton, AB, Canada", isArchived: false }
@@ -46,12 +44,10 @@ export default function BusinessPage() {
   if (loading) return <div className="p-10 text-center">Loading...</div>
   if (!company) return <div className="p-10 text-center">Company Not Found</div>
 
-  // --- CORE ARCHITECTURAL LOGIC ---
   const isCanadaRegistered = company.regCorpCountry === "Canada"
   const isUSRegistered = company.regCorpCountry === "United States"
   const isCrossBorder = company.region === "Cross-Border"
 
-  // Dynamic Visibility Rules based on Origin + Operation
   const needsCanadianTaxes = isCanadaRegistered || isCrossBorder
   const needsUSTaxes = isUSRegistered || isCrossBorder
 
@@ -70,7 +66,6 @@ export default function BusinessPage() {
           </div>
         </div>
 
-        {/* The "Single Source of Truth" Context Banner */}
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-6 text-sm">
             <div>
@@ -127,27 +122,29 @@ export default function BusinessPage() {
             <CardDescription className="text-xs mt-1">Ownership structure and control records.</CardDescription>
           </div>
           
-          {/* Example of a Dialog Add Form */}
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button size="sm"><Plus className="size-4 mr-1"/> Add Record</Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Add Shareholder / Director</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="space-y-2"><Label>Full Name</Label><Input placeholder="John Doe" /></div>
-                <div className="space-y-2"><Label>Percent Shares (%)</Label><Input type="number" placeholder="50" /></div>
-                {/* Note: This is where you would drop in your `<SmartAddressBlock />` component! */}
-                <div className="space-y-2"><Label>Address (Smart Block goes here)</Label><Input placeholder="Address" /></div>
-                <Button className="w-full mt-4">Save Record</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button size="sm" onClick={() => setShowAddShareholder(!showAddShareholder)} variant={showAddShareholder ? "outline" : "default"}>
+            {showAddShareholder ? "Cancel" : <><Plus className="size-4 mr-1"/> Add Record</>}
+          </Button>
 
         </CardHeader>
         <CardContent className="p-0">
+          
+          {/* Inline Add Form (Replaces Dialog) */}
+          {showAddShareholder && (
+            <div className="p-6 bg-muted/10 border-b">
+              <h4 className="font-semibold text-sm mb-4">Add Shareholder / Director</h4>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2"><Label>Full Name</Label><Input placeholder="John Doe" /></div>
+                <div className="space-y-2"><Label>Percent Shares (%)</Label><Input type="number" placeholder="50" /></div>
+                <div className="space-y-2 sm:col-span-2"><Label>Address</Label><Input placeholder="Address" /></div>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="outline" onClick={() => setShowAddShareholder(false)}>Cancel</Button>
+                <Button>Save Record</Button>
+              </div>
+            </div>
+          )}
+
           <div className="divide-y text-sm">
             <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-muted-foreground bg-muted/10 text-xs uppercase tracking-wider">
               <div className="col-span-2">Record ID</div>
@@ -219,7 +216,6 @@ export default function BusinessPage() {
               <Button size="sm" variant="outline" className="h-7"><Plus className="size-3 mr-1"/> Add</Button>
             </CardHeader>
             <CardContent className="p-4 flex flex-col gap-4 text-sm text-center text-muted-foreground py-8">
-              {/* Empty State Example */}
               <FileText className="size-8 mx-auto opacity-20" />
               <p>No CRA Business Number records added.</p>
             </CardContent>

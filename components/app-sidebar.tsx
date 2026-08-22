@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
@@ -18,16 +19,30 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { User, Briefcase, Users, FileText } from "lucide-react" // Added some basic icons for the context menu
 
 export function AppSidebar() {
   const pathname = usePathname()
 
-  // --- CONTEXTUAL ROUTING LOGIC ---
-  // Check if we are inside a specific company record (e.g., /companies/CMP-12345/...)
+  // --- CONTEXTUAL STATE ---
+  const [companyType, setCompanyType] = useState<string | null>(null)
+
+  // 1. Identify if we are in a company context
   const pathSegments = pathname.split('/').filter(Boolean)
   const isCompanyContext = pathSegments[0] === "companies" && pathSegments[1] && pathSegments[1] !== "new"
   const companyId = isCompanyContext ? pathSegments[1] : null
+
+  // 2. Fetch the company type securely on the client to avoid Next.js hydration errors
+  useEffect(() => {
+    if (companyId) {
+      const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
+      const found = savedCompanies.find((c: any) => c.id === companyId)
+      if (found) {
+        setCompanyType(found.kind)
+      }
+    } else {
+      setCompanyType(null)
+    }
+  }, [companyId])
 
   return (
     <Sidebar collapsible="icon">
@@ -64,89 +79,82 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        
-        {/* GLOBAL NAVIGATION */}
-        {navGroups.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-            <SidebarMenu>
-              {group.items.map((item) => {
-                
-                // SMART ACTIVE STATE:
-                // Drops the "Companies" highlight if we are inside a specific company profile
-                let isActive = false
-                if (item.url === "/") {
-                  isActive = pathname === "/"
-                } else if (item.url === "/companies") {
-                  isActive = pathname === "/companies" || pathname === "/companies/new"
-                } else {
-                  isActive = pathname.startsWith(item.url)
-                }
+        {navGroups.map((group) => {
+          
+          // Create a mutable copy of the navigation items
+          let processedItems = [...group.items]
 
-                return (
-                  <SidebarMenuItem key={item.url}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive}
-                      tooltip={item.title}
-                    >
-                      <Link href={item.url}>
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroup>
-        ))}
+          // Detect if this is the "Compliance" group by checking a few known items
+          const isComplianceGroup = group.items.some(item => 
+            ['Profile', 'Business', 'Contacts', 'Tax Filing', 'Vehicles'].includes(item.title)
+          )
 
-        {/* CONTEXTUAL COMPANY MENU (Only visible when inside a company profile) */}
-        {companyId && (
-          <SidebarGroup className="mt-4 border-t border-sidebar-border pt-4">
-            <SidebarGroupLabel className="text-primary font-semibold">Entity Workspace</SidebarGroupLabel>
-            <SidebarMenu>
-              
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname.includes('/profile')} tooltip="Profile">
-                  <Link href={`/companies/${companyId}/profile`}>
-                    <User className="size-4" />
-                    <span>Profile</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+          // --- THE MAGIC FILTER & REWRITE ENGINE ---
+          if (isComplianceGroup && companyId) {
+            
+            // Step 1: Filter out unnecessary tabs if it is NOT a Customer/Prospect
+            const isCustomerOrProspect = companyType === "Customer" || companyType === "Prospect"
+            const allowedForOthers = ["Customers", "Profile", "Contacts", "Credentials", "Settings"]
 
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname.includes('/business')} tooltip="Business">
-                  <Link href={`/companies/${companyId}/business`}>
-                    <Briefcase className="size-4" />
-                    <span>Business</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+            // Only filter if we have loaded the companyType and it's not a Customer/Prospect
+            if (companyType && !isCustomerOrProspect) {
+              processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
+            }
 
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname.includes('/contacts')} tooltip="Contacts">
-                  <Link href={`/companies/${companyId}/contacts`}>
-                    <Users className="size-4" />
-                    <span>Contacts</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+            // Step 2: Rewrite URLs to inject the specific company ID
+            const companySpecificTabs = [
+              "Profile", "Business", "Contacts", "Insurance", "Authorities", 
+              "Tax Filing", "Vehicles", "Drivers", "Citations", "Record of Events", 
+              "Customs", "Programs", "Credentials", "Settings"
+            ]
 
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname.includes('/documents')} tooltip="Documents">
-                  <Link href={`/companies/${companyId}/documents`}>
-                    <FileText className="size-4" />
-                    <span>Documents</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+            processedItems = processedItems.map(item => {
+              if (companySpecificTabs.includes(item.title)) {
+                // Formats titles to URLs (e.g., "Record of Events" -> "record-of-events")
+                const formattedPath = item.title.toLowerCase().replace(/ /g, '-')
+                return { ...item, url: `/companies/${companyId}/${formattedPath}` }
+              }
+              return item
+            })
+          }
 
-            </SidebarMenu>
-          </SidebarGroup>
-        )}
+          return (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarMenu>
+                {processedItems.map((item) => {
+                  
+                  // SMART ACTIVE STATE:
+                  let isActive = false
+                  if (item.url === "/") {
+                    isActive = pathname === "/"
+                  } else if (item.url === "/companies") {
+                    // Drop global "Companies" highlight if inside a company profile
+                    isActive = pathname === "/companies" || pathname === "/companies/new"
+                  } else {
+                    // Exact match or sub-route match for rewritten URLs
+                    isActive = pathname === item.url || pathname.startsWith(item.url + "/")
+                  }
 
+                  return (
+                    // Using item.title as key because item.url might be dynamically modified
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={isActive}
+                        tooltip={item.title}
+                      >
+                        <Link href={item.url}>
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </SidebarGroup>
+          )
+        })}
       </SidebarContent>
 
       <SidebarFooter className="border-sidebar-border border-t">
@@ -158,7 +166,6 @@ export function AppSidebar() {
                   M
                 </AvatarFallback>
               </Avatar>
-
               <div className="grid flex-1 text-left leading-tight">
                 <span className="truncate font-medium">Mehboob</span>
                 <span className="text-sidebar-foreground/60 truncate text-xs">

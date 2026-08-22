@@ -23,7 +23,7 @@ const DocumentUploadZone = ({ title, description }: { title: string, description
     </div>
     <h3 className="font-semibold text-sm text-foreground mb-1">{title}</h3>
     <p className="text-xs text-muted-foreground max-w-sm mb-3">{description}</p>
-    <Button variant="secondary" size="sm" className="pointer-events-none h-7 text-xs">
+    <Button type="button" variant="secondary" size="sm" className="pointer-events-none h-7 text-xs">
       Browse Files
     </Button>
   </div>
@@ -38,9 +38,10 @@ export default function ContactsPage() {
   // UI States
   const [showAddContact, setShowAddContact] = useState(false)
   const [isPrimaryChecked, setIsPrimaryChecked] = useState(false)
-  const [selectedContact, setSelectedContact] = useState<any>(null)
+  const [selectedContact, setSelectedContact] = useState<any>(null) // For the View Popup
+  const [editingContact, setEditingContact] = useState<any>(null) // For the Edit Form
 
-  // Data State (Starts completely empty for testing)
+  // Data State (Starts completely empty for testing!)
   const [contacts, setContacts] = useState<any[]>([])
 
   useEffect(() => {
@@ -54,35 +55,71 @@ export default function ContactsPage() {
   if (loading) return <div className="p-10 text-center">Loading...</div>
   if (!company) return <div className="p-10 text-center">Company Not Found</div>
 
-  // --- SAVE HANDLER ---
+  // --- HANDLERS ---
   const generateId = () => `${company.id}-CNT-${Math.floor(1000 + Math.random() * 9000)}`
+
+  const handleEditClick = (contact: any) => {
+    setEditingContact(contact)
+    setIsPrimaryChecked(contact.isPrimary)
+    setShowAddContact(true)
+  }
+
+  const handleCancelForm = () => {
+    setShowAddContact(false)
+    setEditingContact(null)
+    setIsPrimaryChecked(false)
+  }
 
   const handleSaveContact = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
-    const updatedContacts = isPrimaryChecked 
-      ? contacts.map(c => ({ ...c, isPrimary: false })) 
-      : [...contacts]
+    // If setting as primary, uncheck all others
+    let updatedContacts = [...contacts]
+    if (isPrimaryChecked) {
+      updatedContacts = updatedContacts.map(c => ({ ...c, isPrimary: false }))
+    }
 
-    const newContact = {
-      id: generateId(),
-      firstName: formData.get("firstName"),
-      lastName: formData.get("lastName"),
-      role: formData.get("role"),
-      email: formData.get("email"),
-      phone: formData.get("phone"),
-      dlNumber: formData.get("dlNumber"),
-      dlState: formData.get("dlState"),
-      dlExpiry: formData.get("dlExpiry"),
-      isPrimary: isPrimaryChecked,
-      isArchived: false,
-      createdAt: new Date().toISOString()
+    if (editingContact) {
+      // UPDATE EXISTING RECORD
+      updatedContacts = updatedContacts.map(c => {
+        if (c.id === editingContact.id) {
+          return {
+            ...c,
+            firstName: formData.get("firstName"),
+            lastName: formData.get("lastName"),
+            role: formData.get("role"),
+            email: formData.get("email"),
+            phone: formData.get("phone"),
+            dlNumber: formData.get("dlNumber"),
+            dlState: formData.get("dlState"),
+            dlExpiry: formData.get("dlExpiry"),
+            isPrimary: isPrimaryChecked,
+          }
+        }
+        return c
+      })
+    } else {
+      // ADD NEW RECORD
+      const newContact = {
+        id: generateId(),
+        firstName: formData.get("firstName"),
+        lastName: formData.get("lastName"),
+        role: formData.get("role"),
+        email: formData.get("email"),
+        phone: formData.get("phone"),
+        dlNumber: formData.get("dlNumber"),
+        dlState: formData.get("dlState"),
+        dlExpiry: formData.get("dlExpiry"),
+        isPrimary: isPrimaryChecked,
+        isArchived: false,
+        createdAt: new Date().toISOString()
+      }
+      updatedContacts = [newContact, ...updatedContacts]
     }
     
-    setContacts([newContact, ...updatedContacts])
-    setShowAddContact(false)
-    setIsPrimaryChecked(false)
+    setContacts(updatedContacts)
+    handleCancelForm()
   }
 
   const primaryContact = contacts.find(c => c.isPrimary && !c.isArchived)
@@ -161,17 +198,17 @@ export default function ContactsPage() {
             <CardTitle className="text-sm flex items-center gap-2">Personnel Directory</CardTitle>
             <CardDescription className="text-xs mt-1">Officers, managers, and administrative contacts.</CardDescription>
           </div>
-          <Button size="sm" onClick={() => setShowAddContact(!showAddContact)} variant={showAddContact ? "outline" : "default"}>
-            {showAddContact ? "Cancel" : <><Plus className="size-4 mr-1"/> Add Contact</>}
+          <Button size="sm" onClick={() => setShowAddContact(true)}>
+            <Plus className="size-4 mr-1"/> Add Contact
           </Button>
         </CardHeader>
         <CardContent className="p-0">
           
-          {/* INLINE ADD CONTACT FORM */}
+          {/* INLINE ADD/EDIT CONTACT FORM */}
           {showAddContact && (
             <form onSubmit={handleSaveContact} className="p-6 bg-muted/10 border-b border-primary/20">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="font-semibold text-sm">Add New Personnel</h4>
+                <h4 className="font-semibold text-sm">{editingContact ? "Edit Personnel Profile" : "Add New Personnel"}</h4>
                 <div className="flex items-center space-x-2 bg-background border px-3 py-1.5 rounded-md">
                   <Checkbox 
                     id="isPrimary" 
@@ -183,12 +220,14 @@ export default function ContactsPage() {
               </div>
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                {/* Basic Info */}
                 <div className="space-y-4 lg:col-span-2 grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2 mt-4"><Label>First Name *</Label><Input name="firstName" required /></div>
-                  <div className="space-y-2 mt-4"><Label>Last Name *</Label><Input name="lastName" required /></div>
+                  <div className="space-y-2 mt-4"><Label>First Name *</Label><Input name="firstName" defaultValue={editingContact?.firstName} required /></div>
+                  <div className="space-y-2 mt-4"><Label>Last Name *</Label><Input name="lastName" defaultValue={editingContact?.lastName} required /></div>
                   <div className="space-y-2">
                     <Label>Role / Title *</Label>
-                    <Select name="role" required>
+                    <Select name="role" defaultValue={editingContact?.role} required>
                       <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="Owner">Owner / President</SelectItem>
@@ -201,19 +240,20 @@ export default function ContactsPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2"><Label>Phone Number *</Label><Input name="phone" required /></div>
-                  <div className="space-y-2 sm:col-span-2"><Label>Email Address *</Label><Input name="email" type="email" required /></div>
+                  <div className="space-y-2"><Label>Phone Number *</Label><Input name="phone" defaultValue={editingContact?.phone} required /></div>
+                  <div className="space-y-2 sm:col-span-2"><Label>Email Address *</Label><Input name="email" type="email" defaultValue={editingContact?.email} required /></div>
                 </div>
 
+                {/* Identity / DL Info */}
                 <div className="space-y-4 bg-background p-4 rounded-xl border">
                   <div className="flex items-center gap-2 mb-2">
                     <CreditCard className="size-4 text-primary" />
                     <Label className="text-primary font-semibold">Identity (Driver's License)</Label>
                   </div>
-                  <div className="space-y-2"><Label className="text-xs">License Number</Label><Input name="dlNumber" placeholder="e.g. 123456789" /></div>
+                  <div className="space-y-2"><Label className="text-xs">License Number</Label><Input name="dlNumber" defaultValue={editingContact?.dlNumber} placeholder="e.g. 123456789" /></div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-2"><Label className="text-xs">Issuing State/Prov</Label><Input name="dlState" placeholder="e.g. AB, TX" maxLength={2} /></div>
-                    <div className="space-y-2"><Label className="text-xs">Expiry Date</Label><Input name="dlExpiry" type="date" /></div>
+                    <div className="space-y-2"><Label className="text-xs">Issuing State/Prov</Label><Input name="dlState" defaultValue={editingContact?.dlState} placeholder="e.g. AB, TX" maxLength={2} /></div>
+                    <div className="space-y-2"><Label className="text-xs">Expiry Date</Label><Input name="dlExpiry" type="date" defaultValue={editingContact?.dlExpiry} /></div>
                   </div>
                 </div>
               </div>
@@ -224,8 +264,8 @@ export default function ContactsPage() {
               />
 
               <div className="flex justify-end gap-2 mt-6">
-                <Button type="button" variant="outline" onClick={() => setShowAddContact(false)}>Cancel</Button>
-                <Button type="submit">Save Contact</Button>
+                <Button type="button" variant="outline" onClick={handleCancelForm}>Cancel</Button>
+                <Button type="submit">{editingContact ? "Save Updates" : "Save Contact"}</Button>
               </div>
             </form>
           )}
@@ -273,11 +313,12 @@ export default function ContactsPage() {
                   </div>
 
                   <div className="col-span-2 text-right flex justify-end gap-2 md:mt-0 mt-2">
-                    {/* View Button triggers the Popup */}
                     <Button variant="outline" size="sm" className="h-7 text-xs bg-background" onClick={() => setSelectedContact(contact)}>
-                      View Profile
+                      View
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => handleEditClick(contact)}>
+                      Edit
+                    </Button>
                   </div>
                 </div>
               ))
@@ -354,7 +395,6 @@ export default function ContactsPage() {
                 <div className="flex flex-col h-full">
                   <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Document Preview</h4>
                   <div className="flex-1 min-h-[250px] bg-muted/20 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-6 text-center">
-                    {/* Placeholder for actual image viewing */}
                     <ImageIcon className="size-12 text-muted-foreground/30 mb-3" />
                     <p className="text-sm font-medium text-foreground">No Document Rendered</p>
                     <p className="text-xs text-muted-foreground max-w-[200px] mt-1">

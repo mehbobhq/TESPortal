@@ -41,7 +41,7 @@ export default function ContactsPage() {
   const [selectedContact, setSelectedContact] = useState<any>(null) // For the View Popup
   const [editingContact, setEditingContact] = useState<any>(null) // For the Edit Form
 
-  // Data State (Starts completely empty for testing!)
+  // Data State
   const [contacts, setContacts] = useState<any[]>([])
 
   useEffect(() => {
@@ -285,11 +285,15 @@ export default function ContactsPage() {
               </div>
             ) : (
               contacts.filter(c => !c.isArchived).map((contact) => (
-                <div key={contact.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/5 transition-colors">
+                <div 
+                  key={contact.id} 
+                  onClick={() => setSelectedContact(contact)}
+                  className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/50 transition-colors cursor-pointer group"
+                >
                   
                   <div className="col-span-3 flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-foreground">{contact.firstName} {contact.lastName}</span>
+                      <span className="font-semibold text-foreground group-hover:text-primary transition-colors">{contact.firstName} {contact.lastName}</span>
                       {contact.isPrimary && <Badge className="text-[9px] h-4 px-1.5 uppercase">Primary</Badge>}
                     </div>
                     <span className="text-xs text-muted-foreground">{contact.role}</span>
@@ -313,10 +317,15 @@ export default function ContactsPage() {
                   </div>
 
                   <div className="col-span-2 text-right flex justify-end gap-2 md:mt-0 mt-2">
-                    <Button variant="outline" size="sm" className="h-7 text-xs bg-background" onClick={() => setSelectedContact(contact)}>
-                      View
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => handleEditClick(contact)}>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 text-xs" 
+                      onClick={(e) => {
+                        e.stopPropagation() // Prevents the row click from firing when editing
+                        handleEditClick(contact)
+                      }}
+                    >
                       Edit
                     </Button>
                   </div>

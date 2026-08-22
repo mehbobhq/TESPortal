@@ -37,9 +37,13 @@ export default function CompanyProfilePage() {
     )
   }
 
+  // --- Dynamic Visibility Logic ---
   const isCustomer = company.kind === "Customer"
+  const opRegion = company.region || "Canada Only"
+  const isCanada = opRegion === "Canada Only" || opRegion === "Cross-Border"
+  const isUS = opRegion === "US Only" || opRegion === "Cross-Border"
+  const showCustoms = opRegion === "Cross-Border"
 
-  // Tightened up FieldDisplay spacing
   const FieldDisplay = ({ label, value }: { label: string, value: any }) => (
     <div className="flex flex-col border-b pb-1.5">
       <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-0.5">{label}</p>
@@ -54,25 +58,25 @@ export default function CompanyProfilePage() {
     const zip = company[`${prefix}_zip`]
     const country = company[`${prefix}_country`]
     
-    if (!street && !city) return null;
+    if (!street && !city && !state) return null;
     return (
       <div className="text-sm font-medium leading-snug">
         {street}<br/>
-        {city}, {state} {zip}<br/>
-        {country === 'CA' ? 'Canada' : country === 'US' ? 'United States' : country}
+        {city && state ? `${city}, ${state} ${zip}` : ""}<br/>
+        {country}
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-4 pb-10"> {/* Reduced from gap-6 */}
+    <div className="flex flex-col gap-4 pb-10">
       
       {/* 1. HEADER & STATS BAR */}
-      <div className="bg-card rounded-lg border shadow-sm p-4 flex flex-col gap-4"> {/* Reduced from p-6 */}
+      <div className="bg-card rounded-lg border shadow-sm p-4 flex flex-col gap-4">
         <div className="flex justify-between items-start">
           
           <div className="flex items-start gap-4">
-            <div className="flex shrink-0 size-16 items-center justify-center rounded-lg border bg-muted/30 text-muted-foreground"> {/* Reduced logo size slightly */}
+            <div className="flex shrink-0 size-16 items-center justify-center rounded-lg border bg-muted/30 text-muted-foreground">
               <Building2 className="size-7 opacity-50" />
             </div>
             
@@ -86,11 +90,7 @@ export default function CompanyProfilePage() {
           </div>
 
           <div className="flex gap-2 shrink-0">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => router.push(`/companies/${company.id}/edit`)}
-            >
+            <Button variant="outline" size="sm" onClick={() => router.push(`/companies/${company.id}/edit`)}>
               Edit
             </Button>
             <Button variant="outline" size="sm">Check Status</Button>
@@ -98,10 +98,8 @@ export default function CompanyProfilePage() {
           </div>
         </div>
 
-        {/* COMPACT STATS BAR WITH RIGHT-ALIGNED ASSESSMENT */}
+        {/* COMPACT STATS BAR */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t">
-          
-          {/* Left Stats Group */}
           <div className="flex flex-wrap items-center gap-x-6 sm:gap-x-8 gap-y-3 text-sm">
             <div><p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Operating Region</p><p className="font-medium">{company.region}</p></div>
             <div><p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Staff</p><p className="font-medium">0</p></div>
@@ -111,7 +109,6 @@ export default function CompanyProfilePage() {
             <div><p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Items</p><p className="font-medium flex items-center gap-1 text-orange-500"><AlertCircle className="size-3.5"/> Pending</p></div>
           </div>
 
-          {/* Right Assessment Group */}
           <div className="bg-muted/40 border rounded-md px-4 py-1.5 text-right shrink-0">
             <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-0.5">Assessment Date</p>
             <p className="font-semibold text-sm flex items-center justify-end gap-1.5 text-primary">
@@ -119,21 +116,20 @@ export default function CompanyProfilePage() {
               {company.assessmentDate || "Pending"}
             </p>
           </div>
-
         </div>
       </div>
 
       {/* 2. MAIN GRID LAYOUT */}
-      <div className="grid lg:grid-cols-3 gap-4 items-start"> {/* Reduced from gap-6 */}
+      <div className="grid lg:grid-cols-3 gap-4 items-start">
         
         {/* LEFT COLUMN */}
-        <div className="lg:col-span-2 flex flex-col gap-4"> {/* Reduced from gap-6 */}
+        <div className="lg:col-span-2 flex flex-col gap-4">
           
           <Card>
-            <CardHeader className="bg-muted/30 py-2 border-b"> {/* Reduced from py-3 */}
+            <CardHeader className="bg-muted/30 py-2 border-b">
               <CardTitle className="text-sm flex items-center gap-2"><Building2 className="size-4 text-muted-foreground"/> Company Information</CardTitle>
             </CardHeader>
-            <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4"> {/* Tighter gaps */}
+            <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
               <FieldDisplay label="Company Name" value={company.name} />
               <FieldDisplay label="Company Record Type" value={company.kind} />
               <FieldDisplay label="DBA" value={company.dba} />
@@ -154,14 +150,19 @@ export default function CompanyProfilePage() {
                 <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Registered Address</p>
                 {formatAddress('reg') || <p className="text-sm text-muted-foreground">—</p>}
               </div>
-              <div className="flex flex-col gap-1 border-b pb-2">
-                <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Mailing Address</p>
-                {formatAddress('mail') || <p className="text-sm text-muted-foreground">—</p>}
-              </div>
-              <div className="flex flex-col gap-1 border-b pb-2">
-                <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Yard Address</p>
-                {formatAddress('yard') || <p className="text-sm text-muted-foreground">—</p>}
-              </div>
+              
+              {isCustomer && (
+                <>
+                  <div className="flex flex-col gap-1 border-b pb-2">
+                    <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Mailing Address</p>
+                    {formatAddress('mail') || <p className="text-sm text-muted-foreground">—</p>}
+                  </div>
+                  <div className="flex flex-col gap-1 border-b pb-2">
+                    <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Yard Address</p>
+                    {formatAddress('yard') || <p className="text-sm text-muted-foreground">—</p>}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -186,11 +187,20 @@ export default function CompanyProfilePage() {
                 <CardHeader className="bg-muted/30 py-2 border-b">
                   <CardTitle className="text-sm text-primary">Business Information</CardTitle>
                 </CardHeader>
-                <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
-                  <FieldDisplay label="Incorporation #" value={company.incorpNo} />
-                  <FieldDisplay label="Business #" value={company.businessNo} />
-                  <FieldDisplay label="GST / HST" value={company.gstHst} />
-                  <FieldDisplay label="EIN #" value={company.ein} />
+                <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                  <FieldDisplay 
+                    label={opRegion === "Canada Only" ? "Canadian Corporate Number" : opRegion === "US Only" ? "State File / Charter Number" : "Incorporation # / State File"} 
+                    value={company.incorpNo} 
+                  />
+                  <FieldDisplay 
+                    label={opRegion === "Canada Only" ? "CRA Business Number (BN)" : opRegion === "US Only" ? "IRS Employer ID (EIN)" : "Business Number / EIN"} 
+                    value={company.businessNo} 
+                  />
+                  <FieldDisplay 
+                    label={opRegion === "Canada Only" ? "GST / HST Account" : opRegion === "US Only" ? "State Sales Tax ID" : "Tax Registration #"} 
+                    value={company.gstHst} 
+                  />
+                  <FieldDisplay label="Registered Province/State" value={company.regCorpState} />
                 </CardContent>
               </Card>
 
@@ -199,10 +209,18 @@ export default function CompanyProfilePage() {
                   <CardTitle className="text-sm text-primary">Carrier Information</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
-                  <FieldDisplay label="MVID / RIN #" value={company.mvid} />
-                  <FieldDisplay label="NSC / CVOR #" value={company.nsc} />
-                  <FieldDisplay label="US DOT #" value={company.usdot} />
-                  <FieldDisplay label="MC #" value={company.mc} />
+                  {isCanada && (
+                    <>
+                      <FieldDisplay label="MVID / RIN #" value={company.mvid} />
+                      <FieldDisplay label="NSC / CVOR #" value={company.nsc} />
+                    </>
+                  )}
+                  {isUS && (
+                    <>
+                      <FieldDisplay label="US DOT #" value={company.usdot} />
+                      <FieldDisplay label="MC #" value={company.mc} />
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -213,30 +231,36 @@ export default function CompanyProfilePage() {
                 <CardContent className="pt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
                   <FieldDisplay label="IRP Account #" value={company.accIrp} />
                   <FieldDisplay label="IFTA Account #" value={company.accIfta} />
-                  <FieldDisplay label="NY HUT Account #" value={company.accNyhut} />
-                  <FieldDisplay label="NM WDT Account #" value={company.accNm} />
-                  <FieldDisplay label="Kentucky KYU #" value={company.accKyu} />
-                  <FieldDisplay label="Oregon Account #" value={company.accOr} />
-                  <FieldDisplay label="CT DRS Account #" value={company.accCt} />
+                  {isUS && (
+                    <>
+                      <FieldDisplay label="NY HUT Account #" value={company.accNyhut} />
+                      <FieldDisplay label="NM WDT Account #" value={company.accNm} />
+                      <FieldDisplay label="Kentucky KYU #" value={company.accKyu} />
+                      <FieldDisplay label="Oregon Account #" value={company.accOr} />
+                      <FieldDisplay label="CT DRS Account #" value={company.accCt} />
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
-              <div className="grid sm:grid-cols-2 gap-4"> {/* Reduced from gap-6 */}
-                <Card>
-                  <CardHeader className="bg-muted/30 py-2 border-b">
-                    <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-4 grid gap-x-6 gap-y-4">
-                    <FieldDisplay label="SCAC" value={company.scac} />
-                    <FieldDisplay label="Carrier Code" value={company.carrierCode} />
-                  </CardContent>
-                </Card>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {showCustoms && (
+                  <Card>
+                    <CardHeader className="bg-muted/30 py-2 border-b">
+                      <CardTitle className="text-sm text-primary">Customs Information</CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-4 grid gap-x-6 gap-y-4">
+                      <FieldDisplay label="SCAC" value={company.scac} />
+                      <FieldDisplay label="Carrier Code" value={company.carrierCode} />
+                    </CardContent>
+                  </Card>
+                )}
 
-                <Card>
+                <Card className={!showCustoms ? "sm:col-span-2" : ""}>
                   <CardHeader className="bg-muted/30 py-2 border-b">
                     <CardTitle className="text-sm text-primary">Fleet Information</CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-4 grid gap-x-6 gap-y-4">
+                  <CardContent className="pt-4 grid sm:grid-cols-2 gap-x-6 gap-y-4">
                     <FieldDisplay label="Truck GPS Provider" value={company.gpsProvider} />
                     <FieldDisplay label="Fuel Provider" value={company.fuelProvider} />
                   </CardContent>
@@ -247,7 +271,7 @@ export default function CompanyProfilePage() {
         </div>
 
         {/* RIGHT COLUMN: Sticky Sidebar */}
-        <div className="lg:col-span-1 sticky top-16 flex flex-col gap-4"> {/* Tightened top sticking point */}
+        <div className="lg:col-span-1 sticky top-16 flex flex-col gap-4">
           <Card className="shadow-sm">
             <Tabs defaultValue="activity" className="w-full">
               <CardHeader className="py-1.5 border-b px-0 bg-muted/10">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, FileShield, Briefcase } from "lucide-react"
+import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, ShieldCheck, Briefcase } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"

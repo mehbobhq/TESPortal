@@ -24,23 +24,21 @@ export function AppSidebar() {
   const pathname = usePathname()
 
   // --- CONTEXTUAL STATE ---
-  const [companyType, setCompanyType] = useState<string | null>(null)
+  const [activeCompany, setActiveCompany] = useState<any | null>(null)
 
   // 1. Identify if we are in a company context
   const pathSegments = pathname.split('/').filter(Boolean)
   const isCompanyContext = pathSegments[0] === "companies" && pathSegments[1] && pathSegments[1] !== "new"
   const companyId = isCompanyContext ? pathSegments[1] : null
 
-  // 2. Fetch the company type securely on the client to avoid Next.js hydration errors
+  // 2. Fetch the full company object securely
   useEffect(() => {
     if (companyId) {
       const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
       const found = savedCompanies.find((c: any) => c.id === companyId)
-      if (found) {
-        setCompanyType(found.kind)
-      }
+      setActiveCompany(found || null)
     } else {
-      setCompanyType(null)
+      setActiveCompany(null)
     }
   }, [companyId])
 
@@ -79,82 +77,110 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {navGroups.map((group) => {
-          
-          // Create a mutable copy of the navigation items
-          let processedItems = [...group.items]
+        
+        {/* ========================================================= */}
+        {/* SECTION 1: PLATFORM (Global Navigation)                   */}
+        {/* ========================================================= */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">
+            Platform
+          </SidebarGroupLabel>
+          <SidebarMenu>
+            {navGroups.map((group) => {
+              // Skip the compliance/workspace group here
+              const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
+              if (isComplianceGroup) return null
 
-          // Detect if this is the "Compliance" group by checking a few known items
-          const isComplianceGroup = group.items.some(item => 
-            ['Profile', 'Business', 'Contacts', 'Tax Filing', 'Vehicles'].includes(item.title)
-          )
+              return group.items.map((item) => {
+                let isActive = false
+                if (item.url === "/") {
+                  isActive = pathname === "/"
+                } else if (item.url === "/companies") {
+                  isActive = pathname === "/companies" || pathname === "/companies/new"
+                } else {
+                  isActive = pathname.startsWith(item.url)
+                }
 
-          // --- THE MAGIC FILTER & REWRITE ENGINE ---
-          if (isComplianceGroup && companyId) {
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
+                      <Link href={item.url}><span>{item.title}</span></Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
+              })
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
+
+        {/* ========================================================= */}
+        {/* SECTION 2: COMPANY WORKSPACE (Contextual Navigation)      */}
+        {/* ========================================================= */}
+        {activeCompany && (
+          <SidebarGroup className="mt-2 pt-4 border-t border-sidebar-border">
+            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+              Company Workspace
+            </SidebarGroupLabel>
             
-            // Step 1: Filter out unnecessary tabs if it is NOT a Customer/Prospect
-            const isCustomerOrProspect = companyType === "Customer" || companyType === "Prospect"
-            const allowedForOthers = ["Customers", "Profile", "Contacts", "Credentials", "Settings"]
+            {/* ⚓ THE CONTEXT ANCHOR CARD ⚓ */}
+            <div className="mb-4 px-2">
+              <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 flex flex-col gap-1 shadow-sm transition-all">
+                <span className="font-bold text-primary truncate text-sm leading-tight">
+                  {activeCompany.name}
+                </span>
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+                  <span className="truncate">{activeCompany.region}</span>
+                  <span className="size-1 shrink-0 rounded-full bg-muted-foreground/50"></span>
+                  <span className={activeCompany.status === "Active" ? "text-green-600" : "text-orange-500"}>
+                    {activeCompany.status || "Active"}
+                  </span>
+                </div>
+              </div>
+            </div>
 
-            // Only filter if we have loaded the companyType and it's not a Customer/Prospect
-            if (companyType && !isCustomerOrProspect) {
-              processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
-            }
+            <SidebarMenu>
+              {navGroups.map((group) => {
+                const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
+                if (!isComplianceGroup) return null
 
-            // Step 2: Rewrite URLs to inject the specific company ID
-            const companySpecificTabs = [
-              "Profile", "Business", "Contacts", "Insurance", "Authorities", 
-              "Tax Filing", "Vehicles", "Drivers", "Citations", "Record of Events", 
-              "Customs", "Programs", "Credentials", "Settings"
-            ]
+                let processedItems = [...group.items]
+                const isCustomerOrProspect = activeCompany.kind === "Customer" || activeCompany.kind === "Prospect"
+                const allowedForOthers = ["Profile", "Contacts", "Credentials", "Settings"]
 
-            processedItems = processedItems.map(item => {
-              if (companySpecificTabs.includes(item.title)) {
-                // Formats titles to URLs (e.g., "Record of Events" -> "record-of-events")
-                const formattedPath = item.title.toLowerCase().replace(/ /g, '-')
-                return { ...item, url: `/companies/${companyId}/${formattedPath}` }
-              }
-              return item
-            })
-          }
+                // Apply dynamic hiding for non-customers
+                if (!isCustomerOrProspect) {
+                  processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
+                }
 
-          return (
-            <SidebarGroup key={group.label}>
-              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-              <SidebarMenu>
-                {processedItems.map((item) => {
+                const companySpecificTabs = [
+                  "Profile", "Business", "Contacts", "Insurance", "Authorities", 
+                  "Tax Filing", "Vehicles", "Drivers", "Citations", "Record of Events", 
+                  "Customs", "Programs", "Credentials", "Settings"
+                ]
+
+                return processedItems.map(item => {
+                  let finalUrl = item.url
                   
-                  // SMART ACTIVE STATE:
-                  let isActive = false
-                  if (item.url === "/") {
-                    isActive = pathname === "/"
-                  } else if (item.url === "/companies") {
-                    // Drop global "Companies" highlight if inside a company profile
-                    isActive = pathname === "/companies" || pathname === "/companies/new"
-                  } else {
-                    // Exact match or sub-route match for rewritten URLs
-                    isActive = pathname === item.url || pathname.startsWith(item.url + "/")
+                  // Inject the dynamic ID into the routes
+                  if (companySpecificTabs.includes(item.title)) {
+                    const formattedPath = item.title.toLowerCase().replace(/ /g, '-')
+                    finalUrl = `/companies/${companyId}/${formattedPath}`
                   }
 
+                  const isActive = pathname === finalUrl || pathname.startsWith(finalUrl + "/")
+
                   return (
-                    // Using item.title as key because item.url might be dynamically modified
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive}
-                        tooltip={item.title}
-                      >
-                        <Link href={item.url}>
-                          <span>{item.title}</span>
-                        </Link>
+                      <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
+                        <Link href={finalUrl}><span>{item.title}</span></Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   )
-                })}
-              </SidebarMenu>
-            </SidebarGroup>
-          )
-        })}
+                })
+              })}
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-sidebar-border border-t">

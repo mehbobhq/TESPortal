@@ -20,6 +20,7 @@ export default function BusinessPage() {
   // UI State for inline forms
   const [showAddShareholder, setShowAddShareholder] = useState(false)
 
+  // Initialize with empty arrays for a clean slate
   const [shareholders, setShareholders] = useState<any[]>([])
   const [annualReturns, setAnnualReturns] = useState<any[]>([])
 
@@ -28,16 +29,6 @@ export default function BusinessPage() {
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
     setCompany(found || null)
-
-    setShareholders([
-      { id: `${id}-SHR-001`, name: "John Doe", shares: "60%", address: "123 Main St, Calgary, AB, Canada", isArchived: false },
-      { id: `${id}-SHR-002`, name: "Jane Smith", shares: "40%", address: "456 West Ave, Edmonton, AB, Canada", isArchived: false }
-    ])
-
-    setAnnualReturns([
-      { id: `${id}-RTN-001`, dueDate: "2025-05-15", filedDate: "2025-05-10", filedBy: "Admin", isArchived: false }
-    ])
-
     setLoading(false)
   }, [params.id])
 
@@ -129,7 +120,6 @@ export default function BusinessPage() {
         </CardHeader>
         <CardContent className="p-0">
           
-          {/* Inline Add Form (Replaces Dialog) */}
           {showAddShareholder && (
             <div className="p-6 bg-muted/10 border-b">
               <h4 className="font-semibold text-sm mb-4">Add Shareholder / Director</h4>
@@ -153,21 +143,28 @@ export default function BusinessPage() {
               <div className="col-span-3">Address</div>
               <div className="col-span-2 text-right">Actions</div>
             </div>
-            {shareholders.filter(s => showArchived || !s.isArchived).map((shr) => (
-              <div key={shr.id} className={`grid grid-cols-12 gap-4 p-4 items-center ${shr.isArchived ? 'opacity-50 bg-muted/10' : ''}`}>
-                <div className="col-span-2 font-mono text-xs">{shr.id}</div>
-                <div className="col-span-3 font-medium flex items-center gap-2">
-                  {shr.name}
-                  {shr.isArchived && <Badge variant="secondary" className="text-[10px]">Archived</Badge>}
-                </div>
-                <div className="col-span-2">{shr.shares}</div>
-                <div className="col-span-3 text-muted-foreground text-xs truncate" title={shr.address}>{shr.address}</div>
-                <div className="col-span-2 text-right flex justify-end gap-2">
-                  <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
-                  {!shr.isArchived && <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive"><FileArchive className="size-3.5"/></Button>}
-                </div>
+            
+            {shareholders.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">
+                No shareholder or director records found.
               </div>
-            ))}
+            ) : (
+              shareholders.filter(s => showArchived || !s.isArchived).map((shr) => (
+                <div key={shr.id} className={`grid grid-cols-12 gap-4 p-4 items-center ${shr.isArchived ? 'opacity-50 bg-muted/10' : ''}`}>
+                  <div className="col-span-2 font-mono text-xs">{shr.id}</div>
+                  <div className="col-span-3 font-medium flex items-center gap-2">
+                    {shr.name}
+                    {shr.isArchived && <Badge variant="secondary" className="text-[10px]">Archived</Badge>}
+                  </div>
+                  <div className="col-span-2">{shr.shares}</div>
+                  <div className="col-span-3 text-muted-foreground text-xs truncate" title={shr.address}>{shr.address}</div>
+                  <div className="col-span-2 text-right flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
+                    {!shr.isArchived && <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive"><FileArchive className="size-3.5"/></Button>}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </CardContent>
       </Card>
@@ -190,18 +187,25 @@ export default function BusinessPage() {
               <div className="col-span-2">Filed By</div>
               <div className="col-span-3 text-right">Actions</div>
             </div>
-            {annualReturns.map((rtn) => (
-              <div key={rtn.id} className="grid grid-cols-12 gap-4 p-4 items-center">
-                <div className="col-span-3 font-mono text-xs">{rtn.id}</div>
-                <div className="col-span-2">{rtn.dueDate}</div>
-                <div className="col-span-2 font-medium text-green-600">{rtn.filedDate}</div>
-                <div className="col-span-2 text-muted-foreground">{rtn.filedBy}</div>
-                <div className="col-span-3 text-right flex justify-end gap-2">
-                  <Button variant="outline" size="sm" className="h-7 text-xs"><UploadCloud className="size-3 mr-1"/> Upload</Button>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
-                </div>
+            
+            {annualReturns.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">
+                No annual returns filed yet.
               </div>
-            ))}
+            ) : (
+              annualReturns.map((rtn) => (
+                <div key={rtn.id} className="grid grid-cols-12 gap-4 p-4 items-center">
+                  <div className="col-span-3 font-mono text-xs">{rtn.id}</div>
+                  <div className="col-span-2">{rtn.dueDate}</div>
+                  <div className="col-span-2 font-medium text-green-600">{rtn.filedDate}</div>
+                  <div className="col-span-2 text-muted-foreground">{rtn.filedBy}</div>
+                  <div className="col-span-3 text-right flex justify-end gap-2">
+                    <Button variant="outline" size="sm" className="h-7 text-xs"><UploadCloud className="size-3 mr-1"/> Upload</Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </CardContent>
       </Card>

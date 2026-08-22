@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard, Image as ImageIcon } from "lucide-react"
+import { ArrowLeft, Building2, Plus, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard, Image as ImageIcon, Trash2, Link as LinkIcon, ExternalLink } from "lucide-react"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -38,10 +39,10 @@ export default function ContactsPage() {
   // UI States
   const [showAddContact, setShowAddContact] = useState(false)
   const [isPrimaryChecked, setIsPrimaryChecked] = useState(false)
-  const [selectedContact, setSelectedContact] = useState<any>(null) // For the View Popup
-  const [editingContact, setEditingContact] = useState<any>(null) // For the Edit Form
+  const [selectedContact, setSelectedContact] = useState<any>(null)
+  const [editingContact, setEditingContact] = useState<any>(null)
 
-  // Data State
+  // Data State with Relational "Global ID" example
   const [contacts, setContacts] = useState<any[]>([])
 
   useEffect(() => {
@@ -49,6 +50,31 @@ export default function ContactsPage() {
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
     setCompany(found || null)
+    
+    // Injecting a sample record to demonstrate the Relational Graph
+    if (found) {
+      setContacts([{
+        id: `${id}-CNT-9771`,
+        globalId: `USR-88492`, // The universal human ID spanning multiple companies
+        firstName: "Tejinder",
+        lastName: "Khosa",
+        role: "Owner",
+        email: "john@abc.com",
+        phone: "5872064793",
+        dlNumber: "AB12345678",
+        dlState: "AB",
+        dlExpiry: "2028-02-09",
+        isPrimary: true,
+        isArchived: false,
+        createdAt: new Date().toISOString(),
+        // Simulated graph relations
+        linkedEntities: [
+          { companyId: id, companyName: found.name, role: "Owner" },
+          { companyId: "CMP-44112", companyName: "Khosa Transport LLC", role: "Director" },
+          { companyId: "CMP-99381", companyName: "Apex Logistics Inc", role: "Consultant" }
+        ]
+      }])
+    }
     setLoading(false)
   }, [params.id])
 
@@ -57,11 +83,17 @@ export default function ContactsPage() {
 
   // --- HANDLERS ---
   const generateId = () => `${company.id}-CNT-${Math.floor(1000 + Math.random() * 9000)}`
+  const generateGlobalId = () => `USR-${Math.floor(10000 + Math.random() * 90000)}`
 
   const handleEditClick = (contact: any) => {
     setEditingContact(contact)
     setIsPrimaryChecked(contact.isPrimary)
     setShowAddContact(true)
+  }
+
+  const handleDeleteClick = (contactId: string) => {
+    // In the future, this will toggle isArchived: true
+    setContacts(contacts.filter(c => c.id !== contactId))
   }
 
   const handleCancelForm = () => {
@@ -74,14 +106,12 @@ export default function ContactsPage() {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
-    // If setting as primary, uncheck all others
     let updatedContacts = [...contacts]
     if (isPrimaryChecked) {
       updatedContacts = updatedContacts.map(c => ({ ...c, isPrimary: false }))
     }
 
     if (editingContact) {
-      // UPDATE EXISTING RECORD
       updatedContacts = updatedContacts.map(c => {
         if (c.id === editingContact.id) {
           return {
@@ -100,9 +130,9 @@ export default function ContactsPage() {
         return c
       })
     } else {
-      // ADD NEW RECORD
       const newContact = {
         id: generateId(),
+        globalId: generateGlobalId(), // New human gets a global ID
         firstName: formData.get("firstName"),
         lastName: formData.get("lastName"),
         role: formData.get("role"),
@@ -113,7 +143,8 @@ export default function ContactsPage() {
         dlExpiry: formData.get("dlExpiry"),
         isPrimary: isPrimaryChecked,
         isArchived: false,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        linkedEntities: [{ companyId: company.id, companyName: company.name, role: formData.get("role") }]
       }
       updatedContacts = [newContact, ...updatedContacts]
     }
@@ -220,8 +251,6 @@ export default function ContactsPage() {
               </div>
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                
-                {/* Basic Info */}
                 <div className="space-y-4 lg:col-span-2 grid sm:grid-cols-2 gap-4">
                   <div className="space-y-2 mt-4"><Label>First Name *</Label><Input name="firstName" defaultValue={editingContact?.firstName} required /></div>
                   <div className="space-y-2 mt-4"><Label>Last Name *</Label><Input name="lastName" defaultValue={editingContact?.lastName} required /></div>
@@ -244,7 +273,6 @@ export default function ContactsPage() {
                   <div className="space-y-2 sm:col-span-2"><Label>Email Address *</Label><Input name="email" type="email" defaultValue={editingContact?.email} required /></div>
                 </div>
 
-                {/* Identity / DL Info */}
                 <div className="space-y-4 bg-background p-4 rounded-xl border">
                   <div className="flex items-center gap-2 mb-2">
                     <CreditCard className="size-4 text-primary" />
@@ -322,11 +350,22 @@ export default function ContactsPage() {
                       size="sm" 
                       className="h-7 text-xs" 
                       onClick={(e) => {
-                        e.stopPropagation() // Prevents the row click from firing when editing
+                        e.stopPropagation() 
                         handleEditClick(contact)
                       }}
                     >
                       Edit
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10" 
+                      onClick={(e) => {
+                        e.stopPropagation() 
+                        handleDeleteClick(contact.id)
+                      }}
+                    >
+                      <Trash2 className="size-3.5" />
                     </Button>
                   </div>
                 </div>
@@ -353,7 +392,7 @@ export default function ContactsPage() {
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-sm text-muted-foreground">{selectedContact.role}</span>
                       <span className="text-muted-foreground/30">•</span>
-                      <span className="text-xs font-mono text-muted-foreground">{selectedContact.id}</span>
+                      <span className="text-xs font-mono text-muted-foreground" title="Global Universal ID">Global: {selectedContact.globalId}</span>
                       {selectedContact.isPrimary && <Badge className="text-[9px] h-4 px-1.5 uppercase ml-2">Primary Contact</Badge>}
                     </div>
                   </div>
@@ -397,6 +436,31 @@ export default function ContactsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* THE RELATIONAL GRAPH MODULE */}
+                  {selectedContact.linkedEntities && selectedContact.linkedEntities.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <LinkIcon className="size-3.5" /> Associated Entities
+                      </h4>
+                      <div className="space-y-2">
+                        {selectedContact.linkedEntities.map((entity: any, idx: number) => (
+                          <Link href={`/companies/${entity.companyId}/profile`} key={idx} onClick={() => setSelectedContact(null)}>
+                            <div className="flex justify-between items-center bg-muted/10 hover:bg-primary/5 p-3 rounded-lg border transition-colors cursor-pointer group">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium group-hover:text-primary transition-colors">{entity.companyName}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono">{entity.companyId}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-muted-foreground bg-background px-2 py-1 rounded-md border">{entity.role}</span>
+                                <ExternalLink className="size-3.5 text-muted-foreground/50 group-hover:text-primary" />
+                              </div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                 </div>
 

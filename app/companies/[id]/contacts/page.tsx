@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard, Image as ImageIcon, Trash2, Link as LinkIcon, ExternalLink, Send } from "lucide-react"
+import { ArrowLeft, Building2, Plus, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard, Image as ImageIcon, Trash2, Link as LinkIcon, ExternalLink, Send, Sparkles } from "lucide-react"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
@@ -15,14 +15,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 
-const DocumentUploadZone = ({ title, description }: { title: string, description: string }) => (
-  <div className="w-full mt-4 border-2 border-dashed border-primary/20 rounded-xl p-6 flex flex-col items-center justify-center text-center bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer group">
-    <div className="p-3 bg-background rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform">
-      <ScanLine className="size-5 text-primary" />
+// --- REUSABLE OCR UPLOAD ZONE (Upgraded for Automation Focus) ---
+const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string, description: string, isAutoFill?: boolean }) => (
+  <div className={`w-full border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group ${isAutoFill ? 'border-blue-500/30 bg-blue-50/50 hover:bg-blue-50 dark:bg-blue-950/10 dark:hover:bg-blue-900/20' : 'border-primary/20 bg-primary/5 hover:bg-primary/10'}`}>
+    <div className={`p-3 rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform ${isAutoFill ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400' : 'bg-background text-primary'}`}>
+      {isAutoFill ? <Sparkles className="size-5" /> : <ScanLine className="size-5" />}
     </div>
     <h3 className="font-semibold text-sm text-foreground mb-1">{title}</h3>
     <p className="text-xs text-muted-foreground max-w-sm mb-3">{description}</p>
-    <Button type="button" variant="secondary" size="sm" className="pointer-events-none h-7 text-xs">
+    <Button type="button" variant={isAutoFill ? "default" : "secondary"} size="sm" className={`pointer-events-none h-7 text-xs ${isAutoFill ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}>
       Browse Files
     </Button>
   </div>
@@ -67,10 +68,11 @@ export default function ContactsPage() {
         linkedEntities: [
           { companyId: id, companyName: found.name, role: "Owner" },
           { companyId: "CMP-44112", companyName: "Khosa Transport LLC", role: "Director" }
-        ]
+        ],
+        hasDocumentScanned: true
       }
       setContacts([sampleContact])
-      setSelectedContact(sampleContact) // Auto-select first contact for the preview pane
+      setSelectedContact(sampleContact) 
     }
     setLoading(false)
   }, [params.id])
@@ -143,7 +145,8 @@ export default function ContactsPage() {
         isArchived: false,
         createdAt: new Date().toISOString(),
         notes: "",
-        linkedEntities: [{ companyId: company.id, companyName: company.name, role: formData.get("role") }]
+        linkedEntities: [{ companyId: company.id, companyName: company.name, role: formData.get("role") }],
+        hasDocumentScanned: formData.get("dlNumber") ? true : false
       }
       updatedContacts = [newContact, ...updatedContacts]
       setSelectedContact(newContact)
@@ -180,9 +183,14 @@ export default function ContactsPage() {
                 <CardTitle className="text-sm flex items-center gap-2">Personnel Directory</CardTitle>
                 <CardDescription className="text-xs mt-1">Officers, managers, and administrative contacts.</CardDescription>
               </div>
-              <Button size="sm" onClick={() => { setShowAddContact(true); setEditingContact(null); setIsPrimaryChecked(false); }}>
-                <Plus className="size-4 mr-1"/> Add Contact
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => { setShowAddContact(true); setEditingContact(null); }}>
+                  <ScanLine className="size-4 mr-1"/> Scan ID (OCR)
+                </Button>
+                <Button size="sm" onClick={() => { setShowAddContact(true); setEditingContact(null); setIsPrimaryChecked(false); }}>
+                  <Plus className="size-4 mr-1"/> Manual Add
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               
@@ -195,6 +203,15 @@ export default function ContactsPage() {
                       <Checkbox id="isPrimary" checked={isPrimaryChecked} onCheckedChange={(c) => setIsPrimaryChecked(c === true)} />
                       <Label htmlFor="isPrimary" className="text-xs font-medium cursor-pointer">Set as Primary</Label>
                     </div>
+                  </div>
+
+                  {/* OCR FIRST ARCHITECTURE: Upload is at the absolute top of the creation flow */}
+                  <div className="mb-6">
+                    <DocumentUploadZone 
+                      isAutoFill={true}
+                      title="Upload ID for Auto-Fill"
+                      description="Drop a Driver's License or Government ID here. AI will extract Name, DOB, and License details instantly."
+                    />
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -243,7 +260,11 @@ export default function ContactsPage() {
                 </div>
 
                 {contacts.length === 0 ? (
-                  <div className="p-10 text-center text-muted-foreground text-sm">No records found. Click "Add Contact" to begin.</div>
+                  <div className="p-10 text-center flex flex-col items-center justify-center">
+                     <ScanLine className="size-10 text-muted-foreground/30 mb-3" />
+                     <p className="text-sm font-medium text-muted-foreground">No records found.</p>
+                     <p className="text-xs text-muted-foreground mt-1 max-w-[250px]">Click "Scan ID (OCR)" to instantly create a profile from a document.</p>
+                  </div>
                 ) : (
                   contacts.map((contact) => {
                     const isSelected = selectedContact?.id === contact.id
@@ -358,24 +379,28 @@ export default function ContactsPage() {
                   </TabsContent>
 
                   {/* ID & LINKS TAB */}
-                  <TabsContent value="id" className="m-0 p-4 space-y-6 h-[320px] overflow-y-auto">
+                  <TabsContent value="id" className="m-0 p-4 space-y-6 h-[400px] overflow-y-auto">
                     
-                    {/* ID Preview */}
+                    {/* ID Preview or Upload Prompt */}
                     <div>
-                      <Label className="text-xs text-muted-foreground uppercase tracking-wider font-bold mb-2 block">Identity Document</Label>
-                      {selectedContact.dlNumber ? (
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wider font-bold mb-2 block">Identity Verification</Label>
+                      
+                      {selectedContact.hasDocumentScanned ? (
                         <div className="bg-muted/20 border rounded-lg p-3">
                           <div className="flex justify-between items-center mb-2">
                             <span className="text-xs font-mono font-medium">{selectedContact.dlNumber}</span>
                             <Badge variant="outline" className="text-[10px]">{selectedContact.dlState}</Badge>
                           </div>
-                          <div className="h-[100px] border border-dashed rounded flex flex-col items-center justify-center bg-background text-muted-foreground">
+                          <div className="h-[120px] border border-dashed rounded flex flex-col items-center justify-center bg-background text-muted-foreground">
                              <ImageIcon className="size-6 mb-1 opacity-50" />
-                             <span className="text-[10px]">No Scan Uploaded</span>
+                             <span className="text-[10px]">Preview Rendered</span>
                           </div>
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground italic">No ID details provided.</p>
+                        <DocumentUploadZone 
+                          title="Missing Document"
+                          description="Drop ID here to verify this profile."
+                        />
                       )}
                     </div>
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, Archive, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard } from "lucide-react"
+import { ArrowLeft, Building2, Plus, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard, Image as ImageIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -11,6 +11,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 
 // --- REUSABLE OCR UPLOAD ZONE ---
 const DocumentUploadZone = ({ title, description }: { title: string, description: string }) => (
@@ -31,13 +34,13 @@ export default function ContactsPage() {
   const router = useRouter()
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [showArchived, setShowArchived] = useState(false)
   
-  // UI State for inline form
+  // UI States
   const [showAddContact, setShowAddContact] = useState(false)
   const [isPrimaryChecked, setIsPrimaryChecked] = useState(false)
+  const [selectedContact, setSelectedContact] = useState<any>(null)
 
-  // Data State
+  // Data State (Starts completely empty for testing)
   const [contacts, setContacts] = useState<any[]>([])
 
   useEffect(() => {
@@ -45,24 +48,6 @@ export default function ContactsPage() {
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
     setCompany(found || null)
-    
-    // Simulated database fetch for Contacts
-    setContacts([
-      {
-        id: `${id}-CNT-1001`,
-        firstName: "Michael",
-        lastName: "Scott",
-        role: "Owner",
-        email: "michael@example.com",
-        phone: "+1 (555) 123-4567",
-        isPrimary: true,
-        dlNumber: "AB-123456-78",
-        dlState: "AB",
-        dlExpiry: "2029-05-12",
-        isArchived: false
-      }
-    ])
-    
     setLoading(false)
   }, [params.id])
 
@@ -76,7 +61,6 @@ export default function ContactsPage() {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
-    // If they checked "Primary", uncheck all other primary contacts
     const updatedContacts = isPrimaryChecked 
       ? contacts.map(c => ({ ...c, isPrimary: false })) 
       : [...contacts]
@@ -92,7 +76,8 @@ export default function ContactsPage() {
       dlState: formData.get("dlState"),
       dlExpiry: formData.get("dlExpiry"),
       isPrimary: isPrimaryChecked,
-      isArchived: false
+      isArchived: false,
+      createdAt: new Date().toISOString()
     }
     
     setContacts([newContact, ...updatedContacts])
@@ -128,12 +113,6 @@ export default function ContactsPage() {
               <span className="text-muted-foreground uppercase text-[10px] font-bold tracking-wider block mb-1">Operating Region</span>
               <span className="font-semibold flex items-center gap-1.5"><CheckCircle2 className="size-3.5 text-primary"/> {company.region}</span>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowArchived(!showArchived)}>
-              {showArchived ? <FileText className="size-4 mr-2" /> : <Archive className="size-4 mr-2" />}
-              {showArchived ? "Hide Archived" : "View Archive"}
-            </Button>
           </div>
         </div>
       </div>
@@ -204,8 +183,6 @@ export default function ContactsPage() {
               </div>
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                
-                {/* Basic Info */}
                 <div className="space-y-4 lg:col-span-2 grid sm:grid-cols-2 gap-4">
                   <div className="space-y-2 mt-4"><Label>First Name *</Label><Input name="firstName" required /></div>
                   <div className="space-y-2 mt-4"><Label>Last Name *</Label><Input name="lastName" required /></div>
@@ -228,7 +205,6 @@ export default function ContactsPage() {
                   <div className="space-y-2 sm:col-span-2"><Label>Email Address *</Label><Input name="email" type="email" required /></div>
                 </div>
 
-                {/* Identity / DL Info */}
                 <div className="space-y-4 bg-background p-4 rounded-xl border">
                   <div className="flex items-center gap-2 mb-2">
                     <CreditCard className="size-4 text-primary" />
@@ -265,30 +241,26 @@ export default function ContactsPage() {
 
             {contacts.length === 0 ? (
               <div className="p-10 text-center text-muted-foreground text-sm">
-                No corporate personnel records found.
+                No corporate personnel records found. Click "Add Contact" to begin.
               </div>
             ) : (
-              contacts.filter(c => showArchived || !c.isArchived).map((contact) => (
-                <div key={contact.id} className={`grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center ${contact.isArchived ? 'opacity-50 bg-muted/5' : ''}`}>
+              contacts.filter(c => !c.isArchived).map((contact) => (
+                <div key={contact.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/5 transition-colors">
                   
-                  {/* Name & Role */}
                   <div className="col-span-3 flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-foreground">{contact.firstName} {contact.lastName}</span>
                       {contact.isPrimary && <Badge className="text-[9px] h-4 px-1.5 uppercase">Primary</Badge>}
-                      {contact.isArchived && <Badge variant="secondary" className="text-[9px] h-4 px-1.5 uppercase">Archived</Badge>}
                     </div>
                     <span className="text-xs text-muted-foreground">{contact.role}</span>
                     <span className="text-[10px] font-mono text-muted-foreground/60">{contact.id}</span>
                   </div>
 
-                  {/* Contact Methods */}
                   <div className="col-span-4 flex flex-col gap-1 text-sm">
                     <div className="flex items-center gap-2"><Phone className="size-3.5 text-muted-foreground"/> {contact.phone}</div>
                     <div className="flex items-center gap-2"><Mail className="size-3.5 text-muted-foreground"/> {contact.email}</div>
                   </div>
 
-                  {/* ID / DL */}
                   <div className="col-span-3 flex flex-col gap-0.5">
                     {contact.dlNumber ? (
                       <>
@@ -300,11 +272,13 @@ export default function ContactsPage() {
                     )}
                   </div>
 
-                  {/* Actions */}
                   <div className="col-span-2 text-right flex justify-end gap-2 md:mt-0 mt-2">
+                    {/* View Button triggers the Popup */}
+                    <Button variant="outline" size="sm" className="h-7 text-xs bg-background" onClick={() => setSelectedContact(contact)}>
+                      View Profile
+                    </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
                   </div>
-
                 </div>
               ))
             )}
@@ -312,6 +286,117 @@ export default function ContactsPage() {
         </CardContent>
       </Card>
 
+      {/* 4. DETAILED VIEW POPUP (MODAL) */}
+      <Dialog open={!!selectedContact} onOpenChange={(open) => !open && setSelectedContact(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0 gap-0">
+          
+          {selectedContact && (
+            <>
+              {/* Modal Header */}
+              <div className="bg-muted/30 border-b p-6 flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex shrink-0 items-center justify-center size-14 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    <User className="size-6" />
+                  </div>
+                  <div>
+                    <DialogTitle className="text-xl">{selectedContact.firstName} {selectedContact.lastName}</DialogTitle>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-sm text-muted-foreground">{selectedContact.role}</span>
+                      <span className="text-muted-foreground/30">•</span>
+                      <span className="text-xs font-mono text-muted-foreground">{selectedContact.id}</span>
+                      {selectedContact.isPrimary && <Badge className="text-[9px] h-4 px-1.5 uppercase ml-2">Primary Contact</Badge>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Body: Split View */}
+              <div className="p-6 grid md:grid-cols-2 gap-8">
+                
+                {/* Left Side: Data Details */}
+                <div className="space-y-6">
+                  
+                  <div>
+                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Contact Information</h4>
+                    <div className="space-y-3 bg-muted/10 p-4 rounded-lg border">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground flex items-center gap-2"><Phone className="size-4"/> Phone</span>
+                        <span className="text-sm font-medium">{selectedContact.phone}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground flex items-center gap-2"><Mail className="size-4"/> Email</span>
+                        <span className="text-sm font-medium">{selectedContact.email}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Identity Records</h4>
+                    <div className="space-y-3 bg-muted/10 p-4 rounded-lg border">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground flex items-center gap-2"><CreditCard className="size-4"/> DL Number</span>
+                        <span className="text-sm font-mono font-medium">{selectedContact.dlNumber || "—"}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Issuing State/Prov</span>
+                        <span className="text-sm font-medium">{selectedContact.dlState || "—"}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Expiry Date</span>
+                        <span className="text-sm font-medium">{selectedContact.dlExpiry || "—"}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                </div>
+
+                {/* Right Side: Document Preview Box */}
+                <div className="flex flex-col h-full">
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Document Preview</h4>
+                  <div className="flex-1 min-h-[250px] bg-muted/20 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-6 text-center">
+                    {/* Placeholder for actual image viewing */}
+                    <ImageIcon className="size-12 text-muted-foreground/30 mb-3" />
+                    <p className="text-sm font-medium text-foreground">No Document Rendered</p>
+                    <p className="text-xs text-muted-foreground max-w-[200px] mt-1">
+                      Uploaded identification documents will be displayed here for visual verification.
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Modal Footer: Activity & Notes */}
+              <div className="border-t bg-muted/5 p-6 pt-4">
+                <Tabs defaultValue="notes" className="w-full">
+                  <TabsList className="grid w-full max-w-[400px] grid-cols-2">
+                    <TabsTrigger value="notes">Notes</TabsTrigger>
+                    <TabsTrigger value="activity">Activity Log</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="notes" className="mt-4 space-y-3">
+                    <Textarea placeholder={`Add a note regarding ${selectedContact.firstName}...`} className="min-h-[100px] bg-background text-sm resize-none" />
+                    <Button size="sm">Save Note</Button>
+                  </TabsContent>
+
+                  <TabsContent value="activity" className="mt-4">
+                    <div className="bg-background border rounded-lg p-4 flex items-start gap-3">
+                      <div className="flex shrink-0 items-center justify-center size-8 rounded-full border border-primary/20 text-primary bg-primary/5">
+                        <FileText className="size-4" />
+                      </div>
+                      <div className="flex flex-col">
+                        <p className="text-sm font-medium">Record Created</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {selectedContact.createdAt ? new Date(selectedContact.createdAt).toLocaleString() : "Unknown"} • by System Admin
+                        </p>
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

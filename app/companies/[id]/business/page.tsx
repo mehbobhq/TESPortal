@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, FileText, UploadCloud, FileArchive, CheckCircle2 } from "lucide-react"
+import { ArrowLeft, Building2, Plus, FileText, UploadCloud, FileArchive, CheckCircle2, ScanLine } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -10,13 +10,29 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
+// --- REUSABLE OCR UPLOAD ZONE ---
+// This is the standard component that will trigger your future 3/4 screen OCR overlay.
+const DocumentUploadZone = ({ title, description }: { title: string, description: string }) => (
+  <div className="w-full mt-4 border-2 border-dashed border-primary/20 rounded-xl p-8 flex flex-col items-center justify-center text-center bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer group">
+    <div className="p-3 bg-background rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform">
+      <ScanLine className="size-6 text-primary" />
+    </div>
+    <h3 className="font-semibold text-foreground mb-1">{title}</h3>
+    <p className="text-xs text-muted-foreground max-w-sm mb-4">{description}</p>
+    <Button variant="secondary" size="sm" className="pointer-events-none">
+      <UploadCloud className="size-4 mr-2" /> Browse Files
+    </Button>
+  </div>
+)
+
 export default function BusinessPage() {
   const params = useParams()
   const router = useRouter()
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   
-  // UI State for inline forms
+  // UI States
+  const [isEditingIncorp, setIsEditingIncorp] = useState(false)
   const [showAddShareholder, setShowAddShareholder] = useState(false)
   const [showAddReturn, setShowAddReturn] = useState(false)
   const [showAddCra, setShowAddCra] = useState(false)
@@ -25,6 +41,7 @@ export default function BusinessPage() {
   const [showAddSalesTax, setShowAddSalesTax] = useState(false)
 
   // Data States
+  const [incorpDate, setIncorpDate] = useState("")
   const [shareholders, setShareholders] = useState<any[]>([])
   const [annualReturns, setAnnualReturns] = useState<any[]>([])
   const [craRecords, setCraRecords] = useState<any[]>([])
@@ -37,6 +54,12 @@ export default function BusinessPage() {
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
     setCompany(found || null)
+    
+    // Load saved incorp date if it exists
+    if (found && found.incorpDate) {
+      setIncorpDate(found.incorpDate)
+    }
+    
     setLoading(false)
   }, [params.id])
 
@@ -53,6 +76,12 @@ export default function BusinessPage() {
 
   // --- SAVE HANDLERS ---
   const generateId = (prefix: string) => `${company.id}-${prefix}-${Math.floor(1000 + Math.random() * 9000)}`
+
+  const handleSaveIncorp = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    // In a real app, you'd save this to Supabase/localStorage here.
+    setIsEditingIncorp(false)
+  }
 
   const handleSaveShareholder = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -132,30 +161,51 @@ export default function BusinessPage() {
           <CardTitle className="text-sm flex items-center gap-2">
             <FileText className="size-4 text-muted-foreground"/> Incorporation Information
           </CardTitle>
-          <Button variant="outline" size="sm" className="h-7 text-xs">Edit Origin</Button>
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setIsEditingIncorp(!isEditingIncorp)}>
+            {isEditingIncorp ? "Cancel" : "Edit"}
+          </Button>
         </CardHeader>
-        <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Record ID</p><p className="text-sm font-mono font-medium">{company.id}</p></div>
-          <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">{isCanadaRegistered ? "Corporate Number" : "State File Number"}</p><p className="text-sm font-medium">{company.incorpNo || "—"}</p></div>
-          <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Incorporation Date</p><p className="text-sm font-medium">—</p></div>
-          <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Jurisdiction</p><p className="text-sm font-medium">{company.regCorpState}, {company.regCorpCountry}</p></div>
-          
-          <div className="sm:col-span-2 lg:col-span-4 mt-2 pt-4 border-t flex items-center justify-between bg-muted/20 p-3 rounded-md border border-dashed">
-            <div className="flex items-center gap-3">
-              <FileText className="size-8 text-muted-foreground/50" />
-              <div>
-                <p className="text-sm font-medium">Corporate Documents</p>
-                <p className="text-xs text-muted-foreground">
-                  {isCanadaRegistered 
-                    ? "Upload Articles of Incorporation, Certificate of Status, etc." 
-                    : isUSRegistered 
-                      ? "Upload State Charter, Articles of Incorporation, etc." 
-                      : "Upload corporate formation documents."}
-                </p>
+        <CardContent className="pt-6">
+          {isEditingIncorp ? (
+            <form onSubmit={handleSaveIncorp} className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 pb-6 border-b">
+              <div className="space-y-2"><Label>Record ID</Label><Input value={company.id} disabled className="bg-muted" /></div>
+              <div className="space-y-2">
+                <Label>{isCanadaRegistered ? "Corporate Number" : "State File Number"}</Label>
+                <Input defaultValue={company.incorpNo || ""} disabled className="bg-muted" />
               </div>
+              <div className="space-y-2">
+                <Label>Incorporation Date</Label>
+                <Input 
+                  type="date" 
+                  value={incorpDate}
+                  onChange={(e) => setIncorpDate(e.target.value)}
+                  required 
+                />
+              </div>
+              <div className="space-y-2"><Label>Jurisdiction</Label><Input value={`${company.regCorpState}, ${company.regCorpCountry}`} disabled className="bg-muted" /></div>
+              <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
+                <Button type="submit" size="sm">Save Updates</Button>
+              </div>
+            </form>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+              <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Record ID</p><p className="text-sm font-mono font-medium">{company.id}</p></div>
+              <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">{isCanadaRegistered ? "Corporate Number" : "State File Number"}</p><p className="text-sm font-medium">{company.incorpNo || "—"}</p></div>
+              <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Incorporation Date</p><p className="text-sm font-medium">{incorpDate || "—"}</p></div>
+              <div className="space-y-1"><p className="text-xs text-muted-foreground font-medium uppercase">Jurisdiction</p><p className="text-sm font-medium">{company.regCorpState}, {company.regCorpCountry}</p></div>
             </div>
-            <Button size="sm" variant="secondary"><UploadCloud className="size-4 mr-2"/> Upload File</Button>
-          </div>
+          )}
+          
+          <DocumentUploadZone 
+            title="Corporate Documents"
+            description={
+              isCanadaRegistered 
+                ? "Upload Articles of Incorporation, Certificate of Status, etc. for OCR scanning." 
+                : isUSRegistered 
+                  ? "Upload State Charter, Articles of Incorporation, etc. for OCR scanning." 
+                  : "Upload corporate formation documents for OCR scanning."
+            }
+          />
         </CardContent>
       </Card>
 
@@ -226,18 +276,26 @@ export default function BusinessPage() {
         </CardHeader>
         <CardContent className="p-0">
           {showAddReturn && (
-            <form onSubmit={handleSaveReturn} className="p-6 bg-muted/10 border-b">
-              <h4 className="font-semibold text-sm mb-4">Add Annual Return</h4>
-              <div className="grid sm:grid-cols-3 gap-4">
-                <div className="space-y-2"><Label>Due Date</Label><Input name="dueDate" type="date" required /></div>
-                <div className="space-y-2"><Label>Filed Date</Label><Input name="filedDate" type="date" required /></div>
-                <div className="space-y-2"><Label>Filed By</Label><Input name="filedBy" placeholder="Admin/Accountant" required /></div>
-              </div>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button type="button" variant="outline" onClick={() => setShowAddReturn(false)}>Cancel</Button>
-                <Button type="submit">Save Filing</Button>
-              </div>
-            </form>
+            <div className="p-6 bg-muted/10 border-b">
+              <form onSubmit={handleSaveReturn}>
+                <h4 className="font-semibold text-sm mb-4">Add Annual Return</h4>
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="space-y-2"><Label>Due Date</Label><Input name="dueDate" type="date" required /></div>
+                  <div className="space-y-2"><Label>Filed Date</Label><Input name="filedDate" type="date" required /></div>
+                  <div className="space-y-2"><Label>Filed By</Label><Input name="filedBy" placeholder="Admin/Accountant" required /></div>
+                </div>
+                
+                <DocumentUploadZone 
+                  title="Upload Filing Document"
+                  description="Drop your filed annual return document here for OCR scanning and safe storage."
+                />
+
+                <div className="flex justify-end gap-2 mt-4">
+                  <Button type="button" variant="outline" onClick={() => setShowAddReturn(false)}>Cancel</Button>
+                  <Button type="submit">Save Filing</Button>
+                </div>
+              </form>
+            </div>
           )}
 
           <div className="divide-y text-sm">
@@ -281,16 +339,18 @@ export default function BusinessPage() {
             </CardHeader>
             <CardContent className="p-0">
               {showAddCra && (
-                <form onSubmit={(e) => handleSaveTaxRecord(e, "CRA", setCraRecords, craRecords, setShowAddCra)} className="p-4 bg-muted/10 border-b text-sm">
-                  <div className="space-y-3">
-                    <div className="space-y-1"><Label>CRA Business No</Label><Input name="accountNo" required /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
-                      <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                <div className="p-4 bg-muted/10 border-b text-sm">
+                  <form onSubmit={(e) => handleSaveTaxRecord(e, "CRA", setCraRecords, craRecords, setShowAddCra)}>
+                    <div className="space-y-3">
+                      <div className="space-y-1"><Label>CRA Business No</Label><Input name="accountNo" required /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
+                        <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                      </div>
+                      <Button type="submit" size="sm" className="w-full">Save CRA Number</Button>
                     </div>
-                    <Button type="submit" size="sm" className="w-full">Save CRA Number</Button>
-                  </div>
-                </form>
+                  </form>
+                </div>
               )}
               {craRecords.length === 0 ? (
                 <div className="p-4 flex flex-col gap-4 text-sm text-center text-muted-foreground py-8">
@@ -327,17 +387,24 @@ export default function BusinessPage() {
             </CardHeader>
             <CardContent className="p-0">
               {showAddEin && (
-                <form onSubmit={(e) => handleSaveTaxRecord(e, "EIN", setEinRecords, einRecords, setShowAddEin)} className="p-4 bg-muted/10 border-b text-sm">
-                  <div className="space-y-3">
-                    <div className="space-y-1"><Label>EIN Number</Label><Input name="accountNo" required /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
-                      <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                <div className="p-4 bg-muted/10 border-b text-sm">
+                  <form onSubmit={(e) => handleSaveTaxRecord(e, "EIN", setEinRecords, einRecords, setShowAddEin)}>
+                    <div className="space-y-3">
+                      <div className="space-y-1"><Label>EIN Number</Label><Input name="accountNo" required /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
+                        <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                      </div>
+                      
+                      <DocumentUploadZone 
+                        title="Upload IRS Letter"
+                        description="Drop your CP-575 or SS-4 confirmation letter here for OCR processing."
+                      />
+                      
+                      <Button type="submit" size="sm" className="w-full mt-2">Save EIN</Button>
                     </div>
-                    <div className="pt-2"><Button type="button" variant="secondary" size="sm" className="w-full"><UploadCloud className="size-4 mr-2"/>Upload IRS Letter</Button></div>
-                    <Button type="submit" size="sm" className="w-full">Save EIN</Button>
-                  </div>
-                </form>
+                  </form>
+                </div>
               )}
               {einRecords.length === 0 ? (
                 <div className="p-4 flex flex-col gap-4 text-sm text-center text-muted-foreground py-8">
@@ -374,16 +441,18 @@ export default function BusinessPage() {
             </CardHeader>
             <CardContent className="p-0">
               {showAddGst && (
-                <form onSubmit={(e) => handleSaveTaxRecord(e, "GST", setGstRecords, gstRecords, setShowAddGst)} className="p-4 bg-muted/10 border-b text-sm">
-                  <div className="space-y-3">
-                    <div className="space-y-1"><Label>Account No</Label><Input name="accountNo" required /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
-                      <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                <div className="p-4 bg-muted/10 border-b text-sm">
+                  <form onSubmit={(e) => handleSaveTaxRecord(e, "GST", setGstRecords, gstRecords, setShowAddGst)}>
+                    <div className="space-y-3">
+                      <div className="space-y-1"><Label>Account No</Label><Input name="accountNo" required /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
+                        <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                      </div>
+                      <Button type="submit" size="sm" className="w-full">Save Account</Button>
                     </div>
-                    <Button type="submit" size="sm" className="w-full">Save Account</Button>
-                  </div>
-                </form>
+                  </form>
+                </div>
               )}
               {gstRecords.length === 0 ? (
                 <div className="p-4 flex flex-col gap-4 text-sm text-center text-muted-foreground py-8">
@@ -420,16 +489,18 @@ export default function BusinessPage() {
             </CardHeader>
             <CardContent className="p-0">
               {showAddSalesTax && (
-                <form onSubmit={(e) => handleSaveTaxRecord(e, "STX", setSalesTaxRecords, salesTaxRecords, setShowAddSalesTax)} className="p-4 bg-muted/10 border-b text-sm">
-                  <div className="space-y-3">
-                    <div className="space-y-1"><Label>Account No</Label><Input name="accountNo" required /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
-                      <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                <div className="p-4 bg-muted/10 border-b text-sm">
+                  <form onSubmit={(e) => handleSaveTaxRecord(e, "STX", setSalesTaxRecords, salesTaxRecords, setShowAddSalesTax)}>
+                    <div className="space-y-3">
+                      <div className="space-y-1"><Label>Account No</Label><Input name="accountNo" required /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label>Obtained Date</Label><Input name="obtainedDate" type="date" required /></div>
+                        <div className="space-y-1"><Label>Obtained By</Label><Input name="obtainedBy" required /></div>
+                      </div>
+                      <Button type="submit" size="sm" className="w-full">Save Tax ID</Button>
                     </div>
-                    <Button type="submit" size="sm" className="w-full">Save Tax ID</Button>
-                  </div>
-                </form>
+                  </form>
+                </div>
               )}
               {salesTaxRecords.length === 0 ? (
                 <div className="p-4 flex flex-col gap-4 text-sm text-center text-muted-foreground py-8">

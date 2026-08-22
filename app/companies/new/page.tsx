@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, ShieldCheck, Briefcase } from "lucide-react"
+import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, CheckCircle2 } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -123,7 +123,8 @@ const SmartAddressBlock = ({ title, prefix, isAdditional = false }: { title: str
         <div className="space-y-2">
           <Label>State/Province</Label>
           <input type="hidden" name={`${prefix}_state`} value={region} />
-          <Select value={region} onValueChange={handleRegionChange}>
+          {/* CRITICAL FIX: Added `|| undefined` to prevent Radix UI empty string crash */}
+          <Select value={region || undefined} onValueChange={handleRegionChange}>
             <SelectTrigger className={isAdditional ? "bg-background" : ""}>
               <SelectValue placeholder="Select region" />
             </SelectTrigger>
@@ -294,7 +295,8 @@ export default function NewCompanyPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="companyType" className="text-primary font-medium">Company Record Type *</Label>
-                <Select value={selectedType} onValueChange={setSelectedType} required>
+                {/* CRITICAL FIX: Added `|| undefined` */}
+                <Select value={selectedType || undefined} onValueChange={setSelectedType} required>
                   <SelectTrigger className="border-primary/30 focus:ring-primary/20">
                     <SelectValue placeholder="Select entity type..." />
                   </SelectTrigger>
@@ -359,7 +361,8 @@ export default function NewCompanyPage() {
               <div className="space-y-2">
                 <Label htmlFor="opRegion" className="text-primary font-medium">Operating Region *</Label>
                 <input type="hidden" name="opRegion" value={opRegion} />
-                <Select value={opRegion} onValueChange={setOpRegion} required>
+                {/* CRITICAL FIX: Added `|| undefined` */}
+                <Select value={opRegion || undefined} onValueChange={setOpRegion} required>
                   <SelectTrigger className="border-primary/30"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Canada Only">Canada Only</SelectItem>
@@ -379,15 +382,15 @@ export default function NewCompanyPage() {
         {isCustomer && (
           <div className="flex flex-col gap-6 p-6 bg-muted/20 border-2 border-dashed rounded-xl relative">
             
-            {/* Elegant Header for the "Additional" section */}
+            {/* Elegant Header - Reverted to guaranteed icons to prevent crashes */}
             <div className="absolute -top-3 left-6 bg-background px-3 flex items-center gap-2 text-sm font-semibold text-primary/80 border rounded-full shadow-sm">
-            <ShieldCheck className="size-3.5" />
-             Compliance & Services Profile
+              <CheckCircle2 className="size-3.5" />
+              Compliance & Services Profile
             </div>
 
             <Card className="shadow-none border-border/50">
               <CardHeader className="bg-muted/10 py-3 border-b">
-                <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="size-4 text-muted-foreground"/> Customer Information</CardTitle>
+                <CardTitle className="text-sm flex items-center gap-2"><Building2 className="size-4 text-muted-foreground"/> Customer Information</CardTitle>
               </CardHeader>
               <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-2">
@@ -442,7 +445,8 @@ export default function NewCompanyPage() {
                   <div className="space-y-2">
                     <Label>Registered Province/State</Label>
                     <input type="hidden" name="regCorpState" value={businessRegion} />
-                    <Select value={businessRegion} onValueChange={handleBusinessRegionChange}>
+                    {/* CRITICAL FIX: Added `|| undefined` */}
+                    <Select value={businessRegion || undefined} onValueChange={handleBusinessRegionChange}>
                       <SelectTrigger><SelectValue placeholder="Select origin" /></SelectTrigger>
                       <SelectContent>
                         {REGIONS.map((r) => (

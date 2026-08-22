@@ -381,8 +381,8 @@ export default function NewCompanyPage() {
             
             {/* Elegant Header for the "Additional" section */}
             <div className="absolute -top-3 left-6 bg-background px-3 flex items-center gap-2 text-sm font-semibold text-primary/80 border rounded-full shadow-sm">
-              <FileShield className="size-3.5" />
-              Compliance & Services Profile
+            <ShieldCheck className="size-3.5" />
+             Compliance & Services Profile
             </div>
 
             <Card className="shadow-none border-border/50">

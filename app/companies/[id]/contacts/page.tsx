@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, Archive, FileText, CheckCircle2, User, Phone, Mail, MapPin, ScanLine, CreditCard } from "lucide-react"
+import { ArrowLeft, Building2, Plus, Archive, FileText, CheckCircle2, User, Phone, Mail, ScanLine, CreditCard } from "lucide-react"
 
-import { Button } from "src/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -76,7 +76,7 @@ export default function ContactsPage() {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
-    // If they checked "Primary", we should theoretically uncheck all other primary contacts
+    // If they checked "Primary", uncheck all other primary contacts
     const updatedContacts = isPrimaryChecked 
       ? contacts.map(c => ({ ...c, isPrimary: false })) 
       : [...contacts]

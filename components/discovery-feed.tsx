@@ -1,8 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
-import { ShieldAlert, FileText, CheckCircle2, ChevronRight, UploadCloud } from "lucide-react"
+import { ShieldAlert, FileText, CheckCircle2, UploadCloud } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
@@ -31,6 +30,8 @@ export function DiscoveryFeed() {
 
   // The "Inbox Zero" satisfaction interaction
   const handleResolve = (id: string) => {
+    // Standard state update - Tailwind handles the DOM transition naturally if configured, 
+    // but even instantly snapping is clean without a heavy animation library.
     setInsights((prev) => prev.filter((item) => item.id !== id))
   }
 
@@ -41,75 +42,65 @@ export function DiscoveryFeed() {
           <h2 className="text-2xl font-semibold text-slate-800 tracking-tight">Actionable Insights</h2>
           <p className="text-slate-500 text-sm mt-1">Discover opportunities to improve your compliance posture.</p>
         </div>
-        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-full text-sm font-medium border border-emerald-100">
+        <div className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-full text-sm font-medium border border-emerald-100 transition-all duration-300">
           <CheckCircle2 className="size-4" />
           <span>Fleet Readiness: {insights.length === 0 ? "100%" : "94%"}</span>
         </div>
       </div>
 
       <div className="space-y-4">
-        <AnimatePresence>
-          {insights.length === 0 ? (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }} 
-              animate={{ opacity: 1, scale: 1 }} 
-              className="bg-slate-50 border border-slate-200 rounded-2xl p-12 text-center flex flex-col items-center justify-center"
+        {insights.length === 0 ? (
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-12 text-center flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-500">
+            <div className="bg-white p-4 rounded-full shadow-sm mb-4">
+              <CheckCircle2 className="size-8 text-emerald-500" />
+            </div>
+            <h3 className="text-lg font-medium text-slate-800">You are entirely up to date</h3>
+            <p className="text-slate-500 text-sm mt-2 max-w-md">Your fleet is operating at peak compliance. The system will continuously monitor for emerging patterns or risks.</p>
+          </div>
+        ) : (
+          insights.map((insight) => (
+            <div
+              key={insight.id}
+              className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both"
             >
-              <div className="bg-white p-4 rounded-full shadow-sm mb-4">
-                <CheckCircle2 className="size-8 text-emerald-500" />
-              </div>
-              <h3 className="text-lg font-medium text-slate-800">You are entirely up to date</h3>
-              <p className="text-slate-500 text-sm mt-2 max-w-md">Your fleet is operating at peak compliance. The system will continuously monitor for emerging patterns or risks.</p>
-            </motion.div>
-          ) : (
-            insights.map((insight) => (
-              <motion.div
-                key={insight.id}
-                layout
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: -20, scale: 0.98 }}
-                transition={{ duration: 0.2 }}
-              >
-                <Card className="overflow-hidden border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-200">
-                  <CardContent className="p-0">
-                    <div className="flex flex-col sm:flex-row sm:items-center">
-                      {/* Left: Soft Status Indicator */}
-                      <div className={`p-6 flex items-center justify-center border-b sm:border-b-0 sm:border-r border-slate-100 ${insight.tone === 'warn' ? 'bg-amber-50/50' : 'bg-red-50/50'}`}>
-                        {insight.tone === 'warn' ? (
-                          <FileText className="size-6 text-amber-600" />
-                        ) : (
-                          <ShieldAlert className="size-6 text-red-600" />
-                        )}
-                      </div>
-                      
-                      {/* Middle: Clear Explanation */}
-                      <div className="p-6 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">{insight.type}</span>
-                          <span className="text-slate-300">•</span>
-                          <span className="text-sm font-medium text-slate-700">{insight.entity}</span>
-                        </div>
-                        <p className="text-slate-600 text-sm leading-relaxed">{insight.description}</p>
-                      </div>
-
-                      {/* Right: Low-Friction Action */}
-                      <div className="p-6 bg-slate-50/50 flex items-center justify-end sm:border-l border-slate-100">
-                        <Button 
-                          onClick={() => handleResolve(insight.id)}
-                          className="bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:text-slate-900 shadow-sm w-full sm:w-auto"
-                        >
-                          <UploadCloud className="mr-2 size-4 text-slate-400" />
-                          {insight.action}
-                        </Button>
-                      </div>
+              <Card className="overflow-hidden border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                <CardContent className="p-0">
+                  <div className="flex flex-col sm:flex-row sm:items-center">
+                    {/* Left: Soft Status Indicator */}
+                    <div className={`p-6 flex items-center justify-center border-b sm:border-b-0 sm:border-r border-slate-100 transition-colors ${insight.tone === 'warn' ? 'bg-amber-50/50' : 'bg-red-50/50'}`}>
+                      {insight.tone === 'warn' ? (
+                        <FileText className="size-6 text-amber-600" />
+                      ) : (
+                        <ShieldAlert className="size-6 text-red-600" />
+                      )}
                     </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))
-          )}
-        </AnimatePresence>
+                    
+                    {/* Middle: Clear Explanation */}
+                    <div className="p-6 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">{insight.type}</span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-sm font-medium text-slate-700">{insight.entity}</span>
+                      </div>
+                      <p className="text-slate-600 text-sm leading-relaxed">{insight.description}</p>
+                    </div>
+
+                    {/* Right: Low-Friction Action */}
+                    <div className="p-6 bg-slate-50/50 flex items-center justify-end sm:border-l border-slate-100">
+                      <Button 
+                        onClick={() => handleResolve(insight.id)}
+                        className="bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:text-slate-900 shadow-sm w-full sm:w-auto transition-all"
+                      >
+                        <UploadCloud className="mr-2 size-4 text-slate-400" />
+                        {insight.action}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

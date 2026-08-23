@@ -43,3 +43,23 @@ export async function logDataEvent(event: DataEvent, accessContext: AccessEvent)
   
   // TODO: Insert into database
 }
+
+// lib/audit.ts
+
+/**
+ * DEVELOPMENT ONLY: Hard Delete
+ * This function bypasses the Master Register and deletes a record completely.
+ * It will throw a fatal error if executed in a production environment.
+ */
+export async function devOnlyHardDelete(entityId: string, entityType: string) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(`CRITICAL SECURITY VIOLATION: Hard deletion of ${entityType} ${entityId} attempted in production. Use archiveRecord instead.`);
+  }
+
+  console.warn(`[DEV MODE] ⚠️ Hard deleting ${entityType} record: ${entityId}`);
+  
+  // TODO: Execute your actual DB delete query here during development
+  // db.delete(entityType).where(id === entityId)
+  
+  return { success: true, message: "Record permanently deleted (DEV MODE ONLY)." };
+}

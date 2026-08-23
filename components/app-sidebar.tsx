@@ -87,16 +87,22 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarMenu>
             {navGroups.map((group) => {
-              // Skip the compliance/workspace group here
               const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
-              if (isComplianceGroup) return null
+              
+              // FIX: If it's the compliance group, ONLY extract 'Customers' to show in the global nav
+              let platformItems = group.items
+              if (isComplianceGroup) {
+                platformItems = group.items.filter(item => item.title === "Customers")
+              }
 
-              return group.items.map((item) => {
+              return platformItems.map((item) => {
                 let isActive = false
                 if (item.url === "/") {
                   isActive = pathname === "/"
                 } else if (item.url === "/companies") {
                   isActive = pathname === "/companies" || pathname === "/companies/new"
+                } else if (item.url === "/customers") {
+                  isActive = pathname === "/customers" // FIX: Exact match for the Customers tab
                 } else {
                   isActive = pathname.startsWith(item.url)
                 }
@@ -143,7 +149,9 @@ export function AppSidebar() {
                 const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
                 if (!isComplianceGroup) return null
 
-                let processedItems = [...group.items]
+                // FIX: Strip 'Customers' out of the Company Workspace list so it doesn't double-render
+                let processedItems = group.items.filter(item => item.title !== "Customers")
+                
                 const isCustomerOrProspect = activeCompany.kind === "Customer" || activeCompany.kind === "Prospect"
                 const allowedForOthers = ["Profile", "Contacts", "Credentials", "Settings"]
 

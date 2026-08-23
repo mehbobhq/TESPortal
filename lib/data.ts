@@ -57,14 +57,35 @@ export const drivers: Array<{
   trips: number
 }> = []
 
-export const companies: Array<{
-  name: string
-  kind: string
-  contact: string
-  region: string
-  status: string
-  tone: "ok" | "warn" | "danger"
-}> = []
+// lib/data.ts
+
+// ... keep your other existing arrays ...
+
+export type CompanyType = 
+  | 'Customer' | 'Insurance Broker' | 'Insurance Company' 
+  | 'Government Agency' | 'Employer Reference' | 'Service Provider' 
+  | 'Owner Operator' | 'Sub Contractor' | 'Workers Insurance' 
+  | 'Finance/Leasing Company' | 'Company (Prospect)' | 'Other';
+
+export type CompanyRecord = {
+  recordId: string; // e.g., CMP-000123
+  name: string;
+  type: CompanyType;
+  status: 'Active' | 'Inactive' | 'Archived';
+  address: {
+    street?: string;
+    city: string;
+    stateProvince: string;
+    postalCode?: string;
+    country: string;
+  };
+  phone?: string;
+  email?: string;
+  dateAdded: string;
+};
+
+// Master Directory for all entities
+export const companies: CompanyRecord[] = [];
 
 export const customers: Array<{
   name: string

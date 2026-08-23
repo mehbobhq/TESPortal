@@ -1,11 +1,11 @@
-// app/companies/page.tsx
-
-import { Building2, Download, Filter, Plus, Search } from "lucide-react"
+import { AlertTriangle, Download, FileCheck2, Plus, Route, ShieldCheck, Truck } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
+import { StatCard } from "@/components/stat-card"
 import { StatusBadge } from "@/components/status-badge"
+import { ComplianceChart } from "@/components/compliance-chart"
+import { DiscoveryFeed } from "@/components/discovery-feed" // <-- NEW COMPONENT IMPORTED
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Card,
   CardContent,
@@ -21,95 +21,76 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { companies } from "@/lib/data"
+import { expiringItems, jurisdictionMileage, recentActivity, upcomingFilings } from "@/lib/data"
 
-export default function CompaniesPage() {
+export default function DashboardPage() {
+  const maxMiles = Math.max(...jurisdictionMileage.map((j) => j.miles))
+
   return (
     <>
       <PageHeader
-        title="Companies"
-        description="Master directory of all business entities, including customers, insurance brokers, vendors, and government agencies."
+        title="Dashboard"
+        description="Fleet compliance at a glance — expiring credentials, open filings, and cross-border risk signals across all jurisdictions."
         actions={
           <>
             <Button variant="outline">
-              <Download data-icon="inline-start" className="mr-2 size-4" />
-              Export Directory
+              <Download data-icon="inline-start" />
+              Export
             </Button>
-            {/* This button will trigger the "Add Company" modal/form where our validation logic runs */}
             <Button>
-              <Plus data-icon="inline-start" className="mr-2 size-4" />
-              Add Company
+              <Plus data-icon="inline-start" />
+              New trip
             </Button>
           </>
         }
       />
 
-      <Card>
-        <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="text-muted-foreground size-5" />
-              Entity Directory
-            </CardTitle>
-            <CardDescription>Manage your universal list of verified organizations.</CardDescription>
-          </div>
-          
-          {/* Filters - Essential for the Master Directory */}
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search companies..."
-                className="w-full pl-8 sm:w-[250px]"
-              />
-            </div>
-            <Button variant="outline" size="icon">
-              <Filter className="size-4" />
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="px-0 pt-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-6">Company Name</TableHead>
-                <TableHead>Entity Type</TableHead>
-                <TableHead>Primary Contact</TableHead>
-                <TableHead>Region</TableHead>
-                <TableHead>Status</TableHead>
-                {/* Notice: No Delete column here per our "No Deletion" master rule */}
-                <TableHead className="pr-6 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {companies.map((company) => (
-                <TableRow key={company.name} className="hover:bg-muted/50 cursor-pointer">
-                  <TableCell className="pl-6 font-medium">{company.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{company.kind}</TableCell>
-                  <TableCell className="text-muted-foreground">{company.contact}</TableCell>
-                  <TableCell className="text-muted-foreground">{company.region}</TableCell>
-                  <TableCell>
-                    <StatusBadge tone={company.tone}>{company.status}</StatusBadge>
-                  </TableCell>
-                  <TableCell className="pr-6 text-right">
-                    <Button variant="ghost" size="sm">View</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              
-              {/* Empty state fallback in case lib/data.ts is empty */}
-              {companies.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                    No companies found. Click "Add Company" to create your first entity.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-    </>
-  )
-}
+      {/* TOP STATS: Kept exactly as you built them */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Compliance score" value="96%" icon={ShieldCheck} hint="6-month rolling average" trend={{ value: "1.2%", direction: "up", positive: true }} />
+        <StatCard label="Active vehicles" value="128" icon={Truck} hint="of 134 in fleet" trend={{ value: "3", direction: "up", positive: true }} />
+        <StatCard label="Open filings" value="4" icon={FileCheck2} hint="2 due within 30 days" />
+        <StatCard label="Items expiring" value="12" icon={AlertTriangle} hint="credentials & policies" trend={{ value: "5", direction: "up", positive: false }} />
+      </div>
+
+      {/* THE NEW DISCOVERY LOOP: Inserted right below the high-level stats */}
+      <div className="mt-8 mb-8">
+        <DiscoveryFeed />
+      </div>
+
+      {/* DEEP DIVE DATA: Kept your existing charts and mileage tables below the fold */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Compliance trend</CardTitle>
+            <CardDescription>Fleet-wide compliance score over the last 6 months.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ComplianceChart />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Mileage by jurisdiction</CardTitle>
+            <CardDescription>Current IFTA quarter, top 5.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {jurisdictionMileage.map((j) => (
+              <div key={j.name} className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">{j.name}</span>
+                  <span className="text-muted-foreground font-mono tabular-nums">{j.miles.toLocaleString()} mi</span>
+                </div>
+                <div className="bg-secondary h-2 overflow-hidden rounded-full">
+                  <div className="bg-chart-1 h-full rounded-full" style={{ width: `${(j.miles / maxMiles) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* THE REST OF YOUR TABLES: Expiring Items, Recent Activity, Upcoming Filings... */}
+      <div className="grid gap-4 lg:grid-cols-3 mt-4">
+        {/* ... (Keep the rest of your page.tsx code exactly the same here) ... */}

@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 
-// --- REUSABLE OCR UPLOAD ZONE (Upgraded for Automation Focus) ---
+// --- REUSABLE OCR UPLOAD ZONE ---
 const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string, description: string, isAutoFill?: boolean }) => (
   <div className={`w-full border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group ${isAutoFill ? 'border-blue-500/30 bg-blue-50/50 hover:bg-blue-50 dark:bg-blue-950/10 dark:hover:bg-blue-900/20' : 'border-primary/20 bg-primary/5 hover:bg-primary/10'}`}>
     <div className={`p-3 rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform ${isAutoFill ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400' : 'bg-background text-primary'}`}>
@@ -156,6 +156,13 @@ export default function ContactsPage() {
     handleCancelForm()
   }
 
+  // --- STRICT SORTING ALGORITHM ---
+  // This guarantees that Primary contacts are ALWAYS pinned to the top of the ledger.
+  const sortedContacts = [...contacts].sort((a, b) => {
+    if (a.isPrimary === b.isPrimary) return 0;
+    return a.isPrimary ? -1 : 1;
+  });
+
   return (
     <div className="flex flex-col gap-6 pb-10 max-w-[1400px]">
       
@@ -259,14 +266,14 @@ export default function ContactsPage() {
                   <div className="col-span-3 text-right">Actions</div>
                 </div>
 
-                {contacts.length === 0 ? (
+                {sortedContacts.length === 0 ? (
                   <div className="p-10 text-center flex flex-col items-center justify-center">
                      <ScanLine className="size-10 text-muted-foreground/30 mb-3" />
                      <p className="text-sm font-medium text-muted-foreground">No records found.</p>
                      <p className="text-xs text-muted-foreground mt-1 max-w-[250px]">Click "Scan ID (OCR)" to instantly create a profile from a document.</p>
                   </div>
                 ) : (
-                  contacts.map((contact) => {
+                  sortedContacts.map((contact) => {
                     const isSelected = selectedContact?.id === contact.id
                     return (
                       <div 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, CheckCircle2, ShieldAlert } from "lucide-react"
+import { ArrowLeft, Save, AlertTriangle, XCircle, Building2, MapPin, CheckCircle2, ShieldAlert, ChevronDown } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Badge } from "@/components/ui/badge"
+
+const CARGO_OPTIONS = [
+  "General Freight",
+  "Specialized Equipment",
+  "Household Goods",
+  "Temperature-Controlled & Food",
+  "Hazardous Materials",
+  "Bulk & Other"
+]
 
 // Standard Levenshtein distance for fuzzy matching
 const getLevenshteinDistance = (a: string, b: string) => {
@@ -39,7 +50,7 @@ const REGIONS = [
   { code: "NY", name: "New York", country: "United States" },
   { code: "ON", name: "Ontario", country: "Canada" },
   { code: "TX", name: "Texas", country: "United States" },
-  // ... (keep the rest of your original REGIONS array here)
+  // Add the rest of your original REGIONS array here...
 ].sort((a, b) => a.name.localeCompare(b.name))
 
 const SmartAddressBlock = ({ title, prefix, isAdditional = false }: { title: string, prefix: string, isAdditional?: boolean }) => {
@@ -114,18 +125,21 @@ export default function NewCompanyPage() {
   const [businessRegion, setBusinessRegion] = useState("")
   const [businessCountry, setBusinessCountry] = useState("")
 
+  // State for the Cargo Multi-Select Dropdown
+  const [selectedCargo, setSelectedCargo] = useState<string[]>([])
+
   // Validation States
   const [exactMatchError, setExactMatchError] = useState<string | null>(null)
   const [fuzzyWarning, setFuzzyWarning] = useState<{name: string, id: string} | null>(null)
   const [overrideFuzzy, setOverrideFuzzy] = useState(false)
-  const [strictIdentifierError, setStrictIdentifierError] = useState<string | null>(null) // NEW: Handles IRP, DOT, etc.
+  const [strictIdentifierError, setStrictIdentifierError] = useState<string | null>(null) 
 
   useEffect(() => {
     const randomNum = Math.floor(10000 + Math.random() * 90000)
     setRecordId(`CMP-${randomNum}`)
   }, [])
 
-  // 1. Name Validation (Runs when companyName changes)
+  // 1. Name Validation
   useEffect(() => {
     if (companyName.trim().length < 3) {
       setExactMatchError(null)
@@ -156,7 +170,7 @@ export default function NewCompanyPage() {
     if (!foundFuzzy) setOverrideFuzzy(false)
   }, [companyName])
 
-  // 2. Strict Identifier Validation (Runs on form change)
+  // 2. Strict Identifier Validation
   const handleFormChange = (e: React.FormEvent<HTMLFormElement>) => {
     const formData = new FormData(e.currentTarget)
     const data = Object.fromEntries(formData.entries())
@@ -185,7 +199,6 @@ export default function NewCompanyPage() {
     let identifierConflict = null
     for (const field of uniqueFields) {
       const val = data[field.key] as string
-      // Only check if the user has typed a meaningful value
       if (val && val.trim().length > 2) {
         const conflict = savedCompanies.find((c: any) => c[field.key] === val.trim())
         if (conflict) {
@@ -217,9 +230,16 @@ export default function NewCompanyPage() {
   const handleCreateCompany = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault() 
     if (exactMatchError || strictIdentifierError || (fuzzyWarning && !overrideFuzzy)) return; 
+    
     if (!selectedType) {
       alert("Please select a Company Type before saving.")
       return
+    }
+
+    // Safety check: Block save if creating a Customer without Cargo Info
+    if (selectedType === "Customer" && selectedCargo.length === 0) {
+      alert("Error: Cargo Information is mandatory. Please select at least one Cargo Type.");
+      return;
     }
 
     const formData = new FormData(e.currentTarget)
@@ -234,7 +254,8 @@ export default function NewCompanyPage() {
       contact: (formEntries.contactPerson as string) || "N/A",
       status: (formEntries.status as string) || "Active",
       tone: "ok", 
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      cargoTypes: selectedCargo // Automatically attach cargo profile
     }
 
     const existingCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
@@ -265,12 +286,9 @@ export default function NewCompanyPage() {
         }
       />
 
-      {/* NEW: Attach onChange handler to the entire form to capture real-time uncontrolled input changes */}
       <form onSubmit={handleCreateCompany} onChange={handleFormChange} className="flex flex-col gap-8 max-w-5xl">
         
-        {/* ========================================== */}
-        {/* SECTION 1: CORE IDENTITY (Always Default)  */}
-        {/* ========================================== */}
+        {/* SECTION 1: CORE IDENTITY */}
         <div className="flex flex-col gap-6">
           <Card className="border-primary/30 shadow-sm">
             <CardHeader className="bg-primary/5 py-4 border-b">
@@ -362,9 +380,7 @@ export default function NewCompanyPage() {
           </Card>
         </div>
 
-        {/* ========================================================= */}
-        {/* SECTION 2: CUSTOMER COMPLIANCE PROFILE (Grey Box Add-on)  */}
-        {/* ========================================================= */}
+        {/* SECTION 2: CUSTOMER COMPLIANCE PROFILE */}
         {isCustomer && (
           <div className="flex flex-col gap-6 p-6 bg-muted/20 border-2 border-dashed rounded-xl relative">
             
@@ -414,7 +430,39 @@ export default function NewCompanyPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>Cargo Information</Label><Input name="cargoInfo" placeholder="e.g. Dry Van, Flatbed" /></div>
+
+                {/* MULTI-SELECT CARGO DROPDOWN */}
+                <div className="space-y-2 flex flex-col">
+                  <Label>Cargo Information *</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className={`w-full justify-between h-auto min-h-10 px-3 py-2 ${selectedCargo.length === 0 ? "text-muted-foreground" : ""}`}>
+                        <div className="flex flex-wrap gap-1 text-left">
+                          {selectedCargo.length === 0 && "Select cargo types..."}
+                          {selectedCargo.map(cargo => (
+                            <Badge variant="secondary" key={cargo} className="text-[10px] font-normal">{cargo}</Badge>
+                          ))}
+                        </div>
+                        <ChevronDown className="size-4 opacity-50 shrink-0" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[300px] p-2" align="start">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-muted-foreground mb-2 px-1">Select all that apply</p>
+                        {CARGO_OPTIONS.map((option) => (
+                          <div key={option} className="flex items-center space-x-2 p-1 hover:bg-muted/50 rounded-md transition-colors cursor-pointer" onClick={() => {
+                            setSelectedCargo(prev => prev.includes(option) ? prev.filter(item => item !== option) : [...prev, option])
+                          }}>
+                            <Checkbox checked={selectedCargo.includes(option)} />
+                            <Label className="text-sm cursor-pointer">{option}</Label>
+                          </div>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  <input type="hidden" name="cargoTypes" value={JSON.stringify(selectedCargo)} />
+                </div>
+
               </CardContent>
             </Card>
 
@@ -540,9 +588,7 @@ export default function NewCompanyPage() {
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* SECTION 3: ADDRESSES (Moved to the bottom) */}
-        {/* ========================================== */}
+        {/* SECTION 3: ADDRESSES */}
         <Card className="shadow-sm">
           <CardHeader className="bg-muted/30 py-3 border-b">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -562,7 +608,6 @@ export default function NewCompanyPage() {
 
         {/* ACTION BUTTONS & STRICT ERRORS */}
         <div className="flex flex-col gap-4 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm z-10">
-          {/* NEW: Critical Identifier Error Display */}
           {strictIdentifierError && (
             <div className="flex items-center gap-3 text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded-md text-sm font-medium">
               <ShieldAlert className="size-5 shrink-0" />
@@ -574,7 +619,6 @@ export default function NewCompanyPage() {
             <Button type="button" variant="outline" onClick={() => router.back()}>
               Discard
             </Button>
-            {/* NEW: Disable if strict error exists */}
             <Button type="submit" disabled={!!exactMatchError || !!strictIdentifierError || (!!fuzzyWarning && !overrideFuzzy)}>
               <Save className="mr-2 size-4" />
               Create Record

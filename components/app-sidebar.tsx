@@ -43,31 +43,31 @@ export function AppSidebar() {
   }, [companyId])
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader className="border-sidebar-border border-b">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border/50 shadow-sm">
+      <SidebarHeader className="border-b border-sidebar-border/50 pb-4 pt-4">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
               asChild
-              className="group-data-[collapsible=icon]:p-0!"
+              className="group-data-[collapsible=icon]:p-0! hover:bg-transparent"
             >
-              <Link href="/" className="flex items-center gap-2">
-                <div className="flex shrink-0 aspect-square size-8 items-center justify-center rounded-md overflow-hidden">
+              <Link href="/" className="flex items-center gap-3">
+                <div className="flex shrink-0 aspect-square size-9 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 shadow-sm overflow-hidden transition-all group-hover:scale-105">
                   <Image 
                     src="/logo.png" 
                     alt="TES Logo" 
                     width={32} 
                     height={32} 
-                    className="size-full object-contain"
+                    className="size-full object-contain p-1"
                   />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-semibold tracking-tight text-base">
+                  <span className="truncate font-bold tracking-tight text-lg text-foreground">
                     TES
                   </span>
-                  <span className="text-sidebar-foreground/60 truncate text-xs">
-                    Operational Intelligence
+                  <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
+                    Operational Intel
                   </span>
                 </div>
               </Link>
@@ -76,16 +76,16 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="px-2 pt-2 scrollbar-hide">
         
         {/* ========================================================= */}
         {/* SECTION 1: PLATFORM (Global Navigation)                   */}
         {/* ========================================================= */}
         <SidebarGroup>
-          <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">
+          <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 px-3">
             Platform
           </SidebarGroupLabel>
-          <SidebarMenu>
+          <SidebarMenu className="gap-1">
             {navGroups.map((group) => {
               const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
               
@@ -102,15 +102,34 @@ export function AppSidebar() {
                 } else if (item.url === "/companies") {
                   isActive = pathname === "/companies" || pathname === "/companies/new"
                 } else if (item.url === "/customers") {
-                  isActive = pathname === "/customers" // FIX: Exact match for the Customers tab
+                  isActive = pathname === "/customers"
                 } else {
                   isActive = pathname.startsWith(item.url)
                 }
 
+                // Assume item.icon exists in your navGroups, otherwise fallback to standard text mapping
+                const Icon = item.icon
+
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
-                      <Link href={item.url}><span>{item.title}</span></Link>
+                    <SidebarMenuButton 
+                      asChild 
+                      isActive={isActive} 
+                      tooltip={item.title}
+                      className={`
+                        h-9 rounded-md transition-all duration-200 group relative
+                        data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold
+                        hover:bg-muted/50
+                      `}
+                    >
+                      <Link href={item.url} className="flex items-center gap-3">
+                        {/* The Active Left Ribbon Effect */}
+                        {isActive && (
+                          <div className="absolute left-0 top-1/2 -translate-y-1/2 h-2/3 w-1 bg-primary rounded-r-full" />
+                        )}
+                        {Icon && <Icon className={`size-4 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />}
+                        <span className="truncate">{item.title}</span>
+                      </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 )
@@ -123,39 +142,44 @@ export function AppSidebar() {
         {/* SECTION 2: COMPANY WORKSPACE (Contextual Navigation)      */}
         {/* ========================================================= */}
         {activeCompany && (
-          <SidebarGroup className="mt-2 pt-4 border-t border-sidebar-border">
-            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
-              Company Workspace
+          <SidebarGroup className="mt-4 pt-4 border-t border-sidebar-border/50">
+            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 px-3">
+              Workspace Environment
             </SidebarGroupLabel>
             
-            {/* ⚓ THE CONTEXT ANCHOR CARD ⚓ */}
-            <div className="mb-4 px-2">
-              <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 flex flex-col gap-1 shadow-sm transition-all">
-                <span className="font-bold text-primary truncate text-sm leading-tight">
+            {/* ⚓ THE BEAUTIFUL CONTEXT ANCHOR CARD ⚓ */}
+            <div className="mb-5 px-2">
+              <div className="bg-gradient-to-br from-primary/10 to-transparent border border-primary/20 rounded-xl p-3 flex flex-col gap-1.5 shadow-sm backdrop-blur-sm relative overflow-hidden">
+                {/* Subtle top-glow effect */}
+                <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+                
+                <span className="font-bold text-primary truncate text-sm leading-tight pr-2">
                   {activeCompany.name}
                 </span>
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+                <div className="flex items-center gap-2 text-[10px] text-foreground font-semibold uppercase tracking-wider">
                   <span className="truncate">{activeCompany.region}</span>
-                  <span className="size-1 shrink-0 rounded-full bg-muted-foreground/50"></span>
-                  <span className={activeCompany.status === "Active" ? "text-green-600" : "text-orange-500"}>
-                    {activeCompany.status || "Active"}
-                  </span>
+                  <span className="size-1 shrink-0 rounded-full bg-border"></span>
+                  <div className="flex items-center gap-1">
+                    <span className={`size-1.5 rounded-full ${activeCompany.status === "Active" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)] animate-pulse"}`}></span>
+                    <span className={activeCompany.status === "Active" ? "text-green-600 dark:text-green-400" : "text-orange-600 dark:text-orange-400"}>
+                      {activeCompany.status || "Active"}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <SidebarMenu>
+            <SidebarMenu className="gap-1 border-l border-sidebar-border/50 ml-3 pl-2">
               {navGroups.map((group) => {
                 const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
                 if (!isComplianceGroup) return null
 
-                // FIX: Strip 'Customers' out of the Company Workspace list so it doesn't double-render
+                // Strip 'Customers' out of the Company Workspace list
                 let processedItems = group.items.filter(item => item.title !== "Customers")
                 
                 const isCustomerOrProspect = activeCompany.kind === "Customer" || activeCompany.kind === "Prospect"
                 const allowedForOthers = ["Profile", "Contacts", "Credentials", "Settings"]
 
-                // Apply dynamic hiding for non-customers
                 if (!isCustomerOrProspect) {
                   processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
                 }
@@ -169,18 +193,33 @@ export function AppSidebar() {
                 return processedItems.map(item => {
                   let finalUrl = item.url
                   
-                  // Inject the dynamic ID into the routes
                   if (companySpecificTabs.includes(item.title)) {
                     const formattedPath = item.title.toLowerCase().replace(/ /g, '-')
                     finalUrl = `/companies/${companyId}/${formattedPath}`
                   }
 
                   const isActive = pathname === finalUrl || pathname.startsWith(finalUrl + "/")
+                  const Icon = item.icon
 
                   return (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
-                        <Link href={finalUrl}><span>{item.title}</span></Link>
+                      <SidebarMenuButton 
+                        asChild 
+                        isActive={isActive} 
+                        tooltip={item.title}
+                        className={`
+                          h-8 text-sm rounded-md transition-all duration-200 relative
+                          data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold
+                          hover:bg-muted/50
+                        `}
+                      >
+                        <Link href={finalUrl} className="flex items-center gap-3">
+                          {isActive && (
+                            <div className="absolute -left-[9px] top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-primary" />
+                          )}
+                          {Icon && <Icon className={`size-3.5 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />}
+                          <span className="truncate">{item.title}</span>
+                        </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   )
@@ -191,19 +230,22 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-sidebar-border border-t">
+      {/* ========================================================= */}
+      {/* SECTION 3: FOOTER (User Profile)                          */}
+      {/* ========================================================= */}
+      <SidebarFooter className="border-sidebar-border/50 border-t p-4">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg">
-              <Avatar className="size-8 rounded-md">
-                <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground rounded-md text-xs">
-                  M
+            <SidebarMenuButton size="lg" className="hover:bg-muted/50 transition-colors rounded-xl">
+              <Avatar className="size-9 rounded-lg border border-border shadow-sm">
+                <AvatarFallback className="bg-primary/10 text-primary font-bold rounded-lg text-sm">
+                  MB
                 </AvatarFallback>
               </Avatar>
-              <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate font-medium">Mehboob</span>
-                <span className="text-sidebar-foreground/60 truncate text-xs">
-                  Compliance Lead
+              <div className="grid flex-1 text-left leading-tight ml-1">
+                <span className="truncate font-bold text-foreground">Mehboob</span>
+                <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
+                  System Admin
                 </span>
               </div>
             </SidebarMenuButton>

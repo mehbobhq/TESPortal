@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Save, Building2, MapPin } from "lucide-react"
+import { ArrowLeft, Save, Building2, MapPin, ChevronDown } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
+
+const CARGO_OPTIONS = [
+  "General Freight",
+  "Specialized Equipment",
+  "Household Goods",
+  "Temperature-Controlled & Food",
+  "Hazardous Materials",
+  "Bulk & Other"
+]
 
 // Smart Address Component that handles State -> Country auto-fill
 const SmartAddressBlock = ({ title, prefix, initialData }: { title: string, prefix: string, initialData: any }) => {
@@ -105,7 +117,6 @@ const SmartAddressBlock = ({ title, prefix, initialData }: { title: string, pref
           <Input name={`${prefix}_city`} defaultValue={initialData[`${prefix}_city`] || ""} />
         </div>
         
-        {/* State/Province Dropdown */}
         <div className="space-y-2">
           <Label>State/Province</Label>
           <input type="hidden" name={`${prefix}_state`} value={region} />
@@ -128,14 +139,13 @@ const SmartAddressBlock = ({ title, prefix, initialData }: { title: string, pref
           <Input name={`${prefix}_zip`} defaultValue={initialData[`${prefix}_zip`] || ""} />
         </div>
 
-        {/* Auto-filled Country */}
         <div className="space-y-2">
           <Label>Country</Label>
           <Input 
             name={`${prefix}_country`} 
             value={country} 
             onChange={(e) => setCountry(e.target.value)}
-            className="bg-muted/30" // Slight gray to indicate it's auto-filled
+            className="bg-muted/30" 
           />
         </div>
       </div>
@@ -148,17 +158,34 @@ export default function EditCompanyPage() {
   const router = useRouter()
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  
+  // State for the Cargo Multi-Select Dropdown
+  const [selectedCargo, setSelectedCargo] = useState<string[]>([])
 
   useEffect(() => {
     const id = params.id as string
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
-    setCompany(found || null)
+    
+    if (found) {
+      setCompany(found)
+      // Load their existing cargo types, default to an empty array
+      setSelectedCargo(found.cargoTypes || [])
+    } else {
+      setCompany(null)
+    }
+    
     setLoading(false)
   }, [params.id])
 
   const handleUpdate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    
+    // Safety check: Block save if they haven't selected at least one cargo type
+    if (selectedCargo.length === 0) {
+      alert("Error: Cargo Information is mandatory. Please select at least one Cargo Type.");
+      return;
+    }
     
     const formData = new FormData(e.currentTarget)
     const formEntries = Object.fromEntries(formData.entries())
@@ -170,6 +197,7 @@ export default function EditCompanyPage() {
       contact: formEntries.contactPerson || company.contact,
       region: formEntries.opRegion || company.region,
       status: formEntries.status || company.status,
+      cargoTypes: selectedCargo, // Save the array to the company profile
     }
 
     const existingCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
@@ -245,7 +273,6 @@ export default function EditCompanyPage() {
               <Input id="billingEmail" name="billingEmail" type="email" defaultValue={company.billingEmail || ""} />
             </div>
             
-            {/* RESTORED SELECT: Operating Region */}
             <div className="space-y-2">
               <Label htmlFor="opRegion">Operating Region</Label>
               <Select name="opRegion" defaultValue={company.region || "Canada Only"}>
@@ -283,7 +310,6 @@ export default function EditCompanyPage() {
               </CardHeader>
               <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 
-                {/* RESTORED SELECT: Service Type */}
                 <div className="space-y-2">
                   <Label>Service Type</Label>
                   <Select name="svcType" defaultValue={company.svcType || "Premium"}>
@@ -296,7 +322,6 @@ export default function EditCompanyPage() {
                   </Select>
                 </div>
 
-                {/* RESTORED SELECT: Status */}
                 <div className="space-y-2">
                   <Label>Service Status</Label>
                   <Select name="status" defaultValue={company.status || "Active"}>
@@ -318,7 +343,6 @@ export default function EditCompanyPage() {
                   <Input name="endDate" type="date" defaultValue={company.endDate || ""} />
                 </div>
 
-                {/* RESTORED SELECT: Payment Method */}
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
                   <Select name="payMethod" defaultValue={company.payMethod || "E-Transfer"}>
@@ -332,9 +356,45 @@ export default function EditCompanyPage() {
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Cargo Information</Label>
-                  <Input name="cargoInfo" defaultValue={company.cargoInfo || ""} />
+                {/* THE NEW MULTI-SELECT CARGO DROPDOWN */}
+                <div className="space-y-2 flex flex-col">
+                  <Label>Cargo Information *</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        className={`w-full justify-between h-auto min-h-10 px-3 py-2 ${selectedCargo.length === 0 ? "text-muted-foreground" : ""}`}
+                      >
+                        <div className="flex flex-wrap gap-1 text-left">
+                          {selectedCargo.length === 0 && "Select cargo types..."}
+                          {selectedCargo.map(cargo => (
+                            <Badge variant="secondary" key={cargo} className="text-[10px] font-normal">
+                              {cargo}
+                            </Badge>
+                          ))}
+                        </div>
+                        <ChevronDown className="size-4 opacity-50 shrink-0" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[300px] p-2" align="start">
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-muted-foreground mb-2 px-1">Select all that apply</p>
+                        {CARGO_OPTIONS.map((option) => (
+                          <div key={option} className="flex items-center space-x-2 p-1 hover:bg-muted/50 rounded-md transition-colors cursor-pointer" onClick={() => {
+                            setSelectedCargo(prev => 
+                              prev.includes(option) 
+                                ? prev.filter(item => item !== option)
+                                : [...prev, option]
+                            )
+                          }}>
+                            <Checkbox checked={selectedCargo.includes(option)} />
+                            <Label className="text-sm cursor-pointer">{option}</Label>
+                          </div>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  <input type="hidden" name="cargoTypes" value={JSON.stringify(selectedCargo)} />
                 </div>
               </CardContent>
             </Card>

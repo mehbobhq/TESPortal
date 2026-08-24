@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, CheckCircle2, ScanLine, Sparkles, FileBadge, ShieldAlert, FileKey, CheckSquare } from "lucide-react"
+import { ArrowLeft, Building2, Plus, CheckCircle2, ScanLine, Sparkles, FileBadge, ShieldAlert, FileKey, CheckSquare, Truck } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // --- REUSABLE OCR UPLOAD ZONE ---
 const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string, description: string, isAutoFill?: boolean }) => (
@@ -24,11 +25,23 @@ const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string,
   </div>
 )
 
+const CARGO_TYPES = [
+  "General Freight",
+  "Specialized Equipment",
+  "Household Goods",
+  "Temperature-Controlled & Food",
+  "Hazardous Materials",
+  "Bulk & Other"
+]
+
 export default function AuthoritiesPage() {
   const params = useParams()
   const router = useRouter()
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+
+  // Cargo Operations State
+  const [cargoTypes, setCargoTypes] = useState<string[]>([])
 
   // UI States for Forms
   const [showAddCanadian, setShowAddCanadian] = useState(false)
@@ -46,30 +59,43 @@ export default function AuthoritiesPage() {
     const id = params.id as string
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
-    
-    // For testing: Injecting Hazardous Materials if cargoTypes is missing so you can see it work
-    if (found && !found.cargoTypes) {
-      found.cargoTypes = ["General Freight", "Hazardous Materials"]
-    }
-    
     setCompany(found || null)
+    
+    // Load saved cargo types if they exist, otherwise default to General Freight
+    if (found) {
+      setCargoTypes(found.cargoTypes || ["General Freight"])
+    }
     setLoading(false)
   }, [params.id])
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
   if (!company) return <div className="p-10 text-center">Company Not Found</div>
 
+  // --- CARGO TOGGLE HANDLER ---
+  const toggleCargoType = (type: string) => {
+    setCargoTypes(prev => {
+      const updated = prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+      // In a real app, you would dispatch a save to the backend/localStorage here
+      return updated
+    })
+  }
+
   // --- CORE COMPLIANCE LOGIC EVALUATION ---
   const isCanadaRegistered = company.regCorpCountry === "Canada"
   const isUSRegistered = company.regCorpCountry === "United States"
   const isCrossBorder = company.region === "Cross-Border"
+  const isCanadaOnly = company.region === "Canada Only"
 
+  // Exact rendering logic based on regional AND operational inputs
   const needsCanadianAuthorities = isCanadaRegistered || isCrossBorder
   const needsUSAuthorities = isUSRegistered || isCrossBorder
   const needsUCR = isUSRegistered || isCrossBorder
   
-  // HAZMAT TRIGGER: Directly reads the array saved from the New Company Page
-  const needsHazmat = company.cargoTypes?.includes("Hazardous Materials")
+  // HAZMAT TRIGGER LOGIC:
+  // 1. Must haul Hazardous Materials
+  // 2. Must NOT be Canada Only (PHMSA is a US requirement)
+  const haulsHazmat = cargoTypes.includes("Hazardous Materials")
+  const needsHazmat = haulsHazmat && !isCanadaOnly
 
   const generateId = (prefix: string) => `${company.id}-${prefix}-${Math.floor(1000 + Math.random() * 9000)}`
 
@@ -152,7 +178,34 @@ export default function AuthoritiesPage() {
         </div>
       </div>
 
-      {/* 2. CANADIAN AUTHORITIES */}
+      {/* 2. DYNAMIC CARGO PROFILE CONTROLLER */}
+      <Card className="border-primary/20 shadow-sm">
+        <CardHeader className="bg-muted/30 py-3 border-b">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Truck className="size-4 text-primary" /> Cargo & Operations Profile
+          </CardTitle>
+          <CardDescription className="text-xs mt-1">Select the freight types this carrier handles. This actively drives compliance requirements below.</CardDescription>
+        </CardHeader>
+        <CardContent className="p-4">
+          <div className="flex flex-wrap gap-2">
+            {CARGO_TYPES.map(type => {
+              const isActive = cargoTypes.includes(type)
+              return (
+                <Badge
+                  key={type}
+                  variant={isActive ? "default" : "outline"}
+                  className={`cursor-pointer transition-all hover:opacity-80 py-1 px-3 ${isActive && type === "Hazardous Materials" ? "bg-destructive hover:bg-destructive/90" : ""}`}
+                  onClick={() => toggleCargoType(type)}
+                >
+                  {type}
+                </Badge>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 3. CANADIAN AUTHORITIES */}
       {needsCanadianAuthorities && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
@@ -225,7 +278,7 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 3. US AUTHORITIES (FMCSA) */}
+      {/* 4. US AUTHORITIES (FMCSA) */}
       {needsUSAuthorities && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
@@ -307,7 +360,7 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 4. UCR REGISTRATION */}
+      {/* 5. UCR REGISTRATION */}
       {needsUCR && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
@@ -374,7 +427,7 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 5. HAZMAT AUTHORITIES (Triggered by Company Cargo Profile) */}
+      {/* 6. HAZMAT AUTHORITIES (Triggered by Company Cargo Profile AND US Operations) */}
       {needsHazmat && (
         <Card className="border-destructive/30 shadow-sm">
           <CardHeader className="bg-destructive/5 py-3 border-b border-destructive/20 flex flex-row items-center justify-between">
@@ -382,7 +435,7 @@ export default function AuthoritiesPage() {
               <CardTitle className="text-sm flex items-center gap-2 text-destructive">
                 <ShieldAlert className="size-4" /> PHMSA Hazmat Registration
               </CardTitle>
-              <CardDescription className="text-xs mt-1">Required because "Hazardous Materials" is listed in this company's cargo profile.</CardDescription>
+              <CardDescription className="text-xs mt-1">Required because "Hazardous Materials" is listed in this company's cargo profile for US operations.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddHazmat(true)}>

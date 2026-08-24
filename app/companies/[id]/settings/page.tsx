@@ -1,264 +1,1042 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Save, ShieldCheck, Briefcase, Truck, Globe, Settings2 } from "lucide-react"
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  CircleHelp,
+  FileCheck2,
+  Globe2,
+  ShieldCheck,
+  Truck,
+  Users,
+  X,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
-// Reusable Setting Row Component using CHECKBOX instead of Switch
-const SettingToggle = ({ id, label, description, defaultChecked = false }: { id: string, label: string, description: string, defaultChecked?: boolean }) => (
-  <div className="flex items-center justify-between py-3 hover:bg-muted/30 px-2 -mx-2 rounded-md transition-colors">
-    <div className="space-y-0.5 pr-6 flex-1">
-      <Label htmlFor={id} className="text-sm font-medium cursor-pointer">{label}</Label>
-      <p className="text-xs text-muted-foreground">{description}</p>
+type RuleValue = "applies" | "does-not-apply" | "not-configured"
+
+type Rule = {
+  id: string
+  title: string
+  description: string
+  appliesTo?: "canada" | "us" | "both"
+  defaultValue?: RuleValue
+}
+
+type SettingsState = {
+  jurisdiction: "canada" | "us" | "both"
+  minimumDriverAge: string
+  minimumDriverExperience: string
+  rules: Record<string, RuleValue>
+}
+
+const STORAGE_PREFIX = "tes_company_compliance_settings_"
+
+const RULES: Record<string, Rule[]> = {
+  cargo: [
+    {
+      id: "dg_canada",
+      title: "Dangerous goods in Canada",
+      description:
+        "Generate dangerous-goods compliance requirements when this company transports regulated goods in Canada.",
+      appliesTo: "canada",
+      defaultValue: "applies",
+    },
+    {
+      id: "dg_us",
+      title: "Hazardous materials in the United States",
+      description:
+        "Generate hazardous-material compliance requirements for US operations.",
+      appliesTo: "us",
+      defaultValue: "applies",
+    },
+    {
+      id: "dg_wv_nv",
+      title: "Dangerous goods in West Virginia or Nevada",
+      description:
+        "Use the additional state-specific routing and documentation rules when applicable.",
+      appliesTo: "us",
+    },
+    {
+      id: "dg_colorado",
+      title: "Dangerous goods in Colorado",
+      description:
+        "Apply Colorado-specific dangerous-goods routing and compliance requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "dg_idaho",
+      title: "Dangerous goods in Idaho",
+      description:
+        "Apply Idaho-specific dangerous-goods routing and compliance requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "tobacco_ontario",
+      title: "Tobacco transport in Ontario",
+      description:
+        "Generate Ontario tobacco permit and documentation alerts when this operation applies.",
+      appliesTo: "canada",
+    },
+    {
+      id: "alcohol_us",
+      title: "Alcohol transport in the United States",
+      description:
+        "Enable US alcohol-transport compliance checks for this company.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_nj",
+      title: "Alcohol transport in New Jersey",
+      description:
+        "Apply New Jersey-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_tx",
+      title: "Alcohol transport in Texas",
+      description:
+        "Apply Texas-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_ky",
+      title: "Alcohol transport in Kentucky",
+      description:
+        "Apply Kentucky-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_in",
+      title: "Alcohol transport in Indiana",
+      description:
+        "Apply Indiana-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_oh",
+      title: "Alcohol transport in Ohio",
+      description:
+        "Apply Ohio-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "alcohol_ny",
+      title: "Alcohol transport in New York",
+      description:
+        "Apply New York-specific alcohol transportation requirements.",
+      appliesTo: "us",
+    },
+  ],
+
+  operations: [
+    {
+      id: "travel_oregon",
+      title: "Operations in Oregon",
+      description:
+        "Generate Oregon weight, tax, and operating credential requirements.",
+      appliesTo: "us",
+      defaultValue: "applies",
+    },
+    {
+      id: "travel_new_york",
+      title: "Operations in New York",
+      description:
+        "Generate New York HUT and related operating requirements.",
+      appliesTo: "us",
+      defaultValue: "applies",
+    },
+    {
+      id: "travel_new_mexico",
+      title: "Operations in New Mexico",
+      description:
+        "Apply New Mexico weight-distance tax and related routing requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "travel_kentucky",
+      title: "Operations in Kentucky",
+      description:
+        "Apply Kentucky-specific operating and credential requirements.",
+      appliesTo: "us",
+    },
+    {
+      id: "reefer_california",
+      title: "Refrigerated operations in California",
+      description:
+        "Generate California-specific refrigerated-equipment compliance alerts.",
+      appliesTo: "us",
+    },
+  ],
+
+  drivers: [
+    {
+      id: "background_check",
+      title: "Background check",
+      description:
+        "Require background-check completion before the driver can be treated as compliant.",
+      appliesTo: "both",
+      defaultValue: "applies",
+    },
+    {
+      id: "annual_road_test",
+      title: "Annual road test",
+      description:
+        "Flag missing annual road-test documentation for applicable drivers.",
+      appliesTo: "both",
+      defaultValue: "applies",
+    },
+    {
+      id: "pre_employment_road_test",
+      title: "Pre-employment road test",
+      description:
+        "Require road-test documentation during driver onboarding.",
+      appliesTo: "both",
+      defaultValue: "applies",
+    },
+    {
+      id: "psp",
+      title: "PSP screening",
+      description:
+        "Require Pre-Employment Screening Program checks for applicable US driver operations.",
+      appliesTo: "us",
+    },
+    {
+      id: "canadian_drug_alcohol",
+      title: "Drug & alcohol testing for Canadian drivers",
+      description:
+        "Apply the company's Canadian drug and alcohol testing requirements.",
+      appliesTo: "canada",
+      defaultValue: "applies",
+    },
+    {
+      id: "tax_documents",
+      title: "Driver tax documents",
+      description:
+        "Generate document alerts when required tax or payroll documentation is missing.",
+      appliesTo: "both",
+      defaultValue: "applies",
+    },
+    {
+      id: "work_permit",
+      title: "Work permit",
+      description:
+        "Track work-permit documentation and expiration dates for applicable personnel.",
+      appliesTo: "both",
+    },
+    {
+      id: "permanent_resident_card",
+      title: "Permanent resident card",
+      description:
+        "Track permanent-resident documentation when it is required for the company's operations.",
+      appliesTo: "both",
+    },
+    {
+      id: "staff_incorporation",
+      title: "Staff incorporation documents",
+      description:
+        "Require incorporation documentation for applicable owner-operators or subcontractors.",
+      appliesTo: "both",
+    },
+    {
+      id: "passport_us",
+      title: "Passport for US operations",
+      description:
+        "Generate passport-document alerts for personnel who require them for cross-border operations.",
+      appliesTo: "us",
+      defaultValue: "applies",
+    },
+    {
+      id: "visa_us",
+      title: "Visa for US operations",
+      description:
+        "Track visa documentation and expiry dates when required for US operations.",
+      appliesTo: "us",
+    },
+  ],
+
+  programs: [
+    {
+      id: "ctpat",
+      title: "CTPAT",
+      description:
+        "Identify the company as participating in the Customs-Trade Partnership Against Terrorism program.",
+      appliesTo: "us",
+    },
+    {
+      id: "fast",
+      title: "FAST",
+      description:
+        "Identify participation in the Free and Secure Trade program.",
+      appliesTo: "both",
+    },
+    {
+      id: "pip",
+      title: "PIP",
+      description:
+        "Identify participation in Canada's Partners in Protection program.",
+      appliesTo: "canada",
+    },
+    {
+      id: "csa",
+      title: "Customs Self Assessment",
+      description:
+        "Identify participation in the Customs Self Assessment program.",
+      appliesTo: "canada",
+    },
+    {
+      id: "smartway",
+      title: "EPA SmartWay",
+      description:
+        "Identify participation in the EPA SmartWay program.",
+      appliesTo: "us",
+    },
+    {
+      id: "cor",
+      title: "COR",
+      description:
+        "Identify participation in a Certificate of Recognition safety program.",
+      appliesTo: "canada",
+    },
+    {
+      id: "pic",
+      title: "Partners in Compliance",
+      description:
+        "Identify participation in the applicable Partners in Compliance program.",
+      appliesTo: "canada",
+    },
+    {
+      id: "weight_to_go",
+      title: "Weight to Go",
+      description:
+        "Identify participation in the applicable weight enforcement program.",
+      appliesTo: "canada",
+    },
+    {
+      id: "premium_carrier",
+      title: "Premium carrier designation",
+      description:
+        "Use this internal designation when the company should receive the associated premium-carrier treatment.",
+      appliesTo: "both",
+    },
+  ],
+}
+
+const SECTIONS = [
+  {
+    id: "overview",
+    label: "Profile",
+    description: "Operating scope",
+    icon: Globe2,
+  },
+  {
+    id: "cargo",
+    label: "Cargo",
+    description: "Goods & permits",
+    icon: Truck,
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    description: "Routes & states",
+    icon: ShieldCheck,
+  },
+  {
+    id: "drivers",
+    label: "Drivers & Staff",
+    description: "People & documents",
+    icon: Users,
+  },
+  {
+    id: "programs",
+    label: "Programs",
+    description: "Memberships",
+    icon: FileCheck2,
+  },
+] as const
+
+const DEFAULT_SETTINGS: SettingsState = {
+  jurisdiction: "both",
+  minimumDriverAge: "21",
+  minimumDriverExperience: "24",
+  rules: Object.fromEntries(
+    Object.values(RULES)
+      .flat()
+      .map((rule) => [rule.id, rule.defaultValue ?? "not-configured"]),
+  ),
+}
+
+function cloneSettings(settings: SettingsState): SettingsState {
+  return {
+    jurisdiction: settings.jurisdiction,
+    minimumDriverAge: settings.minimumDriverAge,
+    minimumDriverExperience: settings.minimumDriverExperience,
+    rules: { ...settings.rules },
+  }
+}
+
+function RadioChoice({
+  name,
+  value,
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  name: string
+  value: string
+  checked: boolean
+  onChange: () => void
+  label: string
+  description?: string
+}) {
+  return (
+    <label
+      className={[
+        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-all",
+        checked
+          ? "border-foreground/30 bg-muted/70"
+          : "border-border hover:bg-muted/40",
+      ].join(" ")}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        className="mt-1 h-4 w-4 accent-foreground"
+      />
+
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  )
+}
+
+function RuleRow({
+  rule,
+  value,
+  onChange,
+  disabled,
+}: {
+  rule: Rule
+  value: RuleValue
+  onChange: (value: RuleValue) => void
+  disabled: boolean
+}) {
+  return (
+    <div
+      className={[
+        "border-b last:border-b-0 py-5",
+        disabled ? "opacity-50" : "",
+      ].join(" ")}
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-center">
+        <div>
+          <div className="text-sm font-medium">{rule.title}</div>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+            {rule.description}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <RadioChoice
+            name={rule.id}
+            value="applies"
+            checked={value === "applies"}
+            onChange={() => onChange("applies")}
+            label="Applies"
+          />
+
+          <RadioChoice
+            name={rule.id}
+            value="does-not-apply"
+            checked={value === "does-not-apply"}
+            onChange={() => onChange("does-not-apply")}
+            label="Doesn't apply"
+          />
+
+          <RadioChoice
+            name={rule.id}
+            value="not-configured"
+            checked={value === "not-configured"}
+            onChange={() => onChange("not-configured")}
+            label="Not configured"
+          />
+        </div>
+      </div>
     </div>
-    <div className="shrink-0">
-      <Checkbox id={id} name={id} defaultChecked={defaultChecked} className="h-5 w-5" />
-    </div>
-  </div>
-)
+  )
+}
 
 export default function SettingsPage() {
   const params = useParams()
   const router = useRouter()
+
+  const companyId = params.id as string
+
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [activeSection, setActiveSection] = useState("overview")
+  const [savedSettings, setSavedSettings] =
+    useState<SettingsState>(cloneSettings(DEFAULT_SETTINGS))
+  const [draftSettings, setDraftSettings] =
+    useState<SettingsState>(cloneSettings(DEFAULT_SETTINGS))
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    const id = params.id as string
-    const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-    const found = savedCompanies.find((c: any) => c.id === id)
-    setCompany(found || null)
-    setLoading(false)
-  }, [params.id])
+    if (!companyId) return
 
-  if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company Not Found</div>
+    try {
+      const savedCompanies = JSON.parse(
+        localStorage.getItem("tes_companies") || "[]",
+      )
 
-  const handleSaveSettings = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    // Logic to save settings would go here
-    alert("Settings successfully updated.")
+      const found = savedCompanies.find((c: any) => c.id === companyId)
+      setCompany(found || null)
+
+      const storedSettings = localStorage.getItem(
+        `${STORAGE_PREFIX}${companyId}`,
+      )
+
+      if (storedSettings) {
+        const parsed = JSON.parse(storedSettings) as Partial<SettingsState>
+
+        const hydrated: SettingsState = {
+          ...cloneSettings(DEFAULT_SETTINGS),
+          ...parsed,
+          rules: {
+            ...DEFAULT_SETTINGS.rules,
+            ...(parsed.rules || {}),
+          },
+        }
+
+        setSavedSettings(cloneSettings(hydrated))
+        setDraftSettings(cloneSettings(hydrated))
+      }
+    } catch {
+      setCompany(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [companyId])
+
+  const isDirty = useMemo(
+    () => JSON.stringify(savedSettings) !== JSON.stringify(draftSettings),
+    [savedSettings, draftSettings],
+  )
+
+  const configuredCount = useMemo(
+    () =>
+      Object.values(draftSettings.rules).filter(
+        (value) => value !== "not-configured",
+      ).length,
+    [draftSettings.rules],
+  )
+
+  const totalRules = Object.keys(draftSettings.rules).length
+
+  const activeRules = useMemo(() => {
+    if (activeSection === "overview") return []
+
+    return RULES[activeSection] || []
+  }, [activeSection])
+
+  const updateRule = (id: string, value: RuleValue) => {
+    setSaveMessage(null)
+
+    setDraftSettings((current) => ({
+      ...current,
+      rules: {
+        ...current.rules,
+        [id]: value,
+      },
+    }))
+  }
+
+  const handleSave = () => {
+    try {
+      localStorage.setItem(
+        `${STORAGE_PREFIX}${companyId}`,
+        JSON.stringify(draftSettings),
+      )
+
+      setSavedSettings(cloneSettings(draftSettings))
+      setSavedAt(new Date().toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      }))
+      setSaveMessage("Compliance profile saved.")
+    } catch {
+      setSaveMessage("Unable to save the compliance profile.")
+    }
+  }
+
+  const handleDiscard = () => {
+    setDraftSettings(cloneSettings(savedSettings))
+    setSaveMessage(null)
+  }
+
+  const handleBack = () => {
+    if (isDirty) {
+      const confirmed = window.confirm(
+        "You have unsaved changes. Leave without saving?",
+      )
+
+      if (!confirmed) return
+    }
+
+    router.push(`/companies/${companyId}/profile`)
+  }
+
+  if (loading) {
+    return (
+      <div className="p-10 text-center text-sm text-muted-foreground">
+        Loading company settings...
+      </div>
+    )
+  }
+
+  if (!company) {
+    return (
+      <div className="p-10 text-center">
+        <h1 className="text-lg font-semibold">Company Not Found</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The company associated with this settings page could not be found.
+        </p>
+      </div>
+    )
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-10 max-w-[1200px]">
-      
+    <div className="mx-auto flex w-full max-w-[1280px] flex-col pb-12">
       {/* HEADER */}
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/companies/${company.id}/profile`)}>
+      <div className="border-b pb-6">
+        <div className="flex items-start gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleBack}
+            className="mt-0.5 shrink-0"
+            aria-label="Back to company profile"
+          >
             <ArrowLeft className="size-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Configuration & Settings</h1>
-            <p className="text-muted-foreground text-sm">{company.name} ({company.id})</p>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Compliance Profile
+              </h1>
+
+              {!isDirty && savedAt ? (
+                <span className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
+                  <Check className="size-3" />
+                  Saved {savedAt}
+                </span>
+              ) : null}
+            </div>
+
+            <p className="mt-1 text-sm text-muted-foreground">
+              {company.name}
+              {company.id ? ` · ${company.id}` : ""}
+            </p>
+
+            <p className="mt-4 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Tell TES which compliance rules actually apply to this company.
+              These choices shape the alerts, document requirements, and
+              compliance checks the system generates.
+            </p>
           </div>
         </div>
       </div>
 
-      <form onSubmit={handleSaveSettings}>
-        <Tabs defaultValue="cargo" className="w-full">
-          
-          <TabsList className="grid grid-cols-5 w-full max-w-4xl h-auto p-1 bg-muted/50">
-            <TabsTrigger value="company" className="py-2 text-xs"><Settings2 className="size-3.5 mr-1.5"/> Company</TabsTrigger>
-            <TabsTrigger value="regional" className="py-2 text-xs"><Globe className="size-3.5 mr-1.5"/> Regional</TabsTrigger>
-            <TabsTrigger value="cargo" className="py-2 text-xs"><Truck className="size-3.5 mr-1.5"/> Cargo</TabsTrigger>
-            <TabsTrigger value="certifications" className="py-2 text-xs"><ShieldCheck className="size-3.5 mr-1.5"/> Certifications</TabsTrigger>
-            <TabsTrigger value="staff" className="py-2 text-xs"><Briefcase className="size-3.5 mr-1.5"/> Staff</TabsTrigger>
-          </TabsList>
-
-          <div className="mt-6">
-            
-            {/* ========================================== */}
-            {/* CARGO SETTINGS TAB                         */}
-            {/* ========================================== */}
-            <TabsContent value="cargo" className="space-y-6 m-0">
-              <div className="grid md:grid-cols-2 gap-6">
-                
-                {/* DG / Hazmat Rules */}
-                <Card>
-                  <CardHeader className="bg-muted/30 py-4 border-b">
-                    <CardTitle className="text-sm">Dangerous Goods (Hazmat)</CardTitle>
-                    <CardDescription className="text-xs">Define operational permissions for hazardous materials.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-4 divide-y">
-                    <SettingToggle id="dg_ca" label="Dangerous Goods - Canada" description="Permit transport of DG within Canadian borders." defaultChecked={true} />
-                    <SettingToggle id="dg_us" label="Dangerous Goods - America" description="Permit transport of DG within US borders." defaultChecked={true} />
-                    <SettingToggle id="dg_wv_nv" label="Transport DG in West Virginia or Nevada" description="Enable specific routing for WV/NV DG protocols." />
-                    <SettingToggle id="dg_co" label="Transport DG in Colorado" description="Enable routing for Colorado DG protocols." />
-                    <SettingToggle id="dg_id" label="Transport DG in Idaho" description="Enable routing for Idaho DG protocols." />
-                  </CardContent>
-                </Card>
-
-                {/* Controlled Substances & Alcohol */}
-                <div className="space-y-6">
-                  <Card>
-                    <CardHeader className="bg-muted/30 py-4 border-b">
-                      <CardTitle className="text-sm">Controlled Cargo & Tobacco</CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-4 divide-y">
-                      <SettingToggle id="tobacco_on" label="Transport Tobacco in Ontario" description="Enable compliance checks for Ontario tobacco permits." />
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="bg-muted/30 py-4 border-b">
-                      <CardTitle className="text-sm">Alcohol Transport Regulations</CardTitle>
-                      <CardDescription className="text-xs">Manage state-specific alcohol transport permissions.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="pt-4 divide-y h-[250px] overflow-y-auto pr-2">
-                      <SettingToggle id="alc_us" label="Transport Alcohol in America (General)" description="Master switch for US alcohol transport." />
-                      <SettingToggle id="alc_nj" label="New Jersey Alcohol Transport" description="Permit deliveries within NJ." />
-                      <SettingToggle id="alc_tx" label="Texas Alcohol Transport" description="Permit deliveries within TX." />
-                      <SettingToggle id="alc_ky" label="Kentucky Alcohol Transport" description="Permit deliveries within KY." />
-                      <SettingToggle id="alc_in" label="Indiana Alcohol Transport" description="Permit deliveries within IN." />
-                      <SettingToggle id="alc_oh" label="Ohio Alcohol Transport" description="Permit deliveries to OH facilities." />
-                      <SettingToggle id="alc_ny" label="New York Alcohol Transport" description="Permit deliveries within NY." />
-                    </CardContent>
-                  </Card>
-                </div>
-
-              </div>
-            </TabsContent>
-
-            {/* ========================================== */}
-            {/* STAFF SETTINGS TAB                         */}
-            {/* ========================================== */}
-            <TabsContent value="staff" className="space-y-6 m-0">
-              
-              {/* Hiring Thresholds (Numeric Inputs) */}
-              <Card>
-                <CardHeader className="bg-muted/30 py-4 border-b">
-                  <CardTitle className="text-sm">Hiring Thresholds</CardTitle>
-                  <CardDescription className="text-xs">Minimum requirements for onboarding operational staff.</CardDescription>
-                </CardHeader>
-                <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="minAge">Minimum Age For Drivers *</Label>
-                    <Input id="minAge" name="minAge" type="number" defaultValue="21" className="max-w-[200px]" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="minExp">Minimum Experience For Drivers (Months) *</Label>
-                    <Input id="minExp" name="minExp" type="number" defaultValue="24" className="max-w-[200px]" />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Vetting & Safety */}
-                <Card>
-                  <CardHeader className="bg-muted/30 py-4 border-b">
-                    <CardTitle className="text-sm">Safety & Vetting Requirements</CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-4 divide-y">
-                    <SettingToggle id="req_bg" label="Background Check Required" description="Mandate criminal background checks before dispatch." defaultChecked={true} />
-                    <SettingToggle id="req_road" label="Perform Annual Road Test" description="Flag drivers missing annual road test evaluations." defaultChecked={true} />
-                    <SettingToggle id="req_pre_road" label="Collect Pre-Employment Road Test" description="Require test documentation during onboarding." defaultChecked={true} />
-                    <SettingToggle id="req_psp" label="PSP Required" description="Mandate Pre-Employment Screening Program checks." />
-                    <SettingToggle id="req_da_ca" label="Drug & Alcohol Test (Canadian Drivers)" description="Require cross-border D&A testing compliance." defaultChecked={true} />
-                  </CardContent>
-                </Card>
-
-                {/* Document Collection */}
-                <Card>
-                  <CardHeader className="bg-muted/30 py-4 border-b">
-                    <CardTitle className="text-sm">Document Collection Mandates</CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-4 divide-y">
-                    <SettingToggle id="doc_tax" label="Tax Documents Required" description="Block dispatch if tax/payroll docs are missing." defaultChecked={true} />
-                    <SettingToggle id="doc_wp" label="Collect Staff Work Permit" description="Track work permit expirations." />
-                    <SettingToggle id="doc_pr" label="Collect Permanent Resident Card" description="Track PR card status for border crossing." />
-                    <SettingToggle id="doc_inc" label="Collect Staff Incorporation Documents" description="Required for Owner Operators / Subcontractors." />
-                    <SettingToggle id="doc_pass" label="Collect Passports for US Drivers" description="Mandatory for cross-border dispatches." defaultChecked={true} />
-                    <SettingToggle id="doc_visa" label="Collect VISA for US Drivers" description="Track VISA expiry for international personnel." />
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            {/* ========================================== */}
-            {/* CERTIFICATIONS TAB                         */}
-            {/* ========================================== */}
-            <TabsContent value="certifications" className="space-y-6 m-0">
-              <Card>
-                <CardHeader className="bg-muted/30 py-4 border-b">
-                  <CardTitle className="text-sm">Program Memberships & Certifications</CardTitle>
-                  <CardDescription className="text-xs">Select the security and environmental programs this entity is enrolled in.</CardDescription>
-                </CardHeader>
-                <CardContent className="pt-4 grid md:grid-cols-2 gap-x-12 gap-y-0 divide-y md:divide-y-0">
-                  <div className="divide-y">
-                    <SettingToggle id="cert_ctpat" label="Member of CTPAT?" description="Customs-Trade Partnership Against Terrorism." />
-                    <SettingToggle id="cert_fast" label="Member of FAST?" description="Free and Secure Trade for Commercial Vehicles." />
-                    <SettingToggle id="cert_pip" label="Member of PIP?" description="Partners in Protection (Canada)." />
-                    <SettingToggle id="cert_csa" label="Member of CSA?" description="Customs Self Assessment program." />
-                  </div>
-                  <div className="divide-y">
-                    <SettingToggle id="cert_smartway" label="Member of SmartWay?" description="EPA environmental tracking program." />
-                    <SettingToggle id="cert_cor" label="Member of COR?" description="Certificate of Recognition (Safety)." />
-                    <SettingToggle id="cert_pic" label="Member of PIC Program?" description="Partners in Compliance." />
-                    <SettingToggle id="cert_weight" label="Member of Weight to Go?" description="Weight enforcement bypass program." />
-                    <SettingToggle id="cert_premium" label="Premium Carrier?" description="Internal designation for priority status." />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ========================================== */}
-            {/* REGIONAL SETTINGS TAB                      */}
-            {/* ========================================== */}
-            <TabsContent value="regional" className="space-y-6 m-0">
-              <Card>
-                <CardHeader className="bg-muted/30 py-4 border-b">
-                  <CardTitle className="text-sm">Regional Operations Constraints</CardTitle>
-                  <CardDescription className="text-xs">Enable specific routing and equipment rules based on geography.</CardDescription>
-                </CardHeader>
-                <CardContent className="pt-4 divide-y max-w-3xl">
-                  <SettingToggle id="reg_or" label="Do You Travel In Oregon?" description="Requires Oregon Weight Receipt & Tax identifier." defaultChecked={true} />
-                  <SettingToggle id="reg_ny" label="Do You Travel In NY?" description="Requires NY HUT decal and routing permissions." defaultChecked={true} />
-                  <SettingToggle id="reg_nm" label="Do You Travel In New Mexico?" description="Requires NM Weight Distance tax routing." />
-                  <SettingToggle id="reg_ky" label="Do You Travel In Kentucky?" description="Requires KYU number for dispatch." />
-                  <Separator className="my-2" />
-                  <SettingToggle id="reg_ca_reefer" label="Operate Reefer In California?" description="Mandates CARB compliance checks for refrigerated units." />
-                  <SettingToggle id="reg_id_dg" label="Transport DG In Idaho?" description="Cross-referenced with Cargo Settings." />
-                  <SettingToggle id="reg_co_dg" label="Transport DG in Colorado?" description="Cross-referenced with Cargo Settings." />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* PLACEHOLDER FOR COMPANY TAB */}
-            <TabsContent value="company" className="space-y-6 m-0">
-               <Card>
-                <CardHeader className="bg-muted/30 py-4 border-b">
-                  <CardTitle className="text-sm">General Company Preferences</CardTitle>
-                </CardHeader>
-                <CardContent className="p-10 text-center text-muted-foreground text-sm">
-                  System defaults, timezone, and general configurations will be placed here.
-                </CardContent>
-               </Card>
-            </TabsContent>
-
+      {/* MAIN LAYOUT */}
+      <div className="grid min-h-[620px] lg:grid-cols-[230px_minmax(0,1fr)]">
+        {/* LEFT NAV */}
+        <aside className="border-b py-5 lg:border-b-0 lg:border-r lg:pr-5">
+          <div className="mb-3 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Compliance profile
           </div>
-        </Tabs>
 
-        {/* NORMAL FOOTER (No longer sticky/floating) */}
-        <div className="flex justify-end gap-4 mt-8 pt-6 border-t">
-          <Button type="button" variant="outline" onClick={() => router.back()}>
-            Discard Changes
-          </Button>
-          <Button type="submit">
-            <Save className="mr-2 size-4" />
-            Save Settings
-          </Button>
+          <nav className="space-y-1">
+            {SECTIONS.map((section) => {
+              const Icon = section.icon
+              const active = activeSection === section.id
+
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveSection(section.id)
+                    setSaveMessage(null)
+                  }}
+                  className={[
+                    "group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
+                    active
+                      ? "bg-muted font-medium"
+                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                  ].join(" ")}
+                >
+                  <Icon className="size-4 shrink-0" />
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm">{section.label}</span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {section.description}
+                    </span>
+                  </span>
+
+                  {active ? <ChevronRight className="size-3.5" /> : null}
+                </button>
+              )
+            })}
+          </nav>
+
+          <div className="mt-6 rounded-lg border bg-muted/20 p-3">
+            <div className="text-xs font-medium">Profile coverage</div>
+            <div className="mt-2 text-2xl font-semibold">
+              {configuredCount}
+              <span className="text-sm font-normal text-muted-foreground">
+                {" "}
+                / {totalRules}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+              Rules have an explicit answer.
+            </p>
+          </div>
+        </aside>
+
+        {/* CONTENT */}
+        <main className="min-w-0 py-6 lg:pl-7">
+          {activeSection === "overview" ? (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold">Operating scope</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Start here. TES uses the company's operating scope to decide
+                  which jurisdiction-specific rules should be evaluated.
+                </p>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Where does this company operate?
+                  </CardTitle>
+                  <CardDescription>
+                    Choose the jurisdictions that should be considered when
+                    generating compliance alerts.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="grid gap-3 md:grid-cols-3">
+                  <RadioChoice
+                    name="jurisdiction"
+                    value="canada"
+                    checked={draftSettings.jurisdiction === "canada"}
+                    onChange={() => {
+                      setSaveMessage(null)
+                      setDraftSettings((current) => ({
+                        ...current,
+                        jurisdiction: "canada",
+                      }))
+                    }}
+                    label="Canada"
+                    description="Canadian operations only"
+                  />
+
+                  <RadioChoice
+                    name="jurisdiction"
+                    value="us"
+                    checked={draftSettings.jurisdiction === "us"}
+                    onChange={() => {
+                      setSaveMessage(null)
+                      setDraftSettings((current) => ({
+                        ...current,
+                        jurisdiction: "us",
+                      }))
+                    }}
+                    label="United States"
+                    description="US operations only"
+                  />
+
+                  <RadioChoice
+                    name="jurisdiction"
+                    value="both"
+                    checked={draftSettings.jurisdiction === "both"}
+                    onChange={() => {
+                      setSaveMessage(null)
+                      setDraftSettings((current) => ({
+                        ...current,
+                        jurisdiction: "both",
+                      }))
+                    }}
+                    label="Canada + United States"
+                    description="Cross-border operations"
+                  />
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-6 md:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">
+                      Driver requirements
+                    </CardTitle>
+                    <CardDescription>
+                      These values determine baseline driver-profile
+                      requirements.
+                    </CardDescription>
+                  </CardHeader>
+
+                  <CardContent className="grid gap-5 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="minimumDriverAge">
+                        Minimum driver age
+                      </Label>
+                      <Input
+                        id="minimumDriverAge"
+                        type="number"
+                        min="18"
+                        max="99"
+                        value={draftSettings.minimumDriverAge}
+                        onChange={(event) => {
+                          setSaveMessage(null)
+                          setDraftSettings((current) => ({
+                            ...current,
+                            minimumDriverAge: event.target.value,
+                          }))
+                        }}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Used when evaluating driver eligibility.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="minimumDriverExperience">
+                        Minimum experience
+                      </Label>
+                      <Input
+                        id="minimumDriverExperience"
+                        type="number"
+                        min="0"
+                        max="600"
+                        value={draftSettings.minimumDriverExperience}
+                        onChange={(event) => {
+                          setSaveMessage(null)
+                          setDraftSettings((current) => ({
+                            ...current,
+                            minimumDriverExperience: event.target.value,
+                          }))
+                        }}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Months of driving experience.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">
+                      How the alert engine uses this page
+                    </CardTitle>
+                  </CardHeader>
+
+                  <CardContent className="space-y-4 text-sm">
+                    <div className="flex gap-3">
+                      <div className="mt-0.5 rounded-full bg-muted p-1.5">
+                        <Check className="size-3.5" />
+                      </div>
+                      <div>
+                        <div className="font-medium">Applies</div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          TES should evaluate the rule and create alerts when
+                          requirements are missing or expiring.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="mt-0.5 rounded-full bg-muted p-1.5">
+                        <X className="size-3.5" />
+                      </div>
+                      <div>
+                        <div className="font-medium">Doesn't apply</div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          TES should not create alerts for this rule because it
+                          is outside this company's operations.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="mt-0.5 rounded-full bg-muted p-1.5">
+                        <CircleHelp className="size-3.5" />
+                      </div>
+                      <div>
+                        <div className="font-medium">Not configured</div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          The company profile has not made a decision yet.
+                          This is intentionally different from "Doesn't apply."
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="border-dashed">
+                <CardContent className="flex gap-3 p-5">
+                  <CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <div className="text-sm font-medium">
+                      Why this page exists
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      A compliance system should not warn a company about a
+                      requirement that has nothing to do with its operations.
+                      This profile gives the system the context it needs before
+                      it starts evaluating documents, credentials, routes,
+                      drivers, cargo, and programs.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {SECTIONS.find((section) => section.id === activeSection)
+                    ?.label}
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  Mark each requirement explicitly. This prevents an unanswered
+                  setting from being interpreted as an operational decision.
+                </p>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Applicable requirements
+                  </CardTitle>
+                  <CardDescription>
+                    Choose one answer for every rule that may affect this
+                    company's compliance profile.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="pt-0">
+                  {activeRules.map((rule) => {
+                    const jurisdictionMatches =
+                      rule.appliesTo === "both" ||
+                      draftSettings.jurisdiction === "both" ||
+                      rule.appliesTo === draftSettings.jurisdiction
+
+                    return (
+                      <RuleRow
+                        key={rule.id}
+                        rule={rule}
+                        value={
+                          draftSettings.rules[rule.id] ??
+                          "not-configured"
+                        }
+                        disabled={!jurisdictionMatches}
+                        onChange={(value) => updateRule(rule.id, value)}
+                      />
+                    )
+                  })}
+                </CardContent>
+              </Card>
+
+              <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-4">
+                <CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div className="text-xs leading-5 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    Important:
+                  </span>{" "}
+                  choosing <span className="font-medium">Doesn't apply</span>{" "}
+                  tells TES to intentionally exclude the requirement. Choose{" "}
+                  <span className="font-medium">Not configured</span> when the
+                  company has not made that decision yet.
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* SAVE AREA — ONLY EXISTS WHEN DIRTY */}
+      {isDirty ? (
+        <div className="mt-6 flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-medium">Unsaved changes</div>
+            <p className="text-xs text-muted-foreground">
+              Your changes are not active until you save this profile.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleDiscard}
+            >
+              Discard
+            </Button>
+
+            <Button type="button" onClick={handleSave}>
+              <Check className="mr-2 size-4" />
+              Save profile
+            </Button>
+          </div>
         </div>
-      </form>
+      ) : saveMessage ? (
+        <div className="mt-6 flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm">
+            <Check className="size-4" />
+            {saveMessage}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setSaveMessage(null)}
+            className="text-muted-foreground hover:text-foreground"
+            aria-label="Dismiss save message"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

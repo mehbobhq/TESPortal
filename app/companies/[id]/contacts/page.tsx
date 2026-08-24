@@ -1307,8 +1307,22 @@ export default function ContactsPage() {
                 onClick={openOCR}
                 className="shrink-0"
               >
-                <Upload className="size-4 mr-2" />
-                Upload ID for OCR
+            <div className="flex items-center gap-2">
+            <div className="relative size-4 flex items-center justify-center">
+            {/* Scan frame */}
+            <span className="absolute inset-0">
+            <span className="absolute left-0 top-0 h-1.5 w-1.5 border-l-[1.5px] border-t-[1.5px] border-primary rounded-tl-[2px]" />
+            <span className="absolute right-0 top-0 h-1.5 w-1.5 border-r-[1.5px] border-t-[1.5px] border-primary rounded-tr-[2px]" />
+            <span className="absolute left-0 bottom-0 h-1.5 w-1.5 border-l-[1.5px] border-b-[1.5px] border-primary rounded-bl-[2px]" />
+            <span className="absolute right-0 bottom-0 h-1.5 w-1.5 border-r-[1.5px] border-b-[1.5px] border-primary rounded-br-[2px]" />
+            </span>
+
+            {/* Document */}
+            <FileText className="size-2.5 text-primary stroke-[1.8]" />
+            </div>
+
+            <span>Upload ID for OCR</span>
+            </div>
               </Button>
             </div>
 
@@ -2074,8 +2088,16 @@ export default function ContactsPage() {
                           size="sm"
                           onClick={openOCR}
                         >
-                          <Upload className="size-3.5 mr-1" />
-                          Add
+                <div className="relative size-3.5 flex items-center justify-center">
+                <span className="absolute inset-0">
+                <span className="absolute left-0 top-0 h-1 w-1 border-l-[1.5px] border-t-[1.5px] border-primary rounded-tl-[1px]" />
+                <span className="absolute right-0 top-0 h-1 w-1 border-r-[1.5px] border-t-[1.5px] border-primary rounded-tr-[1px]" />
+                <span className="absolute left-0 bottom-0 h-1 w-1 border-l-[1.5px] border-b-[1.5px] border-primary rounded-bl-[1px]" />
+                <span className="absolute right-0 bottom-0 h-1 w-1 border-r-[1.5px] border-b-[1.5px] border-primary rounded-br-[1px]" />
+                </span>
+
+                <FileText className="size-2 text-primary stroke-[1.8]" />
+                </div>
                         </Button>
                       </div>
 

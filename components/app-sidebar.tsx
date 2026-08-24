@@ -43,17 +43,20 @@ export function AppSidebar() {
   }, [companyId])
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border/50 shadow-sm">
-      <SidebarHeader className="border-b border-sidebar-border/50 pb-4 pt-4">
+    <Sidebar
+        collapsible="icon"
+        className="border-r border-sidebar-border/60 bg-sidebar shadow-sm"
+      >
+      <SidebarHeader className="border-b border-sidebar-border/60 px-2 pb-3 pt-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
               asChild
-              className="group-data-[collapsible=icon]:p-0! hover:bg-transparent"
+              className="group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0! rounded-xl px-2 hover:bg-sidebar-accent/60"
             >
               <Link href="/" className="flex items-center gap-3">
-                <div className="flex shrink-0 aspect-square size-9 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 shadow-sm overflow-hidden transition-all group-hover:scale-105">
+                <div className="flex shrink-0 aspect-square size-9 items-center justify-center rounded-xl bg-primary/10 border border-primary/15 shadow-sm overflow-hidden transition-transform duration-200 group-hover:scale-[1.03]">
                   <Image 
                     src="/logo.png" 
                     alt="TES Logo" 
@@ -76,16 +79,17 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 pt-2 scrollbar-hide">
+      <SidebarContent className="px-2.5 py-3 scrollbar-hide">
+        <div className="space-y-1">
         
         {/* ========================================================= */}
         {/* SECTION 1: PLATFORM (Global Navigation)                   */}
         {/* ========================================================= */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 px-3">
+        <SidebarGroup className="p-0">
+          <SidebarGroupLabel className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
             Platform
           </SidebarGroupLabel>
-          <SidebarMenu className="gap-1">
+          <SidebarMenu className="gap-0.5">
             {navGroups.map((group) => {
               const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
               
@@ -117,17 +121,17 @@ export function AppSidebar() {
                       isActive={isActive} 
                       tooltip={item.title}
                       className={`
-                        h-9 rounded-md transition-all duration-200 group relative
-                        data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold
-                        hover:bg-muted/50
+                        h-10 rounded-lg transition-colors duration-150 group relative
+                        data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
+                        hover:bg-sidebar-accent/70
                       `}
                     >
                       <Link href={item.url} className="flex items-center gap-3">
                         {/* The Active Left Ribbon Effect */}
                         {isActive && (
-                          <div className="absolute left-0 top-1/2 -translate-y-1/2 h-2/3 w-1 bg-primary rounded-r-full" />
+                          <div className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-r-full bg-primary" />
                         )}
-                        {Icon && <Icon className={`size-4 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />}
+                        {Icon && <Icon className={`size-[17px] shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"}`} />}
                         <span className="truncate">{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -148,10 +152,10 @@ export function AppSidebar() {
             </SidebarGroupLabel>
             
             {/* ⚓ THE BEAUTIFUL CONTEXT ANCHOR CARD ⚓ */}
-            <div className="mb-5 px-2">
-              <div className="bg-gradient-to-br from-primary/10 to-transparent border border-primary/20 rounded-xl p-3 flex flex-col gap-1.5 shadow-sm backdrop-blur-sm relative overflow-hidden">
+            <div className="mb-4 px-1">
+              <div className="relative flex flex-col gap-1.5 overflow-hidden rounded-xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/[0.03] to-transparent p-3 shadow-sm">
                 {/* Subtle top-glow effect */}
-                <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
                 
                 <span className="font-bold text-primary truncate text-sm leading-tight pr-2">
                   {activeCompany.name}
@@ -169,7 +173,7 @@ export function AppSidebar() {
               </div>
             </div>
 
-            <SidebarMenu className="gap-1 border-l border-sidebar-border/50 ml-3 pl-2">
+            <SidebarMenu className="ml-1 gap-0.5 border-l border-sidebar-border/60 pl-2">
               {navGroups.map((group) => {
                 const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
                 if (!isComplianceGroup) return null
@@ -208,16 +212,16 @@ export function AppSidebar() {
                         isActive={isActive} 
                         tooltip={item.title}
                         className={`
-                          h-8 text-sm rounded-md transition-all duration-200 relative
-                          data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold
-                          hover:bg-muted/50
+                          h-9 rounded-lg text-sm transition-colors duration-150 relative
+                          data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
+                          hover:bg-sidebar-accent/70
                         `}
                       >
                         <Link href={finalUrl} className="flex items-center gap-3">
                           {isActive && (
-                            <div className="absolute -left-[9px] top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-primary" />
+                            <div className="absolute -left-[9px] top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-primary ring-2 ring-sidebar" />
                           )}
-                          {Icon && <Icon className={`size-3.5 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />}
+                          {Icon && <Icon className={`size-4 shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"}`} />}
                           <span className="truncate">{item.title}</span>
                         </Link>
                       </SidebarMenuButton>
@@ -228,16 +232,20 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroup>
         )}
+        </div>
       </SidebarContent>
 
       {/* ========================================================= */}
       {/* SECTION 3: FOOTER (User Profile)                          */}
       {/* ========================================================= */}
-      <SidebarFooter className="border-sidebar-border/50 border-t p-4">
+      <SidebarFooter className="border-sidebar-border/60 border-t bg-sidebar/95 p-2.5">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" className="hover:bg-muted/50 transition-colors rounded-xl">
-              <Avatar className="size-9 rounded-lg border border-border shadow-sm">
+            <SidebarMenuButton
+                size="lg"
+                className="rounded-xl border border-transparent px-2.5 transition-colors hover:border-sidebar-border/60 hover:bg-sidebar-accent/70 group-data-[collapsible=icon]:justify-center"
+              >
+              <Avatar className="size-9 rounded-xl border border-primary/15 shadow-sm">
                 <AvatarFallback className="bg-primary/10 text-primary font-bold rounded-lg text-sm">
                   MB
                 </AvatarFallback>

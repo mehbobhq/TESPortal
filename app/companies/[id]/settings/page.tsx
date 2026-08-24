@@ -7,19 +7,21 @@ import { ArrowLeft, Save, ShieldCheck, Briefcase, Truck, Globe, Settings2 } from
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 
-// Reusable Setting Row Component for clean consistency
+// Reusable Setting Row Component using CHECKBOX instead of Switch
 const SettingToggle = ({ id, label, description, defaultChecked = false }: { id: string, label: string, description: string, defaultChecked?: boolean }) => (
-  <div className="flex items-center justify-between py-3">
-    <div className="space-y-0.5 pr-6">
+  <div className="flex items-center justify-between py-3 hover:bg-muted/30 px-2 -mx-2 rounded-md transition-colors">
+    <div className="space-y-0.5 pr-6 flex-1">
       <Label htmlFor={id} className="text-sm font-medium cursor-pointer">{label}</Label>
       <p className="text-xs text-muted-foreground">{description}</p>
     </div>
-    <Switch id={id} defaultChecked={defaultChecked} />
+    <div className="shrink-0">
+      <Checkbox id={id} name={id} defaultChecked={defaultChecked} className="h-5 w-5" />
+    </div>
   </div>
 )
 
@@ -87,7 +89,7 @@ export default function SettingsPage() {
                     <CardTitle className="text-sm">Dangerous Goods (Hazmat)</CardTitle>
                     <CardDescription className="text-xs">Define operational permissions for hazardous materials.</CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-2 divide-y">
+                  <CardContent className="pt-4 divide-y">
                     <SettingToggle id="dg_ca" label="Dangerous Goods - Canada" description="Permit transport of DG within Canadian borders." defaultChecked={true} />
                     <SettingToggle id="dg_us" label="Dangerous Goods - America" description="Permit transport of DG within US borders." defaultChecked={true} />
                     <SettingToggle id="dg_wv_nv" label="Transport DG in West Virginia or Nevada" description="Enable specific routing for WV/NV DG protocols." />
@@ -102,7 +104,7 @@ export default function SettingsPage() {
                     <CardHeader className="bg-muted/30 py-4 border-b">
                       <CardTitle className="text-sm">Controlled Cargo & Tobacco</CardTitle>
                     </CardHeader>
-                    <CardContent className="pt-2 divide-y">
+                    <CardContent className="pt-4 divide-y">
                       <SettingToggle id="tobacco_on" label="Transport Tobacco in Ontario" description="Enable compliance checks for Ontario tobacco permits." />
                     </CardContent>
                   </Card>
@@ -112,7 +114,7 @@ export default function SettingsPage() {
                       <CardTitle className="text-sm">Alcohol Transport Regulations</CardTitle>
                       <CardDescription className="text-xs">Manage state-specific alcohol transport permissions.</CardDescription>
                     </CardHeader>
-                    <CardContent className="pt-2 divide-y h-[250px] overflow-y-auto pr-2">
+                    <CardContent className="pt-4 divide-y h-[250px] overflow-y-auto pr-2">
                       <SettingToggle id="alc_us" label="Transport Alcohol in America (General)" description="Master switch for US alcohol transport." />
                       <SettingToggle id="alc_nj" label="New Jersey Alcohol Transport" description="Permit deliveries within NJ." />
                       <SettingToggle id="alc_tx" label="Texas Alcohol Transport" description="Permit deliveries within TX." />
@@ -141,11 +143,11 @@ export default function SettingsPage() {
                 <CardContent className="pt-6 grid sm:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="minAge">Minimum Age For Drivers *</Label>
-                    <Input id="minAge" type="number" defaultValue="21" className="max-w-[200px]" />
+                    <Input id="minAge" name="minAge" type="number" defaultValue="21" className="max-w-[200px]" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="minExp">Minimum Experience For Drivers (Months) *</Label>
-                    <Input id="minExp" type="number" defaultValue="24" className="max-w-[200px]" />
+                    <Input id="minExp" name="minExp" type="number" defaultValue="24" className="max-w-[200px]" />
                   </div>
                 </CardContent>
               </Card>
@@ -156,7 +158,7 @@ export default function SettingsPage() {
                   <CardHeader className="bg-muted/30 py-4 border-b">
                     <CardTitle className="text-sm">Safety & Vetting Requirements</CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-2 divide-y">
+                  <CardContent className="pt-4 divide-y">
                     <SettingToggle id="req_bg" label="Background Check Required" description="Mandate criminal background checks before dispatch." defaultChecked={true} />
                     <SettingToggle id="req_road" label="Perform Annual Road Test" description="Flag drivers missing annual road test evaluations." defaultChecked={true} />
                     <SettingToggle id="req_pre_road" label="Collect Pre-Employment Road Test" description="Require test documentation during onboarding." defaultChecked={true} />
@@ -170,7 +172,7 @@ export default function SettingsPage() {
                   <CardHeader className="bg-muted/30 py-4 border-b">
                     <CardTitle className="text-sm">Document Collection Mandates</CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-2 divide-y">
+                  <CardContent className="pt-4 divide-y">
                     <SettingToggle id="doc_tax" label="Tax Documents Required" description="Block dispatch if tax/payroll docs are missing." defaultChecked={true} />
                     <SettingToggle id="doc_wp" label="Collect Staff Work Permit" description="Track work permit expirations." />
                     <SettingToggle id="doc_pr" label="Collect Permanent Resident Card" description="Track PR card status for border crossing." />
@@ -191,7 +193,7 @@ export default function SettingsPage() {
                   <CardTitle className="text-sm">Program Memberships & Certifications</CardTitle>
                   <CardDescription className="text-xs">Select the security and environmental programs this entity is enrolled in.</CardDescription>
                 </CardHeader>
-                <CardContent className="pt-2 grid md:grid-cols-2 gap-x-12 gap-y-0 divide-y md:divide-y-0">
+                <CardContent className="pt-4 grid md:grid-cols-2 gap-x-12 gap-y-0 divide-y md:divide-y-0">
                   <div className="divide-y">
                     <SettingToggle id="cert_ctpat" label="Member of CTPAT?" description="Customs-Trade Partnership Against Terrorism." />
                     <SettingToggle id="cert_fast" label="Member of FAST?" description="Free and Secure Trade for Commercial Vehicles." />
@@ -218,7 +220,7 @@ export default function SettingsPage() {
                   <CardTitle className="text-sm">Regional Operations Constraints</CardTitle>
                   <CardDescription className="text-xs">Enable specific routing and equipment rules based on geography.</CardDescription>
                 </CardHeader>
-                <CardContent className="pt-2 divide-y max-w-3xl">
+                <CardContent className="pt-4 divide-y max-w-3xl">
                   <SettingToggle id="reg_or" label="Do You Travel In Oregon?" description="Requires Oregon Weight Receipt & Tax identifier." defaultChecked={true} />
                   <SettingToggle id="reg_ny" label="Do You Travel In NY?" description="Requires NY HUT decal and routing permissions." defaultChecked={true} />
                   <SettingToggle id="reg_nm" label="Do You Travel In New Mexico?" description="Requires NM Weight Distance tax routing." />
@@ -246,8 +248,8 @@ export default function SettingsPage() {
           </div>
         </Tabs>
 
-        {/* STICKY SAVE FOOTER */}
-        <div className="flex justify-end gap-4 mt-8 sticky bottom-4 bg-background/80 p-4 border rounded-lg backdrop-blur shadow-sm z-10">
+        {/* NORMAL FOOTER (No longer sticky/floating) */}
+        <div className="flex justify-end gap-4 mt-8 pt-6 border-t">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Discard Changes
           </Button>

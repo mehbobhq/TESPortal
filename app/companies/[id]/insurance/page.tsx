@@ -907,8 +907,10 @@ function InsuranceSection({
   icon,
   records,
   recordType,
+  company,
   onSave,
   onArchive,
+  company: Company
 }: {
   title: string
   description: string

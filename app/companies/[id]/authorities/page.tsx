@@ -2,24 +2,23 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Building2, Plus, CheckCircle2, ScanLine, Sparkles, FileBadge, ShieldAlert, FileKey, Trash2 } from "lucide-react"
+import { ArrowLeft, Building2, Plus, CheckCircle2, ScanLine, Sparkles, FileBadge, ShieldAlert, FileKey, CheckSquare } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // --- REUSABLE OCR UPLOAD ZONE ---
 const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string, description: string, isAutoFill?: boolean }) => (
-  <div className={`w-full border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group ${isAutoFill ? 'border-blue-500/30 bg-blue-50/50 hover:bg-blue-50 dark:bg-blue-950/10 dark:hover:bg-blue-900/20' : 'border-primary/20 bg-primary/5 hover:bg-primary/10'}`}>
-    <div className={`p-3 rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform ${isAutoFill ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400' : 'bg-background text-primary'}`}>
-      {isAutoFill ? <Sparkles className="size-5" /> : <ScanLine className="size-5" />}
+  <div className={`w-full border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group ${isAutoFill ? 'border-blue-500/30 bg-blue-50/50 hover:bg-blue-50 dark:bg-blue-950/10 dark:hover:bg-blue-900/20' : 'border-primary/20 bg-primary/5 hover:bg-primary/10'}`}>
+    <div className={`p-2 rounded-full shadow-sm mb-2 group-hover:scale-110 transition-transform ${isAutoFill ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400' : 'bg-background text-primary'}`}>
+      {isAutoFill ? <Sparkles className="size-4" /> : <ScanLine className="size-4" />}
     </div>
-    <h3 className="font-semibold text-sm text-foreground mb-1">{title}</h3>
-    <p className="text-xs text-muted-foreground max-w-sm mb-3">{description}</p>
-    <Button type="button" variant={isAutoFill ? "default" : "secondary"} size="sm" className={`pointer-events-none h-7 text-xs ${isAutoFill ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}>
+    <h3 className="font-semibold text-xs text-foreground mb-1">{title}</h3>
+    <p className="text-[10px] text-muted-foreground max-w-sm mb-3 leading-tight">{description}</p>
+    <Button type="button" variant={isAutoFill ? "default" : "secondary"} size="sm" className={`pointer-events-none h-6 text-[10px] px-2 ${isAutoFill ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}>
       Browse Files
     </Button>
   </div>
@@ -34,11 +33,13 @@ export default function AuthoritiesPage() {
   // UI States for Forms
   const [showAddCanadian, setShowAddCanadian] = useState(false)
   const [showAddUS, setShowAddUS] = useState(false)
+  const [showAddUCR, setShowAddUCR] = useState(false)
   const [showAddHazmat, setShowAddHazmat] = useState(false)
 
   // Data States
   const [canadianRecords, setCanadianRecords] = useState<any[]>([])
   const [usRecords, setUsRecords] = useState<any[]>([])
+  const [ucrRecords, setUcrRecords] = useState<any[]>([])
   const [hazmatRecords, setHazmatRecords] = useState<any[]>([])
 
   useEffect(() => {
@@ -57,10 +58,11 @@ export default function AuthoritiesPage() {
   const isUSRegistered = company.regCorpCountry === "United States"
   const isCrossBorder = company.region === "Cross-Border"
 
-  // Determine what panels to show based on origin and region
+  // Exact logic requested:
   const needsCanadianAuthorities = isCanadaRegistered || isCrossBorder
   const needsUSAuthorities = isUSRegistered || isCrossBorder
-  const needsHazmat = isUSRegistered || isCrossBorder // Always an option if touching the US
+  const needsUCR = isUSRegistered || isCrossBorder
+  const needsHazmat = true // Always rendered as an option in case they haul hazmat
 
   const generateId = (prefix: string) => `${company.id}-${prefix}-${Math.floor(1000 + Math.random() * 9000)}`
 
@@ -70,10 +72,9 @@ export default function AuthoritiesPage() {
     const formData = new FormData(e.currentTarget)
     setCanadianRecords([{
       id: generateId("CAN"),
-      type: formData.get("type"),
-      number: formData.get("number"),
-      province: formData.get("province"),
-      status: "Active"
+      mvid: formData.get("mvid"),
+      cvor: formData.get("cvor"),
+      obtainedDate: formData.get("obtainedDate"),
     }, ...canadianRecords])
     setShowAddCanadian(false)
   }
@@ -83,24 +84,33 @@ export default function AuthoritiesPage() {
     const formData = new FormData(e.currentTarget)
     setUsRecords([{
       id: generateId("USA"),
-      type: formData.get("type"),
-      number: formData.get("number"),
+      usdot: formData.get("usdot"),
+      mc: formData.get("mc"),
       pin: formData.get("pin"),
-      status: "Active"
+      obtainedDate: formData.get("obtainedDate"),
     }, ...usRecords])
     setShowAddUS(false)
+  }
+
+  const handleSaveUCR = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
+    setUcrRecords([{
+      id: generateId("UCR"),
+      obtainedDate: formData.get("obtainedDate"),
+      expiryDate: formData.get("expiryDate"),
+    }, ...ucrRecords])
+    setShowAddUCR(false)
   }
 
   const handleSaveHazmat = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     setHazmatRecords([{
-      id: generateId("HAZ"),
-      type: formData.get("type"),
-      number: formData.get("number"),
-      effective: formData.get("effective"),
-      expiry: formData.get("expiry"),
-      status: "Active"
+      id: generateId("PHM"),
+      registrationNo: formData.get("registrationNo"),
+      effectiveDate: formData.get("effectiveDate"),
+      expiryDate: formData.get("expiryDate"),
     }, ...hazmatRecords])
     setShowAddHazmat(false)
   }
@@ -135,19 +145,19 @@ export default function AuthoritiesPage() {
         </div>
       </div>
 
-      {/* 2. CANADIAN AUTHORITIES (Only rendered if applicable) */}
+      {/* 2. CANADIAN AUTHORITIES */}
       {needsCanadianAuthorities && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-sm flex items-center gap-2">
-                <FileBadge className="size-4 text-primary" /> Canadian Operating Authorities
+                <FileBadge className="size-4 text-primary" /> Canadian Operations
               </CardTitle>
-              <CardDescription className="text-xs mt-1">Provincial Carrier IDs, NSC, and CVOR details.</CardDescription>
+              <CardDescription className="text-xs mt-1">Provincial Carrier ID and NSC/CVOR Records.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddCanadian(true)}>
-                <ScanLine className="size-4 mr-1"/> Scan Document
+                <ScanLine className="size-4 mr-1"/> Scan Safety Cert
               </Button>
               <Button size="sm" onClick={() => setShowAddCanadian(true)}>
                 <Plus className="size-4 mr-1"/> Manual Add
@@ -163,28 +173,15 @@ export default function AuthoritiesPage() {
                 <div className="mb-6">
                   <DocumentUploadZone 
                     isAutoFill={true}
-                    title="Upload Certificate for Auto-Fill"
-                    description="Drop a CVOR, Safety Fitness Certificate, or Provincial ID here for data extraction."
+                    title="Mandatory: Safety Fitness Certificate / CVOR"
+                    description="Drop document here. OCR will extract NSC and Client numbers."
                   />
                 </div>
 
                 <div className="grid sm:grid-cols-3 gap-4">
-                  <div className="space-y-2 sm:col-span-1">
-                    <Label>Authority Type *</Label>
-                    <Select name="type" required>
-                      <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                      <SelectContent>
-                        {isCanadaRegistered && <SelectItem value="Provincial Carrier ID">Provincial Carrier ID (MVID / MPI)</SelectItem>}
-                        <SelectItem value="NSC Number">NSC Number (National Safety Code)</SelectItem>
-                        <SelectItem value="CVOR">CVOR (Ontario)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2 sm:col-span-1"><Label>Record Number *</Label><Input name="number" required /></div>
-                  <div className="space-y-2 sm:col-span-1">
-                    <Label>Issuing Province *</Label>
-                    <Input name="province" placeholder="e.g. AB, ON, BC" maxLength={2} required />
-                  </div>
+                  <div className="space-y-2"><Label>MVID / RIN (Provincial ID)</Label><Input name="mvid" required /></div>
+                  <div className="space-y-2"><Label>CVOR / NSC Number</Label><Input name="cvor" required /></div>
+                  <div className="space-y-2"><Label>Date Obtained</Label><Input name="obtainedDate" type="date" required /></div>
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
@@ -196,26 +193,23 @@ export default function AuthoritiesPage() {
 
             <div className="divide-y text-sm">
               <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-muted-foreground bg-muted/10 text-xs uppercase tracking-wider hidden md:grid">
-                <div className="col-span-4">Authority Type</div>
-                <div className="col-span-4">Record Number</div>
-                <div className="col-span-2">Province</div>
-                <div className="col-span-2 text-right">Actions</div>
+                <div className="col-span-3">Record ID</div>
+                <div className="col-span-3">MVID / RIN</div>
+                <div className="col-span-3">CVOR / NSC</div>
+                <div className="col-span-2">Date Obtained</div>
+                <div className="col-span-1 text-right">Actions</div>
               </div>
 
               {canadianRecords.length === 0 ? (
-                 <div className="p-10 text-center flex flex-col items-center justify-center">
-                   <FileBadge className="size-10 text-muted-foreground/30 mb-3" />
-                   <p className="text-sm font-medium text-muted-foreground">No Canadian authorities found.</p>
-                 </div>
+                 <div className="p-8 text-center text-muted-foreground text-sm">No Canadian authorities found.</div>
               ) : (
                 canadianRecords.map((r) => (
-                  <div key={r.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/30 transition-colors group">
-                    <div className="col-span-4 font-semibold">{r.type}</div>
-                    <div className="col-span-4 font-mono text-xs">{r.number}</div>
-                    <div className="col-span-2"><Badge variant="outline">{r.province}</Badge></div>
-                    <div className="col-span-2 text-right flex justify-end gap-2">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
-                    </div>
+                  <div key={r.id} className="grid grid-cols-12 gap-4 p-4 items-center">
+                    <div className="col-span-3 font-mono text-xs">{r.id}</div>
+                    <div className="col-span-3 font-medium">{r.mvid}</div>
+                    <div className="col-span-3 font-medium">{r.cvor}</div>
+                    <div className="col-span-2 text-xs">{r.obtainedDate}</div>
+                    <div className="col-span-1 text-right"><Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button></div>
                   </div>
                 ))
               )}
@@ -224,19 +218,19 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 3. US / FMCSA AUTHORITIES (Only rendered if applicable) */}
+      {/* 3. US AUTHORITIES (FMCSA) */}
       {needsUSAuthorities && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-sm flex items-center gap-2">
-                <FileKey className="size-4 text-primary" /> Federal Motor Carrier (US)
+                <FileKey className="size-4 text-primary" /> US Federal Operations (FMCSA)
               </CardTitle>
-              <CardDescription className="text-xs mt-1">USDOT and MC Operating Authorities.</CardDescription>
+              <CardDescription className="text-xs mt-1">USDOT Number, MC Authority, and Portal PIN.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddUS(true)}>
-                <ScanLine className="size-4 mr-1"/> Scan PIN/Letter
+                <ScanLine className="size-4 mr-1"/> Scan Letters
               </Button>
               <Button size="sm" onClick={() => setShowAddUS(true)}>
                 <Plus className="size-4 mr-1"/> Manual Add
@@ -249,61 +243,55 @@ export default function AuthoritiesPage() {
               <form onSubmit={handleSaveUS} className="p-6 bg-primary/5 border-b border-primary/20">
                 <h4 className="font-semibold text-sm text-primary mb-4">Add US Authority</h4>
                 
-                <div className="mb-6">
+                {/* Side-by-side Uploads for US requirements */}
+                <div className="grid sm:grid-cols-2 gap-4 mb-6">
                   <DocumentUploadZone 
                     isAutoFill={true}
-                    title="Upload FMCSA Letter"
-                    description="Drop your DOT or MC grant letter here for instant AI data capture."
+                    title="Mandatory: USDOT PIN Letter"
+                    description="OCR will extract USDOT and Portal PIN."
+                  />
+                  <DocumentUploadZone 
+                    isAutoFill={true}
+                    title="Mandatory: MC Authority Letter"
+                    description="OCR will extract the MC operating authority."
                   />
                 </div>
 
-                <div className="grid sm:grid-cols-3 gap-4">
-                  <div className="space-y-2 sm:col-span-1">
-                    <Label>Authority Type *</Label>
-                    <Select name="type" required>
-                      <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="USDOT Number">USDOT Number</SelectItem>
-                        <SelectItem value="MC Number">MC Number</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2 sm:col-span-1"><Label>Registration Number *</Label><Input name="number" required /></div>
-                  <div className="space-y-2 sm:col-span-1">
-                    <Label>Portal PIN (Optional)</Label>
-                    <Input name="pin" type="password" placeholder="••••••••" />
-                  </div>
+                <div className="grid sm:grid-cols-4 gap-4">
+                  <div className="space-y-2"><Label>USDOT Number</Label><Input name="usdot" required /></div>
+                  <div className="space-y-2"><Label>MC Number</Label><Input name="mc" required /></div>
+                  <div className="space-y-2"><Label>USDOT PIN</Label><Input name="pin" type="password" placeholder="••••••••" required /></div>
+                  <div className="space-y-2"><Label>Date Obtained</Label><Input name="obtainedDate" type="date" required /></div>
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
                   <Button type="button" variant="outline" onClick={() => setShowAddUS(false)}>Cancel</Button>
-                  <Button type="submit">Save Authority</Button>
+                  <Button type="submit">Save US Authority</Button>
                 </div>
               </form>
             )}
 
             <div className="divide-y text-sm">
               <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-muted-foreground bg-muted/10 text-xs uppercase tracking-wider hidden md:grid">
-                <div className="col-span-4">Authority Type</div>
-                <div className="col-span-4">Record Number</div>
-                <div className="col-span-2">Portal PIN</div>
-                <div className="col-span-2 text-right">Actions</div>
+                <div className="col-span-3">Record ID</div>
+                <div className="col-span-2">USDOT</div>
+                <div className="col-span-2">MC Number</div>
+                <div className="col-span-2">USDOT PIN</div>
+                <div className="col-span-2">Date Obtained</div>
+                <div className="col-span-1 text-right">Actions</div>
               </div>
 
               {usRecords.length === 0 ? (
-                 <div className="p-10 text-center flex flex-col items-center justify-center">
-                   <FileKey className="size-10 text-muted-foreground/30 mb-3" />
-                   <p className="text-sm font-medium text-muted-foreground">No US authorities found.</p>
-                 </div>
+                 <div className="p-8 text-center text-muted-foreground text-sm">No US authorities found.</div>
               ) : (
                 usRecords.map((r) => (
-                  <div key={r.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/30 transition-colors group">
-                    <div className="col-span-4 font-semibold">{r.type}</div>
-                    <div className="col-span-4 font-mono text-xs">{r.number}</div>
-                    <div className="col-span-2 text-muted-foreground">{r.pin ? "••••••••" : "Not Provided"}</div>
-                    <div className="col-span-2 text-right flex justify-end gap-2">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
-                    </div>
+                  <div key={r.id} className="grid grid-cols-12 gap-4 p-4 items-center">
+                    <div className="col-span-3 font-mono text-xs">{r.id}</div>
+                    <div className="col-span-2 font-medium">{r.usdot}</div>
+                    <div className="col-span-2 font-medium">{r.mc}</div>
+                    <div className="col-span-2 text-muted-foreground">{r.pin ? "••••••••" : "—"}</div>
+                    <div className="col-span-2 text-xs">{r.obtainedDate}</div>
+                    <div className="col-span-1 text-right"><Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button></div>
                   </div>
                 ))
               )}
@@ -312,19 +300,86 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 4. HAZMAT AUTHORITIES (Only rendered if applicable) */}
+      {/* 4. UCR REGISTRATION */}
+      {needsUCR && (
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <CheckSquare className="size-4 text-primary" /> Unified Carrier Registration (UCR)
+              </CardTitle>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddUCR(true)}>
+                <ScanLine className="size-4 mr-1"/> Scan Receipt
+              </Button>
+              <Button size="sm" onClick={() => setShowAddUCR(true)}>
+                <Plus className="size-4 mr-1"/> Manual Add
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            
+            {showAddUCR && (
+              <form onSubmit={handleSaveUCR} className="p-6 bg-primary/5 border-b border-primary/20">
+                <div className="mb-6">
+                  <DocumentUploadZone 
+                    isAutoFill={true}
+                    title="Mandatory: UCR Certificate / Receipt"
+                    description="Upload the official UCR receipt for the current filing year."
+                  />
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Date Obtained</Label><Input name="obtainedDate" type="date" required /></div>
+                  <div className="space-y-2"><Label>Expiry Date</Label><Input name="expiryDate" type="date" required /></div>
+                </div>
+
+                <div className="flex justify-end gap-2 mt-6">
+                  <Button type="button" variant="outline" onClick={() => setShowAddUCR(false)}>Cancel</Button>
+                  <Button type="submit">Save UCR</Button>
+                </div>
+              </form>
+            )}
+
+            <div className="divide-y text-sm">
+              <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-muted-foreground bg-muted/10 text-xs uppercase tracking-wider hidden md:grid">
+                <div className="col-span-3">Record ID</div>
+                <div className="col-span-4">Date Obtained</div>
+                <div className="col-span-4">Expiry Date</div>
+                <div className="col-span-1 text-right">Actions</div>
+              </div>
+
+              {ucrRecords.length === 0 ? (
+                 <div className="p-8 text-center text-muted-foreground text-sm">No UCR records found.</div>
+              ) : (
+                ucrRecords.map((r) => (
+                  <div key={r.id} className="grid grid-cols-12 gap-4 p-4 items-center">
+                    <div className="col-span-3 font-mono text-xs">{r.id}</div>
+                    <div className="col-span-4">{r.obtainedDate}</div>
+                    <div className="col-span-4 text-destructive font-medium">{r.expiryDate}</div>
+                    <div className="col-span-1 text-right"><Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button></div>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 5. HAZMAT AUTHORITIES */}
       {needsHazmat && (
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-sm flex items-center gap-2">
-                <ShieldAlert className="size-4 text-primary" /> Hazmat Authorities
+                <ShieldAlert className="size-4 text-primary" /> PHMSA Hazmat Registration
               </CardTitle>
-              <CardDescription className="text-xs mt-1">Hazardous Materials Safety Permit (HMSP) and PHMSA Registration.</CardDescription>
+              <CardDescription className="text-xs mt-1">Required only for carriers transporting hazardous materials.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddHazmat(true)}>
-                <ScanLine className="size-4 mr-1"/> Scan Permit
+                <ScanLine className="size-4 mr-1"/> Scan PHMSA License
               </Button>
               <Button size="sm" onClick={() => setShowAddHazmat(true)}>
                 <Plus className="size-4 mr-1"/> Manual Add
@@ -335,64 +390,46 @@ export default function AuthoritiesPage() {
             
             {showAddHazmat && (
               <form onSubmit={handleSaveHazmat} className="p-6 bg-primary/5 border-b border-primary/20">
-                <h4 className="font-semibold text-sm text-primary mb-4">Add Hazmat Registration</h4>
-                
                 <div className="mb-6">
                   <DocumentUploadZone 
                     isAutoFill={true}
-                    title="Upload Hazmat Certificate"
-                    description="Drop your PHMSA or HMSP document here for automated entry."
+                    title="Mandatory: PHMSA License"
+                    description="Drop your PHMSA Registration Certificate here."
                   />
                 </div>
 
-                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="space-y-2 lg:col-span-1">
-                    <Label>Permit Type *</Label>
-                    <Select name="type" required>
-                      <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PHMSA Registration">PHMSA Registration</SelectItem>
-                        <SelectItem value="HMSP Number">HMSP Number</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2 lg:col-span-1"><Label>Registration Number *</Label><Input name="number" required /></div>
-                  <div className="space-y-2 lg:col-span-1"><Label>Effective Date *</Label><Input name="effective" type="date" required /></div>
-                  <div className="space-y-2 lg:col-span-1"><Label>Expiry Date *</Label><Input name="expiry" type="date" required /></div>
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="space-y-2"><Label>Registration Number</Label><Input name="registrationNo" required /></div>
+                  <div className="space-y-2"><Label>Effective Date</Label><Input name="effectiveDate" type="date" required /></div>
+                  <div className="space-y-2"><Label>Expiry Date</Label><Input name="expiryDate" type="date" required /></div>
                 </div>
 
                 <div className="flex justify-end gap-2 mt-6">
                   <Button type="button" variant="outline" onClick={() => setShowAddHazmat(false)}>Cancel</Button>
-                  <Button type="submit">Save Permit</Button>
+                  <Button type="submit">Save PHMSA</Button>
                 </div>
               </form>
             )}
 
             <div className="divide-y text-sm">
               <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-muted-foreground bg-muted/10 text-xs uppercase tracking-wider hidden md:grid">
-                <div className="col-span-4">Permit Type</div>
-                <div className="col-span-3">Record Number</div>
-                <div className="col-span-3">Validity Window</div>
-                <div className="col-span-2 text-right">Actions</div>
+                <div className="col-span-3">Record ID</div>
+                <div className="col-span-3">Registration Number</div>
+                <div className="col-span-3">Effective Date</div>
+                <div className="col-span-2">Expiry Date</div>
+                <div className="col-span-1 text-right">Actions</div>
               </div>
 
               {hazmatRecords.length === 0 ? (
-                 <div className="p-10 text-center flex flex-col items-center justify-center">
-                   <ShieldAlert className="size-10 text-muted-foreground/30 mb-3" />
-                   <p className="text-sm font-medium text-muted-foreground">No hazmat permits found.</p>
-                 </div>
+                 <div className="p-8 text-center text-muted-foreground text-sm">No active Hazmat registrations.</div>
               ) : (
                 hazmatRecords.map((r) => (
-                  <div key={r.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 items-center hover:bg-muted/30 transition-colors group">
-                    <div className="col-span-4 font-semibold">{r.type}</div>
-                    <div className="col-span-3 font-mono text-xs">{r.number}</div>
-                    <div className="col-span-3 flex flex-col gap-0.5 text-xs">
-                      <span className="text-muted-foreground">Eff: {r.effective}</span>
-                      <span className="font-medium text-destructive">Exp: {r.expiry}</span>
-                    </div>
-                    <div className="col-span-2 text-right flex justify-end gap-2">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button>
-                    </div>
+                  <div key={r.id} className="grid grid-cols-12 gap-4 p-4 items-center">
+                    <div className="col-span-3 font-mono text-xs">{r.id}</div>
+                    <div className="col-span-3 font-medium">{r.registrationNo}</div>
+                    <div className="col-span-3 text-xs">{r.effectiveDate}</div>
+                    <div className="col-span-2 text-xs text-destructive font-medium">{r.expiryDate}</div>
+                    <div className="col-span-1 text-right"><Button variant="ghost" size="sm" className="h-7 text-xs">Edit</Button></div>
                   </div>
                 ))
               )}

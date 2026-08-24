@@ -6,9 +6,9 @@ import { ArrowLeft, Building2, Plus, CheckCircle2, ScanLine, Sparkles, FileBadge
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 
 // --- REUSABLE OCR UPLOAD ZONE ---
 const DocumentUploadZone = ({ title, description, isAutoFill }: { title: string, description: string, isAutoFill?: boolean }) => (
@@ -46,6 +46,12 @@ export default function AuthoritiesPage() {
     const id = params.id as string
     const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const found = savedCompanies.find((c: any) => c.id === id)
+    
+    // For testing: Injecting Hazardous Materials if cargoTypes is missing so you can see it work
+    if (found && !found.cargoTypes) {
+      found.cargoTypes = ["General Freight", "Hazardous Materials"]
+    }
+    
     setCompany(found || null)
     setLoading(false)
   }, [params.id])
@@ -53,16 +59,17 @@ export default function AuthoritiesPage() {
   if (loading) return <div className="p-10 text-center">Loading...</div>
   if (!company) return <div className="p-10 text-center">Company Not Found</div>
 
-  // --- COMPLIANCE LOGIC EVALUATION ---
+  // --- CORE COMPLIANCE LOGIC EVALUATION ---
   const isCanadaRegistered = company.regCorpCountry === "Canada"
   const isUSRegistered = company.regCorpCountry === "United States"
   const isCrossBorder = company.region === "Cross-Border"
 
-  // Exact logic requested:
   const needsCanadianAuthorities = isCanadaRegistered || isCrossBorder
   const needsUSAuthorities = isUSRegistered || isCrossBorder
   const needsUCR = isUSRegistered || isCrossBorder
-  const needsHazmat = true // Always rendered as an option in case they haul hazmat
+  
+  // HAZMAT TRIGGER: Directly reads the array saved from the New Company Page
+  const needsHazmat = company.cargoTypes?.includes("Hazardous Materials")
 
   const generateId = (prefix: string) => `${company.id}-${prefix}-${Math.floor(1000 + Math.random() * 9000)}`
 
@@ -367,15 +374,15 @@ export default function AuthoritiesPage() {
         </Card>
       )}
 
-      {/* 5. HAZMAT AUTHORITIES */}
+      {/* 5. HAZMAT AUTHORITIES (Triggered by Company Cargo Profile) */}
       {needsHazmat && (
-        <Card>
-          <CardHeader className="bg-muted/30 py-3 border-b flex flex-row items-center justify-between">
+        <Card className="border-destructive/30 shadow-sm">
+          <CardHeader className="bg-destructive/5 py-3 border-b border-destructive/20 flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <ShieldAlert className="size-4 text-primary" /> PHMSA Hazmat Registration
+              <CardTitle className="text-sm flex items-center gap-2 text-destructive">
+                <ShieldAlert className="size-4" /> PHMSA Hazmat Registration
               </CardTitle>
-              <CardDescription className="text-xs mt-1">Required only for carriers transporting hazardous materials.</CardDescription>
+              <CardDescription className="text-xs mt-1">Required because "Hazardous Materials" is listed in this company's cargo profile.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" onClick={() => setShowAddHazmat(true)}>

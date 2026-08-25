@@ -1,34 +1,44 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
 import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import {
+  useParams,
+  useRouter,
+} from "next/navigation"
+import {
+  AlertTriangle,
+  Archive,
   ArrowLeft,
   Building2,
-  Plus,
+  CalendarClock,
+  Check,
   CheckCircle2,
-  ShieldCheck,
-  HardHat,
+  Eye,
   FileKey2,
   FileText,
-  Archive,
-  CalendarClock,
-  AlertTriangle,
-  XCircle,
-  Eye,
-  Upload,
+  HardHat,
+  History,
   Loader2,
-  Check,
-  RotateCcw,
+  Plus,
+  RefreshCcw,
+  ShieldCheck,
+  Upload,
+  X,
+  XCircle,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
-  CardDescription,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -45,52 +55,162 @@ import {
    TYPES
 ========================================================= */
 
-type RecordStatus = "Active" | "Expiring Soon" | "Expired" | "Archived"
+type ExpiryRules = {
+  healthyMinDays: number
+  watchMinDays: number
+  urgentMinDays: number
+  criticalMinDays: number
+  criticalMaxDays: number
+}
+
+type SystemSettings = {
+  version: number
+  expiryRules: ExpiryRules
+  updatedAt?: string
+  updatedBy?: string
+}
+
+type RecordStatus =
+  | "Healthy"
+  | "Watch"
+  | "Urgent"
+  | "Critical"
+  | "Expired"
+  | "Archived"
+
 type SourceType = "Manual" | "OCR"
+
+type RecordFamily =
+  | "transportation"
+  | "workers"
+  | "bond"
+
+type OcrStatus =
+  | "Not Used"
+  | "Ready"
+  | "Processing"
+  | "Needs Review"
+  | "Verified"
 
 type InsuranceRecord = {
   id: string
+
+  family: RecordFamily
+
   type: string
   number: string
-  company: string
+
+  provider: string
   broker?: string
+
   limits?: string
   principal?: string
   amount?: string
+
   effective: string
   expiry?: string
+
   status: RecordStatus
+
   source: SourceType
+
   documentName?: string
-  documentUrl?: string
-  ocrStatus?: "Not Used" | "Ready" | "Processing" | "Needs Review" | "Verified"
+  documentType?: string
+
+  ocrStatus: OcrStatus
+  ocrConfidence?: number
+
   createdAt: string
+  updatedAt?: string
+
   archivedAt?: string
+  archivedBy?: string
+  archiveReason?: string
 }
 
 type Company = {
   id: string
   name: string
   region?: string
+
+  /*
+    IMPORTANT:
+    These names intentionally remain unchanged because other
+    TES pages already depend on the same company fields.
+  */
   regCorpState?: string
   regCorpCountry?: string
+}
+
+/* =========================================================
+   SETTINGS
+========================================================= */
+
+const SETTINGS_STORAGE_KEY =
+  "tes_system_settings"
+
+const DEFAULT_EXPIRY_RULES: ExpiryRules = {
+  healthyMinDays: 61,
+  watchMinDays: 31,
+  urgentMinDays: 11,
+  criticalMinDays: 0,
+  criticalMaxDays: 10,
+}
+
+function loadSystemSettings(): SystemSettings {
+  const fallback: SystemSettings = {
+    version: 1,
+    expiryRules: DEFAULT_EXPIRY_RULES,
+  }
+
+  if (typeof window === "undefined") {
+    return fallback
+  }
+
+  try {
+    const raw = localStorage.getItem(
+      SETTINGS_STORAGE_KEY
+    )
+
+    if (!raw) return fallback
+
+    const parsed = JSON.parse(raw)
+
+    return {
+      ...fallback,
+      ...parsed,
+      expiryRules: {
+        ...DEFAULT_EXPIRY_RULES,
+        ...(parsed.expiryRules || {}),
+      },
+    }
+  } catch {
+    return fallback
+  }
 }
 
 /* =========================================================
    STANDARD TES OCR ICON
 ========================================================= */
 
-function ScanDocumentIcon({ size = 16 }: { size?: number }) {
+function ScanDocumentIcon({
+  size = 16,
+}: {
+  size?: number
+}) {
   return (
     <span
-      className="relative inline-flex items-center justify-center shrink-0"
-      style={{ width: size, height: size }}
+      className="relative inline-flex shrink-0 items-center justify-center"
+      style={{
+        width: size,
+        height: size,
+      }}
     >
       <span className="absolute inset-0">
-        <span className="absolute left-0 top-0 h-[35%] w-[35%] border-l-[1.5px] border-t-[1.5px] border-current rounded-tl-[2px]" />
-        <span className="absolute right-0 top-0 h-[35%] w-[35%] border-r-[1.5px] border-t-[1.5px] border-current rounded-tr-[2px]" />
-        <span className="absolute left-0 bottom-0 h-[35%] w-[35%] border-l-[1.5px] border-b-[1.5px] border-current rounded-bl-[2px]" />
-        <span className="absolute right-0 bottom-0 h-[35%] w-[35%] border-r-[1.5px] border-b-[1.5px] border-current rounded-br-[2px]" />
+        <span className="absolute left-0 top-0 h-[35%] w-[35%] rounded-tl-[2px] border-l-[1.5px] border-t-[1.5px] border-current" />
+        <span className="absolute right-0 top-0 h-[35%] w-[35%] rounded-tr-[2px] border-r-[1.5px] border-t-[1.5px] border-current" />
+        <span className="absolute bottom-0 left-0 h-[35%] w-[35%] rounded-bl-[2px] border-b-[1.5px] border-l-[1.5px] border-current" />
+        <span className="absolute bottom-0 right-0 h-[35%] w-[35%] rounded-br-[2px] border-b-[1.5px] border-r-[1.5px] border-current" />
       </span>
 
       <FileText
@@ -106,105 +226,312 @@ function ScanDocumentIcon({ size = 16 }: { size?: number }) {
 }
 
 /* =========================================================
-   STATUS HELPERS
+   DATE / STATUS ENGINE
 ========================================================= */
 
-function getRecordStatus(
-  effective?: string,
-  expiry?: string,
-  archived = false
-): RecordStatus {
-  if (archived) return "Archived"
+function getDaysUntilExpiry(
+  expiry?: string
+) {
+  if (!expiry) return null
 
-  if (expiry) {
-    const today = new Date()
-    const expiryDate = new Date(`${expiry}T23:59:59`)
-    const diff =
-      expiryDate.getTime() - today.getTime()
+  const now = new Date()
 
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  )
 
-    if (days < 0) return "Expired"
-    if (days <= 60) return "Expiring Soon"
-  }
+  const expiryDate = new Date(
+    `${expiry}T23:59:59`
+  )
 
-  return "Active"
+  return Math.ceil(
+    (expiryDate.getTime() -
+      today.getTime()) /
+      86400000
+  )
 }
 
-function statusBadge(status: RecordStatus) {
-  switch (status) {
-    case "Active":
-      return (
-        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-          <CheckCircle2 className="mr-1 size-3" />
-          Active
-        </Badge>
-      )
+function getRecordStatus(
+  expiry: string | undefined,
+  rules: ExpiryRules,
+  archived = false
+): RecordStatus {
+  if (archived) {
+    return "Archived"
+  }
 
-    case "Expiring Soon":
-      return (
-        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-          <CalendarClock className="mr-1 size-3" />
-          Expiring Soon
-        </Badge>
-      )
+  /*
+    Continuous / non-expiring records are considered
+    healthy unless another compliance rule says otherwise.
+  */
+  if (!expiry) {
+    return "Healthy"
+  }
+
+  const days =
+    getDaysUntilExpiry(expiry)
+
+  if (days === null) {
+    return "Healthy"
+  }
+
+  if (days < 0) {
+    return "Expired"
+  }
+
+  if (
+    days >= rules.criticalMinDays &&
+    days <= rules.criticalMaxDays
+  ) {
+    return "Critical"
+  }
+
+  if (
+    days >= rules.urgentMinDays &&
+    days < rules.watchMinDays
+  ) {
+    return "Urgent"
+  }
+
+  if (
+    days >= rules.watchMinDays &&
+    days < rules.healthyMinDays
+  ) {
+    return "Watch"
+  }
+
+  return "Healthy"
+}
+
+/* =========================================================
+   STATUS PRESENTATION
+========================================================= */
+
+function getStatusClasses(
+  status: RecordStatus
+) {
+  switch (status) {
+    case "Healthy":
+      return {
+        badge:
+          "border-emerald-200 bg-emerald-50 text-emerald-800",
+        row: "",
+        date: "text-emerald-700",
+      }
+
+    case "Watch":
+      return {
+        badge:
+          "border-amber-200 bg-amber-50 text-amber-800",
+        row: "bg-amber-50/20",
+        date: "text-amber-700",
+      }
+
+    case "Urgent":
+      return {
+        badge:
+          "border-red-200 bg-red-50 text-red-700",
+        row: "bg-red-50/20",
+        date: "text-red-700",
+      }
+
+    case "Critical":
+      return {
+        badge:
+          "border-red-400 bg-red-100 text-red-900",
+        row: "bg-red-50/40",
+        date:
+          "text-red-800 font-semibold",
+      }
 
     case "Expired":
-      return (
-        <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
-          <XCircle className="mr-1 size-3" />
-          Expired
-        </Badge>
-      )
+      return {
+        badge:
+          "border-red-700 bg-red-950 text-white",
+        row: "bg-red-50/60",
+        date:
+          "text-red-950 font-bold",
+      }
 
     case "Archived":
-      return (
-        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-          <Archive className="mr-1 size-3" />
-          Archived
-        </Badge>
-      )
+      return {
+        badge:
+          "border-slate-200 bg-slate-50 text-slate-600",
+        row: "opacity-60",
+        date: "text-muted-foreground",
+      }
   }
+}
+
+function StatusBadge({
+  status,
+}: {
+  status: RecordStatus
+}) {
+  const classes =
+    getStatusClasses(status)
+
+  const icon =
+    status === "Healthy" ? (
+      <CheckCircle2 className="size-3" />
+    ) : status === "Watch" ? (
+      <CalendarClock className="size-3" />
+    ) : status === "Urgent" ? (
+      <AlertTriangle className="size-3" />
+    ) : status === "Critical" ? (
+      <AlertTriangle className="size-3" />
+    ) : status === "Expired" ? (
+      <XCircle className="size-3" />
+    ) : (
+      <Archive className="size-3" />
+    )
+
+  return (
+    <Badge
+      variant="outline"
+      className={`gap-1 ${classes.badge}`}
+    >
+      {icon}
+      {status}
+    </Badge>
+  )
+}
+
+/* =========================================================
+   DUPLICATE HELPERS
+========================================================= */
+
+function normalizeIdentifier(
+  value?: string
+) {
+  return (value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_/]/g, "")
+}
+
+function findDuplicatePolicy(
+  records: InsuranceRecord[],
+  number: string,
+  excludeId?: string
+) {
+  const normalized =
+    normalizeIdentifier(number)
+
+  if (!normalized) return undefined
+
+  return records.find(
+    (record) =>
+      record.id !== excludeId &&
+      record.status !== "Archived" &&
+      normalizeIdentifier(
+        record.number
+      ) === normalized
+  )
 }
 
 /* =========================================================
    OCR DOCUMENT PANEL
 ========================================================= */
 
+type OCRResult = {
+  confidence: number
+  type?: string
+  number?: string
+  provider?: string
+  broker?: string
+  limits?: string
+  effective?: string
+  expiry?: string
+  amount?: string
+  principal?: string
+}
+
 function OCRDocumentPanel({
   title,
   description,
   onFileSelected,
+  onExtractionComplete,
 }: {
   title: string
   description: string
-  onFileSelected: (file: File | null) => void
+  onFileSelected: (
+    file: File | null
+  ) => void
+  onExtractionComplete: (
+    result: OCRResult
+  ) => void
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef =
+    useRef<HTMLInputElement>(null)
 
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [processing, setProcessing] = useState(false)
-  const [reviewReady, setReviewReady] = useState(false)
+  const [file, setFile] =
+    useState<File | null>(null)
+
+  const [previewUrl, setPreviewUrl] =
+    useState<string | null>(null)
+
+  const [processing, setProcessing] =
+    useState(false)
+
+  const [reviewReady, setReviewReady] =
+    useState(false)
+
+  const [confidence, setConfidence] =
+    useState<number | null>(null)
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      if (previewUrl) {
+        URL.revokeObjectURL(
+          previewUrl
+        )
+      }
     }
   }, [previewUrl])
 
-  const handleFile = (selected: File | null) => {
+  const clearFile = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(
+        previewUrl
+      )
+    }
+
+    setFile(null)
+    setPreviewUrl(null)
+    setProcessing(false)
+    setReviewReady(false)
+    setConfidence(null)
+
+    if (inputRef.current) {
+      inputRef.current.value = ""
+    }
+
+    onFileSelected(null)
+  }
+
+  const handleFile = (
+    selected: File | null
+  ) => {
     if (!selected) return
 
     if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
+      URL.revokeObjectURL(
+        previewUrl
+      )
     }
 
-    const url = URL.createObjectURL(selected)
+    const url =
+      URL.createObjectURL(selected)
 
     setFile(selected)
     setPreviewUrl(url)
+
+    setProcessing(false)
     setReviewReady(false)
+    setConfidence(null)
 
     onFileSelected(selected)
   }
@@ -213,53 +540,89 @@ function OCRDocumentPanel({
     if (!file) return
 
     setProcessing(true)
+    setReviewReady(false)
 
     /*
-      ======================================================
-      REAL OCR INTEGRATION POINT
+      ========================================================
+      TES OCR INTEGRATION POINT
+      ========================================================
 
-      Replace this section with the TES OCR API.
+      Replace ONLY this simulated section when the real OCR
+      service is connected.
 
-      Expected lifecycle:
+      Required production flow:
 
-      upload document
-        ↓
-      document processing
-        ↓
-      OCR extraction
-        ↓
-      confidence scoring
-        ↓
-      extracted fields returned
-        ↓
-      human review
-        ↓
-      verified record
-      ======================================================
+      1. Upload original file
+      2. Document quality validation
+      3. OCR extraction
+      4. Document classification
+      5. Field extraction
+      6. Confidence per field
+      7. Overall confidence
+      8. Duplicate identifier check
+      9. Human review where required
+      10. Verified save
+      11. Master Register event
+
+      IMPORTANT:
+      The UI and data contract below are intentionally reusable.
     */
 
-    await new Promise((resolve) => setTimeout(resolve, 1200))
+    await new Promise((resolve) =>
+      setTimeout(resolve, 1000)
+    )
+
+    /*
+      We deliberately DO NOT invent policy data.
+
+      When the OCR API is connected, replace this object with
+      the actual extraction response.
+    */
+    const simulatedResult: OCRResult = {
+      confidence: 90,
+    }
+
+    setConfidence(
+      simulatedResult.confidence
+    )
 
     setProcessing(false)
     setReviewReady(true)
+
+    onExtractionComplete(
+      simulatedResult
+    )
+  }
+
+  const openFullView = () => {
+    if (!previewUrl) return
+
+    window.open(
+      previewUrl,
+      "_blank",
+      "noopener,noreferrer"
+    )
   }
 
   return (
-    <div className="rounded-xl border bg-background overflow-hidden">
-      <div className="p-4 border-b bg-muted/20">
+    <div className="overflow-hidden rounded-xl border bg-background">
+      <div className="border-b bg-muted/20 p-4">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <ScanDocumentIcon size={17} />
-              </div>
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <ScanDocumentIcon
+                size={18}
+              />
+            </div>
 
-              <div>
-                <h4 className="text-sm font-semibold">{title}</h4>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {description}
-                </p>
-              </div>
+            <div>
+              <h4 className="text-sm font-semibold">
+                {title}
+              </h4>
+
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+                {description}
+              </p>
             </div>
           </div>
 
@@ -268,20 +631,11 @@ function OCRDocumentPanel({
               type="button"
               variant="ghost"
               size="icon"
-              className="size-8"
-              onClick={() => {
-                setFile(null)
-                setReviewReady(false)
-
-                if (previewUrl) {
-                  URL.revokeObjectURL(previewUrl)
-                }
-
-                setPreviewUrl(null)
-                onFileSelected(null)
-              }}
+              className="size-8 shrink-0"
+              onClick={clearFile}
+              title="Remove document"
             >
-              <XCircle className="size-4" />
+              <X className="size-4" />
             </Button>
           )}
         </div>
@@ -290,127 +644,164 @@ function OCRDocumentPanel({
       {!file ? (
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
-          className="w-full p-8 flex flex-col items-center justify-center text-center hover:bg-muted/20 transition-colors"
+          onClick={() =>
+            inputRef.current?.click()
+          }
+          className="flex w-full flex-col items-center justify-center p-10 text-center transition-colors hover:bg-muted/20"
         >
-          <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-3">
-            <ScanDocumentIcon size={23} />
+          <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <ScanDocumentIcon
+              size={23}
+            />
           </div>
 
-          <p className="text-sm font-medium">
-            Upload document for OCR
+          <p className="text-sm font-semibold">
+            Upload insurance document
           </p>
 
-          <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-            PDF, JPG or PNG. The original document remains attached
-            to the compliance record.
+          <p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+            Select a PDF, JPG or PNG.
+            The original document remains
+            attached to the compliance
+            record as evidence.
           </p>
 
-          <div className="mt-4 inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium">
+          <div className="mt-4 inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs font-medium shadow-sm">
             <Upload className="size-3.5" />
-            Browse Files
+            Choose File
           </div>
         </button>
       ) : (
-        <div className="grid lg:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)] min-h-[360px]">
-          {/* DOCUMENT PREVIEW */}
-          <div className="border-b lg:border-b-0 lg:border-r bg-muted/10 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="grid min-h-[420px] lg:grid-cols-[minmax(0,1.55fr)_minmax(280px,0.45fr)]">
+          {/* DOCUMENT */}
+
+          <div className="border-b bg-muted/10 p-4 lg:border-b-0 lg:border-r">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Original Document
                 </p>
-                <p className="text-xs truncate max-w-[300px] mt-1">
+
+                <p className="mt-1 max-w-[500px] truncate text-xs font-medium">
                   {file.name}
                 </p>
               </div>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-              >
-                <Eye className="mr-1.5 size-3.5" />
-                Full View
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() =>
+                    inputRef.current?.click()
+                  }
+                >
+                  <RefreshCcw className="mr-1.5 size-3.5" />
+                  Replace
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={openFullView}
+                >
+                  <Eye className="mr-1.5 size-3.5" />
+                  Full View
+                </Button>
+              </div>
             </div>
 
-            <div className="h-[280px] rounded-lg border bg-background overflow-hidden flex items-center justify-center">
-              {file.type === "application/pdf" ? (
+            <div className="flex h-[340px] items-center justify-center overflow-hidden rounded-lg border bg-background">
+              {file.type ===
+              "application/pdf" ? (
                 <iframe
-                  src={previewUrl || undefined}
-                  className="w-full h-full"
-                  title="Uploaded insurance document"
+                  src={
+                    previewUrl ||
+                    undefined
+                  }
+                  className="h-full w-full"
+                  title="Insurance document preview"
                 />
               ) : (
                 <img
-                  src={previewUrl || undefined}
-                  alt="Uploaded insurance document"
-                  className="max-h-full max-w-full object-contain"
+                  src={
+                    previewUrl ||
+                    undefined
+                  }
+                  alt="Insurance document preview"
+                  className="h-full w-full object-contain"
                 />
               )}
             </div>
           </div>
 
-          {/* OCR STATUS */}
-          <div className="p-5 flex flex-col">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Document Processing
-            </p>
+          {/* PROCESSING */}
 
-            <div className="mt-5 space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex size-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                  <Check className="size-3.5" />
-                </div>
+          <div className="flex flex-col p-5">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Document Intelligence
+              </p>
 
-                <div>
-                  <p className="text-sm font-medium">Document uploaded</p>
-                  <p className="text-xs text-muted-foreground">
-                    Original file is available for review.
-                  </p>
-                </div>
-              </div>
+              <div className="mt-5 space-y-5">
+                <ProcessStep
+                  complete
+                  title="Document uploaded"
+                  description="Original evidence is ready for review."
+                />
 
-              <div className="flex items-start gap-3">
-                <div
-                  className={`mt-0.5 flex size-6 items-center justify-center rounded-full ${
+                <ProcessStep
+                  complete={
+                    reviewReady
+                  }
+                  processing={
                     processing
-                      ? "bg-blue-100 text-blue-700"
-                      : reviewReady
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {processing ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : reviewReady ? (
-                    <Check className="size-3.5" />
-                  ) : (
-                    <ScanDocumentIcon size={13} />
-                  )}
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium">
-                    {processing
-                      ? "Processing document..."
+                  }
+                  title={
+                    processing
+                      ? "Reading document..."
                       : reviewReady
                         ? "Extraction complete"
-                        : "Ready for OCR"}
-                  </p>
+                        : "OCR ready"
+                  }
+                  description={
+                    reviewReady
+                      ? "Review extracted fields against the original."
+                      : "Run OCR to extract structured insurance information."
+                  }
+                />
+              </div>
 
-                  <p className="text-xs text-muted-foreground">
-                    {reviewReady
-                      ? "Extracted information is ready for human review."
-                      : "AI will assist with field extraction. Nothing is silently saved."}
+              {confidence !==
+                null && (
+                <div className="mt-5 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      OCR confidence
+                    </span>
+
+                    <span className="text-sm font-bold">
+                      {confidence}%
+                    </span>
+                  </div>
+
+                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                    Confidence is shown
+                    for testing. Final
+                    acceptance behavior
+                    will use the central
+                    Document Intelligence
+                    rules in Portal
+                    Settings.
                   </p>
                 </div>
-              </div>
+              )}
             </div>
 
-            {!reviewReady && (
+            {!reviewReady ? (
               <Button
                 type="button"
                 className="mt-auto"
@@ -424,25 +815,32 @@ function OCRDocumentPanel({
                   </>
                 ) : (
                   <>
-                    <ScanDocumentIcon size={15} />
-                    <span className="ml-2">Run OCR</span>
+                    <ScanDocumentIcon
+                      size={15}
+                    />
+                    <span className="ml-2">
+                      Run OCR
+                    </span>
                   </>
                 )}
               </Button>
-            )}
-
-            {reviewReady && (
+            ) : (
               <div className="mt-auto rounded-lg border border-amber-200 bg-amber-50 p-3">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 size-4 text-amber-700 shrink-0" />
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
 
                   <div>
                     <p className="text-xs font-semibold text-amber-900">
-                      Human verification required
+                      Verify extracted
+                      information
                     </p>
-                    <p className="text-xs text-amber-800 mt-1">
-                      Review the extracted fields against the original
-                      document before saving this compliance record.
+
+                    <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                      OCR assists data
+                      entry. The reviewed
+                      information becomes
+                      authoritative only
+                      after saving.
                     </p>
                   </div>
                 </div>
@@ -457,8 +855,59 @@ function OCRDocumentPanel({
         type="file"
         accept=".pdf,.jpg,.jpeg,.png"
         className="hidden"
-        onChange={(e) => handleFile(e.target.files?.[0] || null)}
+        onChange={(event) =>
+          handleFile(
+            event.target.files?.[0] ||
+              null
+          )
+        }
       />
+    </div>
+  )
+}
+
+function ProcessStep({
+  complete = false,
+  processing = false,
+  title,
+  description,
+}: {
+  complete?: boolean
+  processing?: boolean
+  title: string
+  description: string
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div
+        className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
+          processing
+            ? "bg-blue-100 text-blue-700"
+            : complete
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-muted text-muted-foreground"
+        }`}
+      >
+        {processing ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : complete ? (
+          <Check className="size-3.5" />
+        ) : (
+          <ScanDocumentIcon
+            size={13}
+          />
+        )}
+      </div>
+
+      <div>
+        <p className="text-sm font-medium">
+          {title}
+        </p>
+
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+      </div>
     </div>
   )
 }
@@ -467,70 +916,256 @@ function OCRDocumentPanel({
    RECORD FORM
 ========================================================= */
 
+type RecordDraft = Omit<
+  InsuranceRecord,
+  | "id"
+  | "createdAt"
+  | "status"
+  | "archivedAt"
+  | "archivedBy"
+  | "archiveReason"
+>
+
 function RecordForm({
   title,
   recordType,
   company,
+  records,
+  initialSource,
   onSave,
   onCancel,
 }: {
   title: string
-  recordType: "transportation" | "workers" | "bond"
+  recordType: RecordFamily
   company: Company
+  records: InsuranceRecord[]
+  initialSource: SourceType
   onSave: (
-    record: Omit<InsuranceRecord, "id" | "createdAt" | "status">
+    record: RecordDraft
   ) => void
   onCancel: () => void
 }) {
-  const [source, setSource] = useState<SourceType>("Manual")
-  const [document, setDocument] = useState<File | null>(null)
+  const [source, setSource] =
+    useState<SourceType>(
+      initialSource
+    )
 
-  const [type, setType] = useState("")
-  const [number, setNumber] = useState("")
-  const [provider, setProvider] = useState("")
-  const [broker, setBroker] = useState("")
-  const [limits, setLimits] = useState("")
-  const [principal, setPrincipal] = useState(company.name)
-  const [amount, setAmount] = useState("")
-  const [effective, setEffective] = useState("")
-  const [expiry, setExpiry] = useState("")
+  const [document, setDocument] =
+    useState<File | null>(null)
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const [ocrConfidence, setOcrConfidence] =
+    useState<number | undefined>()
+
+  const [type, setType] =
+    useState("")
+
+  const [number, setNumber] =
+    useState("")
+
+  const [provider, setProvider] =
+    useState("")
+
+  const [broker, setBroker] =
+    useState("")
+
+  const [limits, setLimits] =
+    useState("")
+
+  const [principal, setPrincipal] =
+    useState(company.name)
+
+  const [amount, setAmount] =
+    useState("")
+
+  const [effective, setEffective] =
+    useState("")
+
+  const [expiry, setExpiry] =
+    useState("")
+
+  const [error, setError] =
+    useState<string | null>(null)
+
+  const duplicate = useMemo(
+    () =>
+      findDuplicatePolicy(
+        records,
+        number
+      ),
+    [records, number]
+  )
+
+  const applyOCRResult = (
+    result: OCRResult
+  ) => {
+    setOcrConfidence(
+      result.confidence
+    )
+
+    if (result.type) {
+      setType(result.type)
+    }
+
+    if (result.number) {
+      setNumber(result.number)
+    }
+
+    if (result.provider) {
+      setProvider(
+        result.provider
+      )
+    }
+
+    if (result.broker) {
+      setBroker(result.broker)
+    }
+
+    if (result.limits) {
+      setLimits(result.limits)
+    }
+
+    if (result.amount) {
+      setAmount(result.amount)
+    }
+
+    if (result.principal) {
+      setPrincipal(
+        result.principal
+      )
+    }
+
+    if (result.effective) {
+      setEffective(
+        result.effective
+      )
+    }
+
+    if (result.expiry) {
+      setExpiry(result.expiry)
+    }
+  }
+
+  const submit = (
+    event: React.FormEvent
+  ) => {
+    event.preventDefault()
+
+    setError(null)
+
+    if (!type) {
+      setError(
+        "Select a record type."
+      )
+      return
+    }
+
+    if (!number.trim()) {
+      setError(
+        "Policy / account number is required."
+      )
+      return
+    }
+
+    if (!provider.trim()) {
+      setError(
+        "Carrier / provider is required."
+      )
+      return
+    }
+
+    if (!effective) {
+      setError(
+        "Effective date is required."
+      )
+      return
+    }
+
+    if (
+      recordType !== "bond" &&
+      !expiry
+    ) {
+      setError(
+        "Expiry date is required."
+      )
+      return
+    }
+
+    if (
+      effective &&
+      expiry &&
+      new Date(expiry) <
+        new Date(effective)
+    ) {
+      setError(
+        "Expiry date cannot be earlier than the effective date."
+      )
+      return
+    }
+
+    if (duplicate) {
+      setError(
+        `Possible duplicate detected: ${duplicate.type} already uses identifier ${duplicate.number}.`
+      )
+      return
+    }
 
     onSave({
+      family: recordType,
       type,
-      number,
-      company: provider,
-      broker,
-      limits,
-      principal,
-      amount,
+      number: number.trim(),
+      provider:
+        provider.trim(),
+      broker: broker.trim(),
+      limits: limits.trim(),
+      principal:
+        principal.trim(),
+      amount: amount.trim(),
       effective,
       expiry,
+
       source,
-      documentName: document?.name,
-      documentUrl: document ? URL.createObjectURL(document) : undefined,
+
+      documentName:
+        document?.name,
+
+      documentType:
+        document?.type,
+
+      /*
+        IMPORTANT:
+        We intentionally do NOT persist an object URL.
+        blob: URLs are browser-session references and are
+        not valid permanent document storage.
+
+        Production document storage will replace this with
+        a durable document/evidence ID.
+      */
+
       ocrStatus:
         source === "OCR"
           ? "Needs Review"
           : "Not Used",
+
+      ocrConfidence,
     })
   }
 
   return (
     <form
       onSubmit={submit}
-      className="border-b bg-primary/[0.025]"
+      className="border-b bg-primary/[0.02]"
     >
-      <div className="p-5 border-b">
-        <div className="flex items-center justify-between gap-4">
+      <div className="border-b p-5">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
           <div>
-            <h3 className="font-semibold text-sm">{title}</h3>
-            <p className="text-xs text-muted-foreground mt-1">
+            <h3 className="text-sm font-semibold">
+              {title}
+            </h3>
+
+            <p className="mt-1 text-xs text-muted-foreground">
               {source === "OCR"
-                ? "Review extracted information before creating the compliance record."
-                : "Enter the record information manually."}
+                ? "Upload evidence, extract available information and verify the fields before saving."
+                : "Enter the same authoritative fields manually. Supporting evidence can be added through the OCR workflow."}
             </p>
           </div>
 
@@ -544,14 +1179,17 @@ function RecordForm({
           </Button>
         </div>
 
-        <div className="mt-4 flex rounded-lg border bg-background p-1 w-fit">
+        <div className="mt-4 flex w-fit rounded-lg border bg-background p-1">
           <button
             type="button"
-            onClick={() => setSource("Manual")}
+            onClick={() => {
+              setSource("Manual")
+              setError(null)
+            }}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
               source === "Manual"
-                ? "bg-muted"
-                : "text-muted-foreground"
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             Manual Entry
@@ -559,15 +1197,20 @@ function RecordForm({
 
           <button
             type="button"
-            onClick={() => setSource("OCR")}
+            onClick={() => {
+              setSource("OCR")
+              setError(null)
+            }}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
               source === "OCR"
                 ? "bg-primary/10 text-primary"
-                : "text-muted-foreground"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <span className="inline-flex items-center gap-1.5">
-              <ScanDocumentIcon size={13} />
+              <ScanDocumentIcon
+                size={13}
+              />
               Scan Document
             </span>
           </button>
@@ -575,72 +1218,107 @@ function RecordForm({
       </div>
 
       {source === "OCR" && (
-        <div className="p-5 border-b">
+        <div className="border-b p-5">
           <OCRDocumentPanel
-            title="Source Document"
-            description="Upload the original insurance document. AI assists with extraction; the original remains the source of truth."
-            onFileSelected={setDocument}
+            title="Insurance Evidence"
+            description="Upload the original policy, COI, clearance certificate or bond document. TES will use this document as evidence for the resulting record."
+            onFileSelected={
+              setDocument
+            }
+            onExtractionComplete={
+              applyOCRResult
+            }
           />
         </div>
       )}
 
       <div className="p-5">
+        <div className="mb-5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Record Information
+          </p>
+
+          <p className="mt-1 text-xs text-muted-foreground">
+            Manual and OCR entry use
+            the same fields so the
+            resulting record remains
+            structurally consistent.
+          </p>
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* TYPE */}
+
           <div className="space-y-2">
-            <Label>Record Type *</Label>
+            <Label>
+              Record Type *
+            </Label>
 
             <Select
               value={type}
-              onValueChange={setType}
-              required
+              onValueChange={
+                setType
+              }
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
 
               <SelectContent>
-                {recordType === "transportation" && (
+                {recordType ===
+                  "transportation" && (
                   <>
                     <SelectItem value="Auto Liability">
                       Auto Liability
                     </SelectItem>
+
                     <SelectItem value="General Liability">
                       General Liability
                     </SelectItem>
+
                     <SelectItem value="Motor Truck Cargo">
                       Motor Truck Cargo
                     </SelectItem>
+
                     <SelectItem value="Physical Damage">
                       Physical Damage
                     </SelectItem>
                   </>
                 )}
 
-                {recordType === "workers" && (
+                {recordType ===
+                  "workers" && (
                   <>
                     <SelectItem value="WSIB">
                       WSIB
                     </SelectItem>
+
                     <SelectItem value="WCB">
                       WCB
                     </SelectItem>
+
                     <SelectItem value="Workers Compensation">
                       Workers Compensation
                     </SelectItem>
+
                     <SelectItem value="Occupational Accident">
                       Occupational Accident
                     </SelectItem>
                   </>
                 )}
 
-                {recordType === "bond" && (
+                {recordType ===
+                  "bond" && (
                   <>
                     <SelectItem value="US Customs Continuous">
                       US Customs Continuous
                     </SelectItem>
+
                     <SelectItem value="Freight Broker BMC-84">
-                      Freight Broker BMC-84
+                      Freight Broker
+                      BMC-84
                     </SelectItem>
+
                     <SelectItem value="Performance Bond">
                       Performance Bond
                     </SelectItem>
@@ -650,43 +1328,82 @@ function RecordForm({
             </Select>
           </div>
 
+          {/* NUMBER */}
+
           <div className="space-y-2">
             <Label>
               {recordType === "bond"
-                ? "Bond Number"
-                : "Policy / Account Number"}{" "}
-              *
+                ? "Bond Number *"
+                : recordType ===
+                    "workers"
+                  ? "Account / Policy Number *"
+                  : "Policy Number *"}
             </Label>
 
             <Input
               value={number}
-              onChange={(e) => setNumber(e.target.value)}
-              required
+              onChange={(event) =>
+                setNumber(
+                  event.target.value
+                )
+              }
+              placeholder={
+                recordType ===
+                "bond"
+                  ? "Bond identifier"
+                  : "Policy / account identifier"
+              }
             />
+
+            {duplicate && (
+              <p className="flex items-start gap-1.5 text-[11px] font-medium text-red-700">
+                <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+                Duplicate identifier
+                found in{" "}
+                {duplicate.type}.
+              </p>
+            )}
           </div>
+
+          {/* LIMIT / AMOUNT */}
 
           {recordType === "bond" ? (
             <div className="space-y-2">
-              <Label>Bond Amount</Label>
+              <Label>
+                Bond Amount
+              </Label>
+
               <Input
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(event) =>
+                  setAmount(
+                    event.target
+                      .value
+                  )
+                }
                 placeholder="$50,000"
               />
             </div>
           ) : (
             <div className="space-y-2">
               <Label>
-                {recordType === "workers"
-                  ? "Account / Coverage"
-                  : "Coverage Limits"}
+                {recordType ===
+                "workers"
+                  ? "Coverage / Account Detail"
+                  : "Coverage Limit"}
               </Label>
 
               <Input
                 value={limits}
-                onChange={(e) => setLimits(e.target.value)}
+                onChange={(event) =>
+                  setLimits(
+                    event.target
+                      .value
+                  )
+                }
                 placeholder={
-                  recordType === "transportation"
+                  recordType ===
+                  "transportation"
                     ? "$1,000,000"
                     : "Optional"
                 }
@@ -694,88 +1411,153 @@ function RecordForm({
             </div>
           )}
 
+          {/* PROVIDER */}
+
           <div className="space-y-2 sm:col-span-2">
             <Label>
-              {recordType === "workers"
-                ? "Issuing Board / Carrier"
-                : recordType === "bond"
-                  ? "Surety Company"
-                  : "Insurance Carrier"}{" "}
-              *
+              {recordType ===
+              "workers"
+                ? "Issuing Board / Carrier *"
+                : recordType ===
+                    "bond"
+                  ? "Surety Company *"
+                  : "Insurance Carrier *"}
             </Label>
 
             <Input
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              required
+              onChange={(event) =>
+                setProvider(
+                  event.target.value
+                )
+              }
             />
           </div>
 
-          {recordType === "transportation" && (
+          {/* BROKER */}
+
+          {recordType ===
+            "transportation" && (
             <div className="space-y-2">
-              <Label>Broker</Label>
+              <Label>
+                Broker
+              </Label>
+
               <Input
                 value={broker}
-                onChange={(e) => setBroker(e.target.value)}
+                onChange={(event) =>
+                  setBroker(
+                    event.target
+                      .value
+                  )
+                }
               />
             </div>
           )}
+
+          {/* PRINCIPAL */}
 
           {recordType === "bond" && (
             <div className="space-y-2">
-              <Label>Principal Name</Label>
+              <Label>
+                Principal Name
+              </Label>
+
               <Input
                 value={principal}
-                onChange={(e) => setPrincipal(e.target.value)}
+                onChange={(event) =>
+                  setPrincipal(
+                    event.target
+                      .value
+                  )
+                }
               />
             </div>
           )}
 
+          {/* DATES */}
+
           <div className="space-y-2">
-            <Label>Effective Date *</Label>
+            <Label>
+              Effective Date *
+            </Label>
+
             <Input
               type="date"
               value={effective}
-              onChange={(e) => setEffective(e.target.value)}
-              required
+              onChange={(event) =>
+                setEffective(
+                  event.target.value
+                )
+              }
             />
           </div>
 
           <div className="space-y-2">
             <Label>
               Expiry Date
-              {recordType !== "bond" && " *"}
+              {recordType !==
+                "bond" && " *"}
             </Label>
 
             <Input
               type="date"
               value={expiry}
-              onChange={(e) => setExpiry(e.target.value)}
-              required={recordType !== "bond"}
+              onChange={(event) =>
+                setExpiry(
+                  event.target.value
+                )
+              }
             />
+
+            {recordType === "bond" && (
+              <p className="text-[11px] text-muted-foreground">
+                Leave blank for a
+                continuous bond.
+              </p>
+            )}
           </div>
         </div>
 
+        {/* OCR REVIEW */}
+
         {source === "OCR" && (
-          <div className="mt-5 rounded-lg border bg-muted/30 p-3">
+          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="size-4 text-amber-600 mt-0.5" />
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
 
               <div>
-                <p className="text-xs font-semibold">
-                  Verify before saving
+                <p className="text-xs font-semibold text-amber-900">
+                  Human verification
+                  before save
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  OCR is assistive only. The extracted values must be
-                  checked against the original document before becoming
-                  authoritative compliance data.
+
+                <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                  Compare the populated
+                  fields with the original
+                  evidence. OCR never
+                  silently creates or
+                  changes authoritative
+                  compliance data.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        <div className="flex justify-end gap-2 mt-6">
+        {/* ERROR */}
+
+        {error && (
+          <div className="mt-5 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+
+            <p className="text-xs font-medium">
+              {error}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6 flex justify-end gap-2">
           <Button
             type="button"
             variant="outline"
@@ -784,9 +1566,14 @@ function RecordForm({
             Cancel
           </Button>
 
-          <Button type="submit">
+          <Button
+            type="submit"
+            disabled={
+              Boolean(duplicate)
+            }
+          >
             <Check className="mr-2 size-4" />
-            Save Record
+            Verify & Save
           </Button>
         </div>
       </div>
@@ -803,95 +1590,234 @@ function RecordRow({
   onArchive,
 }: {
   record: InsuranceRecord
-  onArchive: (id: string) => void
+  onArchive: (
+    record: InsuranceRecord
+  ) => void
 }) {
+  const classes =
+    getStatusClasses(
+      record.status
+    )
+
+  const days =
+    getDaysUntilExpiry(
+      record.expiry
+    )
+
   return (
     <div
-      className={`group grid gap-4 p-4 transition-colors hover:bg-muted/20 ${
-        record.status === "Archived"
-          ? "opacity-60"
-          : ""
-      } md:grid-cols-12`}
+      className={`grid gap-4 p-4 transition-colors hover:bg-muted/20 md:grid-cols-12 ${classes.row}`}
     >
+      {/* RECORD */}
+
       <div className="md:col-span-3">
-        <div className="flex items-center gap-2">
-          <p className="font-semibold text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-semibold">
             {record.type}
           </p>
 
-          {record.source === "OCR" && (
+          {record.source ===
+            "OCR" && (
             <Badge
               variant="outline"
-              className="text-[9px] px-1.5 py-0"
+              className="px-1.5 py-0 text-[9px]"
             >
-              OCR
+              <ScanDocumentIcon
+                size={10}
+              />
+              <span className="ml-1">
+                OCR
+              </span>
             </Badge>
           )}
         </div>
 
-        <p className="font-mono text-[10px] text-muted-foreground mt-1">
+        <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
           {record.number}
         </p>
+
+        {record.documentName && (
+          <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <FileText className="size-3" />
+            <span className="truncate">
+              {
+                record.documentName
+              }
+            </span>
+          </p>
+        )}
       </div>
+
+      {/* PROVIDER */}
 
       <div className="md:col-span-3">
         <p className="text-sm">
-          {record.company || "—"}
+          {record.provider ||
+            "—"}
         </p>
 
         {record.broker && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Broker: {record.broker}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Broker:{" "}
+            {record.broker}
+          </p>
+        )}
+
+        {record.principal && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Principal:{" "}
+            {record.principal}
           </p>
         )}
       </div>
+
+      {/* LIMIT */}
 
       <div className="md:col-span-2">
-        {record.limits && (
-          <p className="font-mono text-xs">
-            {record.limits}
-          </p>
-        )}
-
-        {record.amount && (
-          <p className="font-mono text-xs">
-            {record.amount}
-          </p>
-        )}
+        <p className="font-mono text-xs font-medium">
+          {record.amount ||
+            record.limits ||
+            "—"}
+        </p>
       </div>
+
+      {/* DATES */}
 
       <div className="md:col-span-2 text-xs">
         <p className="text-muted-foreground">
-          Effective: {record.effective || "—"}
+          Effective:{" "}
+          {record.effective ||
+            "—"}
         </p>
 
         <p
-          className={`mt-1 ${
-            record.status === "Expired"
-              ? "text-red-600 font-semibold"
-              : record.status === "Expiring Soon"
-                ? "text-amber-700 font-semibold"
-                : ""
-          }`}
+          className={`mt-1 ${classes.date}`}
         >
-          Expiry: {record.expiry || "Continuous"}
+          Expiry:{" "}
+          {record.expiry ||
+            "Continuous"}
         </p>
+
+        {record.expiry &&
+          days !== null && (
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {days < 0
+                ? `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} expired`
+                : days === 0
+                  ? "Expires today"
+                  : `${days} day${days === 1 ? "" : "s"} remaining`}
+            </p>
+          )}
       </div>
 
-      <div className="md:col-span-2 flex md:justify-end items-center gap-2">
-        {statusBadge(record.status)}
+      {/* STATUS */}
 
-        {record.status !== "Archived" && (
+      <div className="flex items-center gap-2 md:col-span-2 md:justify-end">
+        <StatusBadge
+          status={record.status}
+        />
+
+        {record.status !==
+          "Archived" && (
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             className="size-8"
             title="Archive record"
-            onClick={() => onArchive(record.id)}
+            onClick={() =>
+              onArchive(record)
+            }
           >
             <Archive className="size-4" />
           </Button>
         )}
+      </div>
+    </div>
+  )
+}
+
+/* =========================================================
+   ARCHIVE CONFIRMATION
+========================================================= */
+
+function ArchivePanel({
+  record,
+  onConfirm,
+  onCancel,
+}: {
+  record: InsuranceRecord
+  onConfirm: (
+    reason: string
+  ) => void
+  onCancel: () => void
+}) {
+  const [reason, setReason] =
+    useState("")
+
+  return (
+    <div className="border-b border-amber-200 bg-amber-50/60 p-5">
+      <div className="flex items-start gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800">
+          <Archive className="size-4" />
+        </div>
+
+        <div className="flex-1">
+          <h4 className="text-sm font-semibold">
+            Archive{" "}
+            {record.type}
+          </h4>
+
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            This record will remain in
+            TES as historical compliance
+            evidence. It will not be
+            deleted.
+          </p>
+
+          <div className="mt-4 max-w-xl space-y-2">
+            <Label>
+              Archive Reason *
+            </Label>
+
+            <Input
+              value={reason}
+              onChange={(event) =>
+                setReason(
+                  event.target.value
+                )
+              }
+              placeholder="e.g. Policy replaced by renewal"
+            />
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="button"
+              size="sm"
+              disabled={
+                !reason.trim()
+              }
+              onClick={() =>
+                onConfirm(
+                  reason.trim()
+                )
+              }
+            >
+              <Archive className="mr-2 size-4" />
+              Confirm Archive
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -906,51 +1832,86 @@ function InsuranceSection({
   description,
   icon,
   records,
+  allRecords,
   recordType,
   company,
   onSave,
   onArchive,
-  company: Company
 }: {
   title: string
   description: string
   icon: React.ReactNode
-  records: InsuranceRecord[]
-  recordType: "transportation" | "workers" | "bond"
-  onSave: (
-    record: Omit<InsuranceRecord, "id" | "createdAt" | "status">
-  ) => void
-  onArchive: (id: string) => void
-}) {
-  const [formOpen, setFormOpen] = useState(false)
 
-  const activeRecords = records.filter(
-    (r) => r.status !== "Archived"
-  )
+  records: InsuranceRecord[]
+  allRecords: InsuranceRecord[]
+
+  recordType: RecordFamily
+
+  company: Company
+
+  onSave: (
+    record: RecordDraft
+  ) => void
+
+  onArchive: (
+    id: string,
+    reason: string
+  ) => void
+}) {
+  const [formOpen, setFormOpen] =
+    useState(false)
+
+  const [initialSource, setInitialSource] =
+    useState<SourceType>("Manual")
+
+  const [archiveTarget, setArchiveTarget] =
+    useState<InsuranceRecord | null>(
+      null
+    )
+
+  const activeRecords =
+    records.filter(
+      (record) =>
+        record.status !==
+        "Archived"
+    )
+
+  const openForm = (
+    source: SourceType
+  ) => {
+    setInitialSource(source)
+    setArchiveTarget(null)
+    setFormOpen(true)
+  }
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="bg-muted/20 py-4 border-b">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <CardHeader className="border-b bg-muted/20 py-4">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <CardTitle className="text-sm flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
               {icon}
               {title}
             </CardTitle>
 
-            <CardDescription className="text-xs mt-1">
+            <CardDescription className="mt-1 text-xs">
               {description}
             </CardDescription>
           </div>
 
           {!formOpen && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setFormOpen(true)}
+                onClick={() =>
+                  openForm("OCR")
+                }
               >
-                <ScanDocumentIcon size={14} />
+                <ScanDocumentIcon
+                  size={14}
+                />
+
                 <span className="ml-1.5">
                   Scan Document
                 </span>
@@ -958,7 +1919,11 @@ function InsuranceSection({
 
               <Button
                 size="sm"
-                onClick={() => setFormOpen(true)}
+                onClick={() =>
+                  openForm(
+                    "Manual"
+                  )
+                }
               >
                 <Plus className="mr-1.5 size-4" />
                 Manual Add
@@ -971,16 +1936,19 @@ function InsuranceSection({
       <CardContent className="p-0">
         {formOpen && (
           <RecordForm
+            key={`${recordType}-${initialSource}`}
             title={`Add ${title} Record`}
-            recordType={recordType}
-            company={records[0]?.principal ? {
-              id: "",
-              name: records[0].principal || "",
-            } : {
-              id: "",
-              name: "",
-            }}
-            onCancel={() => setFormOpen(false)}
+            recordType={
+              recordType
+            }
+            company={company}
+            records={allRecords}
+            initialSource={
+              initialSource
+            }
+            onCancel={() =>
+              setFormOpen(false)
+            }
             onSave={(record) => {
               onSave(record)
               setFormOpen(false)
@@ -988,17 +1956,56 @@ function InsuranceSection({
           />
         )}
 
-        {activeRecords.length > 0 && (
-          <div className="hidden md:grid grid-cols-12 gap-4 p-3 border-b bg-muted/10 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            <div className="col-span-3">Coverage / Record</div>
-            <div className="col-span-3">Carrier / Provider</div>
-            <div className="col-span-2">Limits / Amount</div>
-            <div className="col-span-2">Dates</div>
-            <div className="col-span-2 text-right">Status / Actions</div>
+        {archiveTarget && (
+          <ArchivePanel
+            record={archiveTarget}
+            onCancel={() =>
+              setArchiveTarget(
+                null
+              )
+            }
+            onConfirm={(
+              reason
+            ) => {
+              onArchive(
+                archiveTarget.id,
+                reason
+              )
+
+              setArchiveTarget(
+                null
+              )
+            }}
+          />
+        )}
+
+        {activeRecords.length >
+          0 && (
+          <div className="hidden grid-cols-12 gap-4 border-b bg-muted/10 p-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground md:grid">
+            <div className="col-span-3">
+              Coverage / Record
+            </div>
+
+            <div className="col-span-3">
+              Carrier / Provider
+            </div>
+
+            <div className="col-span-2">
+              Limit / Amount
+            </div>
+
+            <div className="col-span-2">
+              Dates
+            </div>
+
+            <div className="col-span-2 text-right">
+              Status
+            </div>
           </div>
         )}
 
-        {activeRecords.length === 0 ? (
+        {activeRecords.length ===
+        0 ? (
           <div className="p-10 text-center">
             <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
               {icon}
@@ -1008,24 +2015,112 @@ function InsuranceSection({
               No active records
             </p>
 
-            <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
-              Add the record manually or scan the supporting
-              document to establish the compliance record.
+            <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
+              Scan the source document
+              for assisted extraction or
+              enter the record manually.
             </p>
           </div>
         ) : (
           <div className="divide-y">
-            {activeRecords.map((record) => (
-              <RecordRow
-                key={record.id}
-                record={record}
-                onArchive={onArchive}
-              />
-            ))}
+            {activeRecords.map(
+              (record) => (
+                <RecordRow
+                  key={record.id}
+                  record={record}
+                  onArchive={
+                    setArchiveTarget
+                  }
+                />
+              )
+            )}
           </div>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/* =========================================================
+   SUMMARY CARD
+========================================================= */
+
+function SummaryCard({
+  label,
+  value,
+  status,
+}: {
+  label: string
+  value: number
+  status: RecordStatus
+}) {
+  const classes =
+    getStatusClasses(status)
+
+  return (
+    <Card
+      className={
+        status === "Archived"
+          ? ""
+          : classes.row
+      }
+    >
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            {label}
+          </p>
+
+          <StatusDot
+            status={status}
+          />
+        </div>
+
+        <p className="mt-2 text-2xl font-bold">
+          {value}
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function StatusDot({
+  status,
+}: {
+  status: RecordStatus
+}) {
+  if (status === "Healthy") {
+    return (
+      <CheckCircle2 className="size-4 text-emerald-600" />
+    )
+  }
+
+  if (status === "Watch") {
+    return (
+      <CalendarClock className="size-4 text-amber-600" />
+    )
+  }
+
+  if (status === "Urgent") {
+    return (
+      <AlertTriangle className="size-4 text-red-500" />
+    )
+  }
+
+  if (status === "Critical") {
+    return (
+      <AlertTriangle className="size-4 text-red-800" />
+    )
+  }
+
+  if (status === "Expired") {
+    return (
+      <XCircle className="size-4 text-red-950" />
+    )
+  }
+
+  return (
+    <Archive className="size-4 text-muted-foreground" />
   )
 }
 
@@ -1037,45 +2132,141 @@ export default function InsurancePage() {
   const params = useParams()
   const router = useRouter()
 
+  const companyId =
+    params.id as string
+
   const [company, setCompany] =
     useState<Company | null>(null)
 
-  const [loading, setLoading] = useState(true)
-
   const [records, setRecords] =
-    useState<InsuranceRecord[]>([])
+    useState<InsuranceRecord[]>(
+      []
+    )
 
-  const storageKey = `tes_company_insurance_${params.id}`
+  const [settings, setSettings] =
+    useState<SystemSettings>({
+      version: 1,
+      expiryRules:
+        DEFAULT_EXPIRY_RULES,
+    })
 
-  /* ---------------------------------------------
-     LOAD COMPANY + RECORDS
-  --------------------------------------------- */
+  const [loading, setLoading] =
+    useState(true)
+
+  const storageKey =
+    `tes_company_insurance_${companyId}`
+
+  /* =======================================================
+     LOAD
+  ======================================================= */
 
   useEffect(() => {
-    const id = params.id as string
+    try {
+      const savedCompanies =
+        JSON.parse(
+          localStorage.getItem(
+            "tes_companies"
+          ) || "[]"
+        )
 
-    const savedCompanies = JSON.parse(
-      localStorage.getItem("tes_companies") || "[]"
+      const found =
+        savedCompanies.find(
+          (item: Company) =>
+            item.id === companyId
+        )
+
+      setCompany(
+        found || null
+      )
+
+      const savedRecords =
+        JSON.parse(
+          localStorage.getItem(
+            storageKey
+          ) || "[]"
+        )
+
+      /*
+        Backward compatibility:
+        Existing records used "company" for provider.
+        We normalize them without destroying the stored data.
+      */
+
+      const migrated =
+        savedRecords.map(
+          (
+            record: any
+          ): InsuranceRecord => ({
+            ...record,
+
+            family:
+              record.family ||
+              inferFamily(
+                record.type
+              ),
+
+            provider:
+              record.provider ||
+              record.company ||
+              "",
+
+            ocrStatus:
+              record.ocrStatus ||
+              (record.source ===
+              "OCR"
+                ? "Needs Review"
+                : "Not Used"),
+          })
+        )
+
+      setRecords(migrated)
+
+      setSettings(
+        loadSystemSettings()
+      )
+    } catch (error) {
+      console.error(
+        "Unable to load insurance page:",
+        error
+      )
+    } finally {
+      setLoading(false)
+    }
+  }, [companyId, storageKey])
+
+  /* =======================================================
+     SYNC SETTINGS IF CHANGED ELSEWHERE
+  ======================================================= */
+
+  useEffect(() => {
+    const handleStorage = (
+      event: StorageEvent
+    ) => {
+      if (
+        event.key ===
+        SETTINGS_STORAGE_KEY
+      ) {
+        setSettings(
+          loadSystemSettings()
+        )
+      }
+    }
+
+    window.addEventListener(
+      "storage",
+      handleStorage
     )
 
-    const found = savedCompanies.find(
-      (c: Company) => c.id === id
-    )
+    return () =>
+      window.removeEventListener(
+        "storage",
+        handleStorage
+      )
+  }, [])
 
-    setCompany(found || null)
-
-    const savedRecords = JSON.parse(
-      localStorage.getItem(storageKey) || "[]"
-    )
-
-    setRecords(savedRecords)
-
-    setLoading(false)
-  }, [params.id, storageKey])
-
-  /* ---------------------------------------------
-     PERSIST RECORDS
-  --------------------------------------------- */
+  /* =======================================================
+     SAVE RECORDS
+  ======================================================= */
 
   useEffect(() => {
     if (!loading) {
@@ -1084,91 +2275,193 @@ export default function InsurancePage() {
         JSON.stringify(records)
       )
     }
-  }, [records, loading, storageKey])
+  }, [
+    records,
+    loading,
+    storageKey,
+  ])
 
-  /* ---------------------------------------------
-     DERIVE CURRENT STATUS
-  --------------------------------------------- */
+  /* =======================================================
+     NORMALIZED STATUS
+  ======================================================= */
 
-  const normalizedRecords = useMemo(() => {
-    return records.map((record) => ({
-      ...record,
-      status: getRecordStatus(
-        record.effective,
-        record.expiry,
-        record.status === "Archived"
-      ),
-    }))
-  }, [records])
+  const normalizedRecords =
+    useMemo(() => {
+      return records.map(
+        (record) => ({
+          ...record,
 
-  /* ---------------------------------------------
+          status:
+            getRecordStatus(
+              record.expiry,
+              settings.expiryRules,
+              Boolean(
+                record.archivedAt
+              ) ||
+                record.status ===
+                  "Archived"
+            ),
+        })
+      )
+    }, [
+      records,
+      settings.expiryRules,
+    ])
+
+  /* =======================================================
      SUMMARY
-  --------------------------------------------- */
+  ======================================================= */
 
   const summary = useMemo(() => {
+    const count = (
+      status: RecordStatus
+    ) =>
+      normalizedRecords.filter(
+        (record) =>
+          record.status ===
+          status
+      ).length
+
     return {
-      active: normalizedRecords.filter(
-        (r) => r.status === "Active"
-      ).length,
+      healthy:
+        count("Healthy"),
 
-      expiring: normalizedRecords.filter(
-        (r) => r.status === "Expiring Soon"
-      ).length,
+      watch: count("Watch"),
 
-      expired: normalizedRecords.filter(
-        (r) => r.status === "Expired"
-      ).length,
+      urgent: count("Urgent"),
 
-      archived: normalizedRecords.filter(
-        (r) => r.status === "Archived"
-      ).length,
+      critical:
+        count("Critical"),
+
+      expired:
+        count("Expired"),
+
+      archived:
+        count("Archived"),
     }
   }, [normalizedRecords])
 
-  /* ---------------------------------------------
-     SAVE RECORD
-  --------------------------------------------- */
+  /* =======================================================
+     SAVE
+  ======================================================= */
 
   const saveRecord = (
-    record: Omit<InsuranceRecord, "id" | "createdAt" | "status">
+    draft: RecordDraft
   ) => {
-    const newRecord: InsuranceRecord = {
-      ...record,
-      id: `${params.id}-INS-${crypto.randomUUID()}`,
-      createdAt: new Date().toISOString(),
-      status: getRecordStatus(
-        record.effective,
-        record.expiry
-      ),
+    /*
+      Second duplicate guard.
+      UI validation is never the only guard.
+    */
+
+    const duplicate =
+      findDuplicatePolicy(
+        normalizedRecords,
+        draft.number
+      )
+
+    if (duplicate) {
+      window.alert(
+        `Duplicate identifier detected. ${duplicate.type} already uses ${duplicate.number}.`
+      )
+      return
     }
+
+    const now =
+      new Date().toISOString()
+
+    const newRecord: InsuranceRecord =
+      {
+        ...draft,
+
+        id: `${companyId}-INS-${crypto.randomUUID()}`,
+
+        createdAt: now,
+
+        status:
+          getRecordStatus(
+            draft.expiry,
+            settings.expiryRules
+          ),
+      }
 
     setRecords((current) => [
       newRecord,
       ...current,
     ])
+
+    /*
+      MASTER REGISTER INTEGRATION POINT
+
+      Future centralized audit service should receive:
+
+      {
+        event: "INSURANCE_RECORD_CREATED",
+        companyId,
+        recordId: newRecord.id,
+        actor,
+        role,
+        timestamp,
+        source,
+        documentId
+      }
+
+      Do not build a separate insurance-only ledger.
+    */
   }
 
-  /* ---------------------------------------------
+  /* =======================================================
      ARCHIVE
-  --------------------------------------------- */
+  ======================================================= */
 
-  const archiveRecord = (id: string) => {
+  const archiveRecord = (
+    id: string,
+    reason: string
+  ) => {
+    const now =
+      new Date().toISOString()
+
     setRecords((current) =>
       current.map((record) =>
         record.id === id
           ? {
               ...record,
-              status: "Archived",
-              archivedAt: new Date().toISOString(),
+
+              status:
+                "Archived",
+
+              archivedAt: now,
+
+              archivedBy:
+                "Current User",
+
+              archiveReason:
+                reason,
+
+              updatedAt: now,
             }
           : record
       )
     )
+
+    /*
+      MASTER REGISTER INTEGRATION POINT
+
+      Future event:
+
+      INSURANCE_RECORD_ARCHIVED
+
+      with actor, role, timestamp, record ID,
+      reason and company ID.
+    */
   }
+
+  /* =======================================================
+     RENDER STATES
+  ======================================================= */
 
   if (loading) {
     return (
-      <div className="p-10 flex items-center justify-center">
+      <div className="flex min-h-[300px] items-center justify-center p-10">
         <Loader2 className="size-5 animate-spin text-muted-foreground" />
       </div>
     )
@@ -1176,27 +2469,61 @@ export default function InsurancePage() {
 
   if (!company) {
     return (
-      <div className="p-10 text-center">
-        <p className="font-semibold">
-          Company Not Found
-        </p>
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-10 text-center">
+        <Building2 className="size-10 text-muted-foreground/40" />
+
+        <div>
+          <h2 className="text-lg font-semibold">
+            Company Not Found
+          </h2>
+
+          <p className="mt-1 text-sm text-muted-foreground">
+            The requested company
+            record could not be loaded.
+          </p>
+        </div>
 
         <Button
-          className="mt-4"
           variant="outline"
-          onClick={() => router.push("/companies")}
+          onClick={() =>
+            router.push(
+              "/companies"
+            )
+          }
         >
+          <ArrowLeft className="mr-2 size-4" />
           Return to Companies
         </Button>
       </div>
     )
   }
 
+  const transportationRecords =
+    normalizedRecords.filter(
+      (record) =>
+        record.family ===
+        "transportation"
+    )
+
+  const workersRecords =
+    normalizedRecords.filter(
+      (record) =>
+        record.family ===
+        "workers"
+    )
+
+  const bondRecords =
+    normalizedRecords.filter(
+      (record) =>
+        record.family ===
+        "bond"
+    )
+
   return (
-    <div className="flex flex-col gap-6 pb-12 max-w-6xl">
-      {/* =========================================
+    <div className="flex max-w-7xl flex-col gap-6 pb-12">
+      {/* ===================================================
           HEADER
-      ========================================= */}
+      =================================================== */}
 
       <div>
         <div className="flex items-center gap-3">
@@ -1218,7 +2545,7 @@ export default function InsurancePage() {
               Insurance & Bonds
             </h1>
 
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <p className="mt-0.5 text-sm text-muted-foreground">
               {company.name}{" "}
               <span className="font-mono text-xs">
                 ({company.id})
@@ -1227,7 +2554,8 @@ export default function InsurancePage() {
           </div>
         </div>
 
-        {/* COMPANY CONTEXT */}
+        {/* COMPANY SOURCE CONTEXT */}
+
         <div className="mt-5 rounded-xl border bg-muted/20 p-4">
           <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
             <div>
@@ -1237,12 +2565,16 @@ export default function InsurancePage() {
 
               <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
                 <Building2 className="size-3.5 text-primary" />
-                {company.regCorpState || "Unknown"},{" "}
-                {company.regCorpCountry || "Unknown"}
+
+                {company.regCorpState ||
+                  "Unknown"}
+                ,{" "}
+                {company.regCorpCountry ||
+                  "Unknown"}
               </p>
             </div>
 
-            <div className="hidden sm:block h-8 w-px bg-border" />
+            <div className="hidden h-8 w-px bg-border sm:block" />
 
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -1251,173 +2583,252 @@ export default function InsurancePage() {
 
               <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
                 <CheckCircle2 className="size-3.5 text-primary" />
-                {company.region || "Not specified"}
+
+                {company.region ||
+                  "Not specified"}
+              </p>
+            </div>
+
+            <div className="hidden h-8 w-px bg-border lg:block" />
+
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Renewal Rules
+              </p>
+
+              <p className="mt-1 text-xs font-medium text-muted-foreground">
+                Portal Settings
+                controls expiry
+                classification
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* =========================================
-          COMPLIANCE SUMMARY
-      ========================================= */}
+      {/* ===================================================
+          STATUS SUMMARY
+      =================================================== */}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Active
-              </p>
+      <div>
+        <div className="mb-3 flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold">
+              Renewal Position
+            </h2>
 
-              <CheckCircle2 className="size-4 text-emerald-600" />
-            </div>
-
-            <p className="text-2xl font-bold mt-2">
-              {summary.active}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Live classification
+              based on the central
+              Portal Settings rules.
             </p>
-          </CardContent>
-        </Card>
+          </div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Expiring Soon
-              </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+            onClick={() =>
+              setSettings(
+                loadSystemSettings()
+              )
+            }
+          >
+            <RefreshCcw className="mr-1.5 size-3.5" />
+            Refresh Rules
+          </Button>
+        </div>
 
-              <CalendarClock className="size-4 text-amber-600" />
-            </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <SummaryCard
+            label="Healthy"
+            value={
+              summary.healthy
+            }
+            status="Healthy"
+          />
 
-            <p className="text-2xl font-bold mt-2">
-              {summary.expiring}
-            </p>
-          </CardContent>
-        </Card>
+          <SummaryCard
+            label="Watch"
+            value={summary.watch}
+            status="Watch"
+          />
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Expired
-              </p>
+          <SummaryCard
+            label="Urgent"
+            value={
+              summary.urgent
+            }
+            status="Urgent"
+          />
 
-              <XCircle className="size-4 text-red-600" />
-            </div>
+          <SummaryCard
+            label="Critical"
+            value={
+              summary.critical
+            }
+            status="Critical"
+          />
 
-            <p className="text-2xl font-bold mt-2">
-              {summary.expired}
-            </p>
-          </CardContent>
-        </Card>
+          <SummaryCard
+            label="Expired"
+            value={
+              summary.expired
+            }
+            status="Expired"
+          />
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Archived
-              </p>
-
-              <Archive className="size-4 text-muted-foreground" />
-            </div>
-
-            <p className="text-2xl font-bold mt-2">
-              {summary.archived}
-            </p>
-          </CardContent>
-        </Card>
+          <SummaryCard
+            label="Archived"
+            value={
+              summary.archived
+            }
+            status="Archived"
+          />
+        </div>
       </div>
 
-      {/* =========================================
+      {/* ===================================================
           TRANSPORTATION
-      ========================================= */}
+      =================================================== */}
 
       <InsuranceSection
         title="Transportation Insurance"
-        description="Auto liability, general liability, cargo and physical damage coverage."
+        description="Auto liability, general liability, motor truck cargo and physical damage coverage."
         icon={
           <ShieldCheck className="size-4 text-primary" />
         }
         recordType="transportation"
-        records={normalizedRecords.filter((r) =>
-          [
-            "Auto Liability",
-            "General Liability",
-            "Motor Truck Cargo",
-            "Physical Damage",
-          ].includes(r.type)
-        )}
+        company={company}
+        records={
+          transportationRecords
+        }
+        allRecords={
+          normalizedRecords
+        }
         onSave={saveRecord}
-        onArchive={archiveRecord}
+        onArchive={
+          archiveRecord
+        }
       />
 
-      {/* =========================================
+      {/* ===================================================
           WORKERS
-      ========================================= */}
+      =================================================== */}
 
       <InsuranceSection
         title="Workers Insurance"
-        description="Workers compensation and occupational accident coverage."
+        description="Workers compensation, WCB / WSIB and occupational accident coverage."
         icon={
           <HardHat className="size-4 text-primary" />
         }
         recordType="workers"
-        records={normalizedRecords.filter((r) =>
-          [
-            "WSIB",
-            "WCB",
-            "Workers Compensation",
-            "Occupational Accident",
-          ].includes(r.type)
-        )}
+        company={company}
+        records={
+          workersRecords
+        }
+        allRecords={
+          normalizedRecords
+        }
         onSave={saveRecord}
-        onArchive={archiveRecord}
+        onArchive={
+          archiveRecord
+        }
       />
 
-      {/* =========================================
-          SURETY
-      ========================================= */}
+      {/* ===================================================
+          BONDS
+      =================================================== */}
 
       <InsuranceSection
         title="Surety Bonds"
-        description="Customs bonds, freight broker bonds and performance guarantees."
+        description="Customs bonds, freight broker bonds and other surety guarantees."
         icon={
           <FileKey2 className="size-4 text-primary" />
         }
         recordType="bond"
-        records={normalizedRecords.filter((r) =>
-          [
-            "US Customs Continuous",
-            "Freight Broker BMC-84",
-            "Performance Bond",
-          ].includes(r.type)
-        )}
+        company={company}
+        records={
+          bondRecords
+        }
+        allRecords={
+          normalizedRecords
+        }
         onSave={saveRecord}
-        onArchive={archiveRecord}
+        onArchive={
+          archiveRecord
+        }
       />
 
-      {/* =========================================
-          FOOTER NOTE
-      ========================================= */}
+      {/* ===================================================
+          INTEGRITY
+      =================================================== */}
 
-      <div className="rounded-lg border bg-muted/20 p-4">
-        <div className="flex items-start gap-3">
-          <RotateCcw className="size-4 text-muted-foreground mt-0.5" />
+      <Card className="border-dashed bg-muted/10">
+        <CardContent className="p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <History className="size-4" />
+            </div>
 
-          <div>
-            <p className="text-xs font-semibold">
-              Compliance record integrity
-            </p>
+            <div>
+              <p className="text-xs font-semibold">
+                Compliance record
+                integrity
+              </p>
 
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              Insurance records are retained as historical
-              compliance information. Records are archived rather
-              than deleted. AI-assisted extraction never silently
-              changes authoritative compliance data.
-            </p>
+              <p className="mt-1 max-w-4xl text-xs leading-relaxed text-muted-foreground">
+                Insurance records are
+                retained as historical
+                compliance information.
+                Records are archived
+                rather than deleted.
+                Original evidence remains
+                associated with the
+                record, and AI-assisted
+                extraction never silently
+                changes authoritative
+                compliance information.
+              </p>
+            </div>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   )
+}
+
+/* =========================================================
+   LEGACY FAMILY INFERENCE
+
+   Allows existing localStorage records from the previous
+   Insurance page to continue appearing after this upgrade.
+========================================================= */
+
+function inferFamily(
+  type?: string
+): RecordFamily {
+  if (
+    [
+      "WSIB",
+      "WCB",
+      "Workers Compensation",
+      "Occupational Accident",
+    ].includes(type || "")
+  ) {
+    return "workers"
+  }
+
+  if (
+    [
+      "US Customs Continuous",
+      "Freight Broker BMC-84",
+      "Performance Bond",
+    ].includes(type || "")
+  ) {
+    return "bond"
+  }
+
+  return "transportation"
 }

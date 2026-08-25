@@ -128,6 +128,7 @@ type ContactEvent = {
   type:
     | "CONTACT_CREATED"
     | "CONTACT_UPDATED"
+    | "CONTACT_FIELD_UPDATED"
     | "CONTACT_ARCHIVED"
     | "CONTACT_RESTORED"
     | "PRIMARY_CHANGED"
@@ -1481,6 +1482,62 @@ function OCRContactWorkspace({
   )
 }
 
+function CopyableValue({
+  label,
+  value,
+}: {
+  label: string
+  value?: string
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const copyValue = async () => {
+    if (!value) return
+
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+
+      window.setTimeout(() => {
+        setCopied(false)
+      }, 1200)
+    } catch {
+      // Clipboard access can fail in non-secure development environments.
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-[10px] text-muted-foreground">
+        {label}
+      </p>
+
+      <div className="mt-1 flex items-center gap-1">
+        <span className="min-w-0 flex-1 select-text truncate text-xs font-medium">
+          {value || "Not recorded"}
+        </span>
+
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={copyValue}
+            title={`Copy ${label}`}
+          >
+            {copied ? (
+              <Check className="size-3.5 text-emerald-600" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* =========================================================
    PAGE
 ========================================================= */
@@ -1526,10 +1583,11 @@ export default function ContactsPage() {
   const [showManualForm, setShowManualForm] =
     useState(false)
 
-  const [
-    editingContact,
-    setEditingContact,
-  ] = useState<Contact | null>(null)
+  const [isEditingContact, setIsEditingContact] =
+    useState(false)
+
+  const [editDraft, setEditDraft] =
+    useState<ContactDraft>(EMPTY_DRAFT)
 
   const [manualDraft, setManualDraft] =
     useState<ContactDraft>(EMPTY_DRAFT)
@@ -1776,6 +1834,154 @@ export default function ContactsPage() {
   }
 
   /* =======================================================
+     EDIT CONTACT
+  ======================================================= */
+
+  const beginEditContact = (contact: Contact) => {
+    setEditDraft({
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      dob: contact.dob || "",
+
+      dlNumber: contact.dlNumber || "",
+      dlState: contact.dlState || "",
+      dlExpiry: contact.dlExpiry || "",
+      dlIssueDate: contact.dlIssueDate || "",
+      dlClass: contact.dlClass || "",
+      dlRestrictions: contact.dlRestrictions || "",
+
+      email: contact.email || "",
+      phone: contact.phone || "",
+
+      role: contact.role || "",
+      isPrimary: contact.isPrimary,
+    })
+
+    setIsEditingContact(true)
+  }
+
+  const updateEditDraft = <
+    K extends keyof ContactDraft
+  >(
+    key: K,
+    value: ContactDraft[K]
+  ) => {
+    setEditDraft((current) => ({
+      ...current,
+      [key]: value,
+    }))
+  }
+
+  const saveEditedContact = () => {
+    if (!selectedContact) return
+
+    if (
+      !editDraft.firstName.trim() ||
+      !editDraft.lastName.trim() ||
+      !editDraft.email.trim() ||
+      !editDraft.phone.trim() ||
+      !editDraft.role
+    ) {
+      return
+    }
+
+    const fieldLabels: Partial<Record<keyof ContactDraft, string>> = {
+      firstName: "First Name",
+      lastName: "Last Name",
+      dob: "Date of Birth",
+      dlNumber: "Driver Licence #",
+      dlState: "Issuing Province / State",
+      dlExpiry: "Expiry Date",
+      dlIssueDate: "Issue Date",
+      dlClass: "Licence Class",
+      dlRestrictions: "Restrictions",
+      email: "Email",
+      phone: "Phone",
+      role: "Role / Relationship",
+      isPrimary: "Primary Contact",
+    }
+
+    const changedFields = (
+      Object.keys(fieldLabels) as Array<keyof ContactDraft>
+    ).filter((key) => selectedContact[key] !== editDraft[key])
+
+    if (!changedFields.length) {
+      setIsEditingContact(false)
+      return
+    }
+
+    let updatedContacts = contacts.map((contact) => {
+      if (contact.id !== selectedContact.id) {
+        return contact
+      }
+
+      let updated: Contact = {
+        ...contact,
+        firstName: editDraft.firstName.trim(),
+        lastName: editDraft.lastName.trim(),
+        dob: editDraft.dob,
+
+        dlNumber: editDraft.dlNumber.trim(),
+        dlState: editDraft.dlState.trim(),
+        dlExpiry: editDraft.dlExpiry,
+        dlIssueDate: editDraft.dlIssueDate,
+        dlClass: editDraft.dlClass.trim(),
+        dlRestrictions: editDraft.dlRestrictions.trim(),
+
+        email: editDraft.email.trim(),
+        phone: editDraft.phone.trim(),
+
+        role: editDraft.role,
+        isPrimary: editDraft.isPrimary,
+
+        relationships: contact.relationships.map(
+          (relationship) =>
+            relationship.companyId === companyId &&
+            relationship.status === "active"
+              ? {
+                  ...relationship,
+                  role: editDraft.role,
+                }
+              : relationship
+        ),
+      }
+
+      updated = appendEvent(
+        updated,
+        "CONTACT_UPDATED",
+        "Contact information was updated."
+      )
+
+      changedFields.forEach((key) => {
+        const oldValue = String(contact[key] ?? "")
+        const newValue = String(editDraft[key] ?? "")
+
+        updated = appendEvent(
+          updated,
+          "CONTACT_FIELD_UPDATED",
+          `${fieldLabels[key]} changed from "${oldValue || "Not recorded"}" to "${newValue || "Not recorded"}".`
+        )
+      })
+
+      return updated
+    })
+
+    const updatedContact = updatedContacts.find(
+      (contact) => contact.id === selectedContact.id
+    )
+
+    if (updatedContact && updatedContact.isPrimary) {
+      updatedContacts = applyPrimaryRule(
+        updatedContact,
+        updatedContacts
+      )
+    }
+
+    setContacts(updatedContacts)
+    setIsEditingContact(false)
+  }
+
+  /* =======================================================
      CREATE CONTACT
   ======================================================= */
 
@@ -1893,7 +2099,7 @@ export default function ContactsPage() {
   ======================================================= */
 
   const openManualAdd = () => {
-    setEditingContact(null)
+    setIsEditingContact(false)
 
     setManualDraft({
       ...EMPTY_DRAFT,
@@ -2827,10 +3033,74 @@ export default function ContactsPage() {
                         }
                       </p>
                     </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() =>
+                        beginEditContact(selectedContact)
+                      }
+                    >
+                      <Pencil className="mr-1.5 size-3.5" />
+                      Edit
+                    </Button>
                   </div>
                 </CardHeader>
 
                 <CardContent className="space-y-5 p-4">
+                  {isEditingContact && (
+                    <div className="border-b bg-primary/[0.025] p-4">
+                      <div className="mb-5 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-semibold">
+                            Edit Contact
+                          </p>
+
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Changes update the current contact record while preserving a history event.
+                          </p>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() =>
+                            setIsEditingContact(false)
+                          }
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+
+                      <ContactFields
+                        draft={editDraft}
+                        onChange={updateEditDraft}
+                      />
+
+                      <div className="mt-5 flex justify-end gap-2 border-t pt-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            setIsEditingContact(false)
+                          }
+                        >
+                          Cancel
+                        </Button>
+
+                        <Button
+                          type="button"
+                          onClick={saveEditedContact}
+                        >
+                          <Check className="mr-2 size-4" />
+                          Save Changes
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   {/* IDENTITY */}
                   <section>
                     <div className="flex items-center justify-between">
@@ -2849,72 +3119,62 @@ export default function ContactsPage() {
                       )}
                     </div>
 
-                    <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <p className="text-muted-foreground">
-                          DOB
-                        </p>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <CopyableValue
+                        label="Date of Birth"
+                        value={selectedContact.dob}
+                      />
 
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dob ||
-                            "Not recorded"}
-                        </p>
+                      <CopyableValue
+                        label="Driver Licence #"
+                        value={selectedContact.dlNumber}
+                      />
+
+                      <CopyableValue
+                        label="Issuing Province / State"
+                        value={selectedContact.dlState}
+                      />
+
+                      <CopyableValue
+                        label="Expiry Date"
+                        value={selectedContact.dlExpiry}
+                      />
+
+                      <CopyableValue
+                        label="Issue Date"
+                        value={selectedContact.dlIssueDate}
+                      />
+
+                      <CopyableValue
+                        label="Licence Class"
+                        value={selectedContact.dlClass}
+                      />
+
+                      <div className="col-span-2">
+                        <CopyableValue
+                          label="Restrictions"
+                          value={selectedContact.dlRestrictions}
+                        />
                       </div>
+                    </div>
+                  </section>
 
-                      <div>
-                        <p className="text-muted-foreground">
-                          Licence
-                        </p>
+                  {/* CONTACT INFORMATION */}
+                  <section className="border-t pt-4">
+                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Contact Information
+                    </Label>
 
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dlNumber ||
-                            "Not recorded"}
-                        </p>
-                      </div>
+                    <div className="mt-3 grid gap-3">
+                      <CopyableValue
+                        label="Email"
+                        value={selectedContact.email}
+                      />
 
-                      <div>
-                        <p className="text-muted-foreground">
-                          Issuing Region
-                        </p>
-
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dlState ||
-                            "Not recorded"}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-muted-foreground">
-                          Expiry
-                        </p>
-
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dlExpiry ||
-                            "Not recorded"}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-muted-foreground">
-                          Class
-                        </p>
-
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dlClass ||
-                            "Not recorded"}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-muted-foreground">
-                          Restrictions
-                        </p>
-
-                        <p className="mt-1 font-medium">
-                          {selectedContact.dlRestrictions ||
-                            "None recorded"}
-                        </p>
-                      </div>
+                      <CopyableValue
+                        label="Phone"
+                        value={selectedContact.phone}
+                      />
                     </div>
                   </section>
 

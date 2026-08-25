@@ -1116,7 +1116,7 @@ function ContactFields({
                 <SelectValue placeholder="Select relationship" />
               </SelectTrigger>
 
-              <SelectContent>
+              <SelectContent className="z-[100]">
                 <SelectItem value="Owner">
                   Owner / President
                 </SelectItem>

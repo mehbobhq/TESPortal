@@ -319,6 +319,11 @@ type BondRecord = {
   archiveReason?: string
 }
 
+type SelectedInsuranceRecord =
+  | TransportationInsuranceRecord
+  | WorkersInsuranceRecord
+  | BondRecord
+
 type StoredInsuranceData = {
   version: number
 
@@ -1016,78 +1021,80 @@ function splitPersonName(
    without creating Harpreet again.
 ========================================================= */
 
+function ensureBrokerRelationship(
+  contact: Contact,
+  brokerOrganizationId: string,
+  brokerOrganizationName: string
+): Contact {
+  const relationships = [
+    ...(contact.relationships || []),
+  ]
+
+  const existingIndex = relationships.findIndex(
+    (relationship) =>
+      relationship.companyId === brokerOrganizationId
+  )
+
+  if (existingIndex >= 0) {
+    relationships[existingIndex] = {
+      ...relationships[existingIndex],
+      companyName: brokerOrganizationName,
+      role: "Insurance Broker Contact",
+      status: "active",
+    }
+  } else {
+    relationships.push({
+      id: createId("REL"),
+      companyId: brokerOrganizationId,
+      companyName: brokerOrganizationName,
+      role: "Insurance Broker Contact",
+      status: "active",
+      startDate: isoNow().slice(0, 10),
+      source: "document",
+    })
+  }
+
+  return {
+    ...contact,
+    relationships,
+    updatedAt: isoNow(),
+  }
+}
+
 function resolveBrokerContact({
   brokerOrganizationId,
   brokerOrganizationName,
-
   contactName,
   email,
   phone,
 }: {
   brokerOrganizationId?: string
-
   brokerOrganizationName: string
-
   contactName: string
   email: string
   phone: string
 }) {
-  const contacts =
-    getContacts()
+  const contacts = getContacts()
 
-  const normalizedEmail =
-    normalizeEmail(email)
-
-  const normalizedPhone =
-    normalizePhone(phone)
-
-  const normalizedName =
-    normalizePersonName(
-      contactName
-    )
-
-  /*
-    STRONG IDENTITY #1
-    Same email.
-  */
+  const normalizedEmail = normalizeEmail(email)
+  const normalizedPhone = normalizePhone(phone)
+  const normalizedName = normalizePersonName(contactName)
 
   let existing =
     contacts.find(
       (contact) =>
-        Boolean(
-          normalizedEmail
-        ) &&
-        normalizeEmail(
-          contact.email
-        ) ===
-          normalizedEmail
+        Boolean(normalizedEmail) &&
+        normalizeEmail(contact.email) === normalizedEmail
     )
-
-  /*
-    STRONG IDENTITY #2
-    Same phone.
-  */
 
   if (!existing) {
     existing =
       contacts.find(
         (contact) =>
-          Boolean(
-            normalizedPhone
-          ) &&
-          normalizePhone(
-            contact.phone
-          ) ===
-            normalizedPhone
+          Boolean(normalizedPhone) &&
+          normalizePhone(contact.phone) === normalizedPhone
       )
   }
-
-  /*
-    NAME + SAME BROKER ORGANIZATION.
-
-    Harpreet / Har preet should not be duplicated
-    merely because spacing differs.
-  */
 
   if (
     !existing &&
@@ -1096,164 +1103,70 @@ function resolveBrokerContact({
   ) {
     const candidates =
       contacts
-        .filter(
-          (contact) =>
-            contact.relationships?.some(
-              (
-                relationship
-              ) =>
-                relationship.companyId ===
-                brokerOrganizationId
-            )
+        .filter((contact) =>
+          contact.relationships?.some(
+            (relationship) =>
+              relationship.companyId === brokerOrganizationId
+          )
         )
         .map((contact) => ({
           contact,
-
-          score:
-            similarity(
-              normalizedName,
-
-              normalizePersonName(
-                `${contact.firstName} ${contact.lastName}`
-              )
-            ),
+          score: similarity(
+            normalizedName,
+            normalizePersonName(
+              `${contact.firstName} ${contact.lastName}`
+            )
+          ),
         }))
-        .filter(
-          (result) =>
-            result.score >= 90
-        )
-        .sort(
-          (a, b) =>
-            b.score - a.score
-        )
+        .filter((result) => result.score >= 90)
+        .sort((a, b) => b.score - a.score)
 
-    if (
-      candidates.length
-    ) {
-      existing =
-        candidates[0].contact
-    }
+    existing = candidates[0]?.contact
   }
 
-  /*
-    Found existing contact.
-
-    Fill missing information rather than creating another.
-  */
-
   if (existing) {
-    const updated =
-      contacts.map(
-        (contact) => {
-          if (
-            contact.id !==
-            existing!.id
-          ) {
-            return contact
-          }
-
-          const relationships =
-            [
-              ...(contact.relationships ||
-                []),
-            ]
-
-          const alreadyLinked =
-            brokerOrganizationId &&
-            relationships.some(
-              (
-                relationship
-              ) =>
-                relationship.companyId ===
-                brokerOrganizationId
-            )
-
-          if (
-            brokerOrganizationId &&
-            !alreadyLinked
-          ) {
-            relationships.push({
-              id:
-                createId(
-                  "REL"
-                ),
-
-              companyId:
-                brokerOrganizationId,
-
-              companyName:
-                brokerOrganizationName,
-
-              role:
-                "Insurance Broker Contact",
-
-              status:
-                "active",
-
-              startDate:
-                isoNow().slice(
-                  0,
-                  10
-                ),
-
-              source:
-                "document",
-            })
-          }
-
-          return {
-            ...contact,
-
-            email:
-              contact.email ||
-              email.trim(),
-
-            phone:
-              contact.phone ||
-              phone.trim(),
-
-            relationships,
-
-            updatedAt:
-              isoNow(),
-          }
+    const updatedContacts = contacts.map(
+      (contact) => {
+        if (contact.id !== existing!.id) {
+          return contact
         }
-      )
 
-    saveContacts(updated)
+        let next: Contact = {
+          ...contact,
+          email: contact.email || email.trim(),
+          phone: contact.phone || phone.trim(),
+          updatedAt: isoNow(),
+        }
+
+        if (brokerOrganizationId) {
+          next = ensureBrokerRelationship(
+            next,
+            brokerOrganizationId,
+            brokerOrganizationName
+          )
+        }
+
+        return next
+      }
+    )
+
+    saveContacts(updatedContacts)
 
     const refreshed =
-      updated.find(
+      updatedContacts.find(
         (contact) =>
-          contact.id ===
-          existing!.id
+          contact.id === existing!.id
       )!
 
     return {
-      contactId:
-        refreshed.id,
-
+      contactId: refreshed.id,
       contactName:
         `${refreshed.firstName} ${refreshed.lastName}`.trim(),
-
-      contactEmail:
-        refreshed.email ||
-        "",
-
-      contactPhone:
-        refreshed.phone ||
-        "",
-
+      contactEmail: refreshed.email || "",
+      contactPhone: refreshed.phone || "",
       created: false,
     }
   }
-
-  /*
-    No reliable match.
-
-    Only create when we have at least a meaningful
-    contact identity.
-  */
 
   if (
     !contactName.trim() &&
@@ -1261,1224 +1174,50 @@ function resolveBrokerContact({
     !phone.trim()
   ) {
     return {
-      contactId:
-        undefined,
-
+      contactId: undefined,
       contactName: "",
-
       contactEmail: "",
-
       contactPhone: "",
-
       created: false,
     }
   }
 
-  const names =
-    splitPersonName(
-      contactName
+  const names = splitPersonName(contactName)
+
+  let created: Contact = {
+    id: createId("CNT"),
+    globalId: createId("USR"),
+    firstName: names.firstName,
+    lastName: names.lastName,
+    email: email.trim(),
+    phone: phone.trim(),
+    role: "Insurance Broker Contact",
+    isPrimary: false,
+    isArchived: false,
+    relationships: [],
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    discoveredBy: "Insurance Document Intelligence",
+  }
+
+  if (brokerOrganizationId) {
+    created = ensureBrokerRelationship(
+      created,
+      brokerOrganizationId,
+      brokerOrganizationName
     )
+  }
 
-  const created: Contact =
-    {
-      id:
-        createId(
-          "CNT"
-        ),
-
-      globalId:
-        createId(
-          "USR"
-        ),
-
-      firstName:
-        names.firstName,
-
-      lastName:
-        names.lastName,
-
-      email:
-        email.trim(),
-
-      phone:
-        phone.trim(),
-
-      role:
-        "Insurance Broker Contact",
-
-      isPrimary: false,
-      isArchived: false,
-
-      relationships:
-        brokerOrganizationId
-          ? [
-              {
-                id:
-                  createId(
-                    "REL"
-                  ),
-
-                companyId:
-                  brokerOrganizationId,
-
-                companyName:
-                  brokerOrganizationName,
-
-                role:
-                  "Insurance Broker Contact",
-
-                status:
-                  "active",
-
-                startDate:
-                  isoNow().slice(
-                    0,
-                    10
-                  ),
-
-                source:
-                  "document",
-              },
-            ]
-          : [],
-
-      createdAt:
-        isoNow(),
-
-      updatedAt:
-        isoNow(),
-
-      discoveredBy:
-        "Insurance Document Intelligence",
-    }
-
-  saveContacts([
-    created,
-    ...contacts,
-  ])
+  saveContacts([created, ...contacts])
 
   return {
-    contactId:
-      created.id,
-
+    contactId: created.id,
     contactName:
       `${created.firstName} ${created.lastName}`.trim(),
-
-    contactEmail:
-      created.email || "",
-
-    contactPhone:
-      created.phone || "",
-
+    contactEmail: created.email || "",
+    contactPhone: created.phone || "",
     created: true,
   }
-}
-
-/* =========================================================
-   UPDATE EXISTING BROKER CONTACT
-========================================================= */
-
-function updateBrokerContact({
-  contactId,
-
-  name,
-  email,
-  phone,
-}: {
-  contactId?: string
-
-  name: string
-  email: string
-  phone: string
-}) {
-  if (!contactId) {
-    return
-  }
-
-  const contacts =
-    getContacts()
-
-  const names =
-    splitPersonName(name)
-
-  const updated =
-    contacts.map(
-      (contact) =>
-        contact.id ===
-        contactId
-          ? {
-              ...contact,
-
-              firstName:
-                names.firstName ||
-                contact.firstName,
-
-              lastName:
-                names.lastName ||
-                contact.lastName,
-
-              email:
-                email.trim(),
-
-              phone:
-                phone.trim(),
-
-              updatedAt:
-                isoNow(),
-            }
-          : contact
-    )
-
-  saveContacts(updated)
-}
-
-/* =========================================================
-   TYPE NORMALIZATION
-========================================================= */
-
-function normalizeInsuranceType(
-  source: string
-) {
-  const value =
-    source
-      .trim()
-      .toLowerCase()
-
-  if (
-    value.includes(
-      "general liability"
-    )
-  ) {
-    return "GENERAL_LIABILITY"
-  }
-
-  if (
-    value.includes(
-      "automobile"
-    ) ||
-    value.includes(
-      "auto liability"
-    )
-  ) {
-    return "AUTOMOBILE_LIABILITY"
-  }
-
-  if (
-    value.includes(
-      "motor truck cargo"
-    )
-  ) {
-    return "MOTOR_TRUCK_CARGO"
-  }
-
-  if (
-    value.includes(
-      "non owned trailer"
-    ) ||
-    value.includes(
-      "non-owned trailer"
-    )
-  ) {
-    return "NON_OWNED_TRAILER"
-  }
-
-  if (
-    value.includes(
-      "physical damage"
-    )
-  ) {
-    return "PHYSICAL_DAMAGE"
-  }
-
-  if (
-    value.includes(
-      "trailer interchange"
-    )
-  ) {
-    return "TRAILER_INTERCHANGE"
-  }
-
-  if (
-    value.includes(
-      "umbrella"
-    ) ||
-    value.includes(
-      "excess"
-    )
-  ) {
-    return "UMBRELLA_EXCESS"
-  }
-
-  return "OTHER"
-}
-
-/* =========================================================
-   EXPIRY
-========================================================= */
-
-function getDaysRemaining(
-  expiryDate?: string
-) {
-  if (!expiryDate) {
-    return null
-  }
-
-  const now =
-    new Date()
-
-  const today =
-    new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
-    )
-
-  const expiry =
-    new Date(
-      `${expiryDate}T23:59:59`
-    )
-
-  return Math.ceil(
-    (expiry.getTime() -
-      today.getTime()) /
-      86400000
-  )
-}
-
-function getExpiryStatus(
-  expiryDate:
-    | string
-    | undefined,
-
-  rules: ExpiryRules,
-
-  archived = false
-): ExpiryStatus {
-  if (archived) {
-    return "Archived"
-  }
-
-  if (!expiryDate) {
-    return "Healthy"
-  }
-
-  const days =
-    getDaysRemaining(
-      expiryDate
-    )
-
-  if (days === null) {
-    return "Healthy"
-  }
-
-  if (days < 0) {
-    return "Expired"
-  }
-
-  if (
-    days >=
-      rules.criticalMinDays &&
-    days <=
-      rules.criticalMaxDays
-  ) {
-    return "Critical"
-  }
-
-  if (
-    days >=
-      rules.urgentMinDays &&
-    days <
-      rules.watchMinDays
-  ) {
-    return "Urgent"
-  }
-
-  if (
-    days >=
-      rules.watchMinDays &&
-    days <
-      rules.healthyMinDays
-  ) {
-    return "Watch"
-  }
-
-  return "Healthy"
-}
-
-/* =========================================================
-   STATUS UI
-========================================================= */
-
-function statusStyle(
-  status: ExpiryStatus
-) {
-  switch (status) {
-    case "Healthy":
-      return {
-        badge:
-          "border-emerald-200 bg-emerald-50 text-emerald-800",
-
-        accent:
-          "border-l-emerald-500",
-
-        text:
-          "text-emerald-700",
-      }
-
-    case "Watch":
-      return {
-        badge:
-          "border-amber-200 bg-amber-50 text-amber-800",
-
-        accent:
-          "border-l-amber-400",
-
-        text:
-          "text-amber-700",
-      }
-
-    case "Urgent":
-      return {
-        badge:
-          "border-red-200 bg-red-50 text-red-700",
-
-        accent:
-          "border-l-red-400",
-
-        text:
-          "text-red-600",
-      }
-
-    case "Critical":
-      return {
-        badge:
-          "border-red-400 bg-red-100 text-red-900",
-
-        accent:
-          "border-l-red-700",
-
-        text:
-          "font-semibold text-red-800",
-      }
-
-    case "Expired":
-      return {
-        badge:
-          "border-red-900 bg-red-950 text-white",
-
-        accent:
-          "border-l-red-950",
-
-        text:
-          "font-bold text-red-950",
-      }
-
-    case "Archived":
-      return {
-        badge:
-          "border-slate-200 bg-slate-50 text-slate-600",
-
-        accent:
-          "border-l-slate-300",
-
-        text:
-          "text-muted-foreground",
-      }
-  }
-}
-
-function ExpiryBadge({
-  status,
-}: {
-  status: ExpiryStatus
-}) {
-  const style =
-    statusStyle(status)
-
-  return (
-    <Badge
-      variant="outline"
-      className={`gap-1 ${style.badge}`}
-    >
-      {status ===
-        "Healthy" && (
-        <CheckCircle2 className="size-3" />
-      )}
-
-      {status ===
-        "Watch" && (
-        <CalendarClock className="size-3" />
-      )}
-
-      {(status ===
-        "Urgent" ||
-        status ===
-          "Critical") && (
-        <AlertTriangle className="size-3" />
-      )}
-
-      {status ===
-        "Expired" && (
-        <XCircle className="size-3" />
-      )}
-
-      {status ===
-        "Archived" && (
-        <Archive className="size-3" />
-      )}
-
-      {status}
-    </Badge>
-  )
-}
-
-/* =========================================================
-   FILE
-========================================================= */
-
-function readFileAsDataUrl(
-  file: File
-): Promise<string> {
-  return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      const reader =
-        new FileReader()
-
-      reader.onload = () =>
-        resolve(
-          String(
-            reader.result ||
-              ""
-          )
-        )
-
-      reader.onerror =
-        reject
-
-      reader.readAsDataURL(
-        file
-      )
-    }
-  )
-}
-
-/* =========================================================
-   EMPTY DRAFTS
-========================================================= */
-
-function emptyTransportationDraft():
-  TransportationDraft {
-  return {
-    tempId:
-      createId(
-        "TMP"
-      ),
-
-    insuranceType: "",
-    canonicalType:
-      "OTHER",
-
-    insurerName: "",
-
-    policyNumber: "",
-
-    effectiveDate: "",
-    expiryDate: "",
-
-    coverage: [],
-  }
-}
-
-function emptyWorkersDraft():
-  WorkersDraft {
-  return {
-    insuranceType: "",
-
-    providerName: "",
-    policyNumber: "",
-
-    jurisdiction: "",
-
-    effectiveDate: "",
-    expiryDate: "",
-
-    coverage: [],
-  }
-}
-
-function emptyBondDraft(
-  principalName = ""
-): BondDraft {
-  return {
-    bondType: "",
-
-    suretyName: "",
-    bondNumber: "",
-
-    principalName,
-    bondAmount: "",
-
-    effectiveDate: "",
-    expiryDate: "",
-  }
-}
-
-/* =========================================================
-   DOCUMENT SOURCE PICKER
-========================================================= */
-
-function DocumentSourcePicker({
-  family,
-  onCamera,
-  onDevice,
-  onClose,
-}: {
-  family: RecordFamily
-
-  onCamera: () => void
-  onDevice: () => void
-  onClose: () => void
-}) {
-  const title =
-    family ===
-    "transportation"
-      ? "Scan Transportation Insurance"
-      : family ===
-          "workers"
-        ? "Scan Workers Insurance"
-        : "Scan Surety Bond"
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-      <Card className="w-full max-w-lg shadow-2xl">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ScanDocumentIcon
-                  size={18}
-                />
-
-                {title}
-              </CardTitle>
-
-              <CardDescription className="mt-1">
-                Choose the source document.
-              </CardDescription>
-            </div>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-        </CardHeader>
-
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={onCamera}
-            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
-          >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Camera className="size-5" />
-            </div>
-
-            <p className="mt-4 text-sm font-semibold">
-              Take Photo
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Open the camera, preview the document, and capture it directly.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={onDevice}
-            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
-          >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Upload className="size-5" />
-            </div>
-
-            <p className="mt-4 text-sm font-semibold">
-              Upload from Device
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Select an existing image or PDF.
-            </p>
-          </button>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-/* =========================================================
-   REAL CAMERA CAPTURE
-========================================================= */
-
-function CameraCapture({
-  onCapture,
-  onClose,
-}: {
-  onCapture: (
-    file: File
-  ) => void
-
-  onClose: () => void
-}) {
-  const videoRef =
-    useRef<HTMLVideoElement | null>(
-      null
-    )
-
-  const canvasRef =
-    useRef<HTMLCanvasElement | null>(
-      null
-    )
-
-  const streamRef =
-    useRef<MediaStream | null>(
-      null
-    )
-
-  const [error, setError] =
-    useState("")
-
-  const [ready, setReady] =
-    useState(false)
-
-  useEffect(() => {
-    const start = async () => {
-      try {
-        if (
-          !navigator.mediaDevices
-            ?.getUserMedia
-        ) {
-          setError(
-            "Camera access is not supported by this browser."
-          )
-
-          return
-        }
-
-        const stream =
-          await navigator.mediaDevices.getUserMedia(
-            {
-              video: {
-                facingMode: {
-                  ideal:
-                    "environment",
-                },
-
-                width: {
-                  ideal: 1920,
-                },
-
-                height: {
-                  ideal: 1080,
-                },
-              },
-
-              audio: false,
-            }
-          )
-
-        streamRef.current =
-          stream
-
-        if (
-          videoRef.current
-        ) {
-          videoRef.current.srcObject =
-            stream
-
-          await videoRef.current.play()
-
-          setReady(true)
-        }
-      } catch (err) {
-        console.error(err)
-
-        setError(
-          "TES could not access the camera. Check browser camera permissions."
-        )
-      }
-    }
-
-    start()
-
-    return () => {
-      streamRef.current
-        ?.getTracks()
-        .forEach(
-          (track) =>
-            track.stop()
-        )
-    }
-  }, [])
-
-  const capture = () => {
-    const video =
-      videoRef.current
-
-    const canvas =
-      canvasRef.current
-
-    if (
-      !video ||
-      !canvas
-    ) {
-      return
-    }
-
-    canvas.width =
-      video.videoWidth
-
-    canvas.height =
-      video.videoHeight
-
-    const ctx =
-      canvas.getContext(
-        "2d"
-      )
-
-    if (!ctx) return
-
-    ctx.drawImage(
-      video,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    )
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          return
-        }
-
-        const file =
-          new File(
-            [
-              blob,
-            ],
-
-            `insurance-capture-${Date.now()}.jpg`,
-
-            {
-              type:
-                "image/jpeg",
-            }
-          )
-
-        streamRef.current
-          ?.getTracks()
-          .forEach(
-            (track) =>
-              track.stop()
-          )
-
-        onCapture(file)
-      },
-
-      "image/jpeg",
-
-      0.94
-    )
-  }
-
-  return (
-    <div className="fixed inset-0 z-[110] flex flex-col bg-black">
-      <div className="flex min-h-16 items-center justify-between border-b border-white/10 bg-black px-5 text-white">
-        <div>
-          <p className="text-sm font-semibold">
-            Capture Document
-          </p>
-
-          <p className="mt-0.5 text-[10px] text-white/60">
-            Position the entire document inside the camera view.
-          </p>
-        </div>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-white hover:bg-white/10 hover:text-white"
-        >
-          <X className="size-5" />
-        </Button>
-      </div>
-
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden">
-        {error ? (
-          <div className="max-w-md rounded-xl border border-red-900 bg-red-950/40 p-6 text-center text-white">
-            <AlertTriangle className="mx-auto size-8 text-red-400" />
-
-            <p className="mt-3 text-sm font-semibold">
-              Camera unavailable
-            </p>
-
-            <p className="mt-2 text-xs leading-5 text-white/70">
-              {error}
-            </p>
-          </div>
-        ) : (
-          <>
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="max-h-full max-w-full object-contain"
-            />
-
-            <div className="pointer-events-none absolute inset-[8%] rounded-xl border-2 border-dashed border-white/60" />
-          </>
-        )}
-
-        <canvas
-          ref={canvasRef}
-          className="hidden"
-        />
-      </div>
-
-      <div className="flex min-h-24 items-center justify-center border-t border-white/10 bg-black">
-        <Button
-          type="button"
-          size="lg"
-          disabled={
-            !ready
-          }
-          onClick={capture}
-          className="rounded-full px-8"
-        >
-          <Camera className="mr-2 size-5" />
-          Capture Photo
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   PROPER DOCUMENT VIEWER
-
-   Fit
-   Zoom
-   Pan
-   Rotate
-   Actual Fullscreen
-========================================================= */
-
-function DocumentViewer({
-  file,
-  dataUrl,
-  onReplace,
-}: {
-  file: File
-  dataUrl: string
-  onReplace: () => void
-}) {
-  const rootRef =
-    useRef<HTMLDivElement | null>(
-      null
-    )
-
-  const dragRef =
-    useRef({
-      active: false,
-      x: 0,
-      y: 0,
-    })
-
-  const [zoom, setZoom] =
-    useState(1)
-
-  const [
-    rotation,
-    setRotation,
-  ] = useState(0)
-
-  const [pan, setPan] =
-    useState({
-      x: 0,
-      y: 0,
-    })
-
-  const reset = () => {
-    setZoom(1)
-
-    setPan({
-      x: 0,
-      y: 0,
-    })
-  }
-
-  const fullscreen =
-    async () => {
-      const element =
-        rootRef.current
-
-      if (!element) return
-
-      try {
-        if (
-          !document.fullscreenElement
-        ) {
-          await element.requestFullscreen()
-        } else {
-          await document.exitFullscreen()
-        }
-      } catch (error) {
-        console.error(
-          "Fullscreen failed:",
-          error
-        )
-      }
-    }
-
-  const pointerDown = (
-    event:
-      React.PointerEvent<HTMLDivElement>
-  ) => {
-    dragRef.current = {
-      active: true,
-
-      x:
-        event.clientX,
-
-      y:
-        event.clientY,
-    }
-
-    event.currentTarget.setPointerCapture(
-      event.pointerId
-    )
-  }
-
-  const pointerMove = (
-    event:
-      React.PointerEvent<HTMLDivElement>
-  ) => {
-    if (
-      !dragRef.current
-        .active
-    ) {
-      return
-    }
-
-    const dx =
-      event.clientX -
-      dragRef.current.x
-
-    const dy =
-      event.clientY -
-      dragRef.current.y
-
-    dragRef.current.x =
-      event.clientX
-
-    dragRef.current.y =
-      event.clientY
-
-    setPan(
-      (current) => ({
-        x:
-          current.x +
-          dx,
-
-        y:
-          current.y +
-          dy,
-      })
-    )
-  }
-
-  const pointerUp = () => {
-    dragRef.current.active =
-      false
-  }
-
-  const pdf =
-    file.type ===
-    "application/pdf"
-
-  return (
-    <div
-      ref={rootRef}
-      className="flex h-full min-h-0 flex-col bg-muted/15 fullscreen:bg-background"
-    >
-      <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b bg-background px-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold">
-            Original Document
-          </p>
-
-          <p className="max-w-[360px] truncate text-[10px] text-muted-foreground">
-            {file.name}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={reset}
-          >
-            Fit
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setZoom(
-                (current) =>
-                  Math.max(
-                    0.5,
-                    current -
-                      0.25
-                  )
-              )
-            }
-          >
-            <ZoomOut className="size-4" />
-          </Button>
-
-          <span className="w-12 text-center text-[10px] font-medium">
-            {Math.round(
-              zoom * 100
-            )}
-            %
-          </span>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setZoom(
-                (current) =>
-                  Math.min(
-                    4,
-                    current +
-                      0.25
-                  )
-              )
-            }
-          >
-            <ZoomIn className="size-4" />
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setRotation(
-                (current) =>
-                  (current +
-                    90) %
-                  360
-              )
-            }
-          >
-            <RotateCcw className="size-4" />
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={
-              fullscreen
-            }
-            title="Full screen"
-          >
-            <Maximize2 className="size-4" />
-          </Button>
-        </div>
-      </div>
-
-      <div
-        className="relative min-h-[500px] flex-1 cursor-grab overflow-hidden active:cursor-grabbing"
-        style={{
-          touchAction: "none",
-        }}
-        onPointerDown={
-          pointerDown
-        }
-        onPointerMove={
-          pointerMove
-        }
-        onPointerUp={
-          pointerUp
-        }
-        onPointerCancel={
-          pointerUp
-        }
-      >
-        <div className="absolute inset-0 flex items-center justify-center p-4">
-          <div
-            style={{
-              transform: `
-                translate(${pan.x}px, ${pan.y}px)
-                scale(${zoom})
-                rotate(${rotation}deg)
-              `,
-
-              transformOrigin:
-                "center center",
-            }}
-          >
-            {pdf ? (
-              <iframe
-                src={dataUrl}
-                title="Insurance document"
-                className="h-[70vh] w-[65vw] max-w-[950px] rounded-lg border bg-background pointer-events-none"
-              />
-            ) : (
-              <img
-                src={dataUrl}
-                alt="Insurance document"
-                draggable={false}
-                className="max-h-[calc(100vh-190px)] max-w-[calc(100vw-460px)] rounded-md bg-background object-contain shadow-sm"
-              />
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between border-t bg-background px-4 py-2">
-        <p className="max-w-[70%] truncate text-[10px] text-muted-foreground">
-          {file.name}
-        </p>
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs"
-          onClick={onReplace}
-        >
-          <RefreshCcw className="mr-1.5 size-3.5" />
-          Replace Document
-        </Button>
-      </div>
-    </div>
-  )
 }
 
 /* =========================================================
@@ -4342,6 +3081,299 @@ function BondDraftForm({
   )
 }
 
+function CopyField({
+  label,
+  value,
+}: {
+  label: string
+  value?: string
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    if (!value) return
+
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      // Clipboard may be unavailable in some development contexts.
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <div className="mt-1 flex items-center gap-1">
+        <span className="min-w-0 flex-1 select-text truncate text-xs font-medium">
+          {value || "Not recorded"}
+        </span>
+
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={copy}
+            title={`Copy ${label}`}
+          >
+            {copied ? (
+              <Check className="size-3.5 text-emerald-600" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InsuranceRecordInspector({
+  record,
+  onClose,
+  onEditBroker,
+}: {
+  record: SelectedInsuranceRecord | null
+  onClose: () => void
+  onEditBroker: (groupId: string) => void
+}) {
+  if (!record) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="flex min-h-[480px] flex-col items-center justify-center p-10 text-center">
+          <div className="flex size-14 items-center justify-center rounded-full bg-muted">
+            <ShieldCheck className="size-7 text-muted-foreground/40" />
+          </div>
+          <p className="mt-4 text-sm font-medium">Select an insurance record</p>
+          <p className="mt-1 max-w-[280px] text-xs leading-5 text-muted-foreground">
+            View policy information, expiry status, coverage, insurer and broker details.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const isTransportation = record.family === "transportation"
+  const isWorkers = record.family === "workers"
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-primary/[0.035]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-base">
+                {isTransportation
+                  ? record.insuranceType
+                  : isWorkers
+                    ? record.insuranceType
+                    : record.bondType}
+              </CardTitle>
+              <ExpiryBadge status={record.status} />
+            </div>
+            <CardDescription className="mt-1 font-mono text-[10px]">
+              {record.id}
+            </CardDescription>
+          </div>
+
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-5 p-4">
+        {isTransportation && (
+          <>
+            <section>
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Policy
+              </Label>
+              <div className="mt-3 grid gap-4">
+                <CopyField label="Insurance Company" value={record.insurerName} />
+                <CopyField label="Policy Number" value={record.policyNumber} />
+                <CopyField label="Effective Date" value={record.effectiveDate} />
+                <CopyField label="Expiry Date" value={record.expiryDate} />
+              </div>
+            </section>
+
+            <section className="border-t pt-4">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Key Coverage
+              </Label>
+              <div className="mt-3 space-y-2">
+                {record.coverage.length ? (
+                  record.coverage.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                    >
+                      <span className="text-xs text-muted-foreground">{item.label}</span>
+                      <span className="text-xs font-semibold">{item.value}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    See source document for coverage details.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="border-t pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Insurance Broker
+                </Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px]"
+                  onClick={() => onEditBroker(record.groupId)}
+                >
+                  <Pencil className="mr-1 size-3" />
+                  Edit
+                </Button>
+              </div>
+
+              {record.broker ? (
+                <div className="mt-3 space-y-4">
+                  <CopyField label="Broker Company" value={record.broker.organizationName} />
+                  <CopyField label="Broker Contact" value={record.broker.contactName} />
+                  <CopyField label="Email" value={record.broker.contactEmail} />
+                  <CopyField label="Phone" value={record.broker.contactPhone} />
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  No broker information recorded.
+                </p>
+              )}
+            </section>
+          </>
+        )}
+
+        {isWorkers && (
+          <>
+            <CopyField label="Provider" value={record.providerName} />
+            <CopyField label="Policy / Account Number" value={record.policyNumber} />
+            <CopyField label="Jurisdiction" value={record.jurisdiction} />
+            <CopyField label="Effective Date" value={record.effectiveDate} />
+            <CopyField label="Expiry Date" value={record.expiryDate} />
+
+            <section className="border-t pt-4">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Coverage
+              </Label>
+              <div className="mt-3 space-y-2">
+                {record.coverage.length ? (
+                  record.coverage.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                    >
+                      <span className="text-xs text-muted-foreground">{item.label}</span>
+                      <span className="text-xs font-semibold">{item.value}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    See source document for coverage details.
+                  </p>
+                )}
+              </div>
+            </section>
+          </>
+        )}
+
+        {record.family === "bond" && (
+          <>
+            <CopyField label="Surety Company" value={record.suretyName} />
+            <CopyField label="Bond Number" value={record.bondNumber} />
+            <CopyField label="Principal" value={record.principalName} />
+            <CopyField label="Bond Amount" value={record.bondAmount} />
+            <CopyField label="Effective Date" value={record.effectiveDate} />
+            <CopyField label="Expiry Date" value={record.expiryDate || "Continuous"} />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ManualInsuranceModal({
+  family,
+  company,
+  onCancel,
+  onSaveTransportation,
+  onSaveWorkers,
+  onSaveBond,
+}: {
+  family: RecordFamily
+  company: Company
+  onCancel: () => void
+  onSaveTransportation: (draft: TransportationDraft) => void
+  onSaveWorkers: (draft: WorkersDraft) => void
+  onSaveBond: (draft: BondDraft) => void
+}) {
+  const [transportationDraft, setTransportationDraft] =
+    useState(emptyTransportationDraft())
+
+  const [workersDraft, setWorkersDraft] =
+    useState(emptyWorkersDraft())
+
+  const [bondDraft, setBondDraft] =
+    useState(emptyBondDraft(company.name))
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto">
+        {family === "transportation" && (
+          <TransportationDraftEditor
+            index={0}
+            draft={transportationDraft}
+            onChange={setTransportationDraft}
+            allowRemove={false}
+            onRemove={() => {}}
+          />
+        )}
+
+        {family === "workers" && (
+          <WorkersDraftForm
+            draft={workersDraft}
+            onChange={setWorkersDraft}
+          />
+        )}
+
+        {family === "bond" && (
+          <BondDraftForm
+            draft={bondDraft}
+            onChange={setBondDraft}
+          />
+        )}
+
+        <div className="mt-3 flex justify-end gap-2 rounded-xl border bg-background p-4 shadow-lg">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              if (family === "transportation") onSaveTransportation(transportationDraft)
+              if (family === "workers") onSaveWorkers(workersDraft)
+              if (family === "bond") onSaveBond(bondDraft)
+            }}
+          >
+            <Save className="mr-2 size-4" />
+            Save Record
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* =========================================================
    BROKER EDITOR
 
@@ -4577,11 +3609,13 @@ function BrokerEditor({
 
 function TransportationRow({
   record,
+  selected,
+  onSelect,
   onArchive,
 }: {
-  record:
-    TransportationInsuranceRecord
-
+  record: TransportationInsuranceRecord
+  selected?: boolean
+  onSelect: () => void
   onArchive: () => void
 }) {
   const style =
@@ -4596,7 +3630,16 @@ function TransportationRow({
 
   return (
     <div
-      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`cursor-pointer grid gap-4 border-l-4 p-4 transition-colors hover:bg-muted/30 md:grid-cols-12 ${style.accent} ${selected ? "bg-primary/[0.045] ring-1 ring-inset ring-primary/20" : ""}`}
     >
       <div className="md:col-span-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -4704,9 +3747,10 @@ function TransportationRow({
             variant="ghost"
             size="icon"
             className="size-8"
-            onClick={
-              onArchive
-            }
+            onClick={(event) => {
+              event.stopPropagation()
+              onArchive()
+            }}
           >
             <Archive className="size-4" />
           </Button>
@@ -4722,11 +3766,13 @@ function TransportationRow({
 
 function WorkersRow({
   record,
+  selected,
+  onSelect,
   onArchive,
 }: {
-  record:
-    WorkersInsuranceRecord
-
+  record: WorkersInsuranceRecord
+  selected?: boolean
+  onSelect: () => void
   onArchive: () => void
 }) {
   const style =
@@ -4736,7 +3782,16 @@ function WorkersRow({
 
   return (
     <div
-      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`cursor-pointer grid gap-4 border-l-4 p-4 transition-colors hover:bg-muted/30 md:grid-cols-12 ${style.accent} ${selected ? "bg-primary/[0.045] ring-1 ring-inset ring-primary/20" : ""}`}
     >
       <div className="md:col-span-3">
         <p className="text-sm font-semibold">
@@ -4820,9 +3875,10 @@ function WorkersRow({
           <Button
             variant="ghost"
             size="icon"
-            onClick={
-              onArchive
-            }
+            onClick={(event) => {
+              event.stopPropagation()
+              onArchive()
+            }}
           >
             <Archive className="size-4" />
           </Button>
@@ -4838,10 +3894,13 @@ function WorkersRow({
 
 function BondRow({
   record,
+  selected,
+  onSelect,
   onArchive,
 }: {
   record: BondRecord
-
+  selected?: boolean
+  onSelect: () => void
   onArchive: () => void
 }) {
   const style =
@@ -4851,7 +3910,16 @@ function BondRow({
 
   return (
     <div
-      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`cursor-pointer grid gap-4 border-l-4 p-4 transition-colors hover:bg-muted/30 md:grid-cols-12 ${style.accent} ${selected ? "bg-primary/[0.045] ring-1 ring-inset ring-primary/20" : ""}`}
     >
       <div className="md:col-span-3">
         <p className="text-sm font-semibold">
@@ -4918,9 +3986,10 @@ function BondRow({
           <Button
             variant="ghost"
             size="icon"
-            onClick={
-              onArchive
-            }
+            onClick={(event) => {
+              event.stopPropagation()
+              onArchive()
+            }}
           >
             <Archive className="size-4" />
           </Button>
@@ -5037,6 +4106,12 @@ export default function InsurancePage() {
     useState<string | null>(
       null
     )
+
+  const [manualFamily, setManualFamily] =
+    useState<RecordFamily | null>(null)
+
+  const [selectedRecord, setSelectedRecord] =
+    useState<SelectedInsuranceRecord | null>(null)
 
   const storageKey =
     `tes_company_insurance_${companyId}`
@@ -5820,6 +4895,203 @@ export default function InsurancePage() {
   }
 
   /* =======================================================
+     MANUAL RECORD SAVE
+  ======================================================= */
+
+  const saveManualTransportationRecord = (
+    draft: TransportationDraft
+  ) => {
+    if (
+      !draft.insuranceType.trim() ||
+      !draft.insurerName.trim() ||
+      !draft.policyNumber.trim() ||
+      !draft.effectiveDate ||
+      !draft.expiryDate
+    ) {
+      window.alert(
+        "Please complete the insurance type, insurer, policy number, effective date and expiry date."
+      )
+      return
+    }
+
+    const insurer = resolveOrganization(
+      draft.insurerName,
+      "Insurance Company"
+    )
+
+    const duplicate = transportation.find(
+      (existing) =>
+        !existing.archivedAt &&
+        normalizeCompanyName(existing.insurerName) ===
+          normalizeCompanyName(insurer.organizationName) &&
+        normalizeIdentifier(existing.policyNumber) ===
+          normalizeIdentifier(draft.policyNumber) &&
+        existing.effectiveDate === draft.effectiveDate &&
+        existing.expiryDate === draft.expiryDate
+    )
+
+    if (duplicate) {
+      window.alert("This transportation insurance record already exists.")
+      return
+    }
+
+    const timestamp = isoNow()
+    const record: TransportationInsuranceRecord = {
+      id: createId("INS"),
+      groupId: createId("COI"),
+      family: "transportation",
+      insuranceType: draft.insuranceType.trim(),
+      canonicalType: normalizeInsuranceType(draft.insuranceType),
+      insurerOrganizationId: insurer.organizationId,
+      insurerName: insurer.organizationName,
+      policyNumber: draft.policyNumber.trim(),
+      effectiveDate: draft.effectiveDate,
+      expiryDate: draft.expiryDate,
+      coverage: draft.coverage.filter(
+        (item) => item.label.trim() || item.value.trim()
+      ),
+      source: "Manual",
+      status: getExpiryStatus(draft.expiryDate, settings.expiryRules),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    setData((current) => ({
+      ...current,
+      transportation: [record, ...current.transportation],
+    }))
+    setManualFamily(null)
+    setSelectedRecord(record)
+  }
+
+  const saveManualWorkersRecord = (
+    draft: WorkersDraft
+  ) => {
+    if (
+      !draft.insuranceType.trim() ||
+      !draft.providerName.trim() ||
+      !draft.policyNumber.trim() ||
+      !draft.effectiveDate ||
+      !draft.expiryDate
+    ) {
+      window.alert(
+        "Please complete the insurance type, provider, policy/account number, effective date and expiry date."
+      )
+      return
+    }
+
+    const provider = resolveOrganization(
+      draft.providerName,
+      "Workers Insurance"
+    )
+
+    const duplicate = workers.find(
+      (existing) =>
+        !existing.archivedAt &&
+        normalizeCompanyName(existing.providerName) ===
+          normalizeCompanyName(provider.organizationName) &&
+        normalizeIdentifier(existing.policyNumber) ===
+          normalizeIdentifier(draft.policyNumber) &&
+        existing.effectiveDate === draft.effectiveDate &&
+        existing.expiryDate === draft.expiryDate
+    )
+
+    if (duplicate) {
+      window.alert("This workers insurance record already exists.")
+      return
+    }
+
+    const timestamp = isoNow()
+    const record: WorkersInsuranceRecord = {
+      id: createId("WCB"),
+      family: "workers",
+      insuranceType: draft.insuranceType.trim(),
+      providerOrganizationId: provider.organizationId,
+      providerName: provider.organizationName,
+      policyNumber: draft.policyNumber.trim(),
+      jurisdiction: draft.jurisdiction.trim(),
+      effectiveDate: draft.effectiveDate,
+      expiryDate: draft.expiryDate,
+      coverage: draft.coverage.filter(
+        (item) => item.label.trim() || item.value.trim()
+      ),
+      source: "Manual",
+      status: getExpiryStatus(draft.expiryDate, settings.expiryRules),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    setData((current) => ({
+      ...current,
+      workers: [record, ...current.workers],
+    }))
+    setManualFamily(null)
+    setSelectedRecord(record)
+  }
+
+  const saveManualBondRecord = (
+    draft: BondDraft
+  ) => {
+    if (
+      !draft.bondType.trim() ||
+      !draft.suretyName.trim() ||
+      !draft.bondNumber.trim() ||
+      !draft.principalName.trim() ||
+      !draft.bondAmount.trim() ||
+      !draft.effectiveDate
+    ) {
+      window.alert(
+        "Please complete the bond type, surety, bond number, principal, amount and effective date."
+      )
+      return
+    }
+
+    const surety = resolveOrganization(
+      draft.suretyName,
+      "Insurance Company"
+    )
+
+    const duplicate = bonds.find(
+      (existing) =>
+        !existing.archivedAt &&
+        normalizeCompanyName(existing.suretyName) ===
+          normalizeCompanyName(surety.organizationName) &&
+        normalizeIdentifier(existing.bondNumber) ===
+          normalizeIdentifier(draft.bondNumber)
+    )
+
+    if (duplicate) {
+      window.alert("This bond already exists for the same surety.")
+      return
+    }
+
+    const timestamp = isoNow()
+    const record: BondRecord = {
+      id: createId("BND"),
+      family: "bond",
+      bondType: draft.bondType.trim(),
+      suretyOrganizationId: surety.organizationId,
+      suretyName: surety.organizationName,
+      bondNumber: draft.bondNumber.trim(),
+      principalName: draft.principalName.trim(),
+      bondAmount: draft.bondAmount.trim(),
+      effectiveDate: draft.effectiveDate,
+      expiryDate: draft.expiryDate || undefined,
+      source: "Manual",
+      status: getExpiryStatus(draft.expiryDate, settings.expiryRules),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    setData((current) => ({
+      ...current,
+      bonds: [record, ...current.bonds],
+    }))
+    setManualFamily(null)
+    setSelectedRecord(record)
+  }
+
+  /* =======================================================
      BROKER UPDATE
   ======================================================= */
 
@@ -6203,289 +5475,194 @@ export default function InsurancePage() {
           />
         </div>
 
-        {/* TRANSPORTATION */}
-
-        <Card className="overflow-visible">
-          <CardHeader className="border-b bg-muted/20">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <ShieldCheck className="size-4 text-primary" />
-
-                  Transportation Insurance
-                </CardTitle>
-
-                <CardDescription className="mt-1 text-xs">
-                  One COI can create multiple insurer/policy records.
-                </CardDescription>
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={() =>
-                    selectSource(
-                      "transportation"
-                    )
-                  }
-                >
-                  <ScanDocumentIcon
-                    size={14}
-                  />
-
-                  <span className="ml-2">
-                    Scan Insurance Document
-                  </span>
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0">
-            {visibleTransportation.length ===
-            0 ? (
-              <div className="p-12 text-center">
-                <ScanDocumentIcon
-                  size={28}
-                />
-
-                <p className="mt-4 text-sm font-semibold">
-                  No transportation insurance recorded
-                </p>
-
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Scan the current COI to create structured insurance records.
-                </p>
-              </div>
-            ) : (
-              <div>
-                {groups.map(
-                  (groupId) => {
-                    const groupRecords =
-                      visibleTransportation.filter(
-                        (record) =>
-                          record.groupId ===
-                          groupId
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="space-y-6">
+            <Card className="overflow-visible">
+              <CardHeader className="border-b bg-muted/20">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <ShieldCheck className="size-4 text-primary" />
+                      Transportation Insurance
+                    </CardTitle>
+                    <CardDescription className="mt-1 text-xs">
+                      One COI can create multiple insurer/policy records.
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={() => selectSource("transportation")}>
+                      <ScanDocumentIcon size={14} />
+                      <span className="ml-2">Scan Insurance Document</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setManualFamily("transportation")}
+                    >
+                      <Plus className="mr-2 size-4" />
+                      Add Insurance
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {visibleTransportation.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <ScanDocumentIcon size={28} />
+                    <p className="mt-4 text-sm font-semibold">
+                      No transportation insurance recorded
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Scan the current COI or add an insurance record manually.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    {groups.map((groupId) => {
+                      const groupRecords = visibleTransportation.filter(
+                        (record) => record.groupId === groupId
                       )
-
-                    const broker =
-                      groupRecords.find(
-                        (record) =>
-                          record.broker
-                      )?.broker
-
-                    return (
-                      <div
-                        key={
-                          groupId
-                        }
-                        className="border-b last:border-b-0"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/10 px-4 py-3">
-                          <div>
+                      return (
+                        <div key={groupId} className="border-b last:border-b-0">
+                          <div className="bg-muted/10 px-4 py-3">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               COI / Insurance Group
                             </p>
-
-                            {broker ? (
-                              <p className="mt-1 text-xs">
-                                Broker:{" "}
-                                <strong>
-                                  {
-                                    broker.organizationName
-                                  }
-                                </strong>
-
-                                {broker.contactName &&
-                                  ` · ${broker.contactName}`}
-                              </p>
-                            ) : (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                No broker recorded
-                              </p>
-                            )}
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              Select a record to view policy, coverage and broker details.
+                            </p>
                           </div>
-
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs"
-                            onClick={() =>
-                              setBrokerEditGroup(
-                                groupId
-                              )
-                            }
-                          >
-                            <Pencil className="mr-1.5 size-3.5" />
-
-                            Edit Broker
-                          </Button>
-                        </div>
-
-                        <div className="divide-y">
-                          {groupRecords.map(
-                            (record) => (
+                          <div className="divide-y">
+                            {groupRecords.map((record) => (
                               <TransportationRow
-                                key={
-                                  record.id
-                                }
-                                record={
-                                  record
-                                }
-                                onArchive={() =>
-                                  archiveTransportation(
-                                    record.id
-                                  )
-                                }
+                                key={record.id}
+                                record={record}
+                                selected={selectedRecord?.id === record.id}
+                                onSelect={() => setSelectedRecord(record)}
+                                onArchive={() => archiveTransportation(record.id)}
                               />
-                            )
-                          )}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )
-                  }
+                      )
+                    })}
+                  </div>
                 )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        {/* WORKERS */}
-
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <HardHat className="size-4 text-primary" />
-
-                  Workers Insurance
-                </CardTitle>
-
-                <CardDescription className="mt-1 text-xs">
-                  Separate workers compensation and occupational coverage records.
-                </CardDescription>
-              </div>
-
-              <Button
-                onClick={() =>
-                  selectSource(
-                    "workers"
-                  )
-                }
-              >
-                <ScanDocumentIcon
-                  size={14}
-                />
-
-                <span className="ml-2">
-                  Scan Workers Document
-                </span>
-              </Button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0">
-            {visibleWorkers.length ===
-            0 ? (
-              <div className="p-10 text-center">
-                <HardHat className="mx-auto size-9 text-muted-foreground/30" />
-
-                <p className="mt-3 text-sm font-medium">
-                  No active workers insurance
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y">
-                {visibleWorkers.map(
-                  (record) => (
-                    <WorkersRow
-                      key={
-                        record.id
-                      }
-                      record={
-                        record
-                      }
-                      onArchive={() =>
-                        archiveWorkers(
-                          record.id
-                        )
-                      }
-                    />
-                  )
+            <Card>
+              <CardHeader className="border-b bg-muted/20">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <HardHat className="size-4 text-primary" />
+                      Workers Insurance
+                    </CardTitle>
+                    <CardDescription className="mt-1 text-xs">
+                      Separate workers compensation and occupational coverage records.
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={() => selectSource("workers")}>
+                      <ScanDocumentIcon size={14} />
+                      <span className="ml-2">Scan Workers Document</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setManualFamily("workers")}
+                    >
+                      <Plus className="mr-2 size-4" />
+                      Add Workers Insurance
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {visibleWorkers.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <HardHat className="mx-auto size-9 text-muted-foreground/30" />
+                    <p className="mt-3 text-sm font-medium">No active workers insurance</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Scan a document or add a workers insurance record manually.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {visibleWorkers.map((record) => (
+                      <WorkersRow
+                        key={record.id}
+                        record={record}
+                        selected={selectedRecord?.id === record.id}
+                        onSelect={() => setSelectedRecord(record)}
+                        onArchive={() => archiveWorkers(record.id)}
+                      />
+                    ))}
+                  </div>
                 )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        {/* BONDS */}
-
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <FileKey2 className="size-4 text-primary" />
-
-                  Surety Bonds
-                </CardTitle>
-
-                <CardDescription className="mt-1 text-xs">
-                  Customs, broker, permit and other surety obligations.
-                </CardDescription>
-              </div>
-
-              <Button
-                onClick={() =>
-                  selectSource(
-                    "bond"
-                  )
-                }
-              >
-                <ScanDocumentIcon
-                  size={14}
-                />
-
-                <span className="ml-2">
-                  Scan Bond Document
-                </span>
-              </Button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0">
-            {visibleBonds.length ===
-            0 ? (
-              <div className="p-10 text-center">
-                <FileKey2 className="mx-auto size-9 text-muted-foreground/30" />
-
-                <p className="mt-3 text-sm font-medium">
-                  No active surety bonds
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y">
-                {visibleBonds.map(
-                  (record) => (
-                    <BondRow
-                      key={
-                        record.id
-                      }
-                      record={
-                        record
-                      }
-                      onArchive={() =>
-                        archiveBond(
-                          record.id
-                        )
-                      }
-                    />
-                  )
+            <Card>
+              <CardHeader className="border-b bg-muted/20">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <FileKey2 className="size-4 text-primary" />
+                      Surety Bonds
+                    </CardTitle>
+                    <CardDescription className="mt-1 text-xs">
+                      Customs, broker, permit and other surety obligations.
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={() => selectSource("bond")}>
+                      <ScanDocumentIcon size={14} />
+                      <span className="ml-2">Scan Bond Document</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setManualFamily("bond")}
+                    >
+                      <Plus className="mr-2 size-4" />
+                      Add Bond
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {visibleBonds.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <FileKey2 className="mx-auto size-9 text-muted-foreground/30" />
+                    <p className="mt-3 text-sm font-medium">No active surety bonds</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Scan a bond or add a bond record manually.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {visibleBonds.map((record) => (
+                      <BondRow
+                        key={record.id}
+                        record={record}
+                        selected={selectedRecord?.id === record.id}
+                        onSelect={() => setSelectedRecord(record)}
+                        onArchive={() => archiveBond(record.id)}
+                      />
+                    ))}
+                  </div>
                 )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="xl:sticky xl:top-6">
+            <InsuranceRecordInspector
+              record={selectedRecord}
+              onClose={() => setSelectedRecord(null)}
+              onEditBroker={(groupId) => setBrokerEditGroup(groupId)}
+            />
+          </div>
+        </div>
 
         {/* INTEGRITY */}
 
@@ -6507,6 +5684,19 @@ export default function InsurancePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* MANUAL ENTRY */}
+
+      {manualFamily && (
+        <ManualInsuranceModal
+          family={manualFamily}
+          company={company}
+          onCancel={() => setManualFamily(null)}
+          onSaveTransportation={saveManualTransportationRecord}
+          onSaveWorkers={saveManualWorkersRecord}
+          onSaveBond={saveManualBondRecord}
+        />
+      )}
 
       {/* SOURCE */}
 

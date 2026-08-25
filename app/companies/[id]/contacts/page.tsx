@@ -1118,39 +1118,43 @@ function ContactFields({
                 <SelectValue placeholder="Select relationship" />
               </SelectTrigger>
 
-              <SelectContent className="z-[100]">
-                <SelectItem value="Owner">
-                  Owner / President
-                </SelectItem>
+            <SelectContent>
+            <SelectItem value="Owner">
+            Owner / President
+            </SelectItem>
 
-                <SelectItem value="Director">
-                  Director
-                </SelectItem>
+            <SelectItem value="Director">
+            Director
+            </SelectItem>
 
-                <SelectItem value="Safety Manager">
-                  Safety Manager
-                </SelectItem>
+            <SelectItem value="Safety Manager">
+            Safety Manager
+            </SelectItem>
 
-                <SelectItem value="Dispatcher">
-                  Dispatcher
-                </SelectItem>
+            <SelectItem value="Operations Manager">
+            Operations Manager
+            </SelectItem>
 
-                <SelectItem value="Billing">
-                  Billing / Accounting
-                </SelectItem>
+            <SelectItem value="Fleet Manager">
+            Fleet Manager
+            </SelectItem>
 
-                <SelectItem value="Driver">
-                  Driver
-                </SelectItem>
+            <SelectItem value="Dispatcher">
+            Dispatcher
+            </SelectItem>
 
-                <SelectItem value="Consultant">
-                  Third-Party Consultant
-                </SelectItem>
+            <SelectItem value="Billing">
+            Billing / Accounting
+            </SelectItem>
 
-                <SelectItem value="Other">
-                  Other
-                </SelectItem>
-              </SelectContent>
+            <SelectItem value="Consultant">
+            Third-Party Consultant
+            </SelectItem>
+
+            <SelectItem value="Other">
+            Other
+            </SelectItem>
+            </SelectContent>       
             </Select>
           </div>
 

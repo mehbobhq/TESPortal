@@ -6,19 +6,24 @@ import {
   useRef,
   useState,
 } from "react"
-import { useParams, useRouter } from "next/navigation"
+import {
+  useParams,
+  useRouter,
+} from "next/navigation"
+
 import {
   AlertTriangle,
   Archive,
-  ArchiveRestore,
   ArrowLeft,
   Building2,
   CalendarClock,
+  Camera,
   Check,
   CheckCircle2,
-  ClipboardList,
+  ChevronDown,
   Copy,
   Eye,
+  FileKey2,
   FileText,
   HardHat,
   History,
@@ -26,8 +31,11 @@ import {
   Pencil,
   Plus,
   RefreshCcw,
+  RotateCcw,
+  Save,
+  Search,
   ShieldCheck,
-  Truck,
+  Sparkles,
   Upload,
   UserRound,
   X,
@@ -35,6 +43,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+
 import {
   Card,
   CardContent,
@@ -42,9 +51,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+
 import {
   Select,
   SelectContent,
@@ -52,10 +63,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 
 /* =========================================================
-   TYPES
+   CORE TYPES
 ========================================================= */
 
 type ExpiryRules = {
@@ -73,7 +83,7 @@ type SystemSettings = {
   updatedBy?: string
 }
 
-type RecordStatus =
+type ExpiryStatus =
   | "Healthy"
   | "Watch"
   | "Urgent"
@@ -81,124 +91,318 @@ type RecordStatus =
   | "Expired"
   | "Archived"
 
-type SourceType = "Manual" | "OCR"
+type SourceType =
+  | "OCR"
+  | "Manual"
+
+type DocumentSource =
+  | "camera"
+  | "device"
 
 type RecordFamily =
   | "transportation"
-  | "driver"
-  | "us_filing"
   | "workers"
-  | "legacy_bond"
-
-type OcrStatus =
-  | "Not Used"
-  | "Ready"
-  | "Processing"
-  | "Needs Review"
-  | "Verified"
-
-type CoverageScope =
-  | "all_active_fleet"
-  | "selected_units"
-  | "not_applicable"
-
-type InsuranceEventType =
-  | "INSURANCE_RECORD_CREATED"
-  | "INSURANCE_RECORD_UPDATED"
-  | "INSURANCE_RECORD_ARCHIVED"
-  | "INSURANCE_RECORD_RESTORED"
-  | "INSURANCE_DOCUMENT_ATTACHED"
-  | "INSURANCE_RELATIONSHIP_UPDATED"
-
-type InsuranceEvent = {
-  id: string
-  type: InsuranceEventType
-  timestamp: string
-  actor: string
-  description: string
-}
-
-type InsuranceRecord = {
-  id: string
-  family: RecordFamily
-
-  type: string
-  number: string
-  provider: string
-
-  broker?: string
-  brokerEmail?: string
-  brokerPhone?: string
-
-  limits?: string
-  effective: string
-  expiry?: string
-
-  coverageScope?: CoverageScope
-  linkedVehicleIds?: string[]
-  linkedDriverIds?: string[]
-
-  notes?: string
-
-  status: RecordStatus
-  source: SourceType
-
-  documentName?: string
-  documentType?: string
-  documentEvidenceId?: string
-
-  ocrStatus: OcrStatus
-  ocrConfidence?: number
-
-  createdAt: string
-  updatedAt?: string
-
-  archivedAt?: string
-  archivedBy?: string
-  archiveReason?: string
-
-  events: InsuranceEvent[]
-}
+  | "bond"
 
 type Company = {
   id: string
   name: string
+  kind?: string
+
   region?: string
+
+  /*
+    IMPORTANT:
+    These names remain unchanged because other TES
+    modules already consume them.
+  */
   regCorpState?: string
   regCorpCountry?: string
+
+  phone?: string
+  email?: string
+  website?: string
+
+  status?: string
+  tone?: string
+
+  createdAt?: string
+
+  [key: string]: any
 }
 
-type VehicleReference = {
+type Relationship = {
   id: string
-  label: string
-  detail?: string
-  archived?: boolean
+
+  companyId: string
+  companyName: string
+
+  role: string
+
+  status:
+    | "active"
+    | "ended"
+
+  startDate: string
+
+  source:
+    | "manual"
+    | "document"
+    | "system"
 }
 
-type DriverReference = {
+type Contact = {
   id: string
-  label: string
-  detail?: string
-  archived?: boolean
-}
+  globalId?: string
 
-type RecordDraft = Omit<
-  InsuranceRecord,
-  | "id"
-  | "createdAt"
-  | "updatedAt"
-  | "status"
-  | "archivedAt"
-  | "archivedBy"
-  | "archiveReason"
-  | "events"
->
+  firstName: string
+  lastName: string
+
+  email?: string
+  phone?: string
+
+  role?: string
+
+  isPrimary?: boolean
+  isArchived?: boolean
+
+  relationships?: Relationship[]
+
+  createdAt?: string
+  updatedAt?: string
+
+  [key: string]: any
+}
 
 /* =========================================================
-   SETTINGS / CONSTANTS
+   INSURANCE MODEL
+
+   COI
+      ↓
+   Insurance Records[]
+      ↓
+   Insurer organization
+   policy #
+   dates
+   key coverage
+
+   One COI may create 1, 2, 3, 4, 5+ insurance records.
 ========================================================= */
 
-const SETTINGS_STORAGE_KEY = "tes_system_settings"
+type CoverageItem = {
+  id: string
+  label: string
+  value: string
+}
+
+type InsuranceEvidence = {
+  id: string
+
+  documentName: string
+  documentType: string
+
+  source:
+    | "camera"
+    | "device"
+
+  uploadedAt: string
+
+  ocrConfidence?: number
+
+  /*
+    Prototype only.
+
+    Real document storage should later replace dataUrl
+    with durable document IDs/storage references.
+  */
+  dataUrl?: string
+}
+
+type BrokerSnapshot = {
+  organizationId?: string
+  organizationName: string
+
+  contactId?: string
+  contactName?: string
+  contactEmail?: string
+  contactPhone?: string
+
+  clientReference?: string
+}
+
+type TransportationInsuranceRecord = {
+  id: string
+  family: "transportation"
+
+  /*
+    Exact text appearing on source document.
+
+    Example:
+    "COMMERCIAL GENERAL LIABILITY"
+  */
+  insuranceType: string
+
+  /*
+    TES normalized grouping for filtering/reporting.
+
+    We preserve source wording separately.
+  */
+  canonicalType: string
+
+  insurerOrganizationId?: string
+  insurerName: string
+
+  policyNumber: string
+
+  effectiveDate: string
+  expiryDate: string
+
+  coverage: CoverageItem[]
+
+  status: ExpiryStatus
+
+  source: SourceType
+
+  evidenceId?: string
+
+  broker?: BrokerSnapshot
+
+  previousRecordId?: string
+
+  createdAt: string
+  updatedAt: string
+
+  archivedAt?: string
+  archivedBy?: string
+  archiveReason?: string
+}
+
+type WorkersInsuranceRecord = {
+  id: string
+  family: "workers"
+
+  insuranceType: string
+
+  providerOrganizationId?: string
+  providerName: string
+
+  policyNumber: string
+
+  jurisdiction?: string
+
+  effectiveDate: string
+  expiryDate: string
+
+  coverage: CoverageItem[]
+
+  status: ExpiryStatus
+
+  source: SourceType
+
+  evidenceId?: string
+
+  createdAt: string
+  updatedAt: string
+
+  archivedAt?: string
+  archivedBy?: string
+  archiveReason?: string
+}
+
+type BondRecord = {
+  id: string
+  family: "bond"
+
+  bondType: string
+
+  suretyOrganizationId?: string
+  suretyName: string
+
+  bondNumber: string
+
+  principalName: string
+
+  bondAmount?: string
+
+  effectiveDate: string
+  expiryDate?: string
+
+  status: ExpiryStatus
+
+  source: SourceType
+
+  evidenceId?: string
+
+  createdAt: string
+  updatedAt: string
+
+  archivedAt?: string
+  archivedBy?: string
+  archiveReason?: string
+}
+
+type StoredInsuranceData = {
+  version: number
+
+  transportation: TransportationInsuranceRecord[]
+  workers: WorkersInsuranceRecord[]
+  bonds: BondRecord[]
+
+  evidence: InsuranceEvidence[]
+}
+
+/* =========================================================
+   OCR WORKSPACE TYPES
+========================================================= */
+
+type TransportationDraft = {
+  tempId: string
+
+  insuranceType: string
+  canonicalType: string
+
+  insurerName: string
+
+  policyNumber: string
+
+  effectiveDate: string
+  expiryDate: string
+
+  coverage: CoverageItem[]
+}
+
+type OCRWorkspace = {
+  source: DocumentSource
+
+  file: File
+
+  dataUrl: string
+
+  processing: boolean
+  extractionComplete: boolean
+
+  confidence?: number
+
+  records: TransportationDraft[]
+
+  brokerName: string
+
+  brokerContactName: string
+  brokerEmail: string
+  brokerPhone: string
+
+  brokerClientReference: string
+}
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+const SETTINGS_STORAGE_KEY =
+  "tes_system_settings"
+
+const CONTACT_STORAGE_KEY =
+  "tes_contacts_v5"
 
 const DEFAULT_EXPIRY_RULES: ExpiryRules = {
   healthyMinDays: 61,
@@ -208,44 +412,33 @@ const DEFAULT_EXPIRY_RULES: ExpiryRules = {
   criticalMaxDays: 10,
 }
 
-const FAMILY_OPTIONS: Record<
-  Exclude<RecordFamily, "legacy_bond">,
-  string[]
-> = {
-  transportation: [
-    "Auto Liability",
-    "Motor Truck Cargo",
-    "General Liability",
-    "Physical Damage",
-    "Trailer Interchange",
-    "Non-Owned Auto",
-    "Other Transportation Insurance",
-  ],
-  driver: [
-    "Non-Trucking Liability",
-    "Occupational Accident",
-    "Driver-Specific Coverage",
-    "Other Driver Coverage",
-  ],
-  us_filing: [
-    "BMC-91",
-    "BMC-91X",
-    "Other U.S. Insurance Filing",
-  ],
-  workers: [
-    "WCB",
-    "WSIB",
-    "CNESST",
-    "Workers Compensation Certificate",
-    "Other Workers Compensation Evidence",
-  ],
+const EMPTY_DATA: StoredInsuranceData = {
+  version: 3,
+
+  transportation: [],
+  workers: [],
+  bonds: [],
+
+  evidence: [],
 }
 
+const TRANSPORTATION_CANONICAL_TYPES = [
+  "GENERAL_LIABILITY",
+  "AUTOMOBILE_LIABILITY",
+  "MOTOR_TRUCK_CARGO",
+  "PHYSICAL_DAMAGE",
+  "NON_OWNED_TRAILER",
+  "TRAILER_INTERCHANGE",
+  "UMBRELLA_EXCESS",
+  "POLLUTION_ENVIRONMENTAL",
+  "OTHER",
+]
+
 /* =========================================================
-   HELPERS
+   IDS / DATES
 ========================================================= */
 
-function makeId(prefix: string) {
+function createId(prefix: string) {
   if (
     typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
@@ -254,31 +447,45 @@ function makeId(prefix: string) {
   }
 
   return `${prefix}-${Date.now()}-${Math.floor(
-    Math.random() * 10000
+    Math.random() * 100000
   )}`
 }
 
-function now() {
+function isoNow() {
   return new Date().toISOString()
 }
+
+/* =========================================================
+   SYSTEM SETTINGS
+========================================================= */
 
 function loadSystemSettings(): SystemSettings {
   const fallback: SystemSettings = {
     version: 1,
-    expiryRules: DEFAULT_EXPIRY_RULES,
+
+    expiryRules:
+      DEFAULT_EXPIRY_RULES,
   }
 
-  if (typeof window === "undefined") return fallback
+  if (typeof window === "undefined") {
+    return fallback
+  }
 
   try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
+    const raw =
+      localStorage.getItem(
+        SETTINGS_STORAGE_KEY
+      )
+
     if (!raw) return fallback
 
-    const parsed = JSON.parse(raw)
+    const parsed =
+      JSON.parse(raw)
 
     return {
       ...fallback,
       ...parsed,
+
       expiryRules: {
         ...DEFAULT_EXPIRY_RULES,
         ...(parsed.expiryRules || {}),
@@ -289,295 +496,34 @@ function loadSystemSettings(): SystemSettings {
   }
 }
 
-function getDaysUntilExpiry(expiry?: string) {
-  if (!expiry) return null
+/* =========================================================
+   STANDARD TES OCR ICON
+========================================================= */
 
-  const current = new Date()
-  const today = new Date(
-    current.getFullYear(),
-    current.getMonth(),
-    current.getDate()
-  )
-  const expiryDate = new Date(`${expiry}T23:59:59`)
-
-  return Math.ceil(
-    (expiryDate.getTime() - today.getTime()) / 86400000
-  )
-}
-
-function getRecordStatus(
-  expiry: string | undefined,
-  rules: ExpiryRules,
-  archived = false
-): RecordStatus {
-  if (archived) return "Archived"
-  if (!expiry) return "Healthy"
-
-  const days = getDaysUntilExpiry(expiry)
-  if (days === null) return "Healthy"
-  if (days < 0) return "Expired"
-
-  if (
-    days >= rules.criticalMinDays &&
-    days <= rules.criticalMaxDays
-  ) {
-    return "Critical"
-  }
-
-  if (
-    days >= rules.urgentMinDays &&
-    days < rules.watchMinDays
-  ) {
-    return "Urgent"
-  }
-
-  if (
-    days >= rules.watchMinDays &&
-    days < rules.healthyMinDays
-  ) {
-    return "Watch"
-  }
-
-  return "Healthy"
-}
-
-function getStatusClasses(status: RecordStatus) {
-  switch (status) {
-    case "Healthy":
-      return {
-        badge:
-          "border-emerald-200 bg-emerald-50 text-emerald-800",
-        row: "",
-        date: "text-emerald-700",
-      }
-    case "Watch":
-      return {
-        badge:
-          "border-amber-200 bg-amber-50 text-amber-800",
-        row: "bg-amber-50/20",
-        date: "text-amber-700",
-      }
-    case "Urgent":
-      return {
-        badge: "border-red-200 bg-red-50 text-red-700",
-        row: "bg-red-50/20",
-        date: "text-red-700",
-      }
-    case "Critical":
-      return {
-        badge: "border-red-400 bg-red-100 text-red-900",
-        row: "bg-red-50/40",
-        date: "font-semibold text-red-800",
-      }
-    case "Expired":
-      return {
-        badge: "border-red-700 bg-red-950 text-white",
-        row: "bg-red-50/60",
-        date: "font-bold text-red-950",
-      }
-    case "Archived":
-      return {
-        badge: "border-slate-200 bg-slate-50 text-slate-600",
-        row: "opacity-60",
-        date: "text-muted-foreground",
-      }
-  }
-}
-
-function normalizeIdentifier(value?: string) {
-  return (value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[\s\-_/]/g, "")
-}
-
-function findDuplicateIdentifier(
-  records: InsuranceRecord[],
-  number: string,
-  excludeId?: string
-) {
-  const normalized = normalizeIdentifier(number)
-  if (!normalized) return undefined
-
-  return records.find(
-    (record) =>
-      record.id !== excludeId &&
-      record.status !== "Archived" &&
-      record.family !== "legacy_bond" &&
-      normalizeIdentifier(record.number) === normalized
-  )
-}
-
-function appendEvent(
-  record: InsuranceRecord,
-  type: InsuranceEventType,
-  description: string
-): InsuranceRecord {
-  const timestamp = now()
-
-  return {
-    ...record,
-    updatedAt: timestamp,
-    events: [
-      {
-        id: makeId("EVT"),
-        type,
-        timestamp,
-        actor: "Current User",
-        description,
-      },
-      ...(record.events || []),
-    ],
-  }
-}
-
-function safeParseArray(key: string) {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return []
-
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function loadReferenceCandidates(keys: string[]) {
-  for (const key of keys) {
-    const rows = safeParseArray(key)
-    if (rows.length) return rows
-  }
-
-  return []
-}
-
-function loadVehicleReferences(
-  companyId: string
-): VehicleReference[] {
-  const rows = loadReferenceCandidates([
-    `tes_company_vehicles_${companyId}`,
-    `tes_company_fleet_${companyId}`,
-    "tes_vehicles_v5",
-    "tes_vehicles",
-  ])
-
-  return rows
-    .filter(
-      (row: any) =>
-        !row.companyId || row.companyId === companyId
-    )
-    .map((row: any, index: number) => {
-      const id = String(
-        row.id || row.globalId || row.vehicleId || `vehicle-${index}`
-      )
-      const unit =
-        row.unitNumber ||
-        row.unit ||
-        row.unitNo ||
-        row.truckNumber ||
-        row.vehicleNumber ||
-        row.name ||
-        id
-      const detail =
-        row.vin || row.plate || row.licensePlate || row.makeModel || ""
-
-      return {
-        id,
-        label: `Unit ${unit}`,
-        detail: String(detail || ""),
-        archived: Boolean(
-          row.isArchived ||
-            row.archivedAt ||
-            row.status === "Archived"
-        ),
-      }
-    })
-}
-
-function loadDriverReferences(
-  companyId: string
-): DriverReference[] {
-  const rows = loadReferenceCandidates([
-    `tes_company_drivers_${companyId}`,
-    "tes_drivers_v5",
-    "tes_drivers",
-  ])
-
-  return rows
-    .filter(
-      (row: any) =>
-        !row.companyId || row.companyId === companyId
-    )
-    .map((row: any, index: number) => {
-      const id = String(
-        row.id || row.globalId || row.driverId || `driver-${index}`
-      )
-      const fullName =
-        row.name ||
-        [row.firstName, row.lastName].filter(Boolean).join(" ") ||
-        id
-      const detail =
-        row.dlNumber || row.licenceNumber || row.licenseNumber || ""
-
-      return {
-        id,
-        label: String(fullName),
-        detail: String(detail || ""),
-        archived: Boolean(
-          row.isArchived ||
-            row.archivedAt ||
-            row.status === "Archived"
-        ),
-      }
-    })
-}
-
-function inferFamily(type?: string): RecordFamily {
-  if (
-    [
-      "WCB",
-      "WSIB",
-      "CNESST",
-      "Workers Compensation",
-      "Workers Compensation Certificate",
-      "Occupational Accident",
-    ].includes(type || "")
-  ) {
-    return type === "Occupational Accident" ? "driver" : "workers"
-  }
-
-  if (["BMC-91", "BMC-91X"].includes(type || "")) {
-    return "us_filing"
-  }
-
-  if (
-    [
-      "US Customs Continuous",
-      "Freight Broker BMC-84",
-      "Performance Bond",
-    ].includes(type || "")
-  ) {
-    return "legacy_bond"
-  }
-
-  return "transportation"
-}
-
-function ScanDocumentIcon({ size = 16 }: { size?: number }) {
+function ScanDocumentIcon({
+  size = 16,
+}: {
+  size?: number
+}) {
   return (
     <span
       className="relative inline-flex shrink-0 items-center justify-center"
-      style={{ width: size, height: size }}
+      style={{
+        width: size,
+        height: size,
+      }}
     >
       <span className="absolute inset-0">
         <span className="absolute left-0 top-0 h-[35%] w-[35%] rounded-tl-[2px] border-l-[1.5px] border-t-[1.5px] border-current" />
+
         <span className="absolute right-0 top-0 h-[35%] w-[35%] rounded-tr-[2px] border-r-[1.5px] border-t-[1.5px] border-current" />
+
         <span className="absolute bottom-0 left-0 h-[35%] w-[35%] rounded-bl-[2px] border-b-[1.5px] border-l-[1.5px] border-current" />
+
         <span className="absolute bottom-0 right-0 h-[35%] w-[35%] rounded-br-[2px] border-b-[1.5px] border-r-[1.5px] border-current" />
       </span>
+
       <FileText
-        className="relative"
         style={{
           width: size * 0.58,
           height: size * 0.58,
@@ -588,66 +534,2781 @@ function ScanDocumentIcon({ size = 16 }: { size?: number }) {
   )
 }
 
-function StatusBadge({ status }: { status: RecordStatus }) {
-  const classes = getStatusClasses(status)
+/* =========================================================
+   NORMALIZATION / IDENTITY RESOLUTION
+========================================================= */
 
-  const icon =
-    status === "Healthy" ? (
-      <CheckCircle2 className="size-3" />
-    ) : status === "Watch" ? (
-      <CalendarClock className="size-3" />
-    ) : status === "Archived" ? (
-      <Archive className="size-3" />
-    ) : (
-      <AlertTriangle className="size-3" />
+function normalizeIdentifier(
+  value?: string
+) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+}
+
+function normalizePhone(
+  value?: string
+) {
+  let digits =
+    String(value || "").replace(
+      /\D/g,
+      ""
     )
 
+  if (
+    digits.length === 11 &&
+    digits.startsWith("1")
+  ) {
+    digits = digits.slice(1)
+  }
+
+  return digits
+}
+
+function normalizeEmail(
+  value?: string
+) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+}
+
+function normalizeCompanyName(
+  value?: string
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[.,'"()]/g, " ")
+    .replace(
+      /\b(incorporated|inc|corporation|corp|company|co|limited|ltd|insurance|assurance)\b/g,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function normalizePersonName(
+  value?: string
+) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+}
+
+/* =========================================================
+   LEVENSHTEIN / SIMILARITY
+========================================================= */
+
+function levenshtein(
+  a: string,
+  b: string
+) {
+  if (!a.length) return b.length
+  if (!b.length) return a.length
+
+  const matrix = Array.from(
+    {
+      length: b.length + 1,
+    },
+    () =>
+      Array(a.length + 1).fill(0)
+  )
+
+  for (
+    let i = 0;
+    i <= b.length;
+    i++
+  ) {
+    matrix[i][0] = i
+  }
+
+  for (
+    let j = 0;
+    j <= a.length;
+    j++
+  ) {
+    matrix[0][j] = j
+  }
+
+  for (
+    let i = 1;
+    i <= b.length;
+    i++
+  ) {
+    for (
+      let j = 1;
+      j <= a.length;
+      j++
+    ) {
+      const cost =
+        b[i - 1] === a[j - 1]
+          ? 0
+          : 1
+
+      matrix[i][j] =
+        Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] +
+            cost
+        )
+    }
+  }
+
+  return matrix[b.length][a.length]
+}
+
+function similarity(
+  a: string,
+  b: string
+) {
+  if (!a || !b) return 0
+
+  const max =
+    Math.max(
+      a.length,
+      b.length
+    )
+
+  if (!max) return 100
+
+  const distance =
+    levenshtein(a, b)
+
   return (
-    <Badge variant="outline" className={`gap-1 ${classes.badge}`}>
-      {icon}
+    ((max - distance) / max) *
+    100
+  )
+}
+
+/* =========================================================
+   ORGANIZATION RESOLUTION
+
+   Extract freely.
+   Normalize carefully.
+   Resolve aggressively.
+   Create reluctantly.
+========================================================= */
+
+function getCompanies(): Company[] {
+  try {
+    const parsed =
+      JSON.parse(
+        localStorage.getItem(
+          "tes_companies"
+        ) || "[]"
+      )
+
+    return Array.isArray(parsed)
+      ? parsed
+      : []
+  } catch {
+    return []
+  }
+}
+
+function saveCompanies(
+  companies: Company[]
+) {
+  localStorage.setItem(
+    "tes_companies",
+    JSON.stringify(companies)
+  )
+}
+
+function resolveOrganization(
+  name: string,
+  desiredKind:
+    | "Insurance Company"
+    | "Insurance Broker"
+    | "Workers Insurance"
+) {
+  const cleanName =
+    name.trim()
+
+  if (!cleanName) {
+    return {
+      organizationId:
+        undefined,
+      organizationName: "",
+      created: false,
+    }
+  }
+
+  const companies =
+    getCompanies()
+
+  const normalized =
+    normalizeCompanyName(
+      cleanName
+    )
+
+  /*
+    1. Exact normalized name.
+  */
+
+  let best =
+    companies.find(
+      (company) =>
+        normalizeCompanyName(
+          company.name
+        ) === normalized
+    )
+
+  if (best) {
+    return {
+      organizationId:
+        best.id,
+      organizationName:
+        best.name,
+      created: false,
+    }
+  }
+
+  /*
+    2. Aggressive fuzzy resolver.
+
+    We intentionally use a high threshold.
+    Insurers/brokers are limited entities and we
+    want to avoid accidental duplicates, but we
+    also do not merge weak name-only matches.
+  */
+
+  const scored =
+    companies
+      .map((company) => ({
+        company,
+
+        score: similarity(
+          normalized,
+          normalizeCompanyName(
+            company.name
+          )
+        ),
+      }))
+      .filter(
+        (result) =>
+          result.score >= 92
+      )
+      .sort(
+        (a, b) =>
+          b.score - a.score
+      )
+
+  if (scored.length) {
+    best =
+      scored[0].company
+
+    return {
+      organizationId:
+        best.id,
+      organizationName:
+        best.name,
+      created: false,
+    }
+  }
+
+  /*
+    3. Truly new organization.
+  */
+
+  const newOrganization: Company =
+    {
+      id: createCompanyId(
+        companies
+      ),
+
+      name: cleanName,
+
+      kind: desiredKind,
+
+      contact: "N/A",
+
+      region:
+        "Not specified",
+
+      status: "Active",
+
+      tone: "ok",
+
+      createdAt: isoNow(),
+
+      /*
+        Allows future UI to distinguish records
+        automatically discovered through OCR.
+      */
+      discoveredBy:
+        "Insurance OCR",
+    }
+
+  saveCompanies([
+    newOrganization,
+    ...companies,
+  ])
+
+  return {
+    organizationId:
+      newOrganization.id,
+
+    organizationName:
+      newOrganization.name,
+
+    created: true,
+  }
+}
+
+function createCompanyId(
+  companies: Company[]
+) {
+  const ids =
+    new Set(
+      companies.map(
+        (company) => company.id
+      )
+    )
+
+  for (
+    let attempt = 0;
+    attempt < 100;
+    attempt++
+  ) {
+    const number =
+      10000 +
+      Math.floor(
+        Math.random() * 90000
+      )
+
+    const id =
+      `CMP-${number}`
+
+    if (!ids.has(id)) {
+      return id
+    }
+  }
+
+  return `CMP-${Date.now()}`
+}
+
+/* =========================================================
+   CONTACT RESOLUTION
+
+   Same email/phone is strong identity evidence.
+
+   Name-only similarity is NEVER enough to blindly
+   create a second Harpreet / Har Preet record.
+========================================================= */
+
+function getContacts(): Contact[] {
+  try {
+    const raw =
+      localStorage.getItem(
+        CONTACT_STORAGE_KEY
+      ) ||
+      localStorage.getItem(
+        "tes_contacts_v4"
+      ) ||
+      localStorage.getItem(
+        "tes_contacts_v3"
+      )
+
+    if (!raw) return []
+
+    const parsed =
+      JSON.parse(raw)
+
+    return Array.isArray(parsed)
+      ? parsed
+      : []
+  } catch {
+    return []
+  }
+}
+
+function saveContacts(
+  contacts: Contact[]
+) {
+  localStorage.setItem(
+    CONTACT_STORAGE_KEY,
+    JSON.stringify(contacts)
+  )
+}
+
+function splitPersonName(
+  fullName: string
+) {
+  const parts =
+    fullName
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+
+  if (!parts.length) {
+    return {
+      firstName: "",
+      lastName: "",
+    }
+  }
+
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: "",
+    }
+  }
+
+  return {
+    firstName: parts[0],
+
+    lastName:
+      parts.slice(1).join(" "),
+  }
+}
+
+function resolveBrokerContact({
+  brokerOrganizationId,
+  brokerOrganizationName,
+  contactName,
+  email,
+  phone,
+}: {
+  brokerOrganizationId?: string
+  brokerOrganizationName: string
+  contactName: string
+  email: string
+  phone: string
+}) {
+  if (
+    !contactName.trim() &&
+    !email.trim() &&
+    !phone.trim()
+  ) {
+    return {
+      contactId:
+        undefined,
+
+      contactName:
+        contactName.trim(),
+
+      contactEmail:
+        email.trim(),
+
+      contactPhone:
+        phone.trim(),
+
+      created: false,
+    }
+  }
+
+  const contacts =
+    getContacts()
+
+  const emailKey =
+    normalizeEmail(email)
+
+  const phoneKey =
+    normalizePhone(phone)
+
+  /*
+    Strong identifiers first.
+  */
+
+  let matched =
+    contacts.find(
+      (contact) =>
+        Boolean(emailKey) &&
+        normalizeEmail(
+          contact.email
+        ) === emailKey
+    )
+
+  if (!matched) {
+    matched =
+      contacts.find(
+        (contact) =>
+          Boolean(phoneKey) &&
+          normalizePhone(
+            contact.phone
+          ) === phoneKey
+      )
+  }
+
+  /*
+    Then name + organization relationship.
+  */
+
+  if (
+    !matched &&
+    contactName.trim()
+  ) {
+    const nameKey =
+      normalizePersonName(
+        contactName
+      )
+
+    const candidates =
+      contacts
+        .filter((contact) => {
+          const belongsToBroker =
+            contact.relationships?.some(
+              (relationship) =>
+                relationship.companyId ===
+                brokerOrganizationId
+            )
+
+          return (
+            belongsToBroker ||
+            !brokerOrganizationId
+          )
+        })
+        .map((contact) => {
+          const existing =
+            normalizePersonName(
+              `${contact.firstName} ${contact.lastName}`
+            )
+
+          return {
+            contact,
+
+            score:
+              similarity(
+                nameKey,
+                existing
+              ),
+          }
+        })
+        .filter(
+          (result) =>
+            result.score >= 92
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score
+        )
+
+    if (candidates.length) {
+      matched =
+        candidates[0].contact
+    }
+  }
+
+  if (matched) {
+    return {
+      contactId:
+        matched.id,
+
+      contactName:
+        `${matched.firstName} ${matched.lastName}`.trim(),
+
+      contactEmail:
+        matched.email ||
+        email.trim(),
+
+      contactPhone:
+        matched.phone ||
+        phone.trim(),
+
+      created: false,
+    }
+  }
+
+  /*
+    No strong/probable identity found.
+    Only now do we create.
+  */
+
+  const names =
+    splitPersonName(
+      contactName
+    )
+
+  const contactId =
+    createId("CNT")
+
+  const newContact: Contact =
+    {
+      id: contactId,
+
+      globalId:
+        createId("USR"),
+
+      firstName:
+        names.firstName,
+
+      lastName:
+        names.lastName,
+
+      email:
+        email.trim(),
+
+      phone:
+        phone.trim(),
+
+      role:
+        "Insurance Broker Contact",
+
+      isPrimary: false,
+      isArchived: false,
+
+      relationships:
+        brokerOrganizationId
+          ? [
+              {
+                id: createId(
+                  "REL"
+                ),
+
+                companyId:
+                  brokerOrganizationId,
+
+                companyName:
+                  brokerOrganizationName,
+
+                role:
+                  "Insurance Broker Contact",
+
+                status:
+                  "active",
+
+                startDate:
+                  isoNow().slice(
+                    0,
+                    10
+                  ),
+
+                source:
+                  "document",
+              },
+            ]
+          : [],
+
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+
+      discoveredBy:
+        "Insurance OCR",
+    }
+
+  saveContacts([
+    newContact,
+    ...contacts,
+  ])
+
+  return {
+    contactId,
+
+    contactName:
+      `${newContact.firstName} ${newContact.lastName}`.trim(),
+
+    contactEmail:
+      newContact.email || "",
+
+    contactPhone:
+      newContact.phone || "",
+
+    created: true,
+  }
+}
+
+/* =========================================================
+   INSURANCE TYPE NORMALIZATION
+
+   Exact source language is preserved.
+
+   Canonical type helps TES understand that:
+   COMMERCIAL GENERAL LIABILITY
+   GENERAL LIABILITY
+   etc. may belong to same family.
+========================================================= */
+
+function normalizeInsuranceType(
+  raw: string
+) {
+  const value =
+    raw
+      .trim()
+      .toLowerCase()
+
+  if (
+    value.includes(
+      "general liability"
+    )
+  ) {
+    return "GENERAL_LIABILITY"
+  }
+
+  if (
+    value.includes("automobile") ||
+    value.includes(
+      "auto liability"
+    )
+  ) {
+    return "AUTOMOBILE_LIABILITY"
+  }
+
+  if (
+    value.includes(
+      "motor truck cargo"
+    ) ||
+    value.includes("cargo")
+  ) {
+    return "MOTOR_TRUCK_CARGO"
+  }
+
+  if (
+    value.includes(
+      "physical damage"
+    )
+  ) {
+    return "PHYSICAL_DAMAGE"
+  }
+
+  if (
+    value.includes(
+      "non owned trailer"
+    ) ||
+    value.includes(
+      "non-owned trailer"
+    )
+  ) {
+    return "NON_OWNED_TRAILER"
+  }
+
+  if (
+    value.includes(
+      "trailer interchange"
+    )
+  ) {
+    return "TRAILER_INTERCHANGE"
+  }
+
+  if (
+    value.includes("umbrella") ||
+    value.includes("excess")
+  ) {
+    return "UMBRELLA_EXCESS"
+  }
+
+  if (
+    value.includes("pollution") ||
+    value.includes(
+      "environment"
+    )
+  ) {
+    return "POLLUTION_ENVIRONMENTAL"
+  }
+
+  return "OTHER"
+}
+
+/* =========================================================
+   EXPIRY ENGINE
+========================================================= */
+
+function getDaysRemaining(
+  expiryDate?: string
+) {
+  if (!expiryDate) return null
+
+  const now = new Date()
+
+  const today =
+    new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    )
+
+  const expiry =
+    new Date(
+      `${expiryDate}T23:59:59`
+    )
+
+  return Math.ceil(
+    (expiry.getTime() -
+      today.getTime()) /
+      86400000
+  )
+}
+
+function getExpiryStatus(
+  expiryDate: string | undefined,
+  rules: ExpiryRules,
+  archived = false
+): ExpiryStatus {
+  if (archived) {
+    return "Archived"
+  }
+
+  if (!expiryDate) {
+    return "Healthy"
+  }
+
+  const days =
+    getDaysRemaining(
+      expiryDate
+    )
+
+  if (days === null) {
+    return "Healthy"
+  }
+
+  if (days < 0) {
+    return "Expired"
+  }
+
+  if (
+    days >=
+      rules.criticalMinDays &&
+    days <=
+      rules.criticalMaxDays
+  ) {
+    return "Critical"
+  }
+
+  if (
+    days >=
+      rules.urgentMinDays &&
+    days <
+      rules.watchMinDays
+  ) {
+    return "Urgent"
+  }
+
+  if (
+    days >=
+      rules.watchMinDays &&
+    days <
+      rules.healthyMinDays
+  ) {
+    return "Watch"
+  }
+
+  return "Healthy"
+}
+
+/* =========================================================
+   STATUS UI
+========================================================= */
+
+function statusStyle(
+  status: ExpiryStatus
+) {
+  switch (status) {
+    case "Healthy":
+      return {
+        badge:
+          "border-emerald-200 bg-emerald-50 text-emerald-800",
+
+        accent:
+          "border-l-emerald-500",
+
+        text:
+          "text-emerald-700",
+      }
+
+    case "Watch":
+      return {
+        badge:
+          "border-amber-200 bg-amber-50 text-amber-800",
+
+        accent:
+          "border-l-amber-400",
+
+        text:
+          "text-amber-700",
+      }
+
+    case "Urgent":
+      return {
+        badge:
+          "border-red-200 bg-red-50 text-red-700",
+
+        accent:
+          "border-l-red-400",
+
+        text:
+          "text-red-600",
+      }
+
+    case "Critical":
+      return {
+        badge:
+          "border-red-400 bg-red-100 text-red-900",
+
+        accent:
+          "border-l-red-700",
+
+        text:
+          "font-semibold text-red-800",
+      }
+
+    case "Expired":
+      return {
+        badge:
+          "border-red-900 bg-red-950 text-white",
+
+        accent:
+          "border-l-red-950",
+
+        text:
+          "font-bold text-red-950",
+      }
+
+    case "Archived":
+      return {
+        badge:
+          "border-slate-200 bg-slate-50 text-slate-600",
+
+        accent:
+          "border-l-slate-300",
+
+        text:
+          "text-muted-foreground",
+      }
+  }
+}
+
+function ExpiryBadge({
+  status,
+}: {
+  status: ExpiryStatus
+}) {
+  const style =
+    statusStyle(status)
+
+  return (
+    <Badge
+      variant="outline"
+      className={`gap-1 ${style.badge}`}
+    >
+      {status === "Healthy" && (
+        <CheckCircle2 className="size-3" />
+      )}
+
+      {status === "Watch" && (
+        <CalendarClock className="size-3" />
+      )}
+
+      {(status ===
+        "Urgent" ||
+        status ===
+          "Critical") && (
+        <AlertTriangle className="size-3" />
+      )}
+
+      {status === "Expired" && (
+        <XCircle className="size-3" />
+      )}
+
+      {status ===
+        "Archived" && (
+        <Archive className="size-3" />
+      )}
+
       {status}
     </Badge>
   )
 }
 
-function CopyableValue({
+/* =========================================================
+   FILE HELPER
+========================================================= */
+
+function readFileAsDataUrl(
+  file: File
+): Promise<string> {
+  return new Promise(
+    (resolve, reject) => {
+      const reader =
+        new FileReader()
+
+      reader.onload = () =>
+        resolve(
+          String(
+            reader.result || ""
+          )
+        )
+
+      reader.onerror =
+        reject
+
+      reader.readAsDataURL(
+        file
+      )
+    }
+  )
+}
+
+/* =========================================================
+   DOCUMENT SOURCE PICKER
+========================================================= */
+
+function DocumentSourcePicker({
+  onCamera,
+  onDevice,
+  onClose,
+}: {
+  onCamera: () => void
+  onDevice: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <Card className="w-full max-w-lg shadow-2xl">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ScanDocumentIcon
+                  size={18}
+                />
+
+                Scan Insurance Document
+              </CardTitle>
+
+              <CardDescription className="mt-1">
+                OCR is the primary insurance data-entry workflow.
+              </CardDescription>
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={onCamera}
+            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
+          >
+            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Camera className="size-5" />
+            </div>
+
+            <p className="mt-4 text-sm font-semibold">
+              Take Photo
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Capture the COI, policy, clearance or bond document using the device camera.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={onDevice}
+            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
+          >
+            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Upload className="size-5" />
+            </div>
+
+            <p className="mt-4 text-sm font-semibold">
+              Upload from Device
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Select an existing PDF or image from the device.
+            </p>
+          </button>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* =========================================================
+   ORGANIZATION AUTOCOMPLETE
+
+   Existing TES companies are suggested first.
+
+   Manual and OCR both use the same resolver.
+========================================================= */
+
+function OrganizationInput({
+  label,
+  value,
+  onChange,
+  kindFilter,
+  required = false,
+}: {
+  label: string
+  value: string
+  onChange: (
+    value: string
+  ) => void
+  kindFilter?: string[]
+  required?: boolean
+}) {
+  const [open, setOpen] =
+    useState(false)
+
+  const companies =
+    useMemo(
+      () => getCompanies(),
+      [open]
+    )
+
+  const matches =
+    useMemo(() => {
+      const q =
+        normalizeCompanyName(
+          value
+        )
+
+      let list =
+        companies
+
+      if (
+        kindFilter?.length
+      ) {
+        list =
+          companies.filter(
+            (company) =>
+              kindFilter.includes(
+                company.kind || ""
+              )
+          )
+      }
+
+      if (!q) {
+        return list.slice(
+          0,
+          8
+        )
+      }
+
+      return list
+        .map((company) => ({
+          company,
+
+          score:
+            similarity(
+              q,
+              normalizeCompanyName(
+                company.name
+              )
+            ),
+        }))
+        .filter(
+          (result) =>
+            result.company.name
+              .toLowerCase()
+              .includes(
+                value.toLowerCase()
+              ) ||
+            result.score >= 60
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score
+        )
+        .slice(0, 8)
+        .map(
+          (result) =>
+            result.company
+        )
+    }, [
+      companies,
+      value,
+      kindFilter,
+    ])
+
+  return (
+    <div className="relative space-y-2">
+      <Label>
+        {label}
+        {required && " *"}
+      </Label>
+
+      <div className="relative">
+        <Input
+          value={value}
+          onFocus={() =>
+            setOpen(true)
+          }
+          onChange={(event) => {
+            onChange(
+              event.target.value
+            )
+
+            setOpen(true)
+          }}
+          onBlur={() => {
+            window.setTimeout(
+              () =>
+                setOpen(false),
+              150
+            )
+          }}
+          autoComplete="off"
+        />
+
+        <Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      </div>
+
+      {open &&
+        matches.length > 0 && (
+          <div className="absolute left-0 right-0 z-[120] mt-1 max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
+            {matches.map(
+              (company) => (
+                <button
+                  key={
+                    company.id
+                  }
+                  type="button"
+                  onMouseDown={(
+                    event
+                  ) =>
+                    event.preventDefault()
+                  }
+                  onClick={() => {
+                    onChange(
+                      company.name
+                    )
+
+                    setOpen(false)
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left hover:bg-muted"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {
+                        company.name
+                      }
+                    </p>
+
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {
+                        company.kind ||
+                        "Company"
+                      }{" "}
+                      ·{" "}
+                      {
+                        company.id
+                      }
+                    </p>
+                  </div>
+
+                  <CheckCircle2 className="size-3.5 shrink-0 text-primary" />
+                </button>
+              )
+            )}
+          </div>
+        )}
+    </div>
+  )
+}
+
+/* =========================================================
+   COVERAGE EDITOR
+========================================================= */
+
+function CoverageEditor({
+  items,
+  onChange,
+}: {
+  items: CoverageItem[]
+  onChange: (
+    items: CoverageItem[]
+  ) => void
+}) {
+  const update = (
+    id: string,
+    field:
+      | "label"
+      | "value",
+    value: string
+  ) => {
+    onChange(
+      items.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              [field]: value,
+            }
+          : item
+      )
+    )
+  }
+
+  const add = () => {
+    onChange([
+      ...items,
+
+      {
+        id: createId(
+          "COV"
+        ),
+
+        label: "",
+        value: "",
+      },
+    ])
+  }
+
+  const remove = (
+    id: string
+  ) => {
+    onChange(
+      items.filter(
+        (item) =>
+          item.id !== id
+      )
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <Label>
+            Key Coverage
+          </Label>
+
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Surface the 2–3 most useful coverage values. The original document remains available for deeper detail.
+          </p>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs"
+          onClick={add}
+        >
+          <Plus className="mr-1 size-3.5" />
+          Add
+        </Button>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+          No coverage summary added.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.map(
+            (item) => (
+              <div
+                key={item.id}
+                className="grid gap-2 sm:grid-cols-[1fr_1fr_36px]"
+              >
+                <Input
+                  value={
+                    item.label
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    update(
+                      item.id,
+                      "label",
+                      event
+                        .target
+                        .value
+                    )
+                  }
+                  placeholder="e.g. General Aggregate"
+                />
+
+                <Input
+                  value={
+                    item.value
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    update(
+                      item.id,
+                      "value",
+                      event
+                        .target
+                        .value
+                    )
+                  }
+                  placeholder="e.g. $2,000,000"
+                />
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-9"
+                  onClick={() =>
+                    remove(
+                      item.id
+                    )
+                  }
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* =========================================================
+   TRANSPORTATION DRAFT CARD
+========================================================= */
+
+function TransportationDraftCard({
+  index,
+  draft,
+  onChange,
+  onRemove,
+  allowRemove,
+}: {
+  index: number
+
+  draft: TransportationDraft
+
+  onChange: (
+    draft: TransportationDraft
+  ) => void
+
+  onRemove: () => void
+
+  allowRemove: boolean
+}) {
+  const update = <
+    K extends keyof TransportationDraft
+  >(
+    key: K,
+    value: TransportationDraft[K]
+  ) => {
+    const next = {
+      ...draft,
+      [key]: value,
+    }
+
+    if (
+      key ===
+      "insuranceType"
+    ) {
+      next.canonicalType =
+        normalizeInsuranceType(
+          String(value)
+        )
+    }
+
+    onChange(next)
+  }
+
+  return (
+    <Card className="overflow-visible shadow-none">
+      <CardHeader className="border-b bg-muted/15 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm">
+              Insurance Record{" "}
+              {index + 1}
+            </CardTitle>
+
+            <CardDescription className="mt-1 text-[11px]">
+              One policy/insurance section detected on this document.
+            </CardDescription>
+          </div>
+
+          {allowRemove && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onRemove}
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-5 pt-5">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>
+              Insurance Type *
+            </Label>
+
+            <Input
+              value={
+                draft.insuranceType
+              }
+              onChange={(
+                event
+              ) =>
+                update(
+                  "insuranceType",
+                  event.target.value
+                )
+              }
+              placeholder="Exact wording from COI"
+            />
+
+            <p className="text-[10px] text-muted-foreground">
+              Preserve the exact source wording. TES normalizes it internally without changing the evidence.
+            </p>
+
+            {draft.insuranceType && (
+              <Badge
+                variant="outline"
+                className="text-[9px]"
+              >
+                {
+                  draft.canonicalType
+                }
+              </Badge>
+            )}
+          </div>
+
+          <OrganizationInput
+            label="Insurance Company"
+            value={
+              draft.insurerName
+            }
+            onChange={(
+              value
+            ) =>
+              update(
+                "insurerName",
+                value
+              )
+            }
+            kindFilter={[
+              "Insurance Company",
+            ]}
+            required
+          />
+
+          <div className="space-y-2">
+            <Label>
+              Policy Number *
+            </Label>
+
+            <Input
+              value={
+                draft.policyNumber
+              }
+              onChange={(
+                event
+              ) =>
+                update(
+                  "policyNumber",
+                  event.target.value
+                )
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>
+              Effective Date *
+            </Label>
+
+            <Input
+              type="date"
+              value={
+                draft.effectiveDate
+              }
+              onChange={(
+                event
+              ) =>
+                update(
+                  "effectiveDate",
+                  event.target.value
+                )
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>
+              Expiry Date *
+            </Label>
+
+            <Input
+              type="date"
+              value={
+                draft.expiryDate
+              }
+              onChange={(
+                event
+              ) =>
+                update(
+                  "expiryDate",
+                  event.target.value
+                )
+              }
+            />
+          </div>
+        </div>
+
+        <div className="border-t pt-5">
+          <CoverageEditor
+            items={
+              draft.coverage
+            }
+            onChange={(
+              coverage
+            ) =>
+              update(
+                "coverage",
+                coverage
+              )
+            }
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   OCR / MULTI-POLICY WORKSPACE
+========================================================= */
+
+function TransportationWorkspace({
+  workspace,
+  setWorkspace,
+  existingRecords,
+  onReplaceDocument,
+  onCancel,
+  onSave,
+}: {
+  workspace: OCRWorkspace
+
+  setWorkspace:
+    React.Dispatch<
+      React.SetStateAction<OCRWorkspace | null>
+    >
+
+  existingRecords:
+    TransportationInsuranceRecord[]
+
+  onReplaceDocument: () => void
+
+  onCancel: () => void
+
+  onSave: (
+    workspace: OCRWorkspace
+  ) => void
+}) {
+  const runOCR = async () => {
+    setWorkspace(
+      (current) =>
+        current
+          ? {
+              ...current,
+              processing: true,
+            }
+          : current
+    )
+
+    /*
+      ======================================================
+      REAL TES OCR INTEGRATION POINT
+      ======================================================
+
+      Expected response should resemble:
+
+      {
+        confidence: 96,
+        broker: {
+          name,
+          contactName,
+          email,
+          phone,
+          clientReference
+        },
+        insuranceRecords: [
+          {
+            insuranceType:
+              "COMMERCIAL GENERAL LIABILITY",
+            insurerName:
+              "Aurora Underwriting Solutions Inc.",
+            policyNumber: "...",
+            effectiveDate: "2025-12-24",
+            expiryDate: "2026-12-24",
+            coverage: [
+              {
+                label: "General Aggregate",
+                value: "2,000,000"
+              },
+              ...
+            ]
+          },
+          ...
+        ]
+      }
+
+      DO NOT create entities here.
+
+      OCR only extracts.
+
+      Entity resolution happens during SAVE so both OCR
+      and manual input use the same identity engine.
+      ======================================================
+    */
+
+    await new Promise(
+      (resolve) =>
+        setTimeout(
+          resolve,
+          1200
+        )
+    )
+
+    /*
+      No fake business values are invented here.
+
+      The workspace becomes ready for verification and
+      manual completion until the real OCR endpoint is
+      connected.
+    */
+
+    setWorkspace(
+      (current) =>
+        current
+          ? {
+              ...current,
+
+              processing:
+                false,
+
+              extractionComplete:
+                true,
+
+              confidence: 90,
+            }
+          : current
+    )
+  }
+
+  const addRecord = () => {
+    setWorkspace(
+      (current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+
+          records: [
+            ...current.records,
+
+            emptyTransportationDraft(),
+          ],
+        }
+      }
+    )
+  }
+
+  const updateRecord = (
+    index: number,
+    draft: TransportationDraft
+  ) => {
+    setWorkspace(
+      (current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+
+          records:
+            current.records.map(
+              (
+                item,
+                itemIndex
+              ) =>
+                itemIndex ===
+                index
+                  ? draft
+                  : item
+            ),
+        }
+      }
+    )
+  }
+
+  const removeRecord = (
+    index: number
+  ) => {
+    setWorkspace(
+      (current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+
+          records:
+            current.records.filter(
+              (
+                _,
+                itemIndex
+              ) =>
+                itemIndex !==
+                index
+            ),
+        }
+      }
+    )
+  }
+
+  const duplicateMessages =
+    useMemo(() => {
+      const messages:
+        string[] = []
+
+      workspace.records.forEach(
+        (
+          draft,
+          index
+        ) => {
+          if (
+            !draft.policyNumber.trim() ||
+            !draft.insurerName.trim()
+          ) {
+            return
+          }
+
+          const normalizedPolicy =
+            normalizeIdentifier(
+              draft.policyNumber
+            )
+
+          const normalizedInsurer =
+            normalizeCompanyName(
+              draft.insurerName
+            )
+
+          const exact =
+            existingRecords.find(
+              (record) =>
+                record.status !==
+                  "Archived" &&
+                normalizeIdentifier(
+                  record.policyNumber
+                ) ===
+                  normalizedPolicy &&
+                normalizeCompanyName(
+                  record.insurerName
+                ) ===
+                  normalizedInsurer &&
+                record.effectiveDate ===
+                  draft.effectiveDate &&
+                record.expiryDate ===
+                  draft.expiryDate
+            )
+
+          if (exact) {
+            messages.push(
+              `Record ${index + 1}: policy ${draft.policyNumber} already exists for this insurer and policy period.`
+            )
+          }
+        }
+      )
+
+      return messages
+    }, [
+      workspace.records,
+      existingRecords,
+    ])
+
+  const complete =
+    workspace.records.length >
+      0 &&
+    workspace.records.every(
+      (record) =>
+        record.insuranceType
+          .trim() &&
+        record.insurerName
+          .trim() &&
+        record.policyNumber
+          .trim() &&
+        record.effectiveDate &&
+        record.expiryDate
+    )
+
+  return (
+    <div className="fixed inset-0 z-[80] flex flex-col bg-background">
+      {/* HEADER */}
+
+      <div className="flex min-h-16 items-center justify-between gap-4 border-b px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ScanDocumentIcon
+              size={18}
+            />
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold">
+                Insurance Document Intelligence
+              </p>
+
+              <Badge
+                variant="outline"
+                className="gap-1 text-[9px]"
+              >
+                <Sparkles className="size-3" />
+                AI Assisted
+              </Badge>
+            </div>
+
+            <p className="mt-0.5 max-w-xl truncate text-[10px] text-muted-foreground">
+              {
+                workspace.file.name
+              }
+            </p>
+          </div>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onCancel}
+        >
+          <X className="size-5" />
+        </Button>
+      </div>
+
+      {/* BODY */}
+
+      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(420px,0.95fr)_minmax(640px,1.05fr)]">
+        {/* DOCUMENT */}
+
+        <div className="flex min-h-0 flex-col border-r bg-muted/15">
+          <div className="flex items-center justify-between gap-3 border-b bg-background px-4 py-3">
+            <div>
+              <p className="text-xs font-semibold">
+                Original Document
+              </p>
+
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                Source evidence
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={
+                  onReplaceDocument
+                }
+              >
+                <RotateCcw className="mr-1.5 size-3.5" />
+
+                Replace
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() =>
+                  window.open(
+                    workspace.dataUrl,
+                    "_blank",
+                    "noopener,noreferrer"
+                  )
+                }
+              >
+                <Eye className="mr-1.5 size-3.5" />
+
+                Full View
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-1 items-center justify-center overflow-auto p-5">
+            {workspace.file.type ===
+            "application/pdf" ? (
+              <iframe
+                src={
+                  workspace.dataUrl
+                }
+                title="Insurance document"
+                className="h-full min-h-[650px] w-full rounded-lg border bg-background"
+              />
+            ) : (
+              <img
+                src={
+                  workspace.dataUrl
+                }
+                alt="Insurance document"
+                className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* EXTRACTION */}
+
+        <div className="flex min-h-0 flex-col">
+          <div className="border-b p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold">
+                  Detected Insurance Records
+                </h2>
+
+                <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
+                  One document can contain multiple insurers, policy numbers and insurance types. Review every detected record before saving.
+                </p>
+              </div>
+
+              {workspace.extractionComplete &&
+                workspace.confidence !==
+                  undefined && (
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-emerald-600">
+                      {
+                        workspace.confidence
+                      }
+                      %
+                    </p>
+
+                    <p className="text-[10px] text-muted-foreground">
+                      extraction confidence
+                    </p>
+                  </div>
+                )}
+            </div>
+
+            {!workspace.extractionComplete && (
+              <Button
+                type="button"
+                className="mt-4"
+                onClick={runOCR}
+                disabled={
+                  workspace.processing
+                }
+              >
+                {workspace.processing ? (
+                  <>
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Reading Document...
+                  </>
+                ) : (
+                  <>
+                    <ScanDocumentIcon
+                      size={15}
+                    />
+
+                    <span className="ml-2">
+                      Extract Insurance Data
+                    </span>
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="space-y-5">
+              {workspace.extractionComplete && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+
+                    <div>
+                      <p className="text-xs font-semibold">
+                        Extraction ready for verification
+                      </p>
+
+                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                        OCR extraction should populate these records automatically when the production OCR endpoint is connected. The same structured fields remain editable for verification.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {workspace.records.map(
+                (
+                  draft,
+                  index
+                ) => (
+                  <TransportationDraftCard
+                    key={
+                      draft.tempId
+                    }
+                    index={index}
+                    draft={draft}
+                    onChange={(
+                      next
+                    ) =>
+                      updateRecord(
+                        index,
+                        next
+                      )
+                    }
+                    onRemove={() =>
+                      removeRecord(
+                        index
+                      )
+                    }
+                    allowRemove={
+                      workspace.records
+                        .length > 1
+                    }
+                  />
+                )
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-dashed"
+                onClick={addRecord}
+              >
+                <Plus className="mr-2 size-4" />
+                Add Another Insurance Record
+              </Button>
+
+              {/* BROKER */}
+
+              <Card className="overflow-visible border-primary/15 shadow-none">
+                <CardHeader className="border-b bg-primary/[0.025] py-4">
+                  <CardTitle className="text-sm">
+                    Insurance Broker
+                  </CardTitle>
+
+                  <CardDescription className="text-xs">
+                    Broker information applies to this certificate/document and is resolved against existing TES organizations and contacts before creation.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+                  <OrganizationInput
+                    label="Broker / Agency"
+                    value={
+                      workspace.brokerName
+                    }
+                    onChange={(
+                      value
+                    ) =>
+                      setWorkspace(
+                        (
+                          current
+                        ) =>
+                          current
+                            ? {
+                                ...current,
+                                brokerName:
+                                  value,
+                              }
+                            : current
+                      )
+                    }
+                    kindFilter={[
+                      "Insurance Broker",
+                    ]}
+                  />
+
+                  <div className="space-y-2">
+                    <Label>
+                      Broker Contact
+                    </Label>
+
+                    <Input
+                      value={
+                        workspace.brokerContactName
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setWorkspace(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
+
+                                  brokerContactName:
+                                    event
+                                      .target
+                                      .value,
+                                }
+                              : current
+                        )
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      Broker Email
+                    </Label>
+
+                    <Input
+                      type="email"
+                      value={
+                        workspace.brokerEmail
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setWorkspace(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
+
+                                  brokerEmail:
+                                    event
+                                      .target
+                                      .value,
+                                }
+                              : current
+                        )
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      Broker Phone
+                    </Label>
+
+                    <Input
+                      type="tel"
+                      value={
+                        workspace.brokerPhone
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setWorkspace(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
+
+                                  brokerPhone:
+                                    event
+                                      .target
+                                      .value,
+                                }
+                              : current
+                        )
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>
+                      Broker Client / Reference ID
+                    </Label>
+
+                    <Input
+                      value={
+                        workspace.brokerClientReference
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setWorkspace(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
+
+                                  brokerClientReference:
+                                    event
+                                      .target
+                                      .value,
+                                }
+                              : current
+                        )
+                      }
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {duplicateMessages.length >
+                0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 size-4 text-red-700" />
+
+                    <div>
+                      <p className="text-xs font-semibold text-red-800">
+                        Existing policy record detected
+                      </p>
+
+                      <div className="mt-2 space-y-1">
+                        {duplicateMessages.map(
+                          (
+                            message
+                          ) => (
+                            <p
+                              key={
+                                message
+                              }
+                              className="text-[11px] text-red-700"
+                            >
+                              {
+                                message
+                              }
+                            </p>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t bg-background p-4">
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-[10px] text-muted-foreground">
+                Organizations and broker contacts are resolved against existing TES identities before any new record is created.
+              </p>
+
+              <Button
+                type="button"
+                disabled={
+                  !complete ||
+                  duplicateMessages.length >
+                    0
+                }
+                onClick={() =>
+                  onSave(
+                    workspace
+                  )
+                }
+              >
+                <Check className="mr-2 size-4" />
+                Verify & Save All
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* =========================================================
+   MANUAL TRANSPORTATION FORM
+
+   SAME DATA MODEL AS OCR.
+========================================================= */
+
+function ManualTransportationForm({
+  existingRecords,
+  onCancel,
+  onSave,
+}: {
+  existingRecords:
+    TransportationInsuranceRecord[]
+
+  onCancel: () => void
+
+  onSave: (
+    drafts: TransportationDraft[],
+    broker: {
+      brokerName: string
+      contactName: string
+      email: string
+      phone: string
+      clientReference: string
+    }
+  ) => void
+}) {
+  const [drafts, setDrafts] =
+    useState<
+      TransportationDraft[]
+    >([
+      emptyTransportationDraft(),
+    ])
+
+  const [brokerName, setBrokerName] =
+    useState("")
+
+  const [
+    brokerContactName,
+    setBrokerContactName,
+  ] = useState("")
+
+  const [brokerEmail, setBrokerEmail] =
+    useState("")
+
+  const [brokerPhone, setBrokerPhone] =
+    useState("")
+
+  const [
+    brokerClientReference,
+    setBrokerClientReference,
+  ] = useState("")
+
+  const updateDraft = (
+    index: number,
+    draft: TransportationDraft
+  ) => {
+    setDrafts(
+      (current) =>
+        current.map(
+          (
+            item,
+            itemIndex
+          ) =>
+            itemIndex ===
+            index
+              ? draft
+              : item
+        )
+    )
+  }
+
+  const complete =
+    drafts.length > 0 &&
+    drafts.every(
+      (draft) =>
+        draft.insuranceType
+          .trim() &&
+        draft.insurerName
+          .trim() &&
+        draft.policyNumber
+          .trim() &&
+        draft.effectiveDate &&
+        draft.expiryDate
+    )
+
+  return (
+    <Card className="overflow-visible border-primary/20">
+      <CardHeader className="border-b bg-primary/[0.025]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">
+              Enter Transportation Insurance Manually
+            </CardTitle>
+
+            <CardDescription className="mt-1">
+              Manual entry creates the exact same record structure as OCR.
+            </CardDescription>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onCancel}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-5 p-5">
+        {drafts.map(
+          (
+            draft,
+            index
+          ) => (
+            <TransportationDraftCard
+              key={
+                draft.tempId
+              }
+              index={index}
+              draft={draft}
+              onChange={(
+                next
+              ) =>
+                updateDraft(
+                  index,
+                  next
+                )
+              }
+              onRemove={() =>
+                setDrafts(
+                  (
+                    current
+                  ) =>
+                    current.filter(
+                      (
+                        _,
+                        itemIndex
+                      ) =>
+                        itemIndex !==
+                        index
+                    )
+                )
+              }
+              allowRemove={
+                drafts.length > 1
+              }
+            />
+          )
+        )}
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full border-dashed"
+          onClick={() =>
+            setDrafts(
+              (
+                current
+              ) => [
+                ...current,
+                emptyTransportationDraft(),
+              ]
+            )
+          }
+        >
+          <Plus className="mr-2 size-4" />
+          Add Another Insurance Record
+        </Button>
+
+        <Card className="overflow-visible shadow-none">
+          <CardHeader className="border-b bg-muted/15 py-4">
+            <CardTitle className="text-sm">
+              Insurance Broker
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+            <OrganizationInput
+              label="Broker / Agency"
+              value={
+                brokerName
+              }
+              onChange={
+                setBrokerName
+              }
+              kindFilter={[
+                "Insurance Broker",
+              ]}
+            />
+
+            <div className="space-y-2">
+              <Label>
+                Broker Contact
+              </Label>
+
+              <Input
+                value={
+                  brokerContactName
+                }
+                onChange={(
+                  event
+                ) =>
+                  setBrokerContactName(
+                    event.target.value
+                  )
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Broker Email
+              </Label>
+
+              <Input
+                type="email"
+                value={
+                  brokerEmail
+                }
+                onChange={(
+                  event
+                ) =>
+                  setBrokerEmail(
+                    event.target.value
+                  )
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Broker Phone
+              </Label>
+
+              <Input
+                value={
+                  brokerPhone
+                }
+                onChange={(
+                  event
+                ) =>
+                  setBrokerPhone(
+                    event.target.value
+                  )
+                }
+              />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label>
+                Broker Client / Reference ID
+              </Label>
+
+              <Input
+                value={
+                  brokerClientReference
+                }
+                onChange={(
+                  event
+                ) =>
+                  setBrokerClientReference(
+                    event.target.value
+                  )
+                }
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-end gap-2 border-t pt-5">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            disabled={!complete}
+            onClick={() =>
+              onSave(
+                drafts,
+                {
+                  brokerName,
+
+                  contactName:
+                    brokerContactName,
+
+                  email:
+                    brokerEmail,
+
+                  phone:
+                    brokerPhone,
+
+                  clientReference:
+                    brokerClientReference,
+                }
+              )
+            }
+          >
+            <Check className="mr-2 size-4" />
+            Save Records
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   EMPTY TRANSPORTATION DRAFT
+========================================================= */
+
+function emptyTransportationDraft():
+  TransportationDraft {
+  return {
+    tempId: createId(
+      "TMP"
+    ),
+
+    insuranceType: "",
+    canonicalType: "OTHER",
+
+    insurerName: "",
+
+    policyNumber: "",
+
+    effectiveDate: "",
+    expiryDate: "",
+
+    coverage: [],
+  }
+}
+
+/* =========================================================
+   COPY FIELD
+========================================================= */
+
+function CopyField({
   label,
   value,
 }: {
   label: string
   value?: string
 }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] =
+    useState(false)
 
-  const copyValue = async () => {
+  const copy = async () => {
     if (!value) return
 
     try {
-      await navigator.clipboard.writeText(value)
+      await navigator.clipboard.writeText(
+        value
+      )
+
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
+
+      window.setTimeout(
+        () =>
+          setCopied(false),
+        1000
+      )
     } catch {
-      // Clipboard access may fail in non-secure local environments.
+      // Clipboard can fail in non-secure dev environments.
     }
   }
 
   return (
-    <div className="min-w-0">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div>
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
+
       <div className="mt-1 flex items-center gap-1">
-        <span className="min-w-0 flex-1 select-text truncate text-xs font-medium">
-          {value || "Not recorded"}
+        <span className="min-w-0 flex-1 select-text break-all text-xs font-medium">
+          {value || "—"}
         </span>
+
         {value && (
           <Button
-            type="button"
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
-            onClick={copyValue}
-            title={`Copy ${label}`}
+            onClick={copy}
           >
             {copied ? (
               <Check className="size-3.5 text-emerald-600" />
@@ -662,411 +3323,231 @@ function CopyableValue({
 }
 
 /* =========================================================
-   OCR PANEL
+   TRANSPORTATION RECORD ROW
 ========================================================= */
 
-type OCRResult = {
-  confidence: number
-  type?: string
-  number?: string
-  provider?: string
-  broker?: string
-  brokerEmail?: string
-  brokerPhone?: string
-  limits?: string
-  effective?: string
-  expiry?: string
-}
-
-function OCRDocumentPanel({
-  title,
-  description,
-  onFileSelected,
-  onExtractionComplete,
+function TransportationRecordRow({
+  record,
+  onEdit,
+  onArchive,
 }: {
-  title: string
-  description: string
-  onFileSelected: (file: File | null) => void
-  onExtractionComplete: (result: OCRResult) => void
+  record:
+    TransportationInsuranceRecord
+
+  onEdit: () => void
+
+  onArchive: () => void
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [processing, setProcessing] = useState(false)
-  const [reviewReady, setReviewReady] = useState(false)
-  const [confidence, setConfidence] = useState<number | null>(null)
+  const days =
+    getDaysRemaining(
+      record.expiryDate
+    )
 
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
-    }
-  }, [previewUrl])
-
-  const clearFile = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    setFile(null)
-    setPreviewUrl(null)
-    setProcessing(false)
-    setReviewReady(false)
-    setConfidence(null)
-    if (inputRef.current) inputRef.current.value = ""
-    onFileSelected(null)
-  }
-
-  const handleFile = (selected: File | null) => {
-    if (!selected) return
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-
-    const url = URL.createObjectURL(selected)
-    setFile(selected)
-    setPreviewUrl(url)
-    setProcessing(false)
-    setReviewReady(false)
-    setConfidence(null)
-    onFileSelected(selected)
-  }
-
-  const runOCR = async () => {
-    if (!file) return
-
-    setProcessing(true)
-    setReviewReady(false)
-
-    /*
-      TES DOCUMENT INTELLIGENCE INTEGRATION POINT
-
-      Production flow:
-      upload original evidence -> quality validation -> classification ->
-      extraction -> field confidence -> duplicate check -> human review if
-      required -> verified save -> immutable Master Register event.
-
-      Replace ONLY this simulated extraction section later.
-    */
-
-    await new Promise((resolve) => setTimeout(resolve, 700))
-
-    // Do not invent policy data during prototype OCR testing.
-    const result: OCRResult = { confidence: 90 }
-
-    setConfidence(result.confidence)
-    setProcessing(false)
-    setReviewReady(true)
-    onExtractionComplete(result)
-  }
+  const style =
+    statusStyle(
+      record.status
+    )
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-background">
-      <div className="border-b bg-muted/20 p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <ScanDocumentIcon size={18} />
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold">{title}</h4>
-              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-                {description}
-              </p>
-            </div>
+    <div
+      className={`border-l-4 p-4 transition-colors hover:bg-muted/20 ${style.accent} ${
+        record.status ===
+        "Archived"
+          ? "opacity-60"
+          : ""
+      }`}
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(200px,1fr)_minmax(180px,0.8fr)_150px_auto] lg:items-center">
+        {/* TYPE */}
+
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold">
+              {
+                record.insuranceType
+              }
+            </p>
+
+            {record.source ===
+              "OCR" && (
+              <Badge
+                variant="outline"
+                className="text-[9px]"
+              >
+                OCR
+              </Badge>
+            )}
           </div>
 
-          {file && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              onClick={clearFile}
-              title="Remove document"
-            >
-              <X className="size-4" />
-            </Button>
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+            {record.id}
+          </p>
+        </div>
+
+        {/* INSURER */}
+
+        <div>
+          <p className="text-sm font-medium">
+            {
+              record.insurerName
+            }
+          </p>
+
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+            Policy{" "}
+            {
+              record.policyNumber
+            }
+          </p>
+        </div>
+
+        {/* COVERAGE */}
+
+        <div>
+          {record.coverage.length >
+          0 ? (
+            <div className="space-y-1">
+              {record.coverage
+                .slice(0, 3)
+                .map(
+                  (coverage) => (
+                    <div
+                      key={
+                        coverage.id
+                      }
+                      className="flex items-center justify-between gap-3 text-[10px]"
+                    >
+                      <span className="truncate text-muted-foreground">
+                        {
+                          coverage.label
+                        }
+                      </span>
+
+                      <span className="shrink-0 font-medium">
+                        {
+                          coverage.value
+                        }
+                      </span>
+                    </div>
+                  )
+                )}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              Coverage in source document
+            </span>
+          )}
+        </div>
+
+        {/* DATES */}
+
+        <div className="text-xs">
+          <p>
+            {
+              record.effectiveDate
+            }
+          </p>
+
+          <p
+            className={`mt-1 ${style.text}`}
+          >
+            {
+              record.expiryDate
+            }
+          </p>
+
+          {days !== null && (
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {days < 0
+                ? `${Math.abs(days)} days overdue`
+                : days === 0
+                  ? "Expires today"
+                  : `${days} days remaining`}
+            </p>
+          )}
+        </div>
+
+        {/* STATUS */}
+
+        <div className="flex items-center justify-end gap-1">
+          <ExpiryBadge
+            status={
+              record.status
+            }
+          />
+
+          {record.status !==
+            "Archived" && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={onEdit}
+                title="Edit record"
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={
+                  onArchive
+                }
+                title="Archive record"
+              >
+                <Archive className="size-3.5" />
+              </Button>
+            </>
           )}
         </div>
       </div>
 
-      {!file ? (
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="flex w-full flex-col items-center justify-center p-10 text-center transition-colors hover:bg-muted/20"
-        >
-          <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <ScanDocumentIcon size={23} />
-          </div>
-          <p className="text-sm font-semibold">Upload insurance evidence</p>
-          <p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
-            Select a PDF, JPG or PNG. The original evidence stays associated
-            with the record; OCR only assists data entry.
-          </p>
-          <div className="mt-4 inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs font-medium shadow-sm">
-            <Upload className="size-3.5" />
-            Choose File
-          </div>
-        </button>
-      ) : (
-        <div className="grid min-h-[400px] lg:grid-cols-[minmax(0,1.55fr)_minmax(280px,0.45fr)]">
-          <div className="border-b bg-muted/10 p-4 lg:border-b-0 lg:border-r">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Original Evidence
-                </p>
-                <p className="mt-1 max-w-[500px] truncate text-xs font-medium">
-                  {file.name}
-                </p>
-              </div>
+      {record.broker
+        ?.organizationName && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t pt-3 text-[10px] text-muted-foreground">
+          <span>
+            Broker:{" "}
+            <strong className="text-foreground">
+              {
+                record.broker
+                  .organizationName
+              }
+            </strong>
+          </span>
 
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => inputRef.current?.click()}
-                >
-                  <RefreshCcw className="mr-1.5 size-3.5" />
-                  Replace
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() =>
-                    previewUrl &&
-                    window.open(previewUrl, "_blank", "noopener,noreferrer")
-                  }
-                >
-                  <Eye className="mr-1.5 size-3.5" />
-                  Full View
-                </Button>
-              </div>
-            </div>
+          {record.broker
+            .contactName && (
+            <span>
+              Contact:{" "}
+              {
+                record.broker
+                  .contactName
+              }
+            </span>
+          )}
 
-            <div className="flex h-[330px] items-center justify-center overflow-hidden rounded-lg border bg-background">
-              {file.type === "application/pdf" ? (
-                <iframe
-                  src={previewUrl || undefined}
-                  className="h-full w-full"
-                  title="Insurance document preview"
-                />
-              ) : (
-                <img
-                  src={previewUrl || undefined}
-                  alt="Insurance document preview"
-                  className="h-full w-full object-contain"
-                />
-              )}
-            </div>
-          </div>
+          {record.broker
+            .contactPhone && (
+            <span>
+              {
+                record.broker
+                  .contactPhone
+              }
+            </span>
+          )}
 
-          <div className="flex flex-col p-5">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Document Intelligence
-              </p>
-              <div className="mt-5 space-y-4">
-                <ProcessStep
-                  complete
-                  title="Evidence uploaded"
-                  description="Original source is ready for comparison."
-                />
-                <ProcessStep
-                  complete={reviewReady}
-                  processing={processing}
-                  title={
-                    processing
-                      ? "Reading document..."
-                      : reviewReady
-                        ? "Extraction complete"
-                        : "OCR ready"
-                  }
-                  description={
-                    reviewReady
-                      ? "Review every populated field against the original."
-                      : "Run OCR to extract available insurance information."
-                  }
-                />
-              </div>
-
-              {confidence !== null && (
-                <div className="mt-5 rounded-lg border bg-muted/20 p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">
-                      OCR confidence
-                    </span>
-                    <span className="text-sm font-bold">{confidence}%</span>
-                  </div>
-                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                    Testing value only. Production acceptance uses central TES
-                    Document Intelligence rules and field-level confidence.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {!reviewReady ? (
-              <Button
-                type="button"
-                className="mt-auto"
-                onClick={runOCR}
-                disabled={processing}
-              >
-                {processing ? (
-                  <>
-                    <Loader2 className="mr-2 size-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <ScanDocumentIcon size={15} />
-                    <span className="ml-2">Run OCR</span>
-                  </>
-                )}
-              </Button>
-            ) : (
-              <div className="mt-auto rounded-lg border border-amber-200 bg-amber-50 p-3">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                  <p className="text-xs leading-relaxed text-amber-900">
-                    OCR does not create authoritative compliance data. Review
-                    the extraction and save only after verification.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png"
-        className="hidden"
-        onChange={(event) =>
-          handleFile(event.target.files?.[0] || null)
-        }
-      />
-    </div>
-  )
-}
-
-function ProcessStep({
-  complete = false,
-  processing = false,
-  title,
-  description,
-}: {
-  complete?: boolean
-  processing?: boolean
-  title: string
-  description: string
-}) {
-  return (
-    <div className="flex items-start gap-3">
-      <div
-        className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
-          processing
-            ? "bg-blue-100 text-blue-700"
-            : complete
-              ? "bg-emerald-100 text-emerald-700"
-              : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {processing ? (
-          <Loader2 className="size-3.5 animate-spin" />
-        ) : complete ? (
-          <Check className="size-3.5" />
-        ) : (
-          <ScanDocumentIcon size={13} />
-        )}
-      </div>
-      <div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-          {description}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   RELATIONSHIP PICKER
-========================================================= */
-
-function ReferencePicker({
-  label,
-  description,
-  items,
-  selectedIds,
-  onChange,
-  emptyText,
-}: {
-  label: string
-  description: string
-  items: Array<VehicleReference | DriverReference>
-  selectedIds: string[]
-  onChange: (ids: string[]) => void
-  emptyText: string
-}) {
-  const activeItems = items.filter((item) => !item.archived)
-
-  const toggle = (id: string) => {
-    onChange(
-      selectedIds.includes(id)
-        ? selectedIds.filter((current) => current !== id)
-        : [...selectedIds, id]
-    )
-  }
-
-  return (
-    <div className="space-y-2 sm:col-span-2 lg:col-span-3">
-      <div>
-        <Label>{label}</Label>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          {description}
-        </p>
-      </div>
-
-      {activeItems.length === 0 ? (
-        <div className="rounded-lg border border-dashed bg-muted/10 p-4 text-xs text-muted-foreground">
-          {emptyText}
-        </div>
-      ) : (
-        <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-3">
-          {activeItems.map((item) => {
-            const checked = selectedIds.includes(item.id)
-            return (
-              <label
-                key={item.id}
-                className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 transition-colors ${
-                  checked
-                    ? "border-primary/40 bg-primary/[0.04]"
-                    : "hover:bg-muted/20"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5 size-4"
-                  checked={checked}
-                  onChange={() => toggle(item.id)}
-                />
-                <span className="min-w-0">
-                  <span className="block text-xs font-semibold">
-                    {item.label}
-                  </span>
-                  {item.detail && (
-                    <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                      {item.detail}
-                    </span>
-                  )}
-                </span>
-              </label>
-            )
-          })}
+          {record.broker
+            .contactEmail && (
+            <span>
+              {
+                record.broker
+                  .contactEmail
+              }
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -1074,938 +3555,858 @@ function ReferencePicker({
 }
 
 /* =========================================================
-   RECORD FORM - ADD + EDIT
+   EDIT TRANSPORTATION MODAL
 ========================================================= */
 
-function RecordForm({
-  title,
-  recordType,
-  records,
-  vehicles,
-  drivers,
-  initialSource,
-  initialRecord,
-  onSave,
+function EditTransportationModal({
+  record,
   onCancel,
+  onSave,
 }: {
-  title: string
-  recordType: Exclude<RecordFamily, "legacy_bond">
-  records: InsuranceRecord[]
-  vehicles: VehicleReference[]
-  drivers: DriverReference[]
-  initialSource: SourceType
-  initialRecord?: InsuranceRecord
-  onSave: (record: RecordDraft) => void
+  record:
+    TransportationInsuranceRecord
+
   onCancel: () => void
+
+  onSave: (
+    record:
+      TransportationInsuranceRecord
+  ) => void
 }) {
-  const [source, setSource] = useState<SourceType>(
-    initialRecord?.source || initialSource
-  )
-  const [document, setDocument] = useState<File | null>(null)
-  const [ocrConfidence, setOcrConfidence] = useState<number | undefined>(
-    initialRecord?.ocrConfidence
-  )
+  const [draft, setDraft] =
+    useState<TransportationDraft>({
+      tempId:
+        record.id,
 
-  const [type, setType] = useState(initialRecord?.type || "")
-  const [number, setNumber] = useState(initialRecord?.number || "")
-  const [provider, setProvider] = useState(initialRecord?.provider || "")
-  const [broker, setBroker] = useState(initialRecord?.broker || "")
-  const [brokerEmail, setBrokerEmail] = useState(
-    initialRecord?.brokerEmail || ""
-  )
-  const [brokerPhone, setBrokerPhone] = useState(
-    initialRecord?.brokerPhone || ""
-  )
-  const [limits, setLimits] = useState(initialRecord?.limits || "")
-  const [effective, setEffective] = useState(initialRecord?.effective || "")
-  const [expiry, setExpiry] = useState(initialRecord?.expiry || "")
-  const [coverageScope, setCoverageScope] = useState<CoverageScope>(
-    initialRecord?.coverageScope ||
-      (recordType === "transportation"
-        ? "all_active_fleet"
-        : "not_applicable")
-  )
-  const [linkedVehicleIds, setLinkedVehicleIds] = useState<string[]>(
-    initialRecord?.linkedVehicleIds || []
-  )
-  const [linkedDriverIds, setLinkedDriverIds] = useState<string[]>(
-    initialRecord?.linkedDriverIds || []
-  )
-  const [notes, setNotes] = useState(initialRecord?.notes || "")
-  const [error, setError] = useState<string | null>(null)
+      insuranceType:
+        record.insuranceType,
 
-  const duplicate = useMemo(
-    () =>
-      findDuplicateIdentifier(
-        records,
-        number,
-        initialRecord?.id
-      ),
-    [records, number, initialRecord?.id]
+      canonicalType:
+        record.canonicalType,
+
+      insurerName:
+        record.insurerName,
+
+      policyNumber:
+        record.policyNumber,
+
+      effectiveDate:
+        record.effectiveDate,
+
+      expiryDate:
+        record.expiryDate,
+
+      coverage:
+        record.coverage,
+    })
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto">
+        <TransportationDraftCard
+          index={0}
+          draft={draft}
+          onChange={setDraft}
+          onRemove={() => {}}
+          allowRemove={false}
+        />
+
+        <div className="mt-3 flex justify-end gap-2 rounded-xl border bg-background p-3 shadow-lg">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            onClick={() =>
+              onSave({
+                ...record,
+
+                insuranceType:
+                  draft.insuranceType,
+
+                canonicalType:
+                  normalizeInsuranceType(
+                    draft.insuranceType
+                  ),
+
+                insurerName:
+                  draft.insurerName,
+
+                policyNumber:
+                  draft.policyNumber,
+
+                effectiveDate:
+                  draft.effectiveDate,
+
+                expiryDate:
+                  draft.expiryDate,
+
+                coverage:
+                  draft.coverage,
+
+                updatedAt:
+                  isoNow(),
+              })
+            }
+          >
+            <Save className="mr-2 size-4" />
+            Save Changes
+          </Button>
+        </div>
+      </div>
+    </div>
   )
+}
 
-  const applyOCRResult = (result: OCRResult) => {
-    setOcrConfidence(result.confidence)
-    if (result.type) setType(result.type)
-    if (result.number) setNumber(result.number)
-    if (result.provider) setProvider(result.provider)
-    if (result.broker) setBroker(result.broker)
-    if (result.brokerEmail) setBrokerEmail(result.brokerEmail)
-    if (result.brokerPhone) setBrokerPhone(result.brokerPhone)
-    if (result.limits) setLimits(result.limits)
-    if (result.effective) setEffective(result.effective)
-    if (result.expiry) setExpiry(result.expiry)
-  }
+/* =========================================================
+   SIMPLE WORKERS / BOND FORM
 
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault()
-    setError(null)
+   Separate record families as agreed.
+========================================================= */
 
-    if (!type) return setError("Select a record type.")
-    if (!number.trim()) return setError("Policy / filing number is required.")
-    if (!provider.trim()) return setError("Carrier / provider is required.")
-    if (!effective) return setError("Effective date is required.")
+function SimpleRecordForm({
+  family,
+  company,
+  onCancel,
+  onSaveWorkers,
+  onSaveBond,
+}: {
+  family:
+    | "workers"
+    | "bond"
 
-    if (recordType !== "us_filing" && !expiry) {
-      return setError("Expiry date is required for this record.")
+  company: Company
+
+  onCancel: () => void
+
+  onSaveWorkers: (
+    record:
+      Omit<
+        WorkersInsuranceRecord,
+        | "id"
+        | "status"
+        | "createdAt"
+        | "updatedAt"
+      >
+  ) => void
+
+  onSaveBond: (
+    record:
+      Omit<
+        BondRecord,
+        | "id"
+        | "status"
+        | "createdAt"
+        | "updatedAt"
+      >
+  ) => void
+}) {
+  const [type, setType] =
+    useState("")
+
+  const [provider, setProvider] =
+    useState("")
+
+  const [number, setNumber] =
+    useState("")
+
+  const [jurisdiction, setJurisdiction] =
+    useState("")
+
+  const [effective, setEffective] =
+    useState("")
+
+  const [expiry, setExpiry] =
+    useState("")
+
+  const [amount, setAmount] =
+    useState("")
+
+  const [principal, setPrincipal] =
+    useState(company.name)
+
+  const [coverage, setCoverage] =
+    useState<CoverageItem[]>(
+      []
+    )
+
+  const submit = () => {
+    if (
+      !type ||
+      !provider.trim() ||
+      !number.trim() ||
+      !effective
+    ) {
+      return
     }
 
     if (
-      effective &&
-      expiry &&
-      new Date(expiry) < new Date(effective)
+      family ===
+        "workers" &&
+      !expiry
     ) {
-      return setError("Expiry date cannot be earlier than the effective date.")
-    }
-
-    if (duplicate) {
-      return setError(
-        `Possible duplicate: ${duplicate.type} already uses ${duplicate.number}.`
-      )
+      return
     }
 
     if (
-      recordType === "transportation" &&
-      coverageScope === "selected_units" &&
-      linkedVehicleIds.length === 0
+      family ===
+      "workers"
     ) {
-      return setError("Select at least one covered vehicle or choose all active fleet.")
+      onSaveWorkers({
+        family:
+          "workers",
+
+        insuranceType:
+          type,
+
+        providerName:
+          provider.trim(),
+
+        policyNumber:
+          number.trim(),
+
+        jurisdiction:
+          jurisdiction.trim(),
+
+        effectiveDate:
+          effective,
+
+        expiryDate:
+          expiry,
+
+        coverage,
+
+        source:
+          "Manual",
+      })
+
+      return
     }
 
-    if (recordType === "driver" && linkedDriverIds.length === 0) {
-      return setError("Link this coverage to at least one existing driver record.")
-    }
+    onSaveBond({
+      family: "bond",
 
-    const newDocumentName = document?.name || initialRecord?.documentName
-    const newDocumentType = document?.type || initialRecord?.documentType
+      bondType: type,
 
-    onSave({
-      family: recordType,
-      type,
-      number: number.trim(),
-      provider: provider.trim(),
-      broker: broker.trim(),
-      brokerEmail: brokerEmail.trim(),
-      brokerPhone: brokerPhone.trim(),
-      limits: limits.trim(),
-      effective,
-      expiry,
-      coverageScope:
-        recordType === "transportation"
-          ? coverageScope
-          : "not_applicable",
-      linkedVehicleIds:
-        recordType === "transportation" &&
-        coverageScope === "selected_units"
-          ? linkedVehicleIds
-          : [],
-      linkedDriverIds:
-        recordType === "driver" ? linkedDriverIds : [],
-      notes: notes.trim(),
-      source,
-      documentName: newDocumentName,
-      documentType: newDocumentType,
-      documentEvidenceId: initialRecord?.documentEvidenceId,
-      ocrStatus:
-        source === "OCR"
-          ? document
-            ? "Needs Review"
-            : initialRecord?.ocrStatus || "Needs Review"
-          : "Not Used",
-      ocrConfidence,
+      suretyName:
+        provider.trim(),
+
+      bondNumber:
+        number.trim(),
+
+      principalName:
+        principal.trim(),
+
+      bondAmount:
+        amount.trim(),
+
+      effectiveDate:
+        effective,
+
+      expiryDate:
+        expiry || undefined,
+
+      source:
+        "Manual",
     })
   }
 
-  const providerLabel =
-    recordType === "workers"
-      ? "Issuing Board / Provider *"
-      : recordType === "us_filing"
-        ? "Insurance Carrier / Filing Provider *"
-        : "Insurance Carrier *"
-
   return (
-    <form onSubmit={submit} className="border-b bg-primary/[0.02]">
-      <div className="border-b p-5">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+    <Card className="border-primary/20">
+      <CardHeader className="border-b bg-primary/[0.025]">
+        <div className="flex items-start justify-between">
           <div>
-            <h3 className="text-sm font-semibold">{title}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {initialRecord
-                ? "Update the record without destroying its history. Changes are audit events."
-                : "Create a structured insurance record from verified evidence or manual entry."}
-            </p>
+            <CardTitle className="text-base">
+              Add{" "}
+              {family ===
+              "workers"
+                ? "Workers Insurance"
+                : "Surety Bond"}
+            </CardTitle>
+
+            <CardDescription className="mt-1">
+              This remains a separate record family from transportation insurance.
+            </CardDescription>
           </div>
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            Cancel
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onCancel}
+          >
+            <X className="size-4" />
           </Button>
         </div>
+      </CardHeader>
 
-        {!initialRecord && (
-          <div className="mt-4 flex w-fit rounded-lg border bg-background p-1">
-            <button
-              type="button"
-              onClick={() => {
-                setSource("Manual")
-                setError(null)
-              }}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                source === "Manual"
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Manual Entry
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSource("OCR")
-                setError(null)
-              }}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                source === "OCR"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <ScanDocumentIcon size={13} />
-                Scan Document
-              </span>
-            </button>
-          </div>
-        )}
-      </div>
-
-      {source === "OCR" && (
-        <div className="border-b p-5">
-          <OCRDocumentPanel
-            title="Insurance Evidence"
-            description="Upload the original policy, certificate, filing evidence or workers compensation certificate."
-            onFileSelected={setDocument}
-            onExtractionComplete={applyOCRResult}
-          />
-        </div>
-      )}
-
-      <div className="p-5">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <CardContent className="space-y-5 pt-5">
+        <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-2">
-            <Label>Record Type *</Label>
-            <Select value={type} onValueChange={setType}>
+            <Label>
+              {family ===
+              "workers"
+                ? "Insurance Type *"
+                : "Bond Type *"}
+            </Label>
+
+            <Select
+              value={type}
+              onValueChange={
+                setType
+              }
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
+
               <SelectContent>
-                {FAMILY_OPTIONS[recordType].map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
+                {family ===
+                "workers" ? (
+                  <>
+                    <SelectItem value="Workers Compensation">
+                      Workers Compensation
+                    </SelectItem>
+
+                    <SelectItem value="Occupational Accident">
+                      Occupational Accident
+                    </SelectItem>
+
+                    <SelectItem value="Employer Liability">
+                      Employer Liability
+                    </SelectItem>
+
+                    <SelectItem value="WSIB">
+                      WSIB
+                    </SelectItem>
+
+                    <SelectItem value="Provincial Workers Compensation">
+                      Provincial Workers Compensation
+                    </SelectItem>
+
+                    <SelectItem value="Other">
+                      Other
+                    </SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="BMC-84 Freight Broker Bond">
+                      BMC-84 Freight Broker Bond
+                    </SelectItem>
+
+                    <SelectItem value="BMC-85 Trust Fund">
+                      BMC-85 Trust Fund
+                    </SelectItem>
+
+                    <SelectItem value="MCS-82 Public Liability Surety Bond">
+                      MCS-82 Public Liability Surety Bond
+                    </SelectItem>
+
+                    <SelectItem value="BMC-83 Cargo Surety Bond">
+                      BMC-83 Cargo Surety Bond
+                    </SelectItem>
+
+                    <SelectItem value="Customs Bond">
+                      Customs Bond
+                    </SelectItem>
+
+                    <SelectItem value="IFTA Fuel Tax Bond">
+                      IFTA Fuel Tax Bond
+                    </SelectItem>
+
+                    <SelectItem value="OSOW / Permit Bond">
+                      OSOW / Permit Bond
+                    </SelectItem>
+
+                    <SelectItem value="Other">
+                      Other
+                    </SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
 
+          <OrganizationInput
+            label={
+              family ===
+              "workers"
+                ? "Insurance Company / Board"
+                : "Surety Company"
+            }
+            value={provider}
+            onChange={
+              setProvider
+            }
+            kindFilter={
+              family ===
+              "workers"
+                ? [
+                    "Insurance Company",
+                    "Workers Insurance",
+                  ]
+                : [
+                    "Insurance Company",
+                  ]
+            }
+            required
+          />
+
           <div className="space-y-2">
             <Label>
-              {recordType === "us_filing"
-                ? "Filing / Policy Number *"
-                : recordType === "workers"
-                  ? "Account / Certificate Number *"
-                  : "Policy Number *"}
+              {family ===
+              "workers"
+                ? "Policy / Account Number *"
+                : "Bond Number *"}
             </Label>
+
             <Input
               value={number}
-              onChange={(event) => setNumber(event.target.value)}
-            />
-            {duplicate && (
-              <p className="flex items-start gap-1.5 text-[11px] font-medium text-red-700">
-                <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-                Duplicate identifier found in {duplicate.type}.
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Coverage Limit / Detail</Label>
-            <Input
-              value={limits}
-              onChange={(event) => setLimits(event.target.value)}
-              placeholder="e.g. $1,000,000"
+              onChange={(
+                event
+              ) =>
+                setNumber(
+                  event.target.value
+                )
+              }
             />
           </div>
 
-          <div className="space-y-2 sm:col-span-2">
-            <Label>{providerLabel}</Label>
-            <Input
-              value={provider}
-              onChange={(event) => setProvider(event.target.value)}
-            />
-          </div>
-
-          {recordType === "transportation" && (
+          {family ===
+            "workers" && (
             <div className="space-y-2">
-              <Label>Broker / Agency</Label>
+              <Label>
+                Jurisdiction
+              </Label>
+
               <Input
-                value={broker}
-                onChange={(event) => setBroker(event.target.value)}
+                value={
+                  jurisdiction
+                }
+                onChange={(
+                  event
+                ) =>
+                  setJurisdiction(
+                    event.target.value
+                  )
+                }
+                placeholder="e.g. Ontario"
               />
             </div>
           )}
 
-          {recordType === "transportation" && (
+          {family ===
+            "bond" && (
             <>
               <div className="space-y-2">
-                <Label>Broker Email</Label>
+                <Label>
+                  Principal
+                </Label>
+
                 <Input
-                  type="email"
-                  value={brokerEmail}
-                  onChange={(event) => setBrokerEmail(event.target.value)}
+                  value={
+                    principal
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setPrincipal(
+                      event.target.value
+                    )
+                  }
                 />
               </div>
+
               <div className="space-y-2">
-                <Label>Broker Phone</Label>
+                <Label>
+                  Bond Amount
+                </Label>
+
                 <Input
-                  value={brokerPhone}
-                  onChange={(event) => setBrokerPhone(event.target.value)}
+                  value={amount}
+                  onChange={(
+                    event
+                  ) =>
+                    setAmount(
+                      event.target.value
+                    )
+                  }
                 />
               </div>
             </>
           )}
 
           <div className="space-y-2">
-            <Label>Effective Date *</Label>
+            <Label>
+              Effective Date *
+            </Label>
+
             <Input
               type="date"
               value={effective}
-              onChange={(event) => setEffective(event.target.value)}
+              onChange={(
+                event
+              ) =>
+                setEffective(
+                  event.target.value
+                )
+              }
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Expiry Date{recordType !== "us_filing" ? " *" : ""}
+              Expiry Date
+              {family ===
+                "workers" &&
+                " *"}
             </Label>
+
             <Input
               type="date"
               value={expiry}
-              onChange={(event) => setExpiry(event.target.value)}
-            />
-            {recordType === "us_filing" && (
-              <p className="text-[11px] text-muted-foreground">
-                Leave blank only where the filing evidence itself has no stated expiry.
-              </p>
-            )}
-          </div>
-
-          {recordType === "transportation" && (
-            <div className="space-y-2">
-              <Label>Fleet Coverage Scope *</Label>
-              <Select
-                value={coverageScope}
-                onValueChange={(value) =>
-                  setCoverageScope(value as CoverageScope)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all_active_fleet">
-                    All Active Fleet Units
-                  </SelectItem>
-                  <SelectItem value="selected_units">
-                    Selected Units Only
-                  </SelectItem>
-                  <SelectItem value="not_applicable">
-                    Not Unit-Specific
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          {recordType === "transportation" &&
-            coverageScope === "selected_units" && (
-              <ReferencePicker
-                label="Covered Fleet Units"
-                description="Link the policy to existing vehicle master records."
-                items={vehicles}
-                selectedIds={linkedVehicleIds}
-                onChange={setLinkedVehicleIds}
-                emptyText="No active vehicle records were found for this company. Add the fleet record first, then link it here."
-              />
-            )}
-
-          {recordType === "driver" && (
-            <ReferencePicker
-              label="Covered Drivers *"
-              description="Link coverage to existing Driver Master records rather than duplicating driver identity."
-              items={drivers}
-              selectedIds={linkedDriverIds}
-              onChange={setLinkedDriverIds}
-              emptyText="No active driver records were found for this company. Add the driver first, then link the coverage here."
-            />
-          )}
-
-          <div className="space-y-2 sm:col-span-2 lg:col-span-3">
-            <Label>Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder="Operational context, renewal instruction, endorsement detail or verification note."
-              className="min-h-[90px]"
+              onChange={(
+                event
+              ) =>
+                setExpiry(
+                  event.target.value
+                )
+              }
             />
           </div>
         </div>
 
-        {source === "OCR" && (
-          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-              <div>
-                <p className="text-xs font-semibold text-amber-900">
-                  Human verification before save
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-amber-800">
-                  Compare populated fields with the original evidence. OCR never
-                  silently creates or changes authoritative compliance data.
-                </p>
-              </div>
-            </div>
-          </div>
+        {family ===
+          "workers" && (
+          <CoverageEditor
+            items={coverage}
+            onChange={
+              setCoverage
+            }
+          />
         )}
 
-        {error && (
-          <div className="mt-5 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <p className="text-xs font-medium">{error}</p>
-          </div>
-        )}
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onCancel}>
+        <div className="flex justify-end gap-2 border-t pt-5">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
-          <Button type="submit" disabled={Boolean(duplicate)}>
-            <Check className="mr-2 size-4" />
-            {initialRecord ? "Save Changes" : "Verify & Save"}
-          </Button>
-        </div>
-      </div>
-    </form>
-  )
-}
 
-/* =========================================================
-   ARCHIVE / HISTORY
-========================================================= */
-
-function ArchivePanel({
-  record,
-  onConfirm,
-  onCancel,
-}: {
-  record: InsuranceRecord
-  onConfirm: (reason: string) => void
-  onCancel: () => void
-}) {
-  const [reason, setReason] = useState("")
-
-  return (
-    <div className="border-b border-amber-200 bg-amber-50/60 p-5">
-      <div className="flex items-start gap-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800">
-          <Archive className="size-4" />
-        </div>
-        <div className="flex-1">
-          <h4 className="text-sm font-semibold">Archive {record.type}</h4>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            The record remains permanently retained as historical evidence. It
-            is removed only from normal operational views.
-          </p>
-          <div className="mt-4 max-w-xl space-y-2">
-            <Label>Archive Reason *</Label>
-            <Input
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="e.g. Replaced by renewal policy"
-            />
-          </div>
-          <div className="mt-4 flex gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!reason.trim()}
-              onClick={() => onConfirm(reason.trim())}
-            >
-              <Archive className="mr-2 size-4" />
-              Confirm Archive
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function HistoryPanel({
-  record,
-  onClose,
-}: {
-  record: InsuranceRecord
-  onClose: () => void
-}) {
-  return (
-    <div className="border-b bg-muted/10 p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <History className="size-4" />
-            Record History
-          </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Prototype event history. Production events also write to the immutable Master Register.
-          </p>
-        </div>
-        <Button type="button" variant="ghost" size="icon" onClick={onClose}>
-          <X className="size-4" />
-        </Button>
-      </div>
-
-      <div className="mt-4 space-y-2">
-        {(record.events || []).length === 0 ? (
-          <p className="text-xs text-muted-foreground">No event history recorded.</p>
-        ) : (
-          record.events.map((event) => (
-            <div key={event.id} className="rounded-lg border bg-background p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold">{event.description}</p>
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(event.timestamp).toLocaleString()}
-                </span>
-              </div>
-              <p className="mt-1 text-[10px] text-muted-foreground">
-                {event.type} · {event.actor}
-              </p>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   RECORD ROW
-========================================================= */
-
-function RecordRow({
-  record,
-  vehicles,
-  drivers,
-  onEdit,
-  onArchive,
-  onRestore,
-  onHistory,
-}: {
-  record: InsuranceRecord
-  vehicles: VehicleReference[]
-  drivers: DriverReference[]
-  onEdit: (record: InsuranceRecord) => void
-  onArchive: (record: InsuranceRecord) => void
-  onRestore: (record: InsuranceRecord) => void
-  onHistory: (record: InsuranceRecord) => void
-}) {
-  const classes = getStatusClasses(record.status)
-  const days = getDaysUntilExpiry(record.expiry)
-
-  const coveredUnits =
-    record.coverageScope === "all_active_fleet"
-      ? "All active fleet units"
-      : (record.linkedVehicleIds || [])
-          .map((id) => vehicles.find((vehicle) => vehicle.id === id)?.label)
-          .filter(Boolean)
-          .join(", ")
-
-  const coveredDrivers = (record.linkedDriverIds || [])
-    .map((id) => drivers.find((driver) => driver.id === id)?.label)
-    .filter(Boolean)
-    .join(", ")
-
-  return (
-    <div className={`p-4 transition-colors hover:bg-muted/20 ${classes.row}`}>
-      <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr_0.8fr_0.9fr_auto]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold">{record.type}</p>
-            {record.source === "OCR" && (
-              <Badge variant="outline" className="px-1.5 py-0 text-[9px]">
-                <ScanDocumentIcon size={10} />
-                <span className="ml-1">OCR</span>
-              </Badge>
-            )}
-          </div>
-          <div className="mt-2">
-            <CopyableValue label="Policy / Filing #" value={record.number} />
-          </div>
-          {record.documentName && (
-            <p className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
-              <FileText className="size-3" />
-              <span className="truncate">{record.documentName}</span>
-            </p>
-          )}
-        </div>
-
-        <div className="min-w-0 space-y-3">
-          <CopyableValue label="Carrier / Provider" value={record.provider} />
-          {record.broker && (
-            <CopyableValue label="Broker / Agency" value={record.broker} />
-          )}
-        </div>
-
-        <div className="min-w-0">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Coverage
-          </p>
-          <p className="mt-1 text-xs font-medium">{record.limits || "Not recorded"}</p>
-          {record.family === "transportation" && coveredUnits && (
-            <p className="mt-2 line-clamp-2 text-[10px] text-muted-foreground">
-              {coveredUnits}
-            </p>
-          )}
-          {record.family === "driver" && coveredDrivers && (
-            <p className="mt-2 line-clamp-2 text-[10px] text-muted-foreground">
-              {coveredDrivers}
-            </p>
-          )}
-        </div>
-
-        <div className="text-xs">
-          <p className="text-muted-foreground">Effective: {record.effective || "—"}</p>
-          <p className={`mt-1 ${classes.date}`}>
-            Expiry: {record.expiry || "No stated expiry"}
-          </p>
-          {record.expiry && days !== null && (
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              {days < 0
-                ? `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} expired`
-                : days === 0
-                  ? "Expires today"
-                  : `${days} day${days === 1 ? "" : "s"} remaining`}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-start justify-start gap-1 lg:justify-end">
-          <StatusBadge status={record.status} />
           <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            title="View history"
-            onClick={() => onHistory(record)}
+            onClick={submit}
           >
-            <History className="size-4" />
+            <Check className="mr-2 size-4" />
+            Save Record
           </Button>
-          {record.status === "Archived" ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              title="Restore record"
-              onClick={() => onRestore(record)}
-            >
-              <ArchiveRestore className="size-4" />
-            </Button>
-          ) : (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                title="Edit record"
-                onClick={() => onEdit(record)}
-              >
-                <Pencil className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                title="Archive record"
-                onClick={() => onArchive(record)}
-              >
-                <Archive className="size-4" />
-              </Button>
-            </>
-          )}
         </div>
-      </div>
-
-      {(record.brokerEmail || record.brokerPhone || record.notes) && (
-        <div className="mt-4 grid gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3">
-          {record.brokerEmail && (
-            <CopyableValue label="Broker Email" value={record.brokerEmail} />
-          )}
-          {record.brokerPhone && (
-            <CopyableValue label="Broker Phone" value={record.brokerPhone} />
-          )}
-          {record.notes && (
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Notes
-              </p>
-              <p className="mt-1 whitespace-pre-wrap text-xs">{record.notes}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* =========================================================
-   INSURANCE SECTION
-========================================================= */
-
-function InsuranceSection({
-  title,
-  description,
-  icon,
-  records,
-  allRecords,
-  recordType,
-  vehicles,
-  drivers,
-  onCreate,
-  onUpdate,
-  onArchive,
-  onRestore,
-}: {
-  title: string
-  description: string
-  icon: React.ReactNode
-  records: InsuranceRecord[]
-  allRecords: InsuranceRecord[]
-  recordType: Exclude<RecordFamily, "legacy_bond">
-  vehicles: VehicleReference[]
-  drivers: DriverReference[]
-  onCreate: (record: RecordDraft) => void
-  onUpdate: (id: string, record: RecordDraft) => void
-  onArchive: (id: string, reason: string) => void
-  onRestore: (id: string) => void
-}) {
-  const [formOpen, setFormOpen] = useState(false)
-  const [initialSource, setInitialSource] = useState<SourceType>("Manual")
-  const [editTarget, setEditTarget] = useState<InsuranceRecord | null>(null)
-  const [archiveTarget, setArchiveTarget] = useState<InsuranceRecord | null>(null)
-  const [historyTarget, setHistoryTarget] = useState<InsuranceRecord | null>(null)
-  const [showArchived, setShowArchived] = useState(false)
-
-  const activeRecords = records.filter((record) => record.status !== "Archived")
-  const archivedRecords = records.filter((record) => record.status === "Archived")
-  const visibleRecords = showArchived
-    ? [...activeRecords, ...archivedRecords]
-    : activeRecords
-
-  const openForm = (source: SourceType) => {
-    setInitialSource(source)
-    setEditTarget(null)
-    setArchiveTarget(null)
-    setHistoryTarget(null)
-    setFormOpen(true)
-  }
-
-  const startEdit = (record: InsuranceRecord) => {
-    setFormOpen(false)
-    setArchiveTarget(null)
-    setHistoryTarget(null)
-    setEditTarget(record)
-  }
-
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-muted/20 py-4">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              {icon}
-              {title}
-            </CardTitle>
-            <CardDescription className="mt-1 text-xs">
-              {description}
-            </CardDescription>
-          </div>
-
-          {!formOpen && !editTarget && (
-            <div className="flex flex-wrap items-center gap-2">
-              {archivedRecords.length > 0 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowArchived((value) => !value)}
-                >
-                  {showArchived ? "Hide Archived" : `Archived (${archivedRecords.length})`}
-                </Button>
-              )}
-              <Button size="sm" variant="outline" onClick={() => openForm("OCR")}>
-                <ScanDocumentIcon size={14} />
-                <span className="ml-1.5">Scan Document</span>
-              </Button>
-              <Button size="sm" onClick={() => openForm("Manual")}>
-                <Plus className="mr-1.5 size-4" />
-                Manual Add
-              </Button>
-            </div>
-          )}
-        </div>
-      </CardHeader>
-
-      <CardContent className="p-0">
-        {formOpen && (
-          <RecordForm
-            key={`${recordType}-${initialSource}-new`}
-            title={`Add ${title} Record`}
-            recordType={recordType}
-            records={allRecords}
-            vehicles={vehicles}
-            drivers={drivers}
-            initialSource={initialSource}
-            onCancel={() => setFormOpen(false)}
-            onSave={(record) => {
-              onCreate(record)
-              setFormOpen(false)
-            }}
-          />
-        )}
-
-        {editTarget && (
-          <RecordForm
-            key={`${editTarget.id}-edit`}
-            title={`Edit ${editTarget.type}`}
-            recordType={recordType}
-            records={allRecords}
-            vehicles={vehicles}
-            drivers={drivers}
-            initialSource={editTarget.source}
-            initialRecord={editTarget}
-            onCancel={() => setEditTarget(null)}
-            onSave={(record) => {
-              onUpdate(editTarget.id, record)
-              setEditTarget(null)
-            }}
-          />
-        )}
-
-        {archiveTarget && (
-          <ArchivePanel
-            record={archiveTarget}
-            onCancel={() => setArchiveTarget(null)}
-            onConfirm={(reason) => {
-              onArchive(archiveTarget.id, reason)
-              setArchiveTarget(null)
-            }}
-          />
-        )}
-
-        {historyTarget && (
-          <HistoryPanel
-            record={historyTarget}
-            onClose={() => setHistoryTarget(null)}
-          />
-        )}
-
-        {visibleRecords.length === 0 ? (
-          <div className="p-10 text-center">
-            <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              {icon}
-            </div>
-            <p className="mt-3 text-sm font-medium">No active records</p>
-            <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-              Scan source evidence for assisted extraction or create the record manually.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y">
-            {visibleRecords.map((record) => (
-              <RecordRow
-                key={record.id}
-                record={record}
-                vehicles={vehicles}
-                drivers={drivers}
-                onEdit={startEdit}
-                onArchive={setArchiveTarget}
-                onRestore={(target) => onRestore(target.id)}
-                onHistory={setHistoryTarget}
-              />
-            ))}
-          </div>
-        )}
       </CardContent>
     </Card>
   )
 }
 
 /* =========================================================
-   SUMMARY
+   ARCHIVE CONFIRMATION
 ========================================================= */
 
-function SummaryCard({
+function ArchiveDialog({
   label,
-  value,
-  status,
+  onCancel,
+  onConfirm,
 }: {
   label: string
-  value: number
-  status: RecordStatus
+
+  onCancel: () => void
+
+  onConfirm: (
+    reason: string
+  ) => void
 }) {
+  const [reason, setReason] =
+    useState("")
+
   return (
-    <Card className={getStatusClasses(status).row}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {status === "Healthy" ? (
-            <CheckCircle2 className="size-4 text-emerald-600" />
-          ) : status === "Archived" ? (
-            <Archive className="size-4 text-muted-foreground" />
-          ) : status === "Expired" ? (
-            <XCircle className="size-4 text-red-950" />
-          ) : (
-            <AlertTriangle className="size-4 text-amber-700" />
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <CardTitle className="text-base">
+            Archive Record
+          </CardTitle>
+
+          <CardDescription>
+            {label} will remain permanently available as historical information.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div className="space-y-2">
+            <Label>
+              Archive Reason *
+            </Label>
+
+            <Input
+              value={reason}
+              onChange={(
+                event
+              ) =>
+                setReason(
+                  event.target.value
+                )
+              }
+              placeholder="e.g. Replaced by renewal"
+            />
+          </div>
+
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              disabled={
+                !reason.trim()
+              }
+              onClick={() =>
+                onConfirm(
+                  reason.trim()
+                )
+              }
+            >
+              <Archive className="mr-2 size-4" />
+              Archive
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* =========================================================
+   SIMPLE ROWS
+========================================================= */
+
+function WorkersRow({
+  record,
+  onArchive,
+}: {
+  record:
+    WorkersInsuranceRecord
+
+  onArchive: () => void
+}) {
+  const days =
+    getDaysRemaining(
+      record.expiryDate
+    )
+
+  const style =
+    statusStyle(
+      record.status
+    )
+
+  return (
+    <div
+      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+    >
+      <div className="md:col-span-3">
+        <p className="text-sm font-semibold">
+          {
+            record.insuranceType
+          }
+        </p>
+
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          {
+            record.policyNumber
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-3">
+        <p className="text-sm">
+          {
+            record.providerName
+          }
+        </p>
+
+        <p className="mt-1 text-xs text-muted-foreground">
+          {
+            record.jurisdiction ||
+            "Jurisdiction not recorded"
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-2">
+        {record.coverage
+          .slice(0, 2)
+          .map(
+            (item) => (
+              <p
+                key={
+                  item.id
+                }
+                className="text-[10px]"
+              >
+                {
+                  item.label
+                }
+                :{" "}
+                <strong>
+                  {
+                    item.value
+                  }
+                </strong>
+              </p>
+            )
           )}
-        </div>
-        <p className="mt-2 text-2xl font-bold">{value}</p>
-      </CardContent>
-    </Card>
+      </div>
+
+      <div className="md:col-span-2 text-xs">
+        <p>
+          {
+            record.effectiveDate
+          }
+        </p>
+
+        <p
+          className={`mt-1 ${style.text}`}
+        >
+          {
+            record.expiryDate
+          }
+        </p>
+
+        {days !== null && (
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {days >= 0
+              ? `${days} days remaining`
+              : `${Math.abs(days)} days overdue`}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 md:col-span-2">
+        <ExpiryBadge
+          status={
+            record.status
+          }
+        />
+
+        {record.status !==
+          "Archived" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={
+              onArchive
+            }
+          >
+            <Archive className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BondRow({
+  record,
+  onArchive,
+}: {
+  record: BondRecord
+  onArchive: () => void
+}) {
+  const style =
+    statusStyle(
+      record.status
+    )
+
+  return (
+    <div
+      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+    >
+      <div className="md:col-span-3">
+        <p className="text-sm font-semibold">
+          {
+            record.bondType
+          }
+        </p>
+
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          {
+            record.bondNumber
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-3">
+        <p className="text-sm">
+          {
+            record.suretyName
+          }
+        </p>
+
+        <p className="mt-1 text-xs text-muted-foreground">
+          Principal:{" "}
+          {
+            record.principalName
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-2 font-mono text-xs">
+        {
+          record.bondAmount ||
+          "—"
+        }
+      </div>
+
+      <div className="md:col-span-2 text-xs">
+        <p>
+          {
+            record.effectiveDate
+          }
+        </p>
+
+        <p
+          className={`mt-1 ${style.text}`}
+        >
+          {
+            record.expiryDate ||
+            "Continuous"
+          }
+        </p>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 md:col-span-2">
+        <ExpiryBadge
+          status={
+            record.status
+          }
+        />
+
+        {record.status !==
+          "Archived" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={
+              onArchive
+            }
+          >
+            <Archive className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -2016,238 +4417,1254 @@ function SummaryCard({
 export default function InsurancePage() {
   const params = useParams()
   const router = useRouter()
-  const companyId = params.id as string
 
-  const [company, setCompany] = useState<Company | null>(null)
-  const [records, setRecords] = useState<InsuranceRecord[]>([])
-  const [vehicles, setVehicles] = useState<VehicleReference[]>([])
-  const [drivers, setDrivers] = useState<DriverReference[]>([])
-  const [settings, setSettings] = useState<SystemSettings>({
-    version: 1,
-    expiryRules: DEFAULT_EXPIRY_RULES,
-  })
-  const [loading, setLoading] = useState(true)
+  const companyId =
+    params.id as string
 
-  const storageKey = `tes_company_insurance_${companyId}`
+  const cameraInputRef =
+    useRef<HTMLInputElement | null>(
+      null
+    )
+
+  const deviceInputRef =
+    useRef<HTMLInputElement | null>(
+      null
+    )
+
+  const [company, setCompany] =
+    useState<Company | null>(
+      null
+    )
+
+  const [data, setData] =
+    useState<StoredInsuranceData>(
+      EMPTY_DATA
+    )
+
+  const [settings, setSettings] =
+    useState<SystemSettings>({
+      version: 1,
+      expiryRules:
+        DEFAULT_EXPIRY_RULES,
+    })
+
+  const [loading, setLoading] =
+    useState(true)
+
+  const [
+    showSourcePicker,
+    setShowSourcePicker,
+  ] = useState(false)
+
+  const [
+    workspace,
+    setWorkspace,
+  ] = useState<OCRWorkspace | null>(
+    null
+  )
+
+  const [
+    manualTransportation,
+    setManualTransportation,
+  ] = useState(false)
+
+  const [simpleForm, setSimpleForm] =
+    useState<
+      | "workers"
+      | "bond"
+      | null
+    >(null)
+
+  const [
+    editingTransportation,
+    setEditingTransportation,
+  ] =
+    useState<TransportationInsuranceRecord | null>(
+      null
+    )
+
+  const [
+    archiveTarget,
+    setArchiveTarget,
+  ] = useState<{
+    family: RecordFamily
+    id: string
+    label: string
+  } | null>(null)
+
+  const storageKey =
+    `tes_company_insurance_${companyId}`
+
+  /* =======================================================
+     LOAD
+  ======================================================= */
 
   useEffect(() => {
     try {
-      const savedCompanies = JSON.parse(
-        localStorage.getItem("tes_companies") || "[]"
-      )
-      const found = savedCompanies.find(
-        (item: Company) => item.id === companyId
-      )
-      setCompany(found || null)
+      const companies =
+        getCompanies()
 
-      const savedRecords = safeParseArray(storageKey)
+      const found =
+        companies.find(
+          (item) =>
+            item.id ===
+            companyId
+        )
 
-      const migrated = savedRecords.map(
-        (record: any): InsuranceRecord => ({
-          ...record,
-          family: record.family
-            ? record.family === "bond"
-              ? "legacy_bond"
-              : record.family
-            : inferFamily(record.type),
-          provider: record.provider || record.company || "",
-          linkedVehicleIds: record.linkedVehicleIds || [],
-          linkedDriverIds: record.linkedDriverIds || [],
-          events: record.events || [],
-          ocrStatus:
-            record.ocrStatus ||
-            (record.source === "OCR" ? "Needs Review" : "Not Used"),
-        })
+      setCompany(
+        found || null
       )
 
-      setRecords(migrated)
-      setVehicles(loadVehicleReferences(companyId))
-      setDrivers(loadDriverReferences(companyId))
-      setSettings(loadSystemSettings())
+      const raw =
+        localStorage.getItem(
+          storageKey
+        )
+
+      if (!raw) {
+        setData(
+          EMPTY_DATA
+        )
+      } else {
+        const parsed =
+          JSON.parse(raw)
+
+        /*
+          New model
+        */
+
+        if (
+          parsed &&
+          !Array.isArray(parsed) &&
+          Array.isArray(
+            parsed.transportation
+          )
+        ) {
+          setData({
+            ...EMPTY_DATA,
+            ...parsed,
+
+            transportation:
+              parsed.transportation ||
+              [],
+
+            workers:
+              parsed.workers ||
+              [],
+
+            bonds:
+              parsed.bonds ||
+              [],
+
+            evidence:
+              parsed.evidence ||
+              [],
+          })
+        } else if (
+          Array.isArray(parsed)
+        ) {
+          /*
+            Legacy migration from previous flat InsuranceRecord[].
+          */
+
+          const migrated =
+            migrateLegacyRecords(
+              parsed
+            )
+
+          setData(
+            migrated
+          )
+        }
+      }
+
+      setSettings(
+        loadSystemSettings()
+      )
     } catch (error) {
-      console.error("Unable to load insurance page:", error)
+      console.error(
+        "Unable to load insurance data:",
+        error
+      )
+
+      setData(
+        EMPTY_DATA
+      )
     } finally {
       setLoading(false)
     }
-  }, [companyId, storageKey])
+  }, [
+    companyId,
+    storageKey,
+  ])
 
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === SETTINGS_STORAGE_KEY) {
-        setSettings(loadSystemSettings())
-      }
-    }
-
-    window.addEventListener("storage", handleStorage)
-    return () => window.removeEventListener("storage", handleStorage)
-  }, [])
+  /* =======================================================
+     PERSIST
+  ======================================================= */
 
   useEffect(() => {
     if (!loading) {
-      localStorage.setItem(storageKey, JSON.stringify(records))
-    }
-  }, [records, loading, storageKey])
-
-  const normalizedRecords = useMemo(
-    () =>
-      records.map((record) => ({
-        ...record,
-        status: getRecordStatus(
-          record.expiry,
-          settings.expiryRules,
-          Boolean(record.archivedAt) || record.status === "Archived"
-        ),
-      })),
-    [records, settings.expiryRules]
-  )
-
-  const operationalRecords = normalizedRecords.filter(
-    (record) => record.family !== "legacy_bond"
-  )
-
-  const summary = useMemo(() => {
-    const count = (status: RecordStatus) =>
-      operationalRecords.filter((record) => record.status === status).length
-
-    return {
-      healthy: count("Healthy"),
-      watch: count("Watch"),
-      urgent: count("Urgent"),
-      critical: count("Critical"),
-      expired: count("Expired"),
-      archived: count("Archived"),
-    }
-  }, [operationalRecords])
-
-  const createRecord = (draft: RecordDraft) => {
-    const duplicate = findDuplicateIdentifier(normalizedRecords, draft.number)
-    if (duplicate) {
-      window.alert(
-        `Duplicate identifier detected. ${duplicate.type} already uses ${duplicate.number}.`
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify(data)
       )
+    }
+  }, [
+    data,
+    loading,
+    storageKey,
+  ])
+
+  /* =======================================================
+     RE-CALCULATE STATUS FROM PORTAL SETTINGS
+  ======================================================= */
+
+  const transportation =
+    useMemo(
+      () =>
+        data.transportation.map(
+          (record) => ({
+            ...record,
+
+            status:
+              getExpiryStatus(
+                record.expiryDate,
+
+                settings.expiryRules,
+
+                Boolean(
+                  record.archivedAt
+                ) ||
+                  record.status ===
+                    "Archived"
+              ),
+          })
+        ),
+
+      [
+        data.transportation,
+        settings.expiryRules,
+      ]
+    )
+
+  const workers =
+    useMemo(
+      () =>
+        data.workers.map(
+          (record) => ({
+            ...record,
+
+            status:
+              getExpiryStatus(
+                record.expiryDate,
+
+                settings.expiryRules,
+
+                Boolean(
+                  record.archivedAt
+                ) ||
+                  record.status ===
+                    "Archived"
+              ),
+          })
+        ),
+
+      [
+        data.workers,
+        settings.expiryRules,
+      ]
+    )
+
+  const bonds =
+    useMemo(
+      () =>
+        data.bonds.map(
+          (record) => ({
+            ...record,
+
+            status:
+              getExpiryStatus(
+                record.expiryDate,
+
+                settings.expiryRules,
+
+                Boolean(
+                  record.archivedAt
+                ) ||
+                  record.status ===
+                    "Archived"
+              ),
+          })
+        ),
+
+      [
+        data.bonds,
+        settings.expiryRules,
+      ]
+    )
+
+  const allStatuses =
+    [
+      ...transportation,
+      ...workers,
+      ...bonds,
+    ]
+
+  const counts =
+    useMemo(
+      () => ({
+        healthy:
+          allStatuses.filter(
+            (item) =>
+              item.status ===
+              "Healthy"
+          ).length,
+
+        watch:
+          allStatuses.filter(
+            (item) =>
+              item.status ===
+              "Watch"
+          ).length,
+
+        urgent:
+          allStatuses.filter(
+            (item) =>
+              item.status ===
+              "Urgent"
+          ).length,
+
+        critical:
+          allStatuses.filter(
+            (item) =>
+              item.status ===
+              "Critical"
+          ).length,
+
+        expired:
+          allStatuses.filter(
+            (item) =>
+              item.status ===
+              "Expired"
+          ).length,
+      }),
+
+      [allStatuses]
+    )
+
+  const activeTransportation =
+    transportation.filter(
+      (record) =>
+        ![
+          "Expired",
+          "Archived",
+        ].includes(
+          record.status
+        )
+    )
+
+  /* =======================================================
+     DOCUMENT INPUT
+  ======================================================= */
+
+  const beginDocument = async (
+    file: File,
+    source: DocumentSource
+  ) => {
+    const allowed =
+      file.type.startsWith(
+        "image/"
+      ) ||
+      file.type ===
+        "application/pdf"
+
+    if (!allowed) {
+      window.alert(
+        "Please select a PDF or image."
+      )
+
       return
     }
 
-    const timestamp = now()
-    const id = makeId(`${companyId}-INS`)
+    const dataUrl =
+      await readFileAsDataUrl(
+        file
+      )
 
-    const newRecord: InsuranceRecord = {
-      ...draft,
-      id,
-      createdAt: timestamp,
-      status: getRecordStatus(draft.expiry, settings.expiryRules),
-      events: [
-        {
-          id: makeId("EVT"),
-          type: "INSURANCE_RECORD_CREATED",
-          timestamp,
-          actor: "Current User",
-          description: `${draft.type} record created.`,
-        },
+    setWorkspace({
+      source,
+
+      file,
+
+      dataUrl,
+
+      processing: false,
+
+      extractionComplete:
+        false,
+
+      records: [
+        emptyTransportationDraft(),
       ],
+
+      brokerName: "",
+
+      brokerContactName: "",
+
+      brokerEmail: "",
+
+      brokerPhone: "",
+
+      brokerClientReference:
+        "",
+    })
+  }
+
+  const handleCameraFile = async (
+    event:
+      React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file =
+      event.target.files?.[0]
+
+    event.target.value = ""
+
+    if (!file) return
+
+    await beginDocument(
+      file,
+      "camera"
+    )
+  }
+
+  const handleDeviceFile = async (
+    event:
+      React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file =
+      event.target.files?.[0]
+
+    event.target.value = ""
+
+    if (!file) return
+
+    await beginDocument(
+      file,
+      "device"
+    )
+  }
+
+  /* =======================================================
+     BROKER RESOLUTION
+  ======================================================= */
+
+  const resolveBroker = ({
+    brokerName,
+    contactName,
+    email,
+    phone,
+    clientReference,
+  }: {
+    brokerName: string
+    contactName: string
+    email: string
+    phone: string
+    clientReference: string
+  }): BrokerSnapshot | undefined => {
+    if (
+      !brokerName.trim() &&
+      !contactName.trim() &&
+      !email.trim() &&
+      !phone.trim()
+    ) {
+      return undefined
     }
 
-    setRecords((current) => [newRecord, ...current])
+    const organization =
+      brokerName.trim()
+        ? resolveOrganization(
+            brokerName,
+            "Insurance Broker"
+          )
+        : {
+            organizationId:
+              undefined,
+
+            organizationName:
+              "",
+          }
+
+    const contact =
+      resolveBrokerContact({
+        brokerOrganizationId:
+          organization.organizationId,
+
+        brokerOrganizationName:
+          organization.organizationName,
+
+        contactName,
+
+        email,
+
+        phone,
+      })
+
+    return {
+      organizationId:
+        organization.organizationId,
+
+      organizationName:
+        organization.organizationName ||
+        brokerName.trim(),
+
+      contactId:
+        contact.contactId,
+
+      contactName:
+        contact.contactName,
+
+      contactEmail:
+        contact.contactEmail,
+
+      contactPhone:
+        contact.contactPhone,
+
+      clientReference:
+        clientReference.trim(),
+    }
+  }
+
+  /* =======================================================
+     DUPLICATE / RENEWAL LOGIC
+  ======================================================= */
+
+  const locatePolicyMatch = (
+    draft:
+      TransportationDraft,
+    insurerName:
+      string
+  ) => {
+    const insurer =
+      normalizeCompanyName(
+        insurerName
+      )
+
+    const policy =
+      normalizeIdentifier(
+        draft.policyNumber
+      )
+
+    const sameNumber =
+      transportation.filter(
+        (record) =>
+          record.status !==
+            "Archived" &&
+          normalizeCompanyName(
+            record.insurerName
+          ) === insurer &&
+          normalizeIdentifier(
+            record.policyNumber
+          ) === policy
+      )
+
+    const exactPeriod =
+      sameNumber.find(
+        (record) =>
+          record.effectiveDate ===
+            draft.effectiveDate &&
+          record.expiryDate ===
+            draft.expiryDate
+      )
+
+    if (exactPeriod) {
+      return {
+        type:
+          "duplicate" as const,
+
+        record:
+          exactPeriod,
+      }
+    }
+
+    if (sameNumber.length) {
+      const mostRecent =
+        [...sameNumber].sort(
+          (a, b) =>
+            b.expiryDate.localeCompare(
+              a.expiryDate
+            )
+        )[0]
+
+      return {
+        type:
+          "renewal" as const,
+
+        record:
+          mostRecent,
+      }
+    }
+
+    return {
+      type:
+        "new" as const,
+
+      record:
+        undefined,
+    }
+  }
+
+  /* =======================================================
+     SAVE TRANSPORTATION RECORDS
+  ======================================================= */
+
+  const saveTransportationDrafts = ({
+    drafts,
+    source,
+    evidence,
+    broker,
+  }: {
+    drafts:
+      TransportationDraft[]
+
+    source: SourceType
+
+    evidence?: InsuranceEvidence
+
+    broker?: BrokerSnapshot
+  }) => {
+    const created:
+      TransportationInsuranceRecord[] =
+      []
+
+    for (
+      const draft of drafts
+    ) {
+      const insurer =
+        resolveOrganization(
+          draft.insurerName,
+
+          "Insurance Company"
+        )
+
+      const resolvedName =
+        insurer.organizationName
+
+      const match =
+        locatePolicyMatch(
+          draft,
+          resolvedName
+        )
+
+      /*
+        Exact insurer + policy + policy period
+        = same policy, do not duplicate.
+      */
+
+      if (
+        match.type ===
+        "duplicate"
+      ) {
+        continue
+      }
+
+      const timestamp =
+        isoNow()
+
+      const record:
+        TransportationInsuranceRecord =
+        {
+          id: createId(
+            "INS"
+          ),
+
+          family:
+            "transportation",
+
+          insuranceType:
+            draft.insuranceType
+              .trim(),
+
+          canonicalType:
+            normalizeInsuranceType(
+              draft.insuranceType
+            ),
+
+          insurerOrganizationId:
+            insurer.organizationId,
+
+          insurerName:
+            resolvedName,
+
+          policyNumber:
+            draft.policyNumber
+              .trim(),
+
+          effectiveDate:
+            draft.effectiveDate,
+
+          expiryDate:
+            draft.expiryDate,
+
+          coverage:
+            draft.coverage
+              .filter(
+                (coverage) =>
+                  coverage.label.trim() ||
+                  coverage.value.trim()
+              )
+              .slice(
+                0,
+                6
+              ),
+
+          status:
+            getExpiryStatus(
+              draft.expiryDate,
+
+              settings.expiryRules
+            ),
+
+          source,
+
+          evidenceId:
+            evidence?.id,
+
+          broker,
+
+          /*
+            Same insurer + policy number but new policy
+            period = renewal/history relationship.
+          */
+
+          previousRecordId:
+            match.type ===
+            "renewal"
+              ? match.record?.id
+              : undefined,
+
+          createdAt:
+            timestamp,
+
+          updatedAt:
+            timestamp,
+        }
+
+      created.push(record)
+    }
+
+    if (!created.length) {
+      window.alert(
+        "No new insurance records were created. The detected policy records already exist for the same insurer and policy period."
+      )
+
+      return
+    }
+
+    setData(
+      (current) => ({
+        ...current,
+
+        transportation: [
+          ...created,
+
+          ...current.transportation,
+        ],
+
+        evidence:
+          evidence
+            ? [
+                evidence,
+                ...current.evidence,
+              ]
+            : current.evidence,
+      })
+    )
+  }
+
+  const saveOCRWorkspace = (
+    current: OCRWorkspace
+  ) => {
+    const evidence:
+      InsuranceEvidence =
+      {
+        id: createId(
+          "DOC"
+        ),
+
+        documentName:
+          current.file.name,
+
+        documentType:
+          current.file.type,
+
+        source:
+          current.source,
+
+        uploadedAt:
+          isoNow(),
+
+        ocrConfidence:
+          current.confidence,
+
+        dataUrl:
+          current.dataUrl,
+      }
+
+    const broker =
+      resolveBroker({
+        brokerName:
+          current.brokerName,
+
+        contactName:
+          current.brokerContactName,
+
+        email:
+          current.brokerEmail,
+
+        phone:
+          current.brokerPhone,
+
+        clientReference:
+          current.brokerClientReference,
+      })
+
+    saveTransportationDrafts({
+      drafts:
+        current.records,
+
+      source: "OCR",
+
+      evidence,
+
+      broker,
+    })
+
+    setWorkspace(null)
+  }
+
+  const saveManualTransportation = (
+    drafts:
+      TransportationDraft[],
+
+    brokerData: {
+      brokerName: string
+      contactName: string
+      email: string
+      phone: string
+      clientReference: string
+    }
+  ) => {
+    const broker =
+      resolveBroker(
+        brokerData
+      )
+
+    saveTransportationDrafts({
+      drafts,
+
+      source:
+        "Manual",
+
+      broker,
+    })
+
+    setManualTransportation(
+      false
+    )
+  }
+
+  /* =======================================================
+     WORKERS
+  ======================================================= */
+
+  const saveWorkers = (
+    draft:
+      Omit<
+        WorkersInsuranceRecord,
+        | "id"
+        | "status"
+        | "createdAt"
+        | "updatedAt"
+      >
+  ) => {
+    const provider =
+      resolveOrganization(
+        draft.providerName,
+
+        "Workers Insurance"
+      )
 
     /*
-      MASTER REGISTER INTEGRATION POINT:
-      INSURANCE_RECORD_CREATED with actor, role, companyId, recordId,
-      source, timestamp and durable evidence ID.
+      Strong duplicate:
+      provider + account/policy # + same period.
+    */
+
+    const duplicate =
+      workers.find(
+        (record) =>
+          record.status !==
+            "Archived" &&
+          normalizeCompanyName(
+            record.providerName
+          ) ===
+            normalizeCompanyName(
+              provider.organizationName
+            ) &&
+          normalizeIdentifier(
+            record.policyNumber
+          ) ===
+            normalizeIdentifier(
+              draft.policyNumber
+            ) &&
+          record.effectiveDate ===
+            draft.effectiveDate &&
+          record.expiryDate ===
+            draft.expiryDate
+      )
+
+    if (duplicate) {
+      window.alert(
+        "This workers insurance/account record already exists."
+      )
+
+      return
+    }
+
+    const timestamp =
+      isoNow()
+
+    const record:
+      WorkersInsuranceRecord =
+      {
+        ...draft,
+
+        id: createId(
+          "WCB"
+        ),
+
+        providerOrganizationId:
+          provider.organizationId,
+
+        providerName:
+          provider.organizationName,
+
+        status:
+          getExpiryStatus(
+            draft.expiryDate,
+
+            settings.expiryRules
+          ),
+
+        createdAt:
+          timestamp,
+
+        updatedAt:
+          timestamp,
+      }
+
+    setData(
+      (current) => ({
+        ...current,
+
+        workers: [
+          record,
+          ...current.workers,
+        ],
+      })
+    )
+
+    setSimpleForm(null)
+  }
+
+  /* =======================================================
+     BOND
+  ======================================================= */
+
+  const saveBond = (
+    draft:
+      Omit<
+        BondRecord,
+        | "id"
+        | "status"
+        | "createdAt"
+        | "updatedAt"
+      >
+  ) => {
+    const surety =
+      resolveOrganization(
+        draft.suretyName,
+
+        "Insurance Company"
+      )
+
+    const duplicate =
+      bonds.find(
+        (record) =>
+          record.status !==
+            "Archived" &&
+          normalizeIdentifier(
+            record.bondNumber
+          ) ===
+            normalizeIdentifier(
+              draft.bondNumber
+            ) &&
+          normalizeCompanyName(
+            record.suretyName
+          ) ===
+            normalizeCompanyName(
+              surety.organizationName
+            )
+      )
+
+    if (duplicate) {
+      window.alert(
+        "This bond number already exists for the same surety company."
+      )
+
+      return
+    }
+
+    const timestamp =
+      isoNow()
+
+    const record:
+      BondRecord =
+      {
+        ...draft,
+
+        id: createId(
+          "BND"
+        ),
+
+        suretyOrganizationId:
+          surety.organizationId,
+
+        suretyName:
+          surety.organizationName,
+
+        status:
+          getExpiryStatus(
+            draft.expiryDate,
+
+            settings.expiryRules
+          ),
+
+        createdAt:
+          timestamp,
+
+        updatedAt:
+          timestamp,
+      }
+
+    setData(
+      (current) => ({
+        ...current,
+
+        bonds: [
+          record,
+          ...current.bonds,
+        ],
+      })
+    )
+
+    setSimpleForm(null)
+  }
+
+  /* =======================================================
+     EDIT
+  ======================================================= */
+
+  const saveEditedTransportation = (
+    edited:
+      TransportationInsuranceRecord
+  ) => {
+    const insurer =
+      resolveOrganization(
+        edited.insurerName,
+
+        "Insurance Company"
+      )
+
+    setData(
+      (current) => ({
+        ...current,
+
+        transportation:
+          current.transportation.map(
+            (record) =>
+              record.id ===
+              edited.id
+                ? {
+                    ...edited,
+
+                    insurerOrganizationId:
+                      insurer.organizationId,
+
+                    insurerName:
+                      insurer.organizationName,
+
+                    canonicalType:
+                      normalizeInsuranceType(
+                        edited.insuranceType
+                      ),
+
+                    status:
+                      getExpiryStatus(
+                        edited.expiryDate,
+
+                        settings.expiryRules
+                      ),
+
+                    updatedAt:
+                      isoNow(),
+                  }
+                : record
+          ),
+      })
+    )
+
+    setEditingTransportation(
+      null
+    )
+
+    /*
+      Future shared Master Register:
+      field-level before/after values should be written here.
     */
   }
 
-  const updateRecord = (id: string, draft: RecordDraft) => {
-    const duplicate = findDuplicateIdentifier(
-      normalizedRecords,
-      draft.number,
-      id
-    )
+  /* =======================================================
+     ARCHIVE
+  ======================================================= */
 
-    if (duplicate) {
-      window.alert(
-        `Duplicate identifier detected. ${duplicate.type} already uses ${duplicate.number}.`
+  const confirmArchive = (
+    reason: string
+  ) => {
+    if (!archiveTarget) return
+
+    const timestamp =
+      isoNow()
+
+    if (
+      archiveTarget.family ===
+      "transportation"
+    ) {
+      setData(
+        (current) => ({
+          ...current,
+
+          transportation:
+            current.transportation.map(
+              (record) =>
+                record.id ===
+                archiveTarget.id
+                  ? {
+                      ...record,
+
+                      status:
+                        "Archived",
+
+                      archivedAt:
+                        timestamp,
+
+                      archivedBy:
+                        "Current User",
+
+                      archiveReason:
+                        reason,
+
+                      updatedAt:
+                        timestamp,
+                    }
+                  : record
+            ),
+        })
       )
-      return
     }
 
-    setRecords((current) =>
-      current.map((record) => {
-        if (record.id !== id) return record
+    if (
+      archiveTarget.family ===
+      "workers"
+    ) {
+      setData(
+        (current) => ({
+          ...current,
 
-        const updated = appendEvent(
-          {
-            ...record,
-            ...draft,
-            id: record.id,
-            createdAt: record.createdAt,
-            status: getRecordStatus(
-              draft.expiry,
-              settings.expiryRules,
-              Boolean(record.archivedAt)
+          workers:
+            current.workers.map(
+              (record) =>
+                record.id ===
+                archiveTarget.id
+                  ? {
+                      ...record,
+
+                      status:
+                        "Archived",
+
+                      archivedAt:
+                        timestamp,
+
+                      archivedBy:
+                        "Current User",
+
+                      archiveReason:
+                        reason,
+
+                      updatedAt:
+                        timestamp,
+                    }
+                  : record
             ),
-            events: record.events || [],
-          },
-          "INSURANCE_RECORD_UPDATED",
-          `${draft.type} record updated.`
-        )
+        })
+      )
+    }
 
-        return updated
-      })
-    )
+    if (
+      archiveTarget.family ===
+      "bond"
+    ) {
+      setData(
+        (current) => ({
+          ...current,
 
-    /* MASTER REGISTER: INSURANCE_RECORD_UPDATED */
+          bonds:
+            current.bonds.map(
+              (record) =>
+                record.id ===
+                archiveTarget.id
+                  ? {
+                      ...record,
+
+                      status:
+                        "Archived",
+
+                      archivedAt:
+                        timestamp,
+
+                      archivedBy:
+                        "Current User",
+
+                      archiveReason:
+                        reason,
+
+                      updatedAt:
+                        timestamp,
+                    }
+                  : record
+            ),
+        })
+      )
+    }
+
+    setArchiveTarget(null)
   }
 
-  const archiveRecord = (id: string, reason: string) => {
-    setRecords((current) =>
-      current.map((record) => {
-        if (record.id !== id) return record
-
-        const timestamp = now()
-        return appendEvent(
-          {
-            ...record,
-            status: "Archived",
-            archivedAt: timestamp,
-            archivedBy: "Current User",
-            archiveReason: reason,
-          },
-          "INSURANCE_RECORD_ARCHIVED",
-          `${record.type} archived: ${reason}`
-        )
-      })
-    )
-
-    /* MASTER REGISTER: INSURANCE_RECORD_ARCHIVED */
-  }
-
-  const restoreRecord = (id: string) => {
-    setRecords((current) =>
-      current.map((record) => {
-        if (record.id !== id) return record
-
-        const restored: InsuranceRecord = {
-          ...record,
-          archivedAt: undefined,
-          archivedBy: undefined,
-          archiveReason: undefined,
-          status: getRecordStatus(record.expiry, settings.expiryRules),
-        }
-
-        return appendEvent(
-          restored,
-          "INSURANCE_RECORD_RESTORED",
-          `${record.type} restored to operational view.`
-        )
-      })
-    )
-
-    /* MASTER REGISTER: INSURANCE_RECORD_RESTORED */
-  }
+  /* =======================================================
+     STATES
+  ======================================================= */
 
   if (loading) {
     return (
-      <div className="flex min-h-[300px] items-center justify-center p-10">
+      <div className="flex min-h-[300px] items-center justify-center">
         <Loader2 className="size-5 animate-spin text-muted-foreground" />
       </div>
     )
@@ -2255,224 +5672,1090 @@ export default function InsurancePage() {
 
   if (!company) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-10 text-center">
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Building2 className="size-10 text-muted-foreground/40" />
-        <div>
-          <h2 className="text-lg font-semibold">Company Not Found</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            The requested company record could not be loaded.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => router.push("/companies")}>
+
+        <h2 className="text-lg font-semibold">
+          Company Not Found
+        </h2>
+
+        <Button
+          variant="outline"
+          onClick={() =>
+            router.push(
+              "/companies"
+            )
+          }
+        >
           <ArrowLeft className="mr-2 size-4" />
-          Return to Companies
+
+          Companies
         </Button>
       </div>
     )
   }
 
-  const transportationRecords = normalizedRecords.filter(
-    (record) => record.family === "transportation"
-  )
-  const driverRecords = normalizedRecords.filter(
-    (record) => record.family === "driver"
-  )
-  const usFilingRecords = normalizedRecords.filter(
-    (record) => record.family === "us_filing"
-  )
-  const workersRecords = normalizedRecords.filter(
-    (record) => record.family === "workers"
-  )
-  const legacyBondRecords = normalizedRecords.filter(
-    (record) => record.family === "legacy_bond"
-  )
+  /* =======================================================
+     PAGE
+  ======================================================= */
 
   return (
-    <div className="flex max-w-7xl flex-col gap-6 pb-12">
-      <div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-9"
-            onClick={() => router.push(`/companies/${company.id}/profile`)}
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Insurance & Coverage
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {company.name}{" "}
-              <span className="font-mono text-xs">({company.id})</span>
-            </p>
-          </div>
-        </div>
+    <>
+      <div className="flex max-w-7xl flex-col gap-6 pb-12">
+        {/* HEADER */}
 
-        <div className="mt-5 rounded-xl border bg-muted/20 p-4">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+        <div>
+          <div className="flex items-start gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9"
+              onClick={() =>
+                router.push(
+                  `/companies/${company.id}/profile`
+                )
+              }
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Registered Origin
-              </p>
-              <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-                <Building2 className="size-3.5 text-primary" />
-                {company.regCorpState || "Unknown"}, {company.regCorpCountry || "Unknown"}
-              </p>
-            </div>
-            <div className="hidden h-8 w-px bg-border sm:block" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Operating Region
-              </p>
-              <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-                <CheckCircle2 className="size-3.5 text-primary" />
-                {company.region || "Not specified"}
-              </p>
-            </div>
-            <div className="hidden h-8 w-px bg-border lg:block" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Relationship Sources
-              </p>
-              <p className="mt-1 text-xs font-medium text-muted-foreground">
-                {vehicles.filter((item) => !item.archived).length} active vehicles · {drivers.filter((item) => !item.archived).length} active drivers
+              <h1 className="text-2xl font-bold tracking-tight">
+                Insurance & Bonds
+              </h1>
+
+              <p className="mt-1 text-sm text-muted-foreground">
+                {company.name}{" "}
+                <span className="font-mono text-xs">
+                  ({company.id})
+                </span>
               </p>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div>
-        <div className="mb-3 flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold">Renewal Position</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Live classification based on central Portal Settings rules.
-            </p>
+          {/* SOURCE COMPANY CONTEXT */}
+
+          <div className="mt-5 rounded-xl border bg-muted/20 p-4">
+            <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Registered Origin
+                </p>
+
+                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
+                  <Building2 className="size-3.5 text-primary" />
+
+                  {company.regCorpState ||
+                    "Unknown"}
+                  ,{" "}
+                  {company.regCorpCountry ||
+                    "Unknown"}
+                </p>
+              </div>
+
+              <div className="hidden h-8 w-px bg-border sm:block" />
+
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Operating Region
+                </p>
+
+                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
+                  <CheckCircle2 className="size-3.5 text-primary" />
+
+                  {company.region ||
+                    "Not specified"}
+                </p>
+              </div>
+
+              <div className="hidden h-8 w-px bg-border lg:block" />
+
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Renewal Rules
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSettings(
+                      loadSystemSettings()
+                    )
+                  }
+                  className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                >
+                  <RefreshCcw className="size-3" />
+
+                  Portal Settings
+                </button>
+              </div>
+            </div>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-xs"
-            onClick={() => {
-              setSettings(loadSystemSettings())
-              setVehicles(loadVehicleReferences(companyId))
-              setDrivers(loadDriverReferences(companyId))
-            }}
-          >
-            <RefreshCcw className="mr-1.5 size-3.5" />
-            Refresh Relationships
-          </Button>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <SummaryCard label="Healthy" value={summary.healthy} status="Healthy" />
-          <SummaryCard label="Watch" value={summary.watch} status="Watch" />
-          <SummaryCard label="Urgent" value={summary.urgent} status="Urgent" />
-          <SummaryCard label="Critical" value={summary.critical} status="Critical" />
-          <SummaryCard label="Expired" value={summary.expired} status="Expired" />
-          <SummaryCard label="Archived" value={summary.archived} status="Archived" />
+        {/* OPERATIONAL POSITION */}
+
+        <Card className="border-primary/15">
+          <CardContent className="p-5">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                  Transportation Insurance Position
+                </p>
+
+                {activeTransportation.length >
+                0 ? (
+                  <>
+                    <div className="mt-2 flex items-center gap-2">
+                      <CheckCircle2 className="size-5 text-emerald-600" />
+
+                      <p className="text-base font-semibold">
+                        Active policy records on file
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {activeTransportation.length} current transportation insurance record
+                      {activeTransportation.length ===
+                      1
+                        ? ""
+                        : "s"}{" "}
+                      are available.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-2 flex items-center gap-2">
+                      <AlertTriangle className="size-5 text-amber-600" />
+
+                      <p className="text-base font-semibold">
+                        No current transportation policy record
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Scan the current COI or enter the active policy information manually.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() =>
+                    setShowSourcePicker(
+                      true
+                    )
+                  }
+                >
+                  <ScanDocumentIcon
+                    size={15}
+                  />
+
+                  <span className="ml-2">
+                    Scan Insurance Document
+                  </span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setManualTransportation(
+                      true
+                    )
+                  }
+                >
+                  <Plus className="mr-2 size-4" />
+
+                  Manual Entry
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* RENEWAL STATUS */}
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <StatusCountCard
+            label="Healthy"
+            count={
+              counts.healthy
+            }
+            status="Healthy"
+          />
+
+          <StatusCountCard
+            label="Watch"
+            count={
+              counts.watch
+            }
+            status="Watch"
+          />
+
+          <StatusCountCard
+            label="Urgent"
+            count={
+              counts.urgent
+            }
+            status="Urgent"
+          />
+
+          <StatusCountCard
+            label="Critical"
+            count={
+              counts.critical
+            }
+            status="Critical"
+          />
+
+          <StatusCountCard
+            label="Expired"
+            count={
+              counts.expired
+            }
+            status="Expired"
+          />
         </div>
-      </div>
 
-      <InsuranceSection
-        title="Fleet & Commercial Insurance"
-        description="Auto liability, cargo, general liability, physical damage and other commercial fleet coverage linked to real vehicle records where applicable."
-        icon={<Truck className="size-4 text-primary" />}
-        recordType="transportation"
-        records={transportationRecords}
-        allRecords={normalizedRecords}
-        vehicles={vehicles}
-        drivers={drivers}
-        onCreate={createRecord}
-        onUpdate={updateRecord}
-        onArchive={archiveRecord}
-        onRestore={restoreRecord}
-      />
+        {/* MANUAL TRANSPORTATION */}
 
-      <InsuranceSection
-        title="Driver-Specific Coverage"
-        description="Coverage that genuinely applies to individual drivers, linked to existing Driver Master records rather than duplicated identities."
-        icon={<UserRound className="size-4 text-primary" />}
-        recordType="driver"
-        records={driverRecords}
-        allRecords={normalizedRecords}
-        vehicles={vehicles}
-        drivers={drivers}
-        onCreate={createRecord}
-        onUpdate={updateRecord}
-        onArchive={archiveRecord}
-        onRestore={restoreRecord}
-      />
+        {manualTransportation && (
+          <ManualTransportationForm
+            existingRecords={
+              transportation
+            }
+            onCancel={() =>
+              setManualTransportation(
+                false
+              )
+            }
+            onSave={
+              saveManualTransportation
+            }
+          />
+        )}
 
-      <InsuranceSection
-        title="U.S. Insurance Filings"
-        description="Insurance-specific U.S. filing evidence such as BMC-91 and BMC-91X. Customs, permit and other surety bonds do not belong in this module."
-        icon={<ShieldCheck className="size-4 text-primary" />}
-        recordType="us_filing"
-        records={usFilingRecords}
-        allRecords={normalizedRecords}
-        vehicles={vehicles}
-        drivers={drivers}
-        onCreate={createRecord}
-        onUpdate={updateRecord}
-        onArchive={archiveRecord}
-        onRestore={restoreRecord}
-      />
+        {/* TRANSPORTATION REGISTER */}
 
-      <InsuranceSection
-        title="Workers Compensation"
-        description="Active WCB, WSIB, CNESST or equivalent certificate evidence only. Account credentials remain in the separate access/credentials system."
-        icon={<HardHat className="size-4 text-primary" />}
-        recordType="workers"
-        records={workersRecords}
-        allRecords={normalizedRecords}
-        vehicles={vehicles}
-        drivers={drivers}
-        onCreate={createRecord}
-        onUpdate={updateRecord}
-        onArchive={archiveRecord}
-        onRestore={restoreRecord}
-      />
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b bg-muted/20">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <ShieldCheck className="size-4 text-primary" />
 
-      {legacyBondRecords.length > 0 && (
-        <Card className="border-amber-200 bg-amber-50/40">
+                  Transportation Insurance
+                </CardTitle>
+
+                <CardDescription className="mt-1 text-xs">
+                  Each actual insurer/policy section is stored separately even when several appear on one COI.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-0">
+            {transportation.filter(
+              (record) =>
+                record.status !==
+                "Archived"
+            ).length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <ScanDocumentIcon
+                    size={22}
+                  />
+                </div>
+
+                <p className="mt-4 text-sm font-semibold">
+                  No transportation insurance recorded
+                </p>
+
+                <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-muted-foreground">
+                  Scan the COI first. One certificate can create several insurer/policy records while remaining linked to the same source evidence.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {transportation
+                  .filter(
+                    (record) =>
+                      record.status !==
+                      "Archived"
+                  )
+                  .map(
+                    (record) => (
+                      <TransportationRecordRow
+                        key={
+                          record.id
+                        }
+                        record={
+                          record
+                        }
+                        onEdit={() =>
+                          setEditingTransportation(
+                            record
+                          )
+                        }
+                        onArchive={() =>
+                          setArchiveTarget(
+                            {
+                              family:
+                                "transportation",
+
+                              id:
+                                record.id,
+
+                              label:
+                                `${record.insuranceType} · ${record.policyNumber}`,
+                            }
+                          )
+                        }
+                      />
+                    )
+                  )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* WORKERS */}
+
+        <Card className="overflow-visible">
+          <CardHeader className="border-b bg-muted/20">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <HardHat className="size-4 text-primary" />
+
+                  Workers Insurance
+                </CardTitle>
+
+                <CardDescription className="mt-1 text-xs">
+                  Workers compensation, WCB / WSIB and occupational accident records remain separate from transportation insurance.
+                </CardDescription>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={() =>
+                  setSimpleForm(
+                    "workers"
+                  )
+                }
+              >
+                <Plus className="mr-1.5 size-4" />
+
+                Add Record
+              </Button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-0">
+            {simpleForm ===
+              "workers" && (
+              <div className="p-4">
+                <SimpleRecordForm
+                  family="workers"
+                  company={
+                    company
+                  }
+                  onCancel={() =>
+                    setSimpleForm(
+                      null
+                    )
+                  }
+                  onSaveWorkers={
+                    saveWorkers
+                  }
+                  onSaveBond={() => {}}
+                />
+              </div>
+            )}
+
+            {workers.filter(
+              (record) =>
+                record.status !==
+                "Archived"
+            ).length === 0 ? (
+              <div className="p-10 text-center">
+                <HardHat className="mx-auto size-9 text-muted-foreground/30" />
+
+                <p className="mt-3 text-sm font-medium">
+                  No active workers insurance records
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {workers
+                  .filter(
+                    (record) =>
+                      record.status !==
+                      "Archived"
+                  )
+                  .map(
+                    (record) => (
+                      <WorkersRow
+                        key={
+                          record.id
+                        }
+                        record={
+                          record
+                        }
+                        onArchive={() =>
+                          setArchiveTarget(
+                            {
+                              family:
+                                "workers",
+
+                              id:
+                                record.id,
+
+                              label:
+                                `${record.insuranceType} · ${record.policyNumber}`,
+                            }
+                          )
+                        }
+                      />
+                    )
+                  )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* BONDS */}
+
+        <Card className="overflow-visible">
+          <CardHeader className="border-b bg-muted/20">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <FileKey2 className="size-4 text-primary" />
+
+                  Surety Bonds
+                </CardTitle>
+
+                <CardDescription className="mt-1 text-xs">
+                  Customs, broker, fuel-tax and other surety obligations.
+                </CardDescription>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={() =>
+                  setSimpleForm(
+                    "bond"
+                  )
+                }
+              >
+                <Plus className="mr-1.5 size-4" />
+
+                Add Bond
+              </Button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-0">
+            {simpleForm ===
+              "bond" && (
+              <div className="p-4">
+                <SimpleRecordForm
+                  family="bond"
+                  company={
+                    company
+                  }
+                  onCancel={() =>
+                    setSimpleForm(
+                      null
+                    )
+                  }
+                  onSaveWorkers={() => {}}
+                  onSaveBond={
+                    saveBond
+                  }
+                />
+              </div>
+            )}
+
+            {bonds.filter(
+              (record) =>
+                record.status !==
+                "Archived"
+            ).length === 0 ? (
+              <div className="p-10 text-center">
+                <FileKey2 className="mx-auto size-9 text-muted-foreground/30" />
+
+                <p className="mt-3 text-sm font-medium">
+                  No active surety bonds
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {bonds
+                  .filter(
+                    (record) =>
+                      record.status !==
+                      "Archived"
+                  )
+                  .map(
+                    (record) => (
+                      <BondRow
+                        key={
+                          record.id
+                        }
+                        record={
+                          record
+                        }
+                        onArchive={() =>
+                          setArchiveTarget(
+                            {
+                              family:
+                                "bond",
+
+                              id:
+                                record.id,
+
+                              label:
+                                `${record.bondType} · ${record.bondNumber}`,
+                            }
+                          )
+                        }
+                      />
+                    )
+                  )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ARCHIVED */}
+
+        {[
+          ...transportation,
+          ...workers,
+          ...bonds,
+        ].some(
+          (record) =>
+            record.status ===
+            "Archived"
+        ) && (
+          <Card>
+            <CardHeader className="border-b bg-muted/20">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Archive className="size-4 text-muted-foreground" />
+
+                Archived Records
+              </CardTitle>
+
+              <CardDescription className="text-xs">
+                Historical records remain retained and are never deleted.
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent className="space-y-2 p-4">
+              {transportation
+                .filter(
+                  (record) =>
+                    record.status ===
+                    "Archived"
+                )
+                .map(
+                  (record) => (
+                    <div
+                      key={
+                        record.id
+                      }
+                      className="rounded-lg border p-3 opacity-70"
+                    >
+                      <p className="text-xs font-semibold">
+                        {
+                          record.insuranceType
+                        }
+                      </p>
+
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {
+                          record.insurerName
+                        }{" "}
+                        ·{" "}
+                        {
+                          record.policyNumber
+                        }{" "}
+                        · archived{" "}
+                        {
+                          record.archivedAt
+                            ? new Date(
+                                record.archivedAt
+                              ).toLocaleDateString()
+                            : ""
+                        }
+                      </p>
+
+                      {record.archiveReason && (
+                        <p className="mt-1 text-[10px]">
+                          Reason:{" "}
+                          {
+                            record.archiveReason
+                          }
+                        </p>
+                      )}
+                    </div>
+                  )
+                )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* INTEGRITY */}
+
+        <Card className="border-dashed bg-muted/10">
           <CardContent className="p-5">
             <div className="flex items-start gap-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800">
-                <ClipboardList className="size-4" />
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <History className="size-4" />
               </div>
+
               <div>
-                <p className="text-sm font-semibold">
-                  {legacyBondRecords.length} legacy bond record{legacyBondRecords.length === 1 ? "" : "s"} retained
+                <p className="text-xs font-semibold">
+                  Insurance record integrity
                 </p>
-                <p className="mt-1 max-w-4xl text-xs leading-relaxed text-amber-900/80">
-                  Earlier versions stored customs, freight-broker or performance bonds inside Insurance. Those records have not been deleted. They are retained for historical migration, but they are excluded from Insurance status calculations because the dedicated Customs/Bonds module owns them going forward.
+
+                <p className="mt-1 max-w-4xl text-xs leading-5 text-muted-foreground">
+                  OCR and manual entry create the same underlying record structure. Insurers, brokers and broker contacts are resolved against existing TES identities before new entities are created. Records are archived rather than deleted, and expiry status is controlled by the portal-wide renewal rules.
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* SOURCE PICKER */}
+
+      {showSourcePicker && (
+        <DocumentSourcePicker
+          onClose={() =>
+            setShowSourcePicker(
+              false
+            )
+          }
+          onCamera={() => {
+            setShowSourcePicker(
+              false
+            )
+
+            cameraInputRef.current?.click()
+          }}
+          onDevice={() => {
+            setShowSourcePicker(
+              false
+            )
+
+            deviceInputRef.current?.click()
+          }}
+        />
       )}
 
-      <Card className="border-dashed bg-muted/10">
-        <CardContent className="p-5">
-          <div className="flex items-start gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <History className="size-4" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold">Compliance record integrity</p>
-              <p className="mt-1 max-w-4xl text-xs leading-relaxed text-muted-foreground">
-                Insurance records are evidence-backed, editable through auditable updates and archived rather than deleted. Relationships point to existing company, driver and vehicle records. OCR assists extraction but never silently changes authoritative compliance information. Production events should also be written to the immutable TES Master Register.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+      {/* OCR WORKSPACE */}
+
+      {workspace && (
+        <TransportationWorkspace
+          workspace={
+            workspace
+          }
+          setWorkspace={
+            setWorkspace
+          }
+          existingRecords={
+            transportation
+          }
+          onCancel={() =>
+            setWorkspace(null)
+          }
+          onReplaceDocument={() => {
+            setWorkspace(null)
+
+            setShowSourcePicker(
+              true
+            )
+          }}
+          onSave={
+            saveOCRWorkspace
+          }
+        />
+      )}
+
+      {/* EDIT */}
+
+      {editingTransportation && (
+        <EditTransportationModal
+          record={
+            editingTransportation
+          }
+          onCancel={() =>
+            setEditingTransportation(
+              null
+            )
+          }
+          onSave={
+            saveEditedTransportation
+          }
+        />
+      )}
+
+      {/* ARCHIVE */}
+
+      {archiveTarget && (
+        <ArchiveDialog
+          label={
+            archiveTarget.label
+          }
+          onCancel={() =>
+            setArchiveTarget(
+              null
+            )
+          }
+          onConfirm={
+            confirmArchive
+          }
+        />
+      )}
+
+      {/* CAMERA */}
+
+      <input
+        ref={
+          cameraInputRef
+        }
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={
+          handleCameraFile
+        }
+      />
+
+      {/* DEVICE */}
+
+      <input
+        ref={
+          deviceInputRef
+        }
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,.webp"
+        className="hidden"
+        onChange={
+          handleDeviceFile
+        }
+      />
+    </>
   )
+}
+
+/* =========================================================
+   STATUS SUMMARY
+========================================================= */
+
+function StatusCountCard({
+  label,
+  count,
+  status,
+}: {
+  label: string
+  count: number
+  status: ExpiryStatus
+}) {
+  const style =
+    statusStyle(status)
+
+  return (
+    <Card
+      className={`border-l-4 ${style.accent}`}
+    >
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            {label}
+          </p>
+
+          <ExpiryBadge
+            status={status}
+          />
+        </div>
+
+        <p className="mt-2 text-2xl font-bold">
+          {count}
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   LEGACY MIGRATION
+
+   Old page used:
+   {
+     type,
+     number,
+     company,
+     broker,
+     limits,
+     principal,
+     amount,
+     effective,
+     expiry,
+     source...
+   }
+
+   We keep existing testing data rather than wiping it.
+========================================================= */
+
+function migrateLegacyRecords(
+  legacy: any[]
+): StoredInsuranceData {
+  const result:
+    StoredInsuranceData =
+    {
+      ...EMPTY_DATA,
+
+      transportation: [],
+      workers: [],
+      bonds: [],
+      evidence: [],
+    }
+
+  for (
+    const record of legacy
+  ) {
+    const timestamp =
+      record.createdAt ||
+      isoNow()
+
+    if (
+      [
+        "WSIB",
+        "WCB",
+        "Workers Compensation",
+        "Occupational Accident",
+      ].includes(
+        record.type
+      )
+    ) {
+      result.workers.push({
+        id:
+          record.id ||
+          createId("WCB"),
+
+        family:
+          "workers",
+
+        insuranceType:
+          record.type,
+
+        providerName:
+          record.company ||
+          "",
+
+        policyNumber:
+          record.number ||
+          "",
+
+        effectiveDate:
+          record.effective ||
+          "",
+
+        expiryDate:
+          record.expiry ||
+          "",
+
+        coverage:
+          record.limits
+            ? [
+                {
+                  id: createId(
+                    "COV"
+                  ),
+
+                  label:
+                    "Coverage",
+
+                  value:
+                    record.limits,
+                },
+              ]
+            : [],
+
+        status:
+          record.status ===
+          "Archived"
+            ? "Archived"
+            : "Healthy",
+
+        source:
+          record.source ||
+          "Manual",
+
+        createdAt:
+          timestamp,
+
+        updatedAt:
+          timestamp,
+
+        archivedAt:
+          record.archivedAt,
+      })
+
+      continue
+    }
+
+    if (
+      [
+        "US Customs Continuous",
+        "Freight Broker BMC-84",
+        "Performance Bond",
+      ].includes(
+        record.type
+      )
+    ) {
+      result.bonds.push({
+        id:
+          record.id ||
+          createId("BND"),
+
+        family: "bond",
+
+        bondType:
+          record.type,
+
+        suretyName:
+          record.company ||
+          "",
+
+        bondNumber:
+          record.number ||
+          "",
+
+        principalName:
+          record.principal ||
+          "",
+
+        bondAmount:
+          record.amount,
+
+        effectiveDate:
+          record.effective ||
+          "",
+
+        expiryDate:
+          record.expiry,
+
+        status:
+          record.status ===
+          "Archived"
+            ? "Archived"
+            : "Healthy",
+
+        source:
+          record.source ||
+          "Manual",
+
+        createdAt:
+          timestamp,
+
+        updatedAt:
+          timestamp,
+
+        archivedAt:
+          record.archivedAt,
+      })
+
+      continue
+    }
+
+    result.transportation.push({
+      id:
+        record.id ||
+        createId("INS"),
+
+      family:
+        "transportation",
+
+      insuranceType:
+        record.type ||
+        "Other",
+
+      canonicalType:
+        normalizeInsuranceType(
+          record.type ||
+            "Other"
+        ),
+
+      insurerName:
+        record.company ||
+        "",
+
+      policyNumber:
+        record.number ||
+        "",
+
+      effectiveDate:
+        record.effective ||
+        "",
+
+      expiryDate:
+        record.expiry ||
+        "",
+
+      coverage:
+        record.limits
+          ? [
+              {
+                id: createId(
+                  "COV"
+                ),
+
+                label:
+                  "Coverage Limit",
+
+                value:
+                  record.limits,
+              },
+            ]
+          : [],
+
+      status:
+        record.status ===
+        "Archived"
+          ? "Archived"
+          : "Healthy",
+
+      source:
+        record.source ||
+        "Manual",
+
+      broker:
+        record.broker
+          ? {
+              organizationName:
+                record.broker,
+            }
+          : undefined,
+
+      createdAt:
+        timestamp,
+
+      updatedAt:
+        timestamp,
+
+      archivedAt:
+        record.archivedAt,
+    })
+  }
+
+  return result
 }

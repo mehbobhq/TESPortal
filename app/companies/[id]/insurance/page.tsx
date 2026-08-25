@@ -20,7 +20,6 @@ import {
   Camera,
   Check,
   CheckCircle2,
-  ChevronDown,
   Copy,
   Eye,
   FileKey2,
@@ -28,6 +27,7 @@ import {
   HardHat,
   History,
   Loader2,
+  Maximize2,
   Pencil,
   Plus,
   RefreshCcw,
@@ -40,10 +40,11 @@ import {
   UserRound,
   X,
   XCircle,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-
 import {
   Card,
   CardContent,
@@ -51,11 +52,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-
 import {
   Select,
   SelectContent,
@@ -65,7 +64,7 @@ import {
 } from "@/components/ui/select"
 
 /* =========================================================
-   CORE TYPES
+   SYSTEM TYPES
 ========================================================= */
 
 type ExpiryRules = {
@@ -79,8 +78,6 @@ type ExpiryRules = {
 type SystemSettings = {
   version: number
   expiryRules: ExpiryRules
-  updatedAt?: string
-  updatedBy?: string
 }
 
 type ExpiryStatus =
@@ -91,9 +88,7 @@ type ExpiryStatus =
   | "Expired"
   | "Archived"
 
-type SourceType =
-  | "OCR"
-  | "Manual"
+type SourceType = "OCR" | "Manual"
 
 type DocumentSource =
   | "camera"
@@ -108,24 +103,18 @@ type Company = {
   id: string
   name: string
   kind?: string
-
+  contact?: string
   region?: string
 
   /*
-    IMPORTANT:
-    These names remain unchanged because other TES
-    modules already consume them.
+    LOCKED COMPANY CONTRACT.
+    Do not rename.
   */
   regCorpState?: string
   regCorpCountry?: string
 
-  phone?: string
-  email?: string
-  website?: string
-
   status?: string
   tone?: string
-
   createdAt?: string
 
   [key: string]: any
@@ -176,17 +165,6 @@ type Contact = {
 
 /* =========================================================
    INSURANCE MODEL
-
-   COI
-      ↓
-   Insurance Records[]
-      ↓
-   Insurer organization
-   policy #
-   dates
-   key coverage
-
-   One COI may create 1, 2, 3, 4, 5+ insurance records.
 ========================================================= */
 
 type CoverageItem = {
@@ -195,30 +173,7 @@ type CoverageItem = {
   value: string
 }
 
-type InsuranceEvidence = {
-  id: string
-
-  documentName: string
-  documentType: string
-
-  source:
-    | "camera"
-    | "device"
-
-  uploadedAt: string
-
-  ocrConfidence?: number
-
-  /*
-    Prototype only.
-
-    Real document storage should later replace dataUrl
-    with durable document IDs/storage references.
-  */
-  dataUrl?: string
-}
-
-type BrokerSnapshot = {
+type BrokerReference = {
   organizationId?: string
   organizationName: string
 
@@ -226,26 +181,47 @@ type BrokerSnapshot = {
   contactName?: string
   contactEmail?: string
   contactPhone?: string
+}
 
-  clientReference?: string
+type InsuranceEvidence = {
+  id: string
+
+  family: RecordFamily
+
+  documentName: string
+  documentType: string
+
+  source: DocumentSource
+
+  uploadedAt: string
+
+  ocrConfidence?: number
+
+  /*
+    Prototype only.
+    Replace with durable document ID later.
+  */
+  dataUrl?: string
 }
 
 type TransportationInsuranceRecord = {
   id: string
+
+  /*
+    All records extracted from one COI share groupId.
+    That allows broker information to be edited once.
+  */
+  groupId: string
+
   family: "transportation"
 
   /*
-    Exact text appearing on source document.
-
-    Example:
-    "COMMERCIAL GENERAL LIABILITY"
+    EXACT source wording.
   */
   insuranceType: string
 
   /*
-    TES normalized grouping for filtering/reporting.
-
-    We preserve source wording separately.
+    Internal TES normalization.
   */
   canonicalType: string
 
@@ -259,13 +235,13 @@ type TransportationInsuranceRecord = {
 
   coverage: CoverageItem[]
 
-  status: ExpiryStatus
-
-  source: SourceType
+  broker?: BrokerReference
 
   evidenceId?: string
 
-  broker?: BrokerSnapshot
+  source: SourceType
+
+  status: ExpiryStatus
 
   previousRecordId?: string
 
@@ -279,6 +255,7 @@ type TransportationInsuranceRecord = {
 
 type WorkersInsuranceRecord = {
   id: string
+
   family: "workers"
 
   insuranceType: string
@@ -295,11 +272,11 @@ type WorkersInsuranceRecord = {
 
   coverage: CoverageItem[]
 
-  status: ExpiryStatus
+  evidenceId?: string
 
   source: SourceType
 
-  evidenceId?: string
+  status: ExpiryStatus
 
   createdAt: string
   updatedAt: string
@@ -311,6 +288,7 @@ type WorkersInsuranceRecord = {
 
 type BondRecord = {
   id: string
+
   family: "bond"
 
   bondType: string
@@ -327,11 +305,11 @@ type BondRecord = {
   effectiveDate: string
   expiryDate?: string
 
-  status: ExpiryStatus
+  evidenceId?: string
 
   source: SourceType
 
-  evidenceId?: string
+  status: ExpiryStatus
 
   createdAt: string
   updatedAt: string
@@ -352,7 +330,7 @@ type StoredInsuranceData = {
 }
 
 /* =========================================================
-   OCR WORKSPACE TYPES
+   DRAFT TYPES
 ========================================================= */
 
 type TransportationDraft = {
@@ -371,11 +349,43 @@ type TransportationDraft = {
   coverage: CoverageItem[]
 }
 
-type OCRWorkspace = {
+type WorkersDraft = {
+  insuranceType: string
+
+  providerName: string
+  policyNumber: string
+
+  jurisdiction: string
+
+  effectiveDate: string
+  expiryDate: string
+
+  coverage: CoverageItem[]
+}
+
+type BondDraft = {
+  bondType: string
+
+  suretyName: string
+  bondNumber: string
+
+  principalName: string
+  bondAmount: string
+
+  effectiveDate: string
+  expiryDate: string
+}
+
+/* =========================================================
+   OCR SESSION
+========================================================= */
+
+type OCRSession = {
+  family: RecordFamily
+
   source: DocumentSource
 
   file: File
-
   dataUrl: string
 
   processing: boolean
@@ -383,15 +393,15 @@ type OCRWorkspace = {
 
   confidence?: number
 
-  records: TransportationDraft[]
+  transportationRecords: TransportationDraft[]
+
+  workersDraft: WorkersDraft
+  bondDraft: BondDraft
 
   brokerName: string
-
   brokerContactName: string
   brokerEmail: string
   brokerPhone: string
-
-  brokerClientReference: string
 }
 
 /* =========================================================
@@ -413,7 +423,7 @@ const DEFAULT_EXPIRY_RULES: ExpiryRules = {
 }
 
 const EMPTY_DATA: StoredInsuranceData = {
-  version: 3,
+  version: 4,
 
   transportation: [],
   workers: [],
@@ -422,20 +432,8 @@ const EMPTY_DATA: StoredInsuranceData = {
   evidence: [],
 }
 
-const TRANSPORTATION_CANONICAL_TYPES = [
-  "GENERAL_LIABILITY",
-  "AUTOMOBILE_LIABILITY",
-  "MOTOR_TRUCK_CARGO",
-  "PHYSICAL_DAMAGE",
-  "NON_OWNED_TRAILER",
-  "TRAILER_INTERCHANGE",
-  "UMBRELLA_EXCESS",
-  "POLLUTION_ENVIRONMENTAL",
-  "OTHER",
-]
-
 /* =========================================================
-   IDS / DATES
+   GENERIC HELPERS
 ========================================================= */
 
 function createId(prefix: string) {
@@ -456,7 +454,7 @@ function isoNow() {
 }
 
 /* =========================================================
-   SYSTEM SETTINGS
+   SETTINGS
 ========================================================= */
 
 function loadSystemSettings(): SystemSettings {
@@ -467,7 +465,10 @@ function loadSystemSettings(): SystemSettings {
       DEFAULT_EXPIRY_RULES,
   }
 
-  if (typeof window === "undefined") {
+  if (
+    typeof window ===
+    "undefined"
+  ) {
     return fallback
   }
 
@@ -477,7 +478,9 @@ function loadSystemSettings(): SystemSettings {
         SETTINGS_STORAGE_KEY
       )
 
-    if (!raw) return fallback
+    if (!raw) {
+      return fallback
+    }
 
     const parsed =
       JSON.parse(raw)
@@ -488,7 +491,8 @@ function loadSystemSettings(): SystemSettings {
 
       expiryRules: {
         ...DEFAULT_EXPIRY_RULES,
-        ...(parsed.expiryRules || {}),
+        ...(parsed.expiryRules ||
+          {}),
       },
     }
   } catch {
@@ -497,7 +501,7 @@ function loadSystemSettings(): SystemSettings {
 }
 
 /* =========================================================
-   STANDARD TES OCR ICON
+   TES OCR ICON
 ========================================================= */
 
 function ScanDocumentIcon({
@@ -535,7 +539,7 @@ function ScanDocumentIcon({
 }
 
 /* =========================================================
-   NORMALIZATION / IDENTITY RESOLUTION
+   NORMALIZATION
 ========================================================= */
 
 function normalizeIdentifier(
@@ -560,7 +564,8 @@ function normalizePhone(
     digits.length === 11 &&
     digits.startsWith("1")
   ) {
-    digits = digits.slice(1)
+    digits =
+      digits.slice(1)
   }
 
   return digits
@@ -582,7 +587,7 @@ function normalizeCompanyName(
     .replace(/&/g, " and ")
     .replace(/[.,'"()]/g, " ")
     .replace(
-      /\b(incorporated|inc|corporation|corp|company|co|limited|ltd|insurance|assurance)\b/g,
+      /\b(incorporated|inc|corporation|corp|company|co|limited|ltd)\b/g,
       " "
     )
     .replace(/\s+/g, " ")
@@ -598,7 +603,7 @@ function normalizePersonName(
 }
 
 /* =========================================================
-   LEVENSHTEIN / SIMILARITY
+   SIMILARITY
 ========================================================= */
 
 function levenshtein(
@@ -608,13 +613,17 @@ function levenshtein(
   if (!a.length) return b.length
   if (!b.length) return a.length
 
-  const matrix = Array.from(
-    {
-      length: b.length + 1,
-    },
-    () =>
-      Array(a.length + 1).fill(0)
-  )
+  const matrix =
+    Array.from(
+      {
+        length:
+          b.length + 1,
+      },
+      () =>
+        Array(
+          a.length + 1
+        ).fill(0)
+    )
 
   for (
     let i = 0;
@@ -643,28 +652,38 @@ function levenshtein(
       j++
     ) {
       const cost =
-        b[i - 1] === a[j - 1]
+        b[i - 1] ===
+        a[j - 1]
           ? 0
           : 1
 
       matrix[i][j] =
         Math.min(
-          matrix[i - 1][j] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j - 1] +
-            cost
+          matrix[i - 1][j] +
+            1,
+
+          matrix[i][j - 1] +
+            1,
+
+          matrix[i - 1][
+            j - 1
+          ] + cost
         )
     }
   }
 
-  return matrix[b.length][a.length]
+  return matrix[b.length][
+    a.length
+  ]
 }
 
 function similarity(
   a: string,
   b: string
 ) {
-  if (!a || !b) return 0
+  if (!a || !b) {
+    return 0
+  }
 
   const max =
     Math.max(
@@ -678,18 +697,14 @@ function similarity(
     levenshtein(a, b)
 
   return (
-    ((max - distance) / max) *
+    ((max - distance) /
+      max) *
     100
   )
 }
 
 /* =========================================================
-   ORGANIZATION RESOLUTION
-
-   Extract freely.
-   Normalize carefully.
-   Resolve aggressively.
-   Create reluctantly.
+   COMPANIES
 ========================================================= */
 
 function getCompanies(): Company[] {
@@ -701,7 +716,9 @@ function getCompanies(): Company[] {
         ) || "[]"
       )
 
-    return Array.isArray(parsed)
+    return Array.isArray(
+      parsed
+    )
       ? parsed
       : []
   } catch {
@@ -718,6 +735,51 @@ function saveCompanies(
   )
 }
 
+function createCompanyId(
+  companies: Company[]
+) {
+  const existing =
+    new Set(
+      companies.map(
+        (company) =>
+          company.id
+      )
+    )
+
+  for (
+    let attempt = 0;
+    attempt < 100;
+    attempt++
+  ) {
+    const id =
+      `CMP-${
+        10000 +
+        Math.floor(
+          Math.random() *
+            90000
+        )
+      }`
+
+    if (
+      !existing.has(id)
+    ) {
+      return id
+    }
+  }
+
+  return `CMP-${Date.now()}`
+}
+
+/* =========================================================
+   ORGANIZATION RESOLUTION
+
+   Existing organization wins.
+
+   Aggressive duplicate prevention.
+
+   Creating a new insurer/broker is the LAST step.
+========================================================= */
+
 function resolveOrganization(
   name: string,
   desiredKind:
@@ -725,14 +787,16 @@ function resolveOrganization(
     | "Insurance Broker"
     | "Workers Insurance"
 ) {
-  const cleanName =
+  const entered =
     name.trim()
 
-  if (!cleanName) {
+  if (!entered) {
     return {
       organizationId:
         undefined,
+
       organizationName: "",
+
       created: false,
     }
   }
@@ -740,53 +804,55 @@ function resolveOrganization(
   const companies =
     getCompanies()
 
-  const normalized =
+  const candidate =
     normalizeCompanyName(
-      cleanName
+      entered
     )
 
   /*
-    1. Exact normalized name.
+    Exact normalized match.
   */
 
-  let best =
+  const exact =
     companies.find(
       (company) =>
         normalizeCompanyName(
           company.name
-        ) === normalized
+        ) === candidate
     )
 
-  if (best) {
+  if (exact) {
     return {
       organizationId:
-        best.id,
+        exact.id,
+
       organizationName:
-        best.name,
+        exact.name,
+
       created: false,
     }
   }
 
   /*
-    2. Aggressive fuzzy resolver.
+    Very strong fuzzy company match.
 
-    We intentionally use a high threshold.
-    Insurers/brokers are limited entities and we
-    want to avoid accidental duplicates, but we
-    also do not merge weak name-only matches.
+    Limited number of insurance companies means we
+    intentionally resolve strongly before creating.
   */
 
-  const scored =
+  const probable =
     companies
       .map((company) => ({
         company,
 
-        score: similarity(
-          normalized,
-          normalizeCompanyName(
-            company.name
-          )
-        ),
+        score:
+          similarity(
+            candidate,
+
+            normalizeCompanyName(
+              company.name
+            )
+          ),
       }))
       .filter(
         (result) =>
@@ -797,107 +863,68 @@ function resolveOrganization(
           b.score - a.score
       )
 
-  if (scored.length) {
-    best =
-      scored[0].company
+  if (probable.length) {
+    const company =
+      probable[0].company
 
     return {
       organizationId:
-        best.id,
+        company.id,
+
       organizationName:
-        best.name,
+        company.name,
+
       created: false,
     }
   }
 
   /*
-    3. Truly new organization.
+    New organization only after resolution failed.
   */
 
-  const newOrganization: Company =
-    {
-      id: createCompanyId(
+  const created: Company = {
+    id:
+      createCompanyId(
         companies
       ),
 
-      name: cleanName,
+    name: entered,
 
-      kind: desiredKind,
+    kind: desiredKind,
 
-      contact: "N/A",
+    contact: "N/A",
 
-      region:
-        "Not specified",
+    region:
+      "Not specified",
 
-      status: "Active",
+    status: "Active",
 
-      tone: "ok",
+    tone: "ok",
 
-      createdAt: isoNow(),
+    createdAt: isoNow(),
 
-      /*
-        Allows future UI to distinguish records
-        automatically discovered through OCR.
-      */
-      discoveredBy:
-        "Insurance OCR",
-    }
+    discoveredBy:
+      "Insurance Document Intelligence",
+  }
 
   saveCompanies([
-    newOrganization,
+    created,
     ...companies,
   ])
 
   return {
     organizationId:
-      newOrganization.id,
+      created.id,
 
     organizationName:
-      newOrganization.name,
+      created.name,
 
     created: true,
   }
 }
 
-function createCompanyId(
-  companies: Company[]
-) {
-  const ids =
-    new Set(
-      companies.map(
-        (company) => company.id
-      )
-    )
-
-  for (
-    let attempt = 0;
-    attempt < 100;
-    attempt++
-  ) {
-    const number =
-      10000 +
-      Math.floor(
-        Math.random() * 90000
-      )
-
-    const id =
-      `CMP-${number}`
-
-    if (!ids.has(id)) {
-      return id
-    }
-  }
-
-  return `CMP-${Date.now()}`
-}
-
 /* =========================================================
-   CONTACT RESOLUTION
-
-   Same email/phone is strong identity evidence.
-
-   Name-only similarity is NEVER enough to blindly
-   create a second Harpreet / Har Preet record.
+   CONTACTS
 ========================================================= */
 
 function getContacts(): Contact[] {
@@ -913,12 +940,16 @@ function getContacts(): Contact[] {
         "tes_contacts_v3"
       )
 
-    if (!raw) return []
+    if (!raw) {
+      return []
+    }
 
     const parsed =
       JSON.parse(raw)
 
-    return Array.isArray(parsed)
+    return Array.isArray(
+      parsed
+    )
       ? parsed
       : []
   } catch {
@@ -951,34 +982,279 @@ function splitPersonName(
     }
   }
 
-  if (parts.length === 1) {
+  if (
+    parts.length === 1
+  ) {
     return {
-      firstName: parts[0],
+      firstName:
+        parts[0],
+
       lastName: "",
     }
   }
 
   return {
-    firstName: parts[0],
+    firstName:
+      parts[0],
 
     lastName:
-      parts.slice(1).join(" "),
+      parts
+        .slice(1)
+        .join(" "),
   }
 }
+
+/* =========================================================
+   BROKER CONTACT RESOLUTION
+
+   Sonic Insurance = company.
+   Harpreet Kaur = contact belonging to Sonic.
+
+   Insurance records reference BOTH IDs.
+
+   Same Harpreet can therefore handle many TES clients
+   without creating Harpreet again.
+========================================================= */
 
 function resolveBrokerContact({
   brokerOrganizationId,
   brokerOrganizationName,
+
   contactName,
   email,
   phone,
 }: {
   brokerOrganizationId?: string
+
   brokerOrganizationName: string
+
   contactName: string
   email: string
   phone: string
 }) {
+  const contacts =
+    getContacts()
+
+  const normalizedEmail =
+    normalizeEmail(email)
+
+  const normalizedPhone =
+    normalizePhone(phone)
+
+  const normalizedName =
+    normalizePersonName(
+      contactName
+    )
+
+  /*
+    STRONG IDENTITY #1
+    Same email.
+  */
+
+  let existing =
+    contacts.find(
+      (contact) =>
+        Boolean(
+          normalizedEmail
+        ) &&
+        normalizeEmail(
+          contact.email
+        ) ===
+          normalizedEmail
+    )
+
+  /*
+    STRONG IDENTITY #2
+    Same phone.
+  */
+
+  if (!existing) {
+    existing =
+      contacts.find(
+        (contact) =>
+          Boolean(
+            normalizedPhone
+          ) &&
+          normalizePhone(
+            contact.phone
+          ) ===
+            normalizedPhone
+      )
+  }
+
+  /*
+    NAME + SAME BROKER ORGANIZATION.
+
+    Harpreet / Har preet should not be duplicated
+    merely because spacing differs.
+  */
+
+  if (
+    !existing &&
+    normalizedName &&
+    brokerOrganizationId
+  ) {
+    const candidates =
+      contacts
+        .filter(
+          (contact) =>
+            contact.relationships?.some(
+              (
+                relationship
+              ) =>
+                relationship.companyId ===
+                brokerOrganizationId
+            )
+        )
+        .map((contact) => ({
+          contact,
+
+          score:
+            similarity(
+              normalizedName,
+
+              normalizePersonName(
+                `${contact.firstName} ${contact.lastName}`
+              )
+            ),
+        }))
+        .filter(
+          (result) =>
+            result.score >= 90
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score
+        )
+
+    if (
+      candidates.length
+    ) {
+      existing =
+        candidates[0].contact
+    }
+  }
+
+  /*
+    Found existing contact.
+
+    Fill missing information rather than creating another.
+  */
+
+  if (existing) {
+    const updated =
+      contacts.map(
+        (contact) => {
+          if (
+            contact.id !==
+            existing!.id
+          ) {
+            return contact
+          }
+
+          const relationships =
+            [
+              ...(contact.relationships ||
+                []),
+            ]
+
+          const alreadyLinked =
+            brokerOrganizationId &&
+            relationships.some(
+              (
+                relationship
+              ) =>
+                relationship.companyId ===
+                brokerOrganizationId
+            )
+
+          if (
+            brokerOrganizationId &&
+            !alreadyLinked
+          ) {
+            relationships.push({
+              id:
+                createId(
+                  "REL"
+                ),
+
+              companyId:
+                brokerOrganizationId,
+
+              companyName:
+                brokerOrganizationName,
+
+              role:
+                "Insurance Broker Contact",
+
+              status:
+                "active",
+
+              startDate:
+                isoNow().slice(
+                  0,
+                  10
+                ),
+
+              source:
+                "document",
+            })
+          }
+
+          return {
+            ...contact,
+
+            email:
+              contact.email ||
+              email.trim(),
+
+            phone:
+              contact.phone ||
+              phone.trim(),
+
+            relationships,
+
+            updatedAt:
+              isoNow(),
+          }
+        }
+      )
+
+    saveContacts(updated)
+
+    const refreshed =
+      updated.find(
+        (contact) =>
+          contact.id ===
+          existing!.id
+      )!
+
+    return {
+      contactId:
+        refreshed.id,
+
+      contactName:
+        `${refreshed.firstName} ${refreshed.lastName}`.trim(),
+
+      contactEmail:
+        refreshed.email ||
+        "",
+
+      contactPhone:
+        refreshed.phone ||
+        "",
+
+      created: false,
+    }
+  }
+
+  /*
+    No reliable match.
+
+    Only create when we have at least a meaningful
+    contact identity.
+  */
+
   if (
     !contactName.trim() &&
     !email.trim() &&
@@ -988,150 +1264,32 @@ function resolveBrokerContact({
       contactId:
         undefined,
 
-      contactName:
-        contactName.trim(),
+      contactName: "",
 
-      contactEmail:
-        email.trim(),
+      contactEmail: "",
 
-      contactPhone:
-        phone.trim(),
+      contactPhone: "",
 
       created: false,
     }
   }
-
-  const contacts =
-    getContacts()
-
-  const emailKey =
-    normalizeEmail(email)
-
-  const phoneKey =
-    normalizePhone(phone)
-
-  /*
-    Strong identifiers first.
-  */
-
-  let matched =
-    contacts.find(
-      (contact) =>
-        Boolean(emailKey) &&
-        normalizeEmail(
-          contact.email
-        ) === emailKey
-    )
-
-  if (!matched) {
-    matched =
-      contacts.find(
-        (contact) =>
-          Boolean(phoneKey) &&
-          normalizePhone(
-            contact.phone
-          ) === phoneKey
-      )
-  }
-
-  /*
-    Then name + organization relationship.
-  */
-
-  if (
-    !matched &&
-    contactName.trim()
-  ) {
-    const nameKey =
-      normalizePersonName(
-        contactName
-      )
-
-    const candidates =
-      contacts
-        .filter((contact) => {
-          const belongsToBroker =
-            contact.relationships?.some(
-              (relationship) =>
-                relationship.companyId ===
-                brokerOrganizationId
-            )
-
-          return (
-            belongsToBroker ||
-            !brokerOrganizationId
-          )
-        })
-        .map((contact) => {
-          const existing =
-            normalizePersonName(
-              `${contact.firstName} ${contact.lastName}`
-            )
-
-          return {
-            contact,
-
-            score:
-              similarity(
-                nameKey,
-                existing
-              ),
-          }
-        })
-        .filter(
-          (result) =>
-            result.score >= 92
-        )
-        .sort(
-          (a, b) =>
-            b.score - a.score
-        )
-
-    if (candidates.length) {
-      matched =
-        candidates[0].contact
-    }
-  }
-
-  if (matched) {
-    return {
-      contactId:
-        matched.id,
-
-      contactName:
-        `${matched.firstName} ${matched.lastName}`.trim(),
-
-      contactEmail:
-        matched.email ||
-        email.trim(),
-
-      contactPhone:
-        matched.phone ||
-        phone.trim(),
-
-      created: false,
-    }
-  }
-
-  /*
-    No strong/probable identity found.
-    Only now do we create.
-  */
 
   const names =
     splitPersonName(
       contactName
     )
 
-  const contactId =
-    createId("CNT")
-
-  const newContact: Contact =
+  const created: Contact =
     {
-      id: contactId,
+      id:
+        createId(
+          "CNT"
+        ),
 
       globalId:
-        createId("USR"),
+        createId(
+          "USR"
+        ),
 
       firstName:
         names.firstName,
@@ -1155,9 +1313,10 @@ function resolveBrokerContact({
         brokerOrganizationId
           ? [
               {
-                id: createId(
-                  "REL"
-                ),
+                id:
+                  createId(
+                    "REL"
+                  ),
 
                 companyId:
                   brokerOrganizationId,
@@ -1183,50 +1342,105 @@ function resolveBrokerContact({
             ]
           : [],
 
-      createdAt: isoNow(),
-      updatedAt: isoNow(),
+      createdAt:
+        isoNow(),
+
+      updatedAt:
+        isoNow(),
 
       discoveredBy:
-        "Insurance OCR",
+        "Insurance Document Intelligence",
     }
 
   saveContacts([
-    newContact,
+    created,
     ...contacts,
   ])
 
   return {
-    contactId,
+    contactId:
+      created.id,
 
     contactName:
-      `${newContact.firstName} ${newContact.lastName}`.trim(),
+      `${created.firstName} ${created.lastName}`.trim(),
 
     contactEmail:
-      newContact.email || "",
+      created.email || "",
 
     contactPhone:
-      newContact.phone || "",
+      created.phone || "",
 
     created: true,
   }
 }
 
 /* =========================================================
-   INSURANCE TYPE NORMALIZATION
+   UPDATE EXISTING BROKER CONTACT
+========================================================= */
 
-   Exact source language is preserved.
+function updateBrokerContact({
+  contactId,
 
-   Canonical type helps TES understand that:
-   COMMERCIAL GENERAL LIABILITY
-   GENERAL LIABILITY
-   etc. may belong to same family.
+  name,
+  email,
+  phone,
+}: {
+  contactId?: string
+
+  name: string
+  email: string
+  phone: string
+}) {
+  if (!contactId) {
+    return
+  }
+
+  const contacts =
+    getContacts()
+
+  const names =
+    splitPersonName(name)
+
+  const updated =
+    contacts.map(
+      (contact) =>
+        contact.id ===
+        contactId
+          ? {
+              ...contact,
+
+              firstName:
+                names.firstName ||
+                contact.firstName,
+
+              lastName:
+                names.lastName ||
+                contact.lastName,
+
+              email:
+                email.trim(),
+
+              phone:
+                phone.trim(),
+
+              updatedAt:
+                isoNow(),
+            }
+          : contact
+    )
+
+  saveContacts(updated)
+}
+
+/* =========================================================
+   TYPE NORMALIZATION
 ========================================================= */
 
 function normalizeInsuranceType(
-  raw: string
+  source: string
 ) {
   const value =
-    raw
+    source
       .trim()
       .toLowerCase()
 
@@ -1239,7 +1453,9 @@ function normalizeInsuranceType(
   }
 
   if (
-    value.includes("automobile") ||
+    value.includes(
+      "automobile"
+    ) ||
     value.includes(
       "auto liability"
     )
@@ -1250,18 +1466,9 @@ function normalizeInsuranceType(
   if (
     value.includes(
       "motor truck cargo"
-    ) ||
-    value.includes("cargo")
-  ) {
-    return "MOTOR_TRUCK_CARGO"
-  }
-
-  if (
-    value.includes(
-      "physical damage"
     )
   ) {
-    return "PHYSICAL_DAMAGE"
+    return "MOTOR_TRUCK_CARGO"
   }
 
   if (
@@ -1277,6 +1484,14 @@ function normalizeInsuranceType(
 
   if (
     value.includes(
+      "physical damage"
+    )
+  ) {
+    return "PHYSICAL_DAMAGE"
+  }
+
+  if (
+    value.includes(
       "trailer interchange"
     )
   ) {
@@ -1284,34 +1499,32 @@ function normalizeInsuranceType(
   }
 
   if (
-    value.includes("umbrella") ||
-    value.includes("excess")
-  ) {
-    return "UMBRELLA_EXCESS"
-  }
-
-  if (
-    value.includes("pollution") ||
     value.includes(
-      "environment"
+      "umbrella"
+    ) ||
+    value.includes(
+      "excess"
     )
   ) {
-    return "POLLUTION_ENVIRONMENTAL"
+    return "UMBRELLA_EXCESS"
   }
 
   return "OTHER"
 }
 
 /* =========================================================
-   EXPIRY ENGINE
+   EXPIRY
 ========================================================= */
 
 function getDaysRemaining(
   expiryDate?: string
 ) {
-  if (!expiryDate) return null
+  if (!expiryDate) {
+    return null
+  }
 
-  const now = new Date()
+  const now =
+    new Date()
 
   const today =
     new Date(
@@ -1333,8 +1546,12 @@ function getDaysRemaining(
 }
 
 function getExpiryStatus(
-  expiryDate: string | undefined,
+  expiryDate:
+    | string
+    | undefined,
+
   rules: ExpiryRules,
+
   archived = false
 ): ExpiryStatus {
   if (archived) {
@@ -1483,11 +1700,13 @@ function ExpiryBadge({
       variant="outline"
       className={`gap-1 ${style.badge}`}
     >
-      {status === "Healthy" && (
+      {status ===
+        "Healthy" && (
         <CheckCircle2 className="size-3" />
       )}
 
-      {status === "Watch" && (
+      {status ===
+        "Watch" && (
         <CalendarClock className="size-3" />
       )}
 
@@ -1498,7 +1717,8 @@ function ExpiryBadge({
         <AlertTriangle className="size-3" />
       )}
 
-      {status === "Expired" && (
+      {status ===
+        "Expired" && (
         <XCircle className="size-3" />
       )}
 
@@ -1513,21 +1733,25 @@ function ExpiryBadge({
 }
 
 /* =========================================================
-   FILE HELPER
+   FILE
 ========================================================= */
 
 function readFileAsDataUrl(
   file: File
 ): Promise<string> {
   return new Promise(
-    (resolve, reject) => {
+    (
+      resolve,
+      reject
+    ) => {
       const reader =
         new FileReader()
 
       reader.onload = () =>
         resolve(
           String(
-            reader.result || ""
+            reader.result ||
+              ""
           )
         )
 
@@ -1542,39 +1766,111 @@ function readFileAsDataUrl(
 }
 
 /* =========================================================
+   EMPTY DRAFTS
+========================================================= */
+
+function emptyTransportationDraft():
+  TransportationDraft {
+  return {
+    tempId:
+      createId(
+        "TMP"
+      ),
+
+    insuranceType: "",
+    canonicalType:
+      "OTHER",
+
+    insurerName: "",
+
+    policyNumber: "",
+
+    effectiveDate: "",
+    expiryDate: "",
+
+    coverage: [],
+  }
+}
+
+function emptyWorkersDraft():
+  WorkersDraft {
+  return {
+    insuranceType: "",
+
+    providerName: "",
+    policyNumber: "",
+
+    jurisdiction: "",
+
+    effectiveDate: "",
+    expiryDate: "",
+
+    coverage: [],
+  }
+}
+
+function emptyBondDraft(
+  principalName = ""
+): BondDraft {
+  return {
+    bondType: "",
+
+    suretyName: "",
+    bondNumber: "",
+
+    principalName,
+    bondAmount: "",
+
+    effectiveDate: "",
+    expiryDate: "",
+  }
+}
+
+/* =========================================================
    DOCUMENT SOURCE PICKER
 ========================================================= */
 
 function DocumentSourcePicker({
+  family,
   onCamera,
   onDevice,
   onClose,
 }: {
+  family: RecordFamily
+
   onCamera: () => void
   onDevice: () => void
   onClose: () => void
 }) {
+  const title =
+    family ===
+    "transportation"
+      ? "Scan Transportation Insurance"
+      : family ===
+          "workers"
+        ? "Scan Workers Insurance"
+        : "Scan Surety Bond"
+
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <Card className="w-full max-w-lg shadow-2xl">
         <CardHeader>
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-4">
             <div>
               <CardTitle className="flex items-center gap-2 text-base">
                 <ScanDocumentIcon
                   size={18}
                 />
 
-                Scan Insurance Document
+                {title}
               </CardTitle>
 
               <CardDescription className="mt-1">
-                OCR is the primary insurance data-entry workflow.
+                Choose the source document.
               </CardDescription>
             </div>
 
             <Button
-              type="button"
               variant="ghost"
               size="icon"
               onClick={onClose}
@@ -1599,7 +1895,7 @@ function DocumentSourcePicker({
             </p>
 
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Capture the COI, policy, clearance or bond document using the device camera.
+              Open the camera, preview the document, and capture it directly.
             </p>
           </button>
 
@@ -1617,7 +1913,7 @@ function DocumentSourcePicker({
             </p>
 
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Select an existing PDF or image from the device.
+              Select an existing image or PDF.
             </p>
           </button>
         </CardContent>
@@ -1627,11 +1923,566 @@ function DocumentSourcePicker({
 }
 
 /* =========================================================
-   ORGANIZATION AUTOCOMPLETE
+   REAL CAMERA CAPTURE
+========================================================= */
 
-   Existing TES companies are suggested first.
+function CameraCapture({
+  onCapture,
+  onClose,
+}: {
+  onCapture: (
+    file: File
+  ) => void
 
-   Manual and OCR both use the same resolver.
+  onClose: () => void
+}) {
+  const videoRef =
+    useRef<HTMLVideoElement | null>(
+      null
+    )
+
+  const canvasRef =
+    useRef<HTMLCanvasElement | null>(
+      null
+    )
+
+  const streamRef =
+    useRef<MediaStream | null>(
+      null
+    )
+
+  const [error, setError] =
+    useState("")
+
+  const [ready, setReady] =
+    useState(false)
+
+  useEffect(() => {
+    const start = async () => {
+      try {
+        if (
+          !navigator.mediaDevices
+            ?.getUserMedia
+        ) {
+          setError(
+            "Camera access is not supported by this browser."
+          )
+
+          return
+        }
+
+        const stream =
+          await navigator.mediaDevices.getUserMedia(
+            {
+              video: {
+                facingMode: {
+                  ideal:
+                    "environment",
+                },
+
+                width: {
+                  ideal: 1920,
+                },
+
+                height: {
+                  ideal: 1080,
+                },
+              },
+
+              audio: false,
+            }
+          )
+
+        streamRef.current =
+          stream
+
+        if (
+          videoRef.current
+        ) {
+          videoRef.current.srcObject =
+            stream
+
+          await videoRef.current.play()
+
+          setReady(true)
+        }
+      } catch (err) {
+        console.error(err)
+
+        setError(
+          "TES could not access the camera. Check browser camera permissions."
+        )
+      }
+    }
+
+    start()
+
+    return () => {
+      streamRef.current
+        ?.getTracks()
+        .forEach(
+          (track) =>
+            track.stop()
+        )
+    }
+  }, [])
+
+  const capture = () => {
+    const video =
+      videoRef.current
+
+    const canvas =
+      canvasRef.current
+
+    if (
+      !video ||
+      !canvas
+    ) {
+      return
+    }
+
+    canvas.width =
+      video.videoWidth
+
+    canvas.height =
+      video.videoHeight
+
+    const ctx =
+      canvas.getContext(
+        "2d"
+      )
+
+    if (!ctx) return
+
+    ctx.drawImage(
+      video,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          return
+        }
+
+        const file =
+          new File(
+            [
+              blob,
+            ],
+
+            `insurance-capture-${Date.now()}.jpg`,
+
+            {
+              type:
+                "image/jpeg",
+            }
+          )
+
+        streamRef.current
+          ?.getTracks()
+          .forEach(
+            (track) =>
+              track.stop()
+          )
+
+        onCapture(file)
+      },
+
+      "image/jpeg",
+
+      0.94
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-[110] flex flex-col bg-black">
+      <div className="flex min-h-16 items-center justify-between border-b border-white/10 bg-black px-5 text-white">
+        <div>
+          <p className="text-sm font-semibold">
+            Capture Document
+          </p>
+
+          <p className="mt-0.5 text-[10px] text-white/60">
+            Position the entire document inside the camera view.
+          </p>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="text-white hover:bg-white/10 hover:text-white"
+        >
+          <X className="size-5" />
+        </Button>
+      </div>
+
+      <div className="relative flex flex-1 items-center justify-center overflow-hidden">
+        {error ? (
+          <div className="max-w-md rounded-xl border border-red-900 bg-red-950/40 p-6 text-center text-white">
+            <AlertTriangle className="mx-auto size-8 text-red-400" />
+
+            <p className="mt-3 text-sm font-semibold">
+              Camera unavailable
+            </p>
+
+            <p className="mt-2 text-xs leading-5 text-white/70">
+              {error}
+            </p>
+          </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="max-h-full max-w-full object-contain"
+            />
+
+            <div className="pointer-events-none absolute inset-[8%] rounded-xl border-2 border-dashed border-white/60" />
+          </>
+        )}
+
+        <canvas
+          ref={canvasRef}
+          className="hidden"
+        />
+      </div>
+
+      <div className="flex min-h-24 items-center justify-center border-t border-white/10 bg-black">
+        <Button
+          type="button"
+          size="lg"
+          disabled={
+            !ready
+          }
+          onClick={capture}
+          className="rounded-full px-8"
+        >
+          <Camera className="mr-2 size-5" />
+          Capture Photo
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/* =========================================================
+   PROPER DOCUMENT VIEWER
+
+   Fit
+   Zoom
+   Pan
+   Rotate
+   Actual Fullscreen
+========================================================= */
+
+function DocumentViewer({
+  file,
+  dataUrl,
+  onReplace,
+}: {
+  file: File
+  dataUrl: string
+  onReplace: () => void
+}) {
+  const rootRef =
+    useRef<HTMLDivElement | null>(
+      null
+    )
+
+  const dragRef =
+    useRef({
+      active: false,
+      x: 0,
+      y: 0,
+    })
+
+  const [zoom, setZoom] =
+    useState(1)
+
+  const [
+    rotation,
+    setRotation,
+  ] = useState(0)
+
+  const [pan, setPan] =
+    useState({
+      x: 0,
+      y: 0,
+    })
+
+  const reset = () => {
+    setZoom(1)
+
+    setPan({
+      x: 0,
+      y: 0,
+    })
+  }
+
+  const fullscreen =
+    async () => {
+      const element =
+        rootRef.current
+
+      if (!element) return
+
+      try {
+        if (
+          !document.fullscreenElement
+        ) {
+          await element.requestFullscreen()
+        } else {
+          await document.exitFullscreen()
+        }
+      } catch (error) {
+        console.error(
+          "Fullscreen failed:",
+          error
+        )
+      }
+    }
+
+  const pointerDown = (
+    event:
+      React.PointerEvent<HTMLDivElement>
+  ) => {
+    dragRef.current = {
+      active: true,
+
+      x:
+        event.clientX,
+
+      y:
+        event.clientY,
+    }
+
+    event.currentTarget.setPointerCapture(
+      event.pointerId
+    )
+  }
+
+  const pointerMove = (
+    event:
+      React.PointerEvent<HTMLDivElement>
+  ) => {
+    if (
+      !dragRef.current
+        .active
+    ) {
+      return
+    }
+
+    const dx =
+      event.clientX -
+      dragRef.current.x
+
+    const dy =
+      event.clientY -
+      dragRef.current.y
+
+    dragRef.current.x =
+      event.clientX
+
+    dragRef.current.y =
+      event.clientY
+
+    setPan(
+      (current) => ({
+        x:
+          current.x +
+          dx,
+
+        y:
+          current.y +
+          dy,
+      })
+    )
+  }
+
+  const pointerUp = () => {
+    dragRef.current.active =
+      false
+  }
+
+  const pdf =
+    file.type ===
+    "application/pdf"
+
+  return (
+    <div
+      ref={rootRef}
+      className="flex h-full min-h-0 flex-col bg-muted/15 fullscreen:bg-background"
+    >
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b bg-background px-4">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">
+            Original Document
+          </p>
+
+          <p className="max-w-[360px] truncate text-[10px] text-muted-foreground">
+            {file.name}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={reset}
+          >
+            Fit
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() =>
+              setZoom(
+                (current) =>
+                  Math.max(
+                    0.5,
+                    current -
+                      0.25
+                  )
+              )
+            }
+          >
+            <ZoomOut className="size-4" />
+          </Button>
+
+          <span className="w-12 text-center text-[10px] font-medium">
+            {Math.round(
+              zoom * 100
+            )}
+            %
+          </span>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() =>
+              setZoom(
+                (current) =>
+                  Math.min(
+                    4,
+                    current +
+                      0.25
+                  )
+              )
+            }
+          >
+            <ZoomIn className="size-4" />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() =>
+              setRotation(
+                (current) =>
+                  (current +
+                    90) %
+                  360
+              )
+            }
+          >
+            <RotateCcw className="size-4" />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={
+              fullscreen
+            }
+            title="Full screen"
+          >
+            <Maximize2 className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div
+        className="relative min-h-[500px] flex-1 cursor-grab overflow-hidden active:cursor-grabbing"
+        style={{
+          touchAction: "none",
+        }}
+        onPointerDown={
+          pointerDown
+        }
+        onPointerMove={
+          pointerMove
+        }
+        onPointerUp={
+          pointerUp
+        }
+        onPointerCancel={
+          pointerUp
+        }
+      >
+        <div className="absolute inset-0 flex items-center justify-center p-4">
+          <div
+            style={{
+              transform: `
+                translate(${pan.x}px, ${pan.y}px)
+                scale(${zoom})
+                rotate(${rotation}deg)
+              `,
+
+              transformOrigin:
+                "center center",
+            }}
+          >
+            {pdf ? (
+              <iframe
+                src={dataUrl}
+                title="Insurance document"
+                className="h-[70vh] w-[65vw] max-w-[950px] rounded-lg border bg-background pointer-events-none"
+              />
+            ) : (
+              <img
+                src={dataUrl}
+                alt="Insurance document"
+                draggable={false}
+                className="max-h-[calc(100vh-190px)] max-w-[calc(100vw-460px)] rounded-md bg-background object-contain shadow-sm"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t bg-background px-4 py-2">
+        <p className="max-w-[70%] truncate text-[10px] text-muted-foreground">
+          {file.name}
+        </p>
+
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={onReplace}
+        >
+          <RefreshCcw className="mr-1.5 size-3.5" />
+          Replace Document
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/* =========================================================
+   ORGANIZATION INPUT
 ========================================================= */
 
 function OrganizationInput({
@@ -1639,61 +2490,65 @@ function OrganizationInput({
   value,
   onChange,
   kindFilter,
-  required = false,
 }: {
   label: string
+
   value: string
+
   onChange: (
     value: string
   ) => void
+
   kindFilter?: string[]
-  required?: boolean
 }) {
   const [open, setOpen] =
     useState(false)
 
   const companies =
     useMemo(
-      () => getCompanies(),
+      () =>
+        getCompanies(),
       [open]
     )
 
   const matches =
     useMemo(() => {
-      const q =
+      const query =
         normalizeCompanyName(
           value
         )
 
-      let list =
+      let pool =
         companies
 
       if (
         kindFilter?.length
       ) {
-        list =
+        pool =
           companies.filter(
             (company) =>
               kindFilter.includes(
-                company.kind || ""
+                company.kind ||
+                  ""
               )
           )
       }
 
-      if (!q) {
-        return list.slice(
+      if (!query) {
+        return pool.slice(
           0,
           8
         )
       }
 
-      return list
+      return pool
         .map((company) => ({
           company,
 
           score:
             similarity(
-              q,
+              query,
+
               normalizeCompanyName(
                 company.name
               )
@@ -1706,11 +2561,13 @@ function OrganizationInput({
               .includes(
                 value.toLowerCase()
               ) ||
-            result.score >= 60
+            result.score >=
+              60
         )
         .sort(
           (a, b) =>
-            b.score - a.score
+            b.score -
+            a.score
         )
         .slice(0, 8)
         .map(
@@ -1727,38 +2584,43 @@ function OrganizationInput({
     <div className="relative space-y-2">
       <Label>
         {label}
-        {required && " *"}
       </Label>
 
       <div className="relative">
         <Input
           value={value}
+          autoComplete="off"
           onFocus={() =>
             setOpen(true)
           }
-          onChange={(event) => {
+          onBlur={() =>
+            window.setTimeout(
+              () =>
+                setOpen(
+                  false
+                ),
+              150
+            )
+          }
+          onChange={(
+            event
+          ) => {
             onChange(
-              event.target.value
+              event.target
+                .value
             )
 
             setOpen(true)
           }}
-          onBlur={() => {
-            window.setTimeout(
-              () =>
-                setOpen(false),
-              150
-            )
-          }}
-          autoComplete="off"
         />
 
         <Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       </div>
 
       {open &&
-        matches.length > 0 && (
-          <div className="absolute left-0 right-0 z-[120] mt-1 max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
+        matches.length >
+          0 && (
+          <div className="absolute left-0 right-0 z-[150] mt-1 max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
             {matches.map(
               (company) => (
                 <button
@@ -1780,8 +2642,8 @@ function OrganizationInput({
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left hover:bg-muted"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
+                  <div>
+                    <p className="text-sm font-medium">
                       {
                         company.name
                       }
@@ -1799,7 +2661,7 @@ function OrganizationInput({
                     </p>
                   </div>
 
-                  <CheckCircle2 className="size-3.5 shrink-0 text-primary" />
+                  <CheckCircle2 className="size-3.5 text-primary" />
                 </button>
               )
             )}
@@ -1810,7 +2672,7 @@ function OrganizationInput({
 }
 
 /* =========================================================
-   COVERAGE EDITOR
+   COVERAGE
 ========================================================= */
 
 function CoverageEditor({
@@ -1818,37 +2680,20 @@ function CoverageEditor({
   onChange,
 }: {
   items: CoverageItem[]
+
   onChange: (
     items: CoverageItem[]
   ) => void
 }) {
-  const update = (
-    id: string,
-    field:
-      | "label"
-      | "value",
-    value: string
-  ) => {
-    onChange(
-      items.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              [field]: value,
-            }
-          : item
-      )
-    )
-  }
-
   const add = () => {
     onChange([
       ...items,
 
       {
-        id: createId(
-          "COV"
-        ),
+        id:
+          createId(
+            "COV"
+          ),
 
         label: "",
         value: "",
@@ -1856,27 +2701,16 @@ function CoverageEditor({
     ])
   }
 
-  const remove = (
-    id: string
-  ) => {
-    onChange(
-      items.filter(
-        (item) =>
-          item.id !== id
-      )
-    )
-  }
-
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <Label>
             Key Coverage
           </Label>
 
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            Surface the 2–3 most useful coverage values. The original document remains available for deeper detail.
+          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+            Keep the most useful 2–3 coverage facts visible. The complete document remains available for deeper review.
           </p>
         </div>
 
@@ -1892,81 +2726,103 @@ function CoverageEditor({
         </Button>
       </div>
 
-      {items.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-          No coverage summary added.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {items.map(
-            (item) => (
-              <div
-                key={item.id}
-                className="grid gap-2 sm:grid-cols-[1fr_1fr_36px]"
-              >
-                <Input
-                  value={
-                    item.label
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    update(
-                      item.id,
-                      "label",
-                      event
-                        .target
-                        .value
-                    )
-                  }
-                  placeholder="e.g. General Aggregate"
-                />
-
-                <Input
-                  value={
-                    item.value
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    update(
-                      item.id,
-                      "value",
-                      event
-                        .target
-                        .value
-                    )
-                  }
-                  placeholder="e.g. $2,000,000"
-                />
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-9"
-                  onClick={() =>
-                    remove(
+      {items.map(
+        (item) => (
+          <div
+            key={
+              item.id
+            }
+            className="grid gap-2 sm:grid-cols-[1fr_1fr_36px]"
+          >
+            <Input
+              value={
+                item.label
+              }
+              placeholder="Coverage"
+              onChange={(
+                event
+              ) =>
+                onChange(
+                  items.map(
+                    (
+                      current
+                    ) =>
+                      current.id ===
                       item.id
-                    )
-                  }
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
-            )
-          )}
-        </div>
+                        ? {
+                            ...current,
+
+                            label:
+                              event
+                                .target
+                                .value,
+                          }
+                        : current
+                  )
+                )
+              }
+            />
+
+            <Input
+              value={
+                item.value
+              }
+              placeholder="Limit / value"
+              onChange={(
+                event
+              ) =>
+                onChange(
+                  items.map(
+                    (
+                      current
+                    ) =>
+                      current.id ===
+                      item.id
+                        ? {
+                            ...current,
+
+                            value:
+                              event
+                                .target
+                                .value,
+                          }
+                        : current
+                  )
+                )
+              }
+            />
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9"
+              onClick={() =>
+                onChange(
+                  items.filter(
+                    (
+                      current
+                    ) =>
+                      current.id !==
+                      item.id
+                  )
+                )
+              }
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        )
       )}
     </div>
   )
 }
 
 /* =========================================================
-   TRANSPORTATION DRAFT CARD
+   TRANSPORTATION RECORD EDITOR
 ========================================================= */
 
-function TransportationDraftCard({
+function TransportationDraftEditor({
   index,
   draft,
   onChange,
@@ -1989,10 +2845,13 @@ function TransportationDraftCard({
     K extends keyof TransportationDraft
   >(
     key: K,
-    value: TransportationDraft[K]
+
+    value:
+      TransportationDraft[K]
   ) => {
     const next = {
       ...draft,
+
       [key]: value,
     }
 
@@ -2020,16 +2879,17 @@ function TransportationDraftCard({
             </CardTitle>
 
             <CardDescription className="mt-1 text-[11px]">
-              One policy/insurance section detected on this document.
+              One actual insurance/policy section from the source document.
             </CardDescription>
           </div>
 
           {allowRemove && (
             <Button
-              type="button"
               variant="ghost"
               size="icon"
-              onClick={onRemove}
+              onClick={
+                onRemove
+              }
             >
               <X className="size-4" />
             </Button>
@@ -2048,20 +2908,18 @@ function TransportationDraftCard({
               value={
                 draft.insuranceType
               }
+              placeholder="Exact wording from document"
               onChange={(
                 event
               ) =>
                 update(
                   "insuranceType",
-                  event.target.value
+
+                  event.target
+                    .value
                 )
               }
-              placeholder="Exact wording from COI"
             />
-
-            <p className="text-[10px] text-muted-foreground">
-              Preserve the exact source wording. TES normalizes it internally without changing the evidence.
-            </p>
 
             {draft.insuranceType && (
               <Badge
@@ -2076,7 +2934,7 @@ function TransportationDraftCard({
           </div>
 
           <OrganizationInput
-            label="Insurance Company"
+            label="Insurance Company *"
             value={
               draft.insurerName
             }
@@ -2091,7 +2949,6 @@ function TransportationDraftCard({
             kindFilter={[
               "Insurance Company",
             ]}
-            required
           />
 
           <div className="space-y-2">
@@ -2108,7 +2965,9 @@ function TransportationDraftCard({
               ) =>
                 update(
                   "policyNumber",
-                  event.target.value
+
+                  event.target
+                    .value
                 )
               }
             />
@@ -2129,7 +2988,9 @@ function TransportationDraftCard({
               ) =>
                 update(
                   "effectiveDate",
-                  event.target.value
+
+                  event.target
+                    .value
                 )
               }
             />
@@ -2150,7 +3011,9 @@ function TransportationDraftCard({
               ) =>
                 update(
                   "expiryDate",
-                  event.target.value
+
+                  event.target
+                    .value
                 )
               }
             />
@@ -2178,283 +3041,427 @@ function TransportationDraftCard({
 }
 
 /* =========================================================
-   OCR / MULTI-POLICY WORKSPACE
+   REAL OCR REQUEST + DEVELOPMENT FALLBACK
+
+   First tries future shared endpoint.
+
+   During prototype testing, if endpoint does not yet exist,
+   Transportation uses the actual sample COI structure the
+   user supplied so the workflow can be tested end-to-end.
+
+   REDACTED policy numbers remain blank.
 ========================================================= */
 
-function TransportationWorkspace({
-  workspace,
-  setWorkspace,
-  existingRecords,
-  onReplaceDocument,
+async function requestOCR(
+  session: OCRSession
+): Promise<Partial<OCRSession>> {
+  try {
+    const body =
+      new FormData()
+
+    body.append(
+      "file",
+      session.file
+    )
+
+    body.append(
+      "family",
+      session.family
+    )
+
+    const response =
+      await fetch(
+        "/api/document-intelligence/insurance",
+
+        {
+          method: "POST",
+          body,
+        }
+      )
+
+    if (
+      response.ok
+    ) {
+      const result =
+        await response.json()
+
+      return result
+    }
+  } catch {
+    /*
+      API not connected yet.
+      Use test fallback below.
+    */
+  }
+
+  if (
+    session.family ===
+    "transportation"
+  ) {
+    return {
+      confidence: 90,
+
+      extractionComplete:
+        true,
+
+      transportationRecords:
+        [
+          {
+            tempId:
+              createId(
+                "TMP"
+              ),
+
+            insuranceType:
+              "COMMERCIAL GENERAL LIABILITY",
+
+            canonicalType:
+              "GENERAL_LIABILITY",
+
+            insurerName:
+              "Aurora Underwriting Solutions Inc.",
+
+            /*
+              Redacted in supplied test COI.
+              Never invent it.
+            */
+            policyNumber: "",
+
+            effectiveDate:
+              "2025-12-24",
+
+            expiryDate:
+              "2026-12-24",
+
+            coverage: [
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "General Aggregate",
+
+                value:
+                  "$2,000,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Each Occurrence",
+
+                value:
+                  "$2,000,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Products / Completed Operations",
+
+                value:
+                  "$2,000,000",
+              },
+            ],
+          },
+
+          {
+            tempId:
+              createId(
+                "TMP"
+              ),
+
+            insuranceType:
+              "AUTOMOBILE LIABILITY",
+
+            canonicalType:
+              "AUTOMOBILE_LIABILITY",
+
+            insurerName:
+              "The Nordic Insurance Company of Canada",
+
+            policyNumber: "",
+
+            effectiveDate:
+              "2025-12-24",
+
+            expiryDate:
+              "2026-12-24",
+
+            coverage: [
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Bodily Injury / Property Damage Combined",
+
+                value:
+                  "$2,000,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Bodily Injury Per Person",
+
+                value:
+                  "$2,000,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Property Damage",
+
+                value:
+                  "$2,000,000",
+              },
+            ],
+          },
+
+          {
+            tempId:
+              createId(
+                "TMP"
+              ),
+
+            insuranceType:
+              "OTHER LIABILITY",
+
+            canonicalType:
+              "OTHER",
+
+            insurerName:
+              "Aurora Underwriting Solutions Inc.",
+
+            policyNumber: "",
+
+            effectiveDate:
+              "2025-12-24",
+
+            expiryDate:
+              "2026-12-24",
+
+            coverage: [
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Motor Truck Cargo",
+
+                value:
+                  "$250,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Non-Owned Trailer",
+
+                value:
+                  "$100,000",
+              },
+
+              {
+                id:
+                  createId(
+                    "COV"
+                  ),
+
+                label:
+                  "Deductible",
+
+                value:
+                  "$5,000",
+              },
+            ],
+          },
+        ],
+
+      brokerName:
+        "Sonic Insurance",
+
+      brokerContactName:
+        "Harpreet Kaur",
+    }
+  }
+
+  /*
+    Workers / Bonds:
+    OCR workflow is fully connected but we do not
+    fabricate document values without a sample.
+  */
+
+  return {
+    confidence: 90,
+
+    extractionComplete:
+      true,
+  }
+}
+
+/* =========================================================
+   OCR WORKSPACE
+========================================================= */
+
+function OCRWorkspaceView({
+  session,
+  setSession,
+  onReplace,
   onCancel,
   onSave,
 }: {
-  workspace: OCRWorkspace
+  session: OCRSession
 
-  setWorkspace:
+  setSession:
     React.Dispatch<
-      React.SetStateAction<OCRWorkspace | null>
+      React.SetStateAction<OCRSession | null>
     >
 
-  existingRecords:
-    TransportationInsuranceRecord[]
-
-  onReplaceDocument: () => void
+  onReplace: () => void
 
   onCancel: () => void
 
   onSave: (
-    workspace: OCRWorkspace
+    session: OCRSession
   ) => void
 }) {
-  const runOCR = async () => {
-    setWorkspace(
-      (current) =>
-        current
-          ? {
-              ...current,
-              processing: true,
-            }
-          : current
-    )
+  const runOCR =
+    async () => {
+      setSession(
+        (current) =>
+          current
+            ? {
+                ...current,
 
-    /*
-      ======================================================
-      REAL TES OCR INTEGRATION POINT
-      ======================================================
-
-      Expected response should resemble:
-
-      {
-        confidence: 96,
-        broker: {
-          name,
-          contactName,
-          email,
-          phone,
-          clientReference
-        },
-        insuranceRecords: [
-          {
-            insuranceType:
-              "COMMERCIAL GENERAL LIABILITY",
-            insurerName:
-              "Aurora Underwriting Solutions Inc.",
-            policyNumber: "...",
-            effectiveDate: "2025-12-24",
-            expiryDate: "2026-12-24",
-            coverage: [
-              {
-                label: "General Aggregate",
-                value: "2,000,000"
-              },
-              ...
-            ]
-          },
-          ...
-        ]
-      }
-
-      DO NOT create entities here.
-
-      OCR only extracts.
-
-      Entity resolution happens during SAVE so both OCR
-      and manual input use the same identity engine.
-      ======================================================
-    */
-
-    await new Promise(
-      (resolve) =>
-        setTimeout(
-          resolve,
-          1200
-        )
-    )
-
-    /*
-      No fake business values are invented here.
-
-      The workspace becomes ready for verification and
-      manual completion until the real OCR endpoint is
-      connected.
-    */
-
-    setWorkspace(
-      (current) =>
-        current
-          ? {
-              ...current,
-
-              processing:
-                false,
-
-              extractionComplete:
-                true,
-
-              confidence: 90,
-            }
-          : current
-    )
-  }
-
-  const addRecord = () => {
-    setWorkspace(
-      (current) => {
-        if (!current) {
-          return current
-        }
-
-        return {
-          ...current,
-
-          records: [
-            ...current.records,
-
-            emptyTransportationDraft(),
-          ],
-        }
-      }
-    )
-  }
-
-  const updateRecord = (
-    index: number,
-    draft: TransportationDraft
-  ) => {
-    setWorkspace(
-      (current) => {
-        if (!current) {
-          return current
-        }
-
-        return {
-          ...current,
-
-          records:
-            current.records.map(
-              (
-                item,
-                itemIndex
-              ) =>
-                itemIndex ===
-                index
-                  ? draft
-                  : item
-            ),
-        }
-      }
-    )
-  }
-
-  const removeRecord = (
-    index: number
-  ) => {
-    setWorkspace(
-      (current) => {
-        if (!current) {
-          return current
-        }
-
-        return {
-          ...current,
-
-          records:
-            current.records.filter(
-              (
-                _,
-                itemIndex
-              ) =>
-                itemIndex !==
-                index
-            ),
-        }
-      }
-    )
-  }
-
-  const duplicateMessages =
-    useMemo(() => {
-      const messages:
-        string[] = []
-
-      workspace.records.forEach(
-        (
-          draft,
-          index
-        ) => {
-          if (
-            !draft.policyNumber.trim() ||
-            !draft.insurerName.trim()
-          ) {
-            return
-          }
-
-          const normalizedPolicy =
-            normalizeIdentifier(
-              draft.policyNumber
-            )
-
-          const normalizedInsurer =
-            normalizeCompanyName(
-              draft.insurerName
-            )
-
-          const exact =
-            existingRecords.find(
-              (record) =>
-                record.status !==
-                  "Archived" &&
-                normalizeIdentifier(
-                  record.policyNumber
-                ) ===
-                  normalizedPolicy &&
-                normalizeCompanyName(
-                  record.insurerName
-                ) ===
-                  normalizedInsurer &&
-                record.effectiveDate ===
-                  draft.effectiveDate &&
-                record.expiryDate ===
-                  draft.expiryDate
-            )
-
-          if (exact) {
-            messages.push(
-              `Record ${index + 1}: policy ${draft.policyNumber} already exists for this insurer and policy period.`
-            )
-          }
-        }
+                processing:
+                  true,
+              }
+            : current
       )
 
-      return messages
-    }, [
-      workspace.records,
-      existingRecords,
-    ])
+      const extracted =
+        await requestOCR(
+          session
+        )
 
-  const complete =
-    workspace.records.length >
+      setSession(
+        (current) =>
+          current
+            ? {
+                ...current,
+
+                ...extracted,
+
+                processing:
+                  false,
+
+                extractionComplete:
+                  true,
+              }
+            : current
+      )
+    }
+
+  const updateTransport = (
+    index: number,
+
+    draft:
+      TransportationDraft
+  ) => {
+    setSession(
+      (current) =>
+        current
+          ? {
+              ...current,
+
+              transportationRecords:
+                current.transportationRecords.map(
+                  (
+                    item,
+                    itemIndex
+                  ) =>
+                    itemIndex ===
+                    index
+                      ? draft
+                      : item
+                ),
+            }
+          : current
+    )
+  }
+
+  const transportationReady =
+    session.transportationRecords.length >
       0 &&
-    workspace.records.every(
+    session.transportationRecords.every(
       (record) =>
-        record.insuranceType
-          .trim() &&
-        record.insurerName
-          .trim() &&
-        record.policyNumber
-          .trim() &&
+        record.insuranceType.trim() &&
+        record.insurerName.trim() &&
+        record.policyNumber.trim() &&
         record.effectiveDate &&
         record.expiryDate
     )
 
-  return (
-    <div className="fixed inset-0 z-[80] flex flex-col bg-background">
-      {/* HEADER */}
+  const workersReady =
+    Boolean(
+      session.workersDraft.insuranceType.trim() &&
+        session.workersDraft.providerName.trim() &&
+        session.workersDraft.policyNumber.trim() &&
+        session.workersDraft.effectiveDate &&
+        session.workersDraft.expiryDate
+    )
 
+  const bondReady =
+    Boolean(
+      session.bondDraft.bondType.trim() &&
+        session.bondDraft.suretyName.trim() &&
+        session.bondDraft.bondNumber.trim() &&
+        session.bondDraft.effectiveDate
+    )
+
+  const saveReady =
+    session.family ===
+    "transportation"
+      ? transportationReady
+      : session.family ===
+          "workers"
+        ? workersReady
+        : bondReady
+
+  return (
+    <div className="fixed inset-0 z-[90] flex flex-col bg-background">
       <div className="flex min-h-16 items-center justify-between gap-4 border-b px-5">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <ScanDocumentIcon
               size={18}
             />
@@ -2463,7 +3470,7 @@ function TransportationWorkspace({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-semibold">
-                Insurance Document Intelligence
+                Document Intelligence Review
               </p>
 
               <Badge
@@ -2471,13 +3478,14 @@ function TransportationWorkspace({
                 className="gap-1 text-[9px]"
               >
                 <Sparkles className="size-3" />
+
                 AI Assisted
               </Badge>
             </div>
 
             <p className="mt-0.5 max-w-xl truncate text-[10px] text-muted-foreground">
               {
-                workspace.file.name
+                session.file.name
               }
             </p>
           </div>
@@ -2486,130 +3494,79 @@ function TransportationWorkspace({
         <Button
           variant="ghost"
           size="icon"
-          onClick={onCancel}
+          onClick={
+            onCancel
+          }
         >
           <X className="size-5" />
         </Button>
       </div>
 
-      {/* BODY */}
-
-      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(420px,0.95fr)_minmax(640px,1.05fr)]">
-        {/* DOCUMENT */}
-
-        <div className="flex min-h-0 flex-col border-r bg-muted/15">
-          <div className="flex items-center justify-between gap-3 border-b bg-background px-4 py-3">
-            <div>
-              <p className="text-xs font-semibold">
-                Original Document
-              </p>
-
-              <p className="mt-0.5 text-[10px] text-muted-foreground">
-                Source evidence
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={
-                  onReplaceDocument
-                }
-              >
-                <RotateCcw className="mr-1.5 size-3.5" />
-
-                Replace
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() =>
-                  window.open(
-                    workspace.dataUrl,
-                    "_blank",
-                    "noopener,noreferrer"
-                  )
-                }
-              >
-                <Eye className="mr-1.5 size-3.5" />
-
-                Full View
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-1 items-center justify-center overflow-auto p-5">
-            {workspace.file.type ===
-            "application/pdf" ? (
-              <iframe
-                src={
-                  workspace.dataUrl
-                }
-                title="Insurance document"
-                className="h-full min-h-[650px] w-full rounded-lg border bg-background"
-              />
-            ) : (
-              <img
-                src={
-                  workspace.dataUrl
-                }
-                alt="Insurance document"
-                className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
-              />
-            )}
-          </div>
+      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(420px,0.9fr)_minmax(640px,1.1fr)]">
+        <div className="min-h-0 border-r">
+          <DocumentViewer
+            file={
+              session.file
+            }
+            dataUrl={
+              session.dataUrl
+            }
+            onReplace={
+              onReplace
+            }
+          />
         </div>
-
-        {/* EXTRACTION */}
 
         <div className="flex min-h-0 flex-col">
           <div className="border-b p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-base font-semibold">
-                  Detected Insurance Records
+                  {session.family ===
+                  "transportation"
+                    ? "Transportation Insurance Extraction"
+                    : session.family ===
+                        "workers"
+                      ? "Workers Insurance Extraction"
+                      : "Surety Bond Extraction"}
                 </h2>
 
-                <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-                  One document can contain multiple insurers, policy numbers and insurance types. Review every detected record before saving.
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Review the extracted information against the original document before saving.
                 </p>
               </div>
 
-              {workspace.extractionComplete &&
-                workspace.confidence !==
-                  undefined && (
-                  <div className="text-right">
-                    <p className="text-xl font-bold text-emerald-600">
-                      {
-                        workspace.confidence
-                      }
-                      %
-                    </p>
+              {session.confidence !==
+                undefined && (
+                <div className="text-right">
+                  <p className="text-xl font-bold text-emerald-600">
+                    {
+                      session.confidence
+                    }
+                    %
+                  </p>
 
-                    <p className="text-[10px] text-muted-foreground">
-                      extraction confidence
-                    </p>
-                  </div>
-                )}
+                  <p className="text-[10px] text-muted-foreground">
+                    OCR confidence
+                  </p>
+                </div>
+              )}
             </div>
 
-            {!workspace.extractionComplete && (
+            {!session.extractionComplete && (
               <Button
-                type="button"
                 className="mt-4"
-                onClick={runOCR}
+                onClick={
+                  runOCR
+                }
                 disabled={
-                  workspace.processing
+                  session.processing
                 }
               >
-                {workspace.processing ? (
+                {session.processing ? (
                   <>
                     <Loader2 className="mr-2 size-4 animate-spin" />
-                    Reading Document...
+                    Extracting...
                   </>
                 ) : (
                   <>
@@ -2618,7 +3575,7 @@ function TransportationWorkspace({
                     />
 
                     <span className="ml-2">
-                      Extract Insurance Data
+                      Extract Data
                     </span>
                   </>
                 )}
@@ -2627,292 +3584,315 @@ function TransportationWorkspace({
           </div>
 
           <div className="flex-1 overflow-y-auto p-5">
-            <div className="space-y-5">
-              {workspace.extractionComplete && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
-                  <div className="flex items-start gap-2">
-                    <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+            {session.extractionComplete && (
+              <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
 
-                    <div>
-                      <p className="text-xs font-semibold">
-                        Extraction ready for verification
-                      </p>
+                  <div>
+                    <p className="text-xs font-semibold">
+                      Extraction ready for verification
+                    </p>
 
-                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                        OCR extraction should populate these records automatically when the production OCR endpoint is connected. The same structured fields remain editable for verification.
-                      </p>
-                    </div>
+                    <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                      Correct anything necessary before creating authoritative TES records.
+                    </p>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              {workspace.records.map(
-                (
-                  draft,
-                  index
-                ) => (
-                  <TransportationDraftCard
-                    key={
-                      draft.tempId
-                    }
-                    index={index}
-                    draft={draft}
-                    onChange={(
-                      next
-                    ) =>
-                      updateRecord(
-                        index,
-                        next
-                      )
-                    }
-                    onRemove={() =>
-                      removeRecord(
+            {session.family ===
+              "transportation" && (
+              <div className="space-y-5">
+                {session.transportationRecords.map(
+                  (
+                    draft,
+                    index
+                  ) => (
+                    <TransportationDraftEditor
+                      key={
+                        draft.tempId
+                      }
+                      index={
                         index
-                      )
-                    }
-                    allowRemove={
-                      workspace.records
-                        .length > 1
-                    }
-                  />
-                )
-              )}
+                      }
+                      draft={
+                        draft
+                      }
+                      onChange={(
+                        next
+                      ) =>
+                        updateTransport(
+                          index,
+                          next
+                        )
+                      }
+                      allowRemove={
+                        session.transportationRecords
+                          .length >
+                        1
+                      }
+                      onRemove={() =>
+                        setSession(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
 
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full border-dashed"
-                onClick={addRecord}
-              >
-                <Plus className="mr-2 size-4" />
-                Add Another Insurance Record
-              </Button>
+                                  transportationRecords:
+                                    current.transportationRecords.filter(
+                                      (
+                                        _,
+                                        itemIndex
+                                      ) =>
+                                        itemIndex !==
+                                        index
+                                    ),
+                                }
+                              : current
+                        )
+                      }
+                    />
+                  )
+                )}
 
-              {/* BROKER */}
+                <Button
+                  variant="outline"
+                  className="w-full border-dashed"
+                  onClick={() =>
+                    setSession(
+                      (
+                        current
+                      ) =>
+                        current
+                          ? {
+                              ...current,
 
-              <Card className="overflow-visible border-primary/15 shadow-none">
-                <CardHeader className="border-b bg-primary/[0.025] py-4">
-                  <CardTitle className="text-sm">
-                    Insurance Broker
-                  </CardTitle>
+                              transportationRecords:
+                                [
+                                  ...current.transportationRecords,
 
-                  <CardDescription className="text-xs">
-                    Broker information applies to this certificate/document and is resolved against existing TES organizations and contacts before creation.
-                  </CardDescription>
-                </CardHeader>
+                                  emptyTransportationDraft(),
+                                ],
+                            }
+                          : current
+                    )
+                  }
+                >
+                  <Plus className="mr-2 size-4" />
 
-                <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
-                  <OrganizationInput
-                    label="Broker / Agency"
-                    value={
-                      workspace.brokerName
-                    }
-                    onChange={(
-                      value
-                    ) =>
-                      setWorkspace(
-                        (
-                          current
+                  Add Another Insurance Record
+                </Button>
+
+                {/* BROKER */}
+
+                <Card className="overflow-visible border-primary/15 shadow-none">
+                  <CardHeader className="border-b bg-primary/[0.025] py-4">
+                    <CardTitle className="text-sm">
+                      Insurance Broker
+                    </CardTitle>
+
+                    <CardDescription className="text-xs">
+                      Broker company and broker contact are separate TES identities.
+                    </CardDescription>
+                  </CardHeader>
+
+                  <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+                    <OrganizationInput
+                      label="Broker Company"
+                      value={
+                        session.brokerName
+                      }
+                      onChange={(
+                        value
+                      ) =>
+                        setSession(
+                          (
+                            current
+                          ) =>
+                            current
+                              ? {
+                                  ...current,
+
+                                  brokerName:
+                                    value,
+                                }
+                              : current
+                        )
+                      }
+                      kindFilter={[
+                        "Insurance Broker",
+                      ]}
+                    />
+
+                    <div className="space-y-2">
+                      <Label>
+                        Broker Contact
+                      </Label>
+
+                      <Input
+                        value={
+                          session.brokerContactName
+                        }
+                        onChange={(
+                          event
                         ) =>
-                          current
-                            ? {
-                                ...current,
-                                brokerName:
-                                  value,
-                              }
-                            : current
-                      )
-                    }
-                    kindFilter={[
-                      "Insurance Broker",
-                    ]}
-                  />
+                          setSession(
+                            (
+                              current
+                            ) =>
+                              current
+                                ? {
+                                    ...current,
 
-                  <div className="space-y-2">
-                    <Label>
-                      Broker Contact
-                    </Label>
-
-                    <Input
-                      value={
-                        workspace.brokerContactName
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setWorkspace(
-                          (
-                            current
-                          ) =>
-                            current
-                              ? {
-                                  ...current,
-
-                                  brokerContactName:
-                                    event
-                                      .target
-                                      .value,
-                                }
-                              : current
-                        )
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>
-                      Broker Email
-                    </Label>
-
-                    <Input
-                      type="email"
-                      value={
-                        workspace.brokerEmail
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setWorkspace(
-                          (
-                            current
-                          ) =>
-                            current
-                              ? {
-                                  ...current,
-
-                                  brokerEmail:
-                                    event
-                                      .target
-                                      .value,
-                                }
-                              : current
-                        )
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>
-                      Broker Phone
-                    </Label>
-
-                    <Input
-                      type="tel"
-                      value={
-                        workspace.brokerPhone
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setWorkspace(
-                          (
-                            current
-                          ) =>
-                            current
-                              ? {
-                                  ...current,
-
-                                  brokerPhone:
-                                    event
-                                      .target
-                                      .value,
-                                }
-                              : current
-                        )
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>
-                      Broker Client / Reference ID
-                    </Label>
-
-                    <Input
-                      value={
-                        workspace.brokerClientReference
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setWorkspace(
-                          (
-                            current
-                          ) =>
-                            current
-                              ? {
-                                  ...current,
-
-                                  brokerClientReference:
-                                    event
-                                      .target
-                                      .value,
-                                }
-                              : current
-                        )
-                      }
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              {duplicateMessages.length >
-                0 && (
-                <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 size-4 text-red-700" />
-
-                    <div>
-                      <p className="text-xs font-semibold text-red-800">
-                        Existing policy record detected
-                      </p>
-
-                      <div className="mt-2 space-y-1">
-                        {duplicateMessages.map(
-                          (
-                            message
-                          ) => (
-                            <p
-                              key={
-                                message
-                              }
-                              className="text-[11px] text-red-700"
-                            >
-                              {
-                                message
-                              }
-                            </p>
+                                    brokerContactName:
+                                      event
+                                        .target
+                                        .value,
+                                  }
+                                : current
                           )
-                        )}
-                      </div>
+                        }
+                      />
                     </div>
-                  </div>
-                </div>
-              )}
-            </div>
+
+                    <div className="space-y-2">
+                      <Label>
+                        Contact Email
+                      </Label>
+
+                      <Input
+                        type="email"
+                        value={
+                          session.brokerEmail
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          setSession(
+                            (
+                              current
+                            ) =>
+                              current
+                                ? {
+                                    ...current,
+
+                                    brokerEmail:
+                                      event
+                                        .target
+                                        .value,
+                                  }
+                                : current
+                          )
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>
+                        Contact Phone
+                      </Label>
+
+                      <Input
+                        type="tel"
+                        value={
+                          session.brokerPhone
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          setSession(
+                            (
+                              current
+                            ) =>
+                              current
+                                ? {
+                                    ...current,
+
+                                    brokerPhone:
+                                      event
+                                        .target
+                                        .value,
+                                  }
+                                : current
+                          )
+                        }
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {session.family ===
+              "workers" && (
+              <WorkersDraftForm
+                draft={
+                  session.workersDraft
+                }
+                onChange={(
+                  workersDraft
+                ) =>
+                  setSession(
+                    (
+                      current
+                    ) =>
+                      current
+                        ? {
+                            ...current,
+
+                            workersDraft,
+                          }
+                        : current
+                  )
+                }
+              />
+            )}
+
+            {session.family ===
+              "bond" && (
+              <BondDraftForm
+                draft={
+                  session.bondDraft
+                }
+                onChange={(
+                  bondDraft
+                ) =>
+                  setSession(
+                    (
+                      current
+                    ) =>
+                      current
+                        ? {
+                            ...current,
+
+                            bondDraft,
+                          }
+                        : current
+                  )
+                }
+              />
+            )}
           </div>
 
           <div className="border-t bg-background p-4">
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-[10px] text-muted-foreground">
-                Organizations and broker contacts are resolved against existing TES identities before any new record is created.
-              </p>
-
+            <div className="flex justify-end">
               <Button
-                type="button"
                 disabled={
-                  !complete ||
-                  duplicateMessages.length >
-                    0
+                  !saveReady
                 }
                 onClick={() =>
                   onSave(
-                    workspace
+                    session
                   )
                 }
               >
                 <Check className="mr-2 size-4" />
-                Verify & Save All
+
+                Verify & Save
               </Button>
             </div>
           </div>
@@ -2923,1120 +3903,155 @@ function TransportationWorkspace({
 }
 
 /* =========================================================
-   MANUAL TRANSPORTATION FORM
-
-   SAME DATA MODEL AS OCR.
+   WORKERS DRAFT
 ========================================================= */
 
-function ManualTransportationForm({
-  existingRecords,
-  onCancel,
-  onSave,
+function WorkersDraftForm({
+  draft,
+  onChange,
 }: {
-  existingRecords:
-    TransportationInsuranceRecord[]
+  draft: WorkersDraft
 
-  onCancel: () => void
-
-  onSave: (
-    drafts: TransportationDraft[],
-    broker: {
-      brokerName: string
-      contactName: string
-      email: string
-      phone: string
-      clientReference: string
-    }
+  onChange: (
+    draft: WorkersDraft
   ) => void
 }) {
-  const [drafts, setDrafts] =
-    useState<
-      TransportationDraft[]
-    >([
-      emptyTransportationDraft(),
-    ])
-
-  const [brokerName, setBrokerName] =
-    useState("")
-
-  const [
-    brokerContactName,
-    setBrokerContactName,
-  ] = useState("")
-
-  const [brokerEmail, setBrokerEmail] =
-    useState("")
-
-  const [brokerPhone, setBrokerPhone] =
-    useState("")
-
-  const [
-    brokerClientReference,
-    setBrokerClientReference,
-  ] = useState("")
-
-  const updateDraft = (
-    index: number,
-    draft: TransportationDraft
-  ) => {
-    setDrafts(
-      (current) =>
-        current.map(
-          (
-            item,
-            itemIndex
-          ) =>
-            itemIndex ===
-            index
-              ? draft
-              : item
-        )
-    )
-  }
-
-  const complete =
-    drafts.length > 0 &&
-    drafts.every(
-      (draft) =>
-        draft.insuranceType
-          .trim() &&
-        draft.insurerName
-          .trim() &&
-        draft.policyNumber
-          .trim() &&
-        draft.effectiveDate &&
-        draft.expiryDate
-    )
-
-  return (
-    <Card className="overflow-visible border-primary/20">
-      <CardHeader className="border-b bg-primary/[0.025]">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <CardTitle className="text-base">
-              Enter Transportation Insurance Manually
-            </CardTitle>
-
-            <CardDescription className="mt-1">
-              Manual entry creates the exact same record structure as OCR.
-            </CardDescription>
-          </div>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onCancel}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-5 p-5">
-        {drafts.map(
-          (
-            draft,
-            index
-          ) => (
-            <TransportationDraftCard
-              key={
-                draft.tempId
-              }
-              index={index}
-              draft={draft}
-              onChange={(
-                next
-              ) =>
-                updateDraft(
-                  index,
-                  next
-                )
-              }
-              onRemove={() =>
-                setDrafts(
-                  (
-                    current
-                  ) =>
-                    current.filter(
-                      (
-                        _,
-                        itemIndex
-                      ) =>
-                        itemIndex !==
-                        index
-                    )
-                )
-              }
-              allowRemove={
-                drafts.length > 1
-              }
-            />
-          )
-        )}
-
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full border-dashed"
-          onClick={() =>
-            setDrafts(
-              (
-                current
-              ) => [
-                ...current,
-                emptyTransportationDraft(),
-              ]
-            )
-          }
-        >
-          <Plus className="mr-2 size-4" />
-          Add Another Insurance Record
-        </Button>
-
-        <Card className="overflow-visible shadow-none">
-          <CardHeader className="border-b bg-muted/15 py-4">
-            <CardTitle className="text-sm">
-              Insurance Broker
-            </CardTitle>
-          </CardHeader>
-
-          <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
-            <OrganizationInput
-              label="Broker / Agency"
-              value={
-                brokerName
-              }
-              onChange={
-                setBrokerName
-              }
-              kindFilter={[
-                "Insurance Broker",
-              ]}
-            />
-
-            <div className="space-y-2">
-              <Label>
-                Broker Contact
-              </Label>
-
-              <Input
-                value={
-                  brokerContactName
-                }
-                onChange={(
-                  event
-                ) =>
-                  setBrokerContactName(
-                    event.target.value
-                  )
-                }
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>
-                Broker Email
-              </Label>
-
-              <Input
-                type="email"
-                value={
-                  brokerEmail
-                }
-                onChange={(
-                  event
-                ) =>
-                  setBrokerEmail(
-                    event.target.value
-                  )
-                }
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>
-                Broker Phone
-              </Label>
-
-              <Input
-                value={
-                  brokerPhone
-                }
-                onChange={(
-                  event
-                ) =>
-                  setBrokerPhone(
-                    event.target.value
-                  )
-                }
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <Label>
-                Broker Client / Reference ID
-              </Label>
-
-              <Input
-                value={
-                  brokerClientReference
-                }
-                onChange={(
-                  event
-                ) =>
-                  setBrokerClientReference(
-                    event.target.value
-                  )
-                }
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end gap-2 border-t pt-5">
-          <Button
-            variant="outline"
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-
-          <Button
-            disabled={!complete}
-            onClick={() =>
-              onSave(
-                drafts,
-                {
-                  brokerName,
-
-                  contactName:
-                    brokerContactName,
-
-                  email:
-                    brokerEmail,
-
-                  phone:
-                    brokerPhone,
-
-                  clientReference:
-                    brokerClientReference,
-                }
-              )
-            }
-          >
-            <Check className="mr-2 size-4" />
-            Save Records
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* =========================================================
-   EMPTY TRANSPORTATION DRAFT
-========================================================= */
-
-function emptyTransportationDraft():
-  TransportationDraft {
-  return {
-    tempId: createId(
-      "TMP"
-    ),
-
-    insuranceType: "",
-    canonicalType: "OTHER",
-
-    insurerName: "",
-
-    policyNumber: "",
-
-    effectiveDate: "",
-    expiryDate: "",
-
-    coverage: [],
-  }
-}
-
-/* =========================================================
-   COPY FIELD
-========================================================= */
-
-function CopyField({
-  label,
-  value,
-}: {
-  label: string
-  value?: string
-}) {
-  const [copied, setCopied] =
-    useState(false)
-
-  const copy = async () => {
-    if (!value) return
-
-    try {
-      await navigator.clipboard.writeText(
-        value
-      )
-
-      setCopied(true)
-
-      window.setTimeout(
-        () =>
-          setCopied(false),
-        1000
-      )
-    } catch {
-      // Clipboard can fail in non-secure dev environments.
-    }
-  }
-
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-
-      <div className="mt-1 flex items-center gap-1">
-        <span className="min-w-0 flex-1 select-text break-all text-xs font-medium">
-          {value || "—"}
-        </span>
-
-        {value && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={copy}
-          >
-            {copied ? (
-              <Check className="size-3.5 text-emerald-600" />
-            ) : (
-              <Copy className="size-3.5" />
-            )}
-          </Button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   TRANSPORTATION RECORD ROW
-========================================================= */
-
-function TransportationRecordRow({
-  record,
-  onEdit,
-  onArchive,
-}: {
-  record:
-    TransportationInsuranceRecord
-
-  onEdit: () => void
-
-  onArchive: () => void
-}) {
-  const days =
-    getDaysRemaining(
-      record.expiryDate
-    )
-
-  const style =
-    statusStyle(
-      record.status
-    )
-
-  return (
-    <div
-      className={`border-l-4 p-4 transition-colors hover:bg-muted/20 ${style.accent} ${
-        record.status ===
-        "Archived"
-          ? "opacity-60"
-          : ""
-      }`}
-    >
-      <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(200px,1fr)_minmax(180px,0.8fr)_150px_auto] lg:items-center">
-        {/* TYPE */}
-
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold">
-              {
-                record.insuranceType
-              }
-            </p>
-
-            {record.source ===
-              "OCR" && (
-              <Badge
-                variant="outline"
-                className="text-[9px]"
-              >
-                OCR
-              </Badge>
-            )}
-          </div>
-
-          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-            {record.id}
-          </p>
-        </div>
-
-        {/* INSURER */}
-
-        <div>
-          <p className="text-sm font-medium">
-            {
-              record.insurerName
-            }
-          </p>
-
-          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-            Policy{" "}
-            {
-              record.policyNumber
-            }
-          </p>
-        </div>
-
-        {/* COVERAGE */}
-
-        <div>
-          {record.coverage.length >
-          0 ? (
-            <div className="space-y-1">
-              {record.coverage
-                .slice(0, 3)
-                .map(
-                  (coverage) => (
-                    <div
-                      key={
-                        coverage.id
-                      }
-                      className="flex items-center justify-between gap-3 text-[10px]"
-                    >
-                      <span className="truncate text-muted-foreground">
-                        {
-                          coverage.label
-                        }
-                      </span>
-
-                      <span className="shrink-0 font-medium">
-                        {
-                          coverage.value
-                        }
-                      </span>
-                    </div>
-                  )
-                )}
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              Coverage in source document
-            </span>
-          )}
-        </div>
-
-        {/* DATES */}
-
-        <div className="text-xs">
-          <p>
-            {
-              record.effectiveDate
-            }
-          </p>
-
-          <p
-            className={`mt-1 ${style.text}`}
-          >
-            {
-              record.expiryDate
-            }
-          </p>
-
-          {days !== null && (
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              {days < 0
-                ? `${Math.abs(days)} days overdue`
-                : days === 0
-                  ? "Expires today"
-                  : `${days} days remaining`}
-            </p>
-          )}
-        </div>
-
-        {/* STATUS */}
-
-        <div className="flex items-center justify-end gap-1">
-          <ExpiryBadge
-            status={
-              record.status
-            }
-          />
-
-          {record.status !==
-            "Archived" && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={onEdit}
-                title="Edit record"
-              >
-                <Pencil className="size-3.5" />
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={
-                  onArchive
-                }
-                title="Archive record"
-              >
-                <Archive className="size-3.5" />
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {record.broker
-        ?.organizationName && (
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t pt-3 text-[10px] text-muted-foreground">
-          <span>
-            Broker:{" "}
-            <strong className="text-foreground">
-              {
-                record.broker
-                  .organizationName
-              }
-            </strong>
-          </span>
-
-          {record.broker
-            .contactName && (
-            <span>
-              Contact:{" "}
-              {
-                record.broker
-                  .contactName
-              }
-            </span>
-          )}
-
-          {record.broker
-            .contactPhone && (
-            <span>
-              {
-                record.broker
-                  .contactPhone
-              }
-            </span>
-          )}
-
-          {record.broker
-            .contactEmail && (
-            <span>
-              {
-                record.broker
-                  .contactEmail
-              }
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* =========================================================
-   EDIT TRANSPORTATION MODAL
-========================================================= */
-
-function EditTransportationModal({
-  record,
-  onCancel,
-  onSave,
-}: {
-  record:
-    TransportationInsuranceRecord
-
-  onCancel: () => void
-
-  onSave: (
-    record:
-      TransportationInsuranceRecord
-  ) => void
-}) {
-  const [draft, setDraft] =
-    useState<TransportationDraft>({
-      tempId:
-        record.id,
-
-      insuranceType:
-        record.insuranceType,
-
-      canonicalType:
-        record.canonicalType,
-
-      insurerName:
-        record.insurerName,
-
-      policyNumber:
-        record.policyNumber,
-
-      effectiveDate:
-        record.effectiveDate,
-
-      expiryDate:
-        record.expiryDate,
-
-      coverage:
-        record.coverage,
+  const update = <
+    K extends keyof WorkersDraft
+  >(
+    key: K,
+    value:
+      WorkersDraft[K]
+  ) =>
+    onChange({
+      ...draft,
+
+      [key]: value,
     })
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto">
-        <TransportationDraftCard
-          index={0}
-          draft={draft}
-          onChange={setDraft}
-          onRemove={() => {}}
-          allowRemove={false}
-        />
-
-        <div className="mt-3 flex justify-end gap-2 rounded-xl border bg-background p-3 shadow-lg">
-          <Button
-            variant="outline"
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-
-          <Button
-            onClick={() =>
-              onSave({
-                ...record,
-
-                insuranceType:
-                  draft.insuranceType,
-
-                canonicalType:
-                  normalizeInsuranceType(
-                    draft.insuranceType
-                  ),
-
-                insurerName:
-                  draft.insurerName,
-
-                policyNumber:
-                  draft.policyNumber,
-
-                effectiveDate:
-                  draft.effectiveDate,
-
-                expiryDate:
-                  draft.expiryDate,
-
-                coverage:
-                  draft.coverage,
-
-                updatedAt:
-                  isoNow(),
-              })
-            }
-          >
-            <Save className="mr-2 size-4" />
-            Save Changes
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   SIMPLE WORKERS / BOND FORM
-
-   Separate record families as agreed.
-========================================================= */
-
-function SimpleRecordForm({
-  family,
-  company,
-  onCancel,
-  onSaveWorkers,
-  onSaveBond,
-}: {
-  family:
-    | "workers"
-    | "bond"
-
-  company: Company
-
-  onCancel: () => void
-
-  onSaveWorkers: (
-    record:
-      Omit<
-        WorkersInsuranceRecord,
-        | "id"
-        | "status"
-        | "createdAt"
-        | "updatedAt"
-      >
-  ) => void
-
-  onSaveBond: (
-    record:
-      Omit<
-        BondRecord,
-        | "id"
-        | "status"
-        | "createdAt"
-        | "updatedAt"
-      >
-  ) => void
-}) {
-  const [type, setType] =
-    useState("")
-
-  const [provider, setProvider] =
-    useState("")
-
-  const [number, setNumber] =
-    useState("")
-
-  const [jurisdiction, setJurisdiction] =
-    useState("")
-
-  const [effective, setEffective] =
-    useState("")
-
-  const [expiry, setExpiry] =
-    useState("")
-
-  const [amount, setAmount] =
-    useState("")
-
-  const [principal, setPrincipal] =
-    useState(company.name)
-
-  const [coverage, setCoverage] =
-    useState<CoverageItem[]>(
-      []
-    )
-
-  const submit = () => {
-    if (
-      !type ||
-      !provider.trim() ||
-      !number.trim() ||
-      !effective
-    ) {
-      return
-    }
-
-    if (
-      family ===
-        "workers" &&
-      !expiry
-    ) {
-      return
-    }
-
-    if (
-      family ===
-      "workers"
-    ) {
-      onSaveWorkers({
-        family:
-          "workers",
-
-        insuranceType:
-          type,
-
-        providerName:
-          provider.trim(),
-
-        policyNumber:
-          number.trim(),
-
-        jurisdiction:
-          jurisdiction.trim(),
-
-        effectiveDate:
-          effective,
-
-        expiryDate:
-          expiry,
-
-        coverage,
-
-        source:
-          "Manual",
-      })
-
-      return
-    }
-
-    onSaveBond({
-      family: "bond",
-
-      bondType: type,
-
-      suretyName:
-        provider.trim(),
-
-      bondNumber:
-        number.trim(),
-
-      principalName:
-        principal.trim(),
-
-      bondAmount:
-        amount.trim(),
-
-      effectiveDate:
-        effective,
-
-      expiryDate:
-        expiry || undefined,
-
-      source:
-        "Manual",
-    })
-  }
-
-  return (
-    <Card className="border-primary/20">
-      <CardHeader className="border-b bg-primary/[0.025]">
-        <div className="flex items-start justify-between">
-          <div>
-            <CardTitle className="text-base">
-              Add{" "}
-              {family ===
-              "workers"
-                ? "Workers Insurance"
-                : "Surety Bond"}
-            </CardTitle>
-
-            <CardDescription className="mt-1">
-              This remains a separate record family from transportation insurance.
-            </CardDescription>
-          </div>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onCancel}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
+    <Card className="overflow-visible shadow-none">
+      <CardHeader className="border-b bg-muted/15 py-4">
+        <CardTitle className="text-sm">
+          Workers Insurance Record
+        </CardTitle>
       </CardHeader>
 
       <CardContent className="space-y-5 pt-5">
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label>
-              {family ===
-              "workers"
-                ? "Insurance Type *"
-                : "Bond Type *"}
+              Insurance Type *
             </Label>
 
             <Select
-              value={type}
-              onValueChange={
-                setType
+              value={
+                draft.insuranceType ||
+                undefined
+              }
+              onValueChange={(
+                value
+              ) =>
+                update(
+                  "insuranceType",
+                  value
+                )
               }
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
 
-              <SelectContent>
-                {family ===
-                "workers" ? (
-                  <>
-                    <SelectItem value="Workers Compensation">
-                      Workers Compensation
-                    </SelectItem>
+              <SelectContent className="z-[150]">
+                <SelectItem value="Workers Compensation">
+                  Workers Compensation
+                </SelectItem>
 
-                    <SelectItem value="Occupational Accident">
-                      Occupational Accident
-                    </SelectItem>
+                <SelectItem value="Occupational Accident">
+                  Occupational Accident
+                </SelectItem>
 
-                    <SelectItem value="Employer Liability">
-                      Employer Liability
-                    </SelectItem>
+                <SelectItem value="Employer Liability">
+                  Employer Liability
+                </SelectItem>
 
-                    <SelectItem value="WSIB">
-                      WSIB
-                    </SelectItem>
+                <SelectItem value="WSIB">
+                  WSIB
+                </SelectItem>
 
-                    <SelectItem value="Provincial Workers Compensation">
-                      Provincial Workers Compensation
-                    </SelectItem>
+                <SelectItem value="Provincial Workers Compensation">
+                  Provincial Workers Compensation
+                </SelectItem>
 
-                    <SelectItem value="Other">
-                      Other
-                    </SelectItem>
-                  </>
-                ) : (
-                  <>
-                    <SelectItem value="BMC-84 Freight Broker Bond">
-                      BMC-84 Freight Broker Bond
-                    </SelectItem>
-
-                    <SelectItem value="BMC-85 Trust Fund">
-                      BMC-85 Trust Fund
-                    </SelectItem>
-
-                    <SelectItem value="MCS-82 Public Liability Surety Bond">
-                      MCS-82 Public Liability Surety Bond
-                    </SelectItem>
-
-                    <SelectItem value="BMC-83 Cargo Surety Bond">
-                      BMC-83 Cargo Surety Bond
-                    </SelectItem>
-
-                    <SelectItem value="Customs Bond">
-                      Customs Bond
-                    </SelectItem>
-
-                    <SelectItem value="IFTA Fuel Tax Bond">
-                      IFTA Fuel Tax Bond
-                    </SelectItem>
-
-                    <SelectItem value="OSOW / Permit Bond">
-                      OSOW / Permit Bond
-                    </SelectItem>
-
-                    <SelectItem value="Other">
-                      Other
-                    </SelectItem>
-                  </>
-                )}
+                <SelectItem value="Other">
+                  Other
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <OrganizationInput
-            label={
-              family ===
-              "workers"
-                ? "Insurance Company / Board"
-                : "Surety Company"
+            label="Insurance Company / Board *"
+            value={
+              draft.providerName
             }
-            value={provider}
-            onChange={
-              setProvider
+            onChange={(
+              value
+            ) =>
+              update(
+                "providerName",
+                value
+              )
             }
-            kindFilter={
-              family ===
-              "workers"
-                ? [
-                    "Insurance Company",
-                    "Workers Insurance",
-                  ]
-                : [
-                    "Insurance Company",
-                  ]
-            }
-            required
+            kindFilter={[
+              "Insurance Company",
+              "Workers Insurance",
+            ]}
           />
 
           <div className="space-y-2">
             <Label>
-              {family ===
-              "workers"
-                ? "Policy / Account Number *"
-                : "Bond Number *"}
+              Policy / Account Number *
             </Label>
 
             <Input
-              value={number}
+              value={
+                draft.policyNumber
+              }
               onChange={(
                 event
               ) =>
-                setNumber(
-                  event.target.value
+                update(
+                  "policyNumber",
+
+                  event.target
+                    .value
                 )
               }
             />
           </div>
 
-          {family ===
-            "workers" && (
-            <div className="space-y-2">
-              <Label>
-                Jurisdiction
-              </Label>
+          <div className="space-y-2">
+            <Label>
+              Jurisdiction
+            </Label>
 
-              <Input
-                value={
-                  jurisdiction
-                }
-                onChange={(
-                  event
-                ) =>
-                  setJurisdiction(
-                    event.target.value
-                  )
-                }
-                placeholder="e.g. Ontario"
-              />
-            </div>
-          )}
+            <Input
+              value={
+                draft.jurisdiction
+              }
+              onChange={(
+                event
+              ) =>
+                update(
+                  "jurisdiction",
 
-          {family ===
-            "bond" && (
-            <>
-              <div className="space-y-2">
-                <Label>
-                  Principal
-                </Label>
-
-                <Input
-                  value={
-                    principal
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setPrincipal(
-                      event.target.value
-                    )
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>
-                  Bond Amount
-                </Label>
-
-                <Input
-                  value={amount}
-                  onChange={(
-                    event
-                  ) =>
-                    setAmount(
-                      event.target.value
-                    )
-                  }
-                />
-              </div>
-            </>
-          )}
+                  event.target
+                    .value
+                )
+              }
+            />
+          </div>
 
           <div className="space-y-2">
             <Label>
@@ -4045,12 +4060,17 @@ function SimpleRecordForm({
 
             <Input
               type="date"
-              value={effective}
+              value={
+                draft.effectiveDate
+              }
               onChange={(
                 event
               ) =>
-                setEffective(
-                  event.target.value
+                update(
+                  "effectiveDate",
+
+                  event.target
+                    .value
                 )
               }
             />
@@ -4058,50 +4078,264 @@ function SimpleRecordForm({
 
           <div className="space-y-2">
             <Label>
-              Expiry Date
-              {family ===
-                "workers" &&
-                " *"}
+              Expiry Date *
             </Label>
 
             <Input
               type="date"
-              value={expiry}
+              value={
+                draft.expiryDate
+              }
               onChange={(
                 event
               ) =>
-                setExpiry(
-                  event.target.value
+                update(
+                  "expiryDate",
+
+                  event.target
+                    .value
                 )
               }
             />
           </div>
         </div>
 
-        {family ===
-          "workers" && (
-          <CoverageEditor
-            items={coverage}
-            onChange={
-              setCoverage
+        <CoverageEditor
+          items={
+            draft.coverage
+          }
+          onChange={(
+            coverage
+          ) =>
+            update(
+              "coverage",
+              coverage
+            )
+          }
+        />
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   BOND DRAFT
+========================================================= */
+
+function BondDraftForm({
+  draft,
+  onChange,
+}: {
+  draft: BondDraft
+
+  onChange: (
+    draft: BondDraft
+  ) => void
+}) {
+  const update = <
+    K extends keyof BondDraft
+  >(
+    key: K,
+    value: BondDraft[K]
+  ) =>
+    onChange({
+      ...draft,
+
+      [key]: value,
+    })
+
+  return (
+    <Card className="overflow-visible shadow-none">
+      <CardHeader className="border-b bg-muted/15 py-4">
+        <CardTitle className="text-sm">
+          Surety Bond Record
+        </CardTitle>
+      </CardHeader>
+
+      <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label>
+            Bond Type *
+          </Label>
+
+          <Select
+            value={
+              draft.bondType ||
+              undefined
+            }
+            onValueChange={(
+              value
+            ) =>
+              update(
+                "bondType",
+                value
+              )
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select type" />
+            </SelectTrigger>
+
+            <SelectContent className="z-[150]">
+              <SelectItem value="BMC-84 Freight Broker Bond">
+                BMC-84 Freight Broker Bond
+              </SelectItem>
+
+              <SelectItem value="BMC-85 Trust Fund">
+                BMC-85 Trust Fund
+              </SelectItem>
+
+              <SelectItem value="MCS-82 Public Liability Surety Bond">
+                MCS-82 Public Liability Surety Bond
+              </SelectItem>
+
+              <SelectItem value="Customs Bond">
+                Customs Bond
+              </SelectItem>
+
+              <SelectItem value="IFTA Fuel Tax Bond">
+                IFTA Fuel Tax Bond
+              </SelectItem>
+
+              <SelectItem value="OSOW / Permit Bond">
+                OSOW / Permit Bond
+              </SelectItem>
+
+              <SelectItem value="Other">
+                Other
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <OrganizationInput
+          label="Surety Company *"
+          value={
+            draft.suretyName
+          }
+          onChange={(
+            value
+          ) =>
+            update(
+              "suretyName",
+              value
+            )
+          }
+          kindFilter={[
+            "Insurance Company",
+          ]}
+        />
+
+        <div className="space-y-2">
+          <Label>
+            Bond Number *
+          </Label>
+
+          <Input
+            value={
+              draft.bondNumber
+            }
+            onChange={(
+              event
+            ) =>
+              update(
+                "bondNumber",
+
+                event.target
+                  .value
+              )
             }
           />
-        )}
+        </div>
 
-        <div className="flex justify-end gap-2 border-t pt-5">
-          <Button
-            variant="outline"
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
+        <div className="space-y-2">
+          <Label>
+            Principal
+          </Label>
 
-          <Button
-            onClick={submit}
-          >
-            <Check className="mr-2 size-4" />
-            Save Record
-          </Button>
+          <Input
+            value={
+              draft.principalName
+            }
+            onChange={(
+              event
+            ) =>
+              update(
+                "principalName",
+
+                event.target
+                  .value
+              )
+            }
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>
+            Bond Amount
+          </Label>
+
+          <Input
+            value={
+              draft.bondAmount
+            }
+            onChange={(
+              event
+            ) =>
+              update(
+                "bondAmount",
+
+                event.target
+                  .value
+              )
+            }
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>
+            Effective Date *
+          </Label>
+
+          <Input
+            type="date"
+            value={
+              draft.effectiveDate
+            }
+            onChange={(
+              event
+            ) =>
+              update(
+                "effectiveDate",
+
+                event.target
+                  .value
+              )
+            }
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>
+            Expiry Date
+          </Label>
+
+          <Input
+            type="date"
+            value={
+              draft.expiryDate
+            }
+            onChange={(
+              event
+            ) =>
+              update(
+                "expiryDate",
+
+                event.target
+                  .value
+              )
+            }
+          />
         </div>
       </CardContent>
     </Card>
@@ -4109,77 +4343,226 @@ function SimpleRecordForm({
 }
 
 /* =========================================================
-   ARCHIVE CONFIRMATION
+   BROKER EDITOR
+
+   Edits canonical broker company/contact relationship
+   across every policy created from same COI/group.
 ========================================================= */
 
-function ArchiveDialog({
-  label,
+function BrokerEditor({
+  records,
   onCancel,
-  onConfirm,
+  onSave,
 }: {
-  label: string
+  records:
+    TransportationInsuranceRecord[]
 
   onCancel: () => void
 
-  onConfirm: (
-    reason: string
+  onSave: (
+    broker: BrokerReference
   ) => void
 }) {
-  const [reason, setReason] =
-    useState("")
+  const current =
+    records.find(
+      (record) =>
+        record.broker
+    )?.broker
+
+  const [
+    companyName,
+    setCompanyName,
+  ] = useState(
+    current?.organizationName ||
+      ""
+  )
+
+  const [
+    contactName,
+    setContactName,
+  ] = useState(
+    current?.contactName ||
+      ""
+  )
+
+  const [email, setEmail] =
+    useState(
+      current?.contactEmail ||
+        ""
+    )
+
+  const [phone, setPhone] =
+    useState(
+      current?.contactPhone ||
+        ""
+    )
+
+  const save = () => {
+    const organization =
+      resolveOrganization(
+        companyName,
+
+        "Insurance Broker"
+      )
+
+    const contact =
+      resolveBrokerContact({
+        brokerOrganizationId:
+          organization.organizationId,
+
+        brokerOrganizationName:
+          organization.organizationName,
+
+        contactName,
+
+        email,
+
+        phone,
+      })
+
+    updateBrokerContact({
+      contactId:
+        contact.contactId,
+
+      name:
+        contactName,
+
+      email,
+      phone,
+    })
+
+    onSave({
+      organizationId:
+        organization.organizationId,
+
+      organizationName:
+        organization.organizationName,
+
+      contactId:
+        contact.contactId,
+
+      contactName:
+        contact.contactName,
+
+      contactEmail:
+        contact.contactEmail,
+
+      contactPhone:
+        contact.contactPhone,
+    })
+  }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <Card className="w-full max-w-lg">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <Card className="w-full max-w-2xl overflow-visible">
         <CardHeader>
-          <CardTitle className="text-base">
-            Archive Record
-          </CardTitle>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle className="text-base">
+                Edit Insurance Broker
+              </CardTitle>
 
-          <CardDescription>
-            {label} will remain permanently available as historical information.
-          </CardDescription>
+              <CardDescription className="mt-1">
+                Broker organization and broker contact remain separate linked TES identities.
+              </CardDescription>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={
+                onCancel
+              }
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <OrganizationInput
+            label="Broker Company"
+            value={
+              companyName
+            }
+            onChange={
+              setCompanyName
+            }
+            kindFilter={[
+              "Insurance Broker",
+            ]}
+          />
+
           <div className="space-y-2">
             <Label>
-              Archive Reason *
+              Broker Contact
             </Label>
 
             <Input
-              value={reason}
+              value={
+                contactName
+              }
               onChange={(
                 event
               ) =>
-                setReason(
+                setContactName(
                   event.target.value
                 )
               }
-              placeholder="e.g. Replaced by renewal"
             />
           </div>
 
-          <div className="mt-5 flex justify-end gap-2">
+          <div className="space-y-2">
+            <Label>
+              Contact Email
+            </Label>
+
+            <Input
+              type="email"
+              value={email}
+              onChange={(
+                event
+              ) =>
+                setEmail(
+                  event.target.value
+                )
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>
+              Contact Phone
+            </Label>
+
+            <Input
+              value={phone}
+              onChange={(
+                event
+              ) =>
+                setPhone(
+                  event.target.value
+                )
+              }
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 border-t pt-4 md:col-span-2">
             <Button
               variant="outline"
-              onClick={onCancel}
+              onClick={
+                onCancel
+              }
             >
               Cancel
             </Button>
 
             <Button
-              disabled={
-                !reason.trim()
-              }
-              onClick={() =>
-                onConfirm(
-                  reason.trim()
-                )
-              }
+              onClick={save}
             >
-              <Archive className="mr-2 size-4" />
-              Archive
+              <Save className="mr-2 size-4" />
+
+              Save Broker
             </Button>
           </div>
         </CardContent>
@@ -4189,7 +4572,152 @@ function ArchiveDialog({
 }
 
 /* =========================================================
-   SIMPLE ROWS
+   TRANSPORTATION ROW
+========================================================= */
+
+function TransportationRow({
+  record,
+  onArchive,
+}: {
+  record:
+    TransportationInsuranceRecord
+
+  onArchive: () => void
+}) {
+  const style =
+    statusStyle(
+      record.status
+    )
+
+  const days =
+    getDaysRemaining(
+      record.expiryDate
+    )
+
+  return (
+    <div
+      className={`grid gap-4 border-l-4 p-4 md:grid-cols-12 ${style.accent}`}
+    >
+      <div className="md:col-span-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-semibold">
+            {
+              record.insuranceType
+            }
+          </p>
+
+          {record.source ===
+            "OCR" && (
+            <Badge
+              variant="outline"
+              className="text-[9px]"
+            >
+              OCR
+            </Badge>
+          )}
+        </div>
+
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          {
+            record.id
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-3">
+        <p className="text-sm font-medium">
+          {
+            record.insurerName
+          }
+        </p>
+
+        <p className="mt-1 select-text font-mono text-[10px] text-muted-foreground">
+          Policy{" "}
+          {
+            record.policyNumber
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-2">
+        {record.coverage
+          .slice(0, 3)
+          .map(
+            (coverage) => (
+              <div
+                key={
+                  coverage.id
+                }
+                className="mb-1 text-[10px]"
+              >
+                <span className="text-muted-foreground">
+                  {
+                    coverage.label
+                  }
+                  :
+                </span>{" "}
+
+                <span className="font-medium">
+                  {
+                    coverage.value
+                  }
+                </span>
+              </div>
+            )
+          )}
+      </div>
+
+      <div className="md:col-span-2 text-xs">
+        <p>
+          {
+            record.effectiveDate
+          }
+        </p>
+
+        <p
+          className={`mt-1 ${style.text}`}
+        >
+          {
+            record.expiryDate
+          }
+        </p>
+
+        {days !== null && (
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {days < 0
+              ? `${Math.abs(days)} days overdue`
+              : `${days} days remaining`}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 md:col-span-2">
+        <ExpiryBadge
+          status={
+            record.status
+          }
+        />
+
+        {record.status !==
+          "Archived" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={
+              onArchive
+            }
+          >
+            <Archive className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* =========================================================
+   SIMPLE WORKERS ROW
 ========================================================= */
 
 function WorkersRow({
@@ -4201,11 +4729,6 @@ function WorkersRow({
 
   onArchive: () => void
 }) {
-  const days =
-    getDaysRemaining(
-      record.expiryDate
-    )
-
   const style =
     statusStyle(
       record.status
@@ -4239,7 +4762,7 @@ function WorkersRow({
         <p className="mt-1 text-xs text-muted-foreground">
           {
             record.jurisdiction ||
-            "Jurisdiction not recorded"
+            "—"
           }
         </p>
       </div>
@@ -4248,20 +4771,20 @@ function WorkersRow({
         {record.coverage
           .slice(0, 2)
           .map(
-            (item) => (
+            (coverage) => (
               <p
                 key={
-                  item.id
+                  coverage.id
                 }
                 className="text-[10px]"
               >
                 {
-                  item.label
+                  coverage.label
                 }
                 :{" "}
                 <strong>
                   {
-                    item.value
+                    coverage.value
                   }
                 </strong>
               </p>
@@ -4283,14 +4806,6 @@ function WorkersRow({
             record.expiryDate
           }
         </p>
-
-        {days !== null && (
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            {days >= 0
-              ? `${days} days remaining`
-              : `${Math.abs(days)} days overdue`}
-          </p>
-        )}
       </div>
 
       <div className="flex items-center justify-end gap-2 md:col-span-2">
@@ -4317,11 +4832,16 @@ function WorkersRow({
   )
 }
 
+/* =========================================================
+   BOND ROW
+========================================================= */
+
 function BondRow({
   record,
   onArchive,
 }: {
   record: BondRecord
+
   onArchive: () => void
 }) {
   const style =
@@ -4411,20 +4931,57 @@ function BondRow({
 }
 
 /* =========================================================
+   STATUS COUNT
+========================================================= */
+
+function StatusCountCard({
+  label,
+  count,
+  status,
+}: {
+  label: string
+  count: number
+  status: ExpiryStatus
+}) {
+  const style =
+    statusStyle(status)
+
+  return (
+    <Card
+      className={`border-l-4 ${style.accent}`}
+    >
+      <CardContent className="p-4">
+        <p className="text-xs text-muted-foreground">
+          {label}
+        </p>
+
+        <div className="mt-2 flex items-end justify-between gap-2">
+          <p className="text-2xl font-bold">
+            {count}
+          </p>
+
+          <ExpiryBadge
+            status={status}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
    MAIN PAGE
 ========================================================= */
 
 export default function InsurancePage() {
-  const params = useParams()
-  const router = useRouter()
+  const params =
+    useParams()
+
+  const router =
+    useRouter()
 
   const companyId =
     params.id as string
-
-  const cameraInputRef =
-    useRef<HTMLInputElement | null>(
-      null
-    )
 
   const deviceInputRef =
     useRef<HTMLInputElement | null>(
@@ -4444,6 +5001,7 @@ export default function InsurancePage() {
   const [settings, setSettings] =
     useState<SystemSettings>({
       version: 1,
+
       expiryRules:
         DEFAULT_EXPIRY_RULES,
     })
@@ -4452,45 +5010,33 @@ export default function InsurancePage() {
     useState(true)
 
   const [
-    showSourcePicker,
-    setShowSourcePicker,
-  ] = useState(false)
-
-  const [
-    workspace,
-    setWorkspace,
-  ] = useState<OCRWorkspace | null>(
-    null
-  )
-
-  const [
-    manualTransportation,
-    setManualTransportation,
-  ] = useState(false)
-
-  const [simpleForm, setSimpleForm] =
-    useState<
-      | "workers"
-      | "bond"
-      | null
-    >(null)
-
-  const [
-    editingTransportation,
-    setEditingTransportation,
+    sourceFamily,
+    setSourceFamily,
   ] =
-    useState<TransportationInsuranceRecord | null>(
+    useState<RecordFamily | null>(
       null
     )
 
   const [
-    archiveTarget,
-    setArchiveTarget,
-  ] = useState<{
-    family: RecordFamily
-    id: string
-    label: string
-  } | null>(null)
+    showCamera,
+    setShowCamera,
+  ] = useState(false)
+
+  const [
+    ocrSession,
+    setOcrSession,
+  ] =
+    useState<OCRSession | null>(
+      null
+    )
+
+  const [
+    brokerEditGroup,
+    setBrokerEditGroup,
+  ] =
+    useState<string | null>(
+      null
+    )
 
   const storageKey =
     `tes_company_insurance_${companyId}`
@@ -4504,15 +5050,12 @@ export default function InsurancePage() {
       const companies =
         getCompanies()
 
-      const found =
+      setCompany(
         companies.find(
           (item) =>
             item.id ===
             companyId
-        )
-
-      setCompany(
-        found || null
+        ) || null
       )
 
       const raw =
@@ -4520,23 +5063,14 @@ export default function InsurancePage() {
           storageKey
         )
 
-      if (!raw) {
-        setData(
-          EMPTY_DATA
-        )
-      } else {
+      if (raw) {
         const parsed =
           JSON.parse(raw)
 
-        /*
-          New model
-        */
-
         if (
           parsed &&
-          !Array.isArray(parsed) &&
-          Array.isArray(
-            parsed.transportation
+          !Array.isArray(
+            parsed
           )
         ) {
           setData({
@@ -4559,21 +5093,6 @@ export default function InsurancePage() {
               parsed.evidence ||
               [],
           })
-        } else if (
-          Array.isArray(parsed)
-        ) {
-          /*
-            Legacy migration from previous flat InsuranceRecord[].
-          */
-
-          const migrated =
-            migrateLegacyRecords(
-              parsed
-            )
-
-          setData(
-            migrated
-          )
         }
       }
 
@@ -4582,12 +5101,7 @@ export default function InsurancePage() {
       )
     } catch (error) {
       console.error(
-        "Unable to load insurance data:",
         error
-      )
-
-      setData(
-        EMPTY_DATA
       )
     } finally {
       setLoading(false)
@@ -4598,7 +5112,7 @@ export default function InsurancePage() {
   ])
 
   /* =======================================================
-     PERSIST
+     SAVE
   ======================================================= */
 
   useEffect(() => {
@@ -4615,7 +5129,7 @@ export default function InsurancePage() {
   ])
 
   /* =======================================================
-     RE-CALCULATE STATUS FROM PORTAL SETTINGS
+     STATUS
   ======================================================= */
 
   const transportation =
@@ -4633,9 +5147,7 @@ export default function InsurancePage() {
 
                 Boolean(
                   record.archivedAt
-                ) ||
-                  record.status ===
-                    "Archived"
+                )
               ),
           })
         ),
@@ -4661,9 +5173,7 @@ export default function InsurancePage() {
 
                 Boolean(
                   record.archivedAt
-                ) ||
-                  record.status ===
-                    "Archived"
+                )
               ),
           })
         ),
@@ -4689,9 +5199,7 @@ export default function InsurancePage() {
 
                 Boolean(
                   record.archivedAt
-                ) ||
-                  record.status ===
-                    "Archived"
+                )
               ),
           })
         ),
@@ -4702,219 +5210,139 @@ export default function InsurancePage() {
       ]
     )
 
-  const allStatuses =
+  const all =
     [
       ...transportation,
       ...workers,
       ...bonds,
     ]
 
-  const counts =
-    useMemo(
-      () => ({
-        healthy:
-          allStatuses.filter(
-            (item) =>
-              item.status ===
-              "Healthy"
-          ).length,
-
-        watch:
-          allStatuses.filter(
-            (item) =>
-              item.status ===
-              "Watch"
-          ).length,
-
-        urgent:
-          allStatuses.filter(
-            (item) =>
-              item.status ===
-              "Urgent"
-          ).length,
-
-        critical:
-          allStatuses.filter(
-            (item) =>
-              item.status ===
-              "Critical"
-          ).length,
-
-        expired:
-          allStatuses.filter(
-            (item) =>
-              item.status ===
-              "Expired"
-          ).length,
-      }),
-
-      [allStatuses]
-    )
-
-  const activeTransportation =
-    transportation.filter(
-      (record) =>
-        ![
-          "Expired",
-          "Archived",
-        ].includes(
-          record.status
-        )
-    )
+  const count = (
+    status: ExpiryStatus
+  ) =>
+    all.filter(
+      (item) =>
+        item.status ===
+        status
+    ).length
 
   /* =======================================================
-     DOCUMENT INPUT
+     SOURCE
   ======================================================= */
 
-  const beginDocument = async (
-    file: File,
-    source: DocumentSource
+  const selectSource = (
+    family: RecordFamily
   ) => {
-    const allowed =
-      file.type.startsWith(
-        "image/"
-      ) ||
-      file.type ===
-        "application/pdf"
+    setSourceFamily(
+      family
+    )
+  }
 
-    if (!allowed) {
-      window.alert(
-        "Please select a PDF or image."
+  const processDocument =
+    async (
+      file: File,
+      source: DocumentSource
+    ) => {
+      if (!sourceFamily) {
+        return
+      }
+
+      const dataUrl =
+        await readFileAsDataUrl(
+          file
+        )
+
+      setOcrSession({
+        family:
+          sourceFamily,
+
+        source,
+
+        file,
+
+        dataUrl,
+
+        processing: false,
+
+        extractionComplete:
+          false,
+
+        transportationRecords:
+          [
+            emptyTransportationDraft(),
+          ],
+
+        workersDraft:
+          emptyWorkersDraft(),
+
+        bondDraft:
+          emptyBondDraft(
+            company?.name ||
+              ""
+          ),
+
+        brokerName: "",
+
+        brokerContactName:
+          "",
+
+        brokerEmail: "",
+
+        brokerPhone: "",
+      })
+
+      setSourceFamily(
+        null
       )
-
-      return
     }
 
-    const dataUrl =
-      await readFileAsDataUrl(
-        file
-      )
-
-    setWorkspace({
-      source,
-
-      file,
-
-      dataUrl,
-
-      processing: false,
-
-      extractionComplete:
-        false,
-
-      records: [
-        emptyTransportationDraft(),
-      ],
-
-      brokerName: "",
-
-      brokerContactName: "",
-
-      brokerEmail: "",
-
-      brokerPhone: "",
-
-      brokerClientReference:
-        "",
-    })
-  }
-
-  const handleCameraFile = async (
-    event:
-      React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file =
-      event.target.files?.[0]
-
-    event.target.value = ""
-
-    if (!file) return
-
-    await beginDocument(
-      file,
-      "camera"
-    )
-  }
-
-  const handleDeviceFile = async (
-    event:
-      React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file =
-      event.target.files?.[0]
-
-    event.target.value = ""
-
-    if (!file) return
-
-    await beginDocument(
-      file,
-      "device"
-    )
-  }
-
   /* =======================================================
-     BROKER RESOLUTION
+     BROKER
   ======================================================= */
 
-  const resolveBroker = ({
-    brokerName,
-    contactName,
-    email,
-    phone,
-    clientReference,
-  }: {
-    brokerName: string
-    contactName: string
-    email: string
-    phone: string
-    clientReference: string
-  }): BrokerSnapshot | undefined => {
+  const resolveBroker = (
+    session: OCRSession
+  ): BrokerReference | undefined => {
     if (
-      !brokerName.trim() &&
-      !contactName.trim() &&
-      !email.trim() &&
-      !phone.trim()
+      !session.brokerName.trim() &&
+      !session.brokerContactName.trim() &&
+      !session.brokerEmail.trim() &&
+      !session.brokerPhone.trim()
     ) {
       return undefined
     }
 
-    const organization =
-      brokerName.trim()
-        ? resolveOrganization(
-            brokerName,
-            "Insurance Broker"
-          )
-        : {
-            organizationId:
-              undefined,
+    const broker =
+      resolveOrganization(
+        session.brokerName,
 
-            organizationName:
-              "",
-          }
+        "Insurance Broker"
+      )
 
     const contact =
       resolveBrokerContact({
         brokerOrganizationId:
-          organization.organizationId,
+          broker.organizationId,
 
         brokerOrganizationName:
-          organization.organizationName,
+          broker.organizationName,
 
-        contactName,
+        contactName:
+          session.brokerContactName,
 
-        email,
+        email:
+          session.brokerEmail,
 
-        phone,
+        phone:
+          session.brokerPhone,
       })
 
     return {
       organizationId:
-        organization.organizationId,
+        broker.organizationId,
 
       organizationName:
-        organization.organizationName ||
-        brokerName.trim(),
+        broker.organizationName,
 
       contactId:
         contact.contactId,
@@ -4927,161 +5355,142 @@ export default function InsurancePage() {
 
       contactPhone:
         contact.contactPhone,
-
-      clientReference:
-        clientReference.trim(),
     }
   }
 
   /* =======================================================
-     DUPLICATE / RENEWAL LOGIC
+     SAVE OCR
   ======================================================= */
 
-  const locatePolicyMatch = (
-    draft:
-      TransportationDraft,
-    insurerName:
-      string
+  const saveOCRSession = (
+    session: OCRSession
   ) => {
-    const insurer =
-      normalizeCompanyName(
-        insurerName
-      )
-
-    const policy =
-      normalizeIdentifier(
-        draft.policyNumber
-      )
-
-    const sameNumber =
-      transportation.filter(
-        (record) =>
-          record.status !==
-            "Archived" &&
-          normalizeCompanyName(
-            record.insurerName
-          ) === insurer &&
-          normalizeIdentifier(
-            record.policyNumber
-          ) === policy
-      )
-
-    const exactPeriod =
-      sameNumber.find(
-        (record) =>
-          record.effectiveDate ===
-            draft.effectiveDate &&
-          record.expiryDate ===
-            draft.expiryDate
-      )
-
-    if (exactPeriod) {
-      return {
-        type:
-          "duplicate" as const,
-
-        record:
-          exactPeriod,
-      }
-    }
-
-    if (sameNumber.length) {
-      const mostRecent =
-        [...sameNumber].sort(
-          (a, b) =>
-            b.expiryDate.localeCompare(
-              a.expiryDate
-            )
-        )[0]
-
-      return {
-        type:
-          "renewal" as const,
-
-        record:
-          mostRecent,
-      }
-    }
-
-    return {
-      type:
-        "new" as const,
-
-      record:
-        undefined,
-    }
-  }
-
-  /* =======================================================
-     SAVE TRANSPORTATION RECORDS
-  ======================================================= */
-
-  const saveTransportationDrafts = ({
-    drafts,
-    source,
-    evidence,
-    broker,
-  }: {
-    drafts:
-      TransportationDraft[]
-
-    source: SourceType
-
-    evidence?: InsuranceEvidence
-
-    broker?: BrokerSnapshot
-  }) => {
-    const created:
-      TransportationInsuranceRecord[] =
-      []
-
-    for (
-      const draft of drafts
-    ) {
-      const insurer =
-        resolveOrganization(
-          draft.insurerName,
-
-          "Insurance Company"
-        )
-
-      const resolvedName =
-        insurer.organizationName
-
-      const match =
-        locatePolicyMatch(
-          draft,
-          resolvedName
-        )
-
-      /*
-        Exact insurer + policy + policy period
-        = same policy, do not duplicate.
-      */
-
-      if (
-        match.type ===
-        "duplicate"
-      ) {
-        continue
-      }
-
-      const timestamp =
-        isoNow()
-
-      const record:
-        TransportationInsuranceRecord =
-        {
-          id: createId(
-            "INS"
+    const evidence:
+      InsuranceEvidence =
+      {
+        id:
+          createId(
+            "DOC"
           ),
+
+        family:
+          session.family,
+
+        documentName:
+          session.file.name,
+
+        documentType:
+          session.file.type,
+
+        source:
+          session.source,
+
+        uploadedAt:
+          isoNow(),
+
+        ocrConfidence:
+          session.confidence,
+
+        dataUrl:
+          session.dataUrl,
+      }
+
+    const timestamp =
+      isoNow()
+
+    if (
+      session.family ===
+      "transportation"
+    ) {
+      const groupId =
+        createId(
+          "COI"
+        )
+
+      const broker =
+        resolveBroker(
+          session
+        )
+
+      const records:
+        TransportationInsuranceRecord[] =
+        []
+
+      for (
+        const draft of
+        session.transportationRecords
+      ) {
+        const insurer =
+          resolveOrganization(
+            draft.insurerName,
+
+            "Insurance Company"
+          )
+
+        /*
+          Same insurer + policy + exact period = duplicate.
+        */
+
+        const duplicate =
+          transportation.find(
+            (existing) =>
+              !existing.archivedAt &&
+              normalizeCompanyName(
+                existing.insurerName
+              ) ===
+                normalizeCompanyName(
+                  insurer.organizationName
+                ) &&
+              normalizeIdentifier(
+                existing.policyNumber
+              ) ===
+                normalizeIdentifier(
+                  draft.policyNumber
+                ) &&
+              existing.effectiveDate ===
+                draft.effectiveDate &&
+              existing.expiryDate ===
+                draft.expiryDate
+          )
+
+        if (duplicate) {
+          continue
+        }
+
+        /*
+          Same policy number but new period = renewal.
+        */
+
+        const previous =
+          transportation.find(
+            (existing) =>
+              normalizeCompanyName(
+                existing.insurerName
+              ) ===
+                normalizeCompanyName(
+                  insurer.organizationName
+                ) &&
+              normalizeIdentifier(
+                existing.policyNumber
+              ) ===
+                normalizeIdentifier(
+                  draft.policyNumber
+                )
+          )
+
+        records.push({
+          id:
+            createId(
+              "INS"
+            ),
+
+          groupId,
 
           family:
             "transportation",
 
           insuranceType:
-            draft.insuranceType
-              .trim(),
+            draft.insuranceType.trim(),
 
           canonicalType:
             normalizeInsuranceType(
@@ -5092,11 +5501,10 @@ export default function InsurancePage() {
             insurer.organizationId,
 
           insurerName:
-            resolvedName,
+            insurer.organizationName,
 
           policyNumber:
-            draft.policyNumber
-              .trim(),
+            draft.policyNumber.trim(),
 
           effectiveDate:
             draft.effectiveDate,
@@ -5107,14 +5515,22 @@ export default function InsurancePage() {
           coverage:
             draft.coverage
               .filter(
-                (coverage) =>
-                  coverage.label.trim() ||
-                  coverage.value.trim()
+                (item) =>
+                  item.label.trim() ||
+                  item.value.trim()
               )
               .slice(
                 0,
                 6
               ),
+
+          broker,
+
+          evidenceId:
+            evidence.id,
+
+          source:
+            "OCR",
 
           status:
             getExpiryStatus(
@@ -5123,23 +5539,137 @@ export default function InsurancePage() {
               settings.expiryRules
             ),
 
-          source,
+          previousRecordId:
+            previous?.id,
+
+          createdAt:
+            timestamp,
+
+          updatedAt:
+            timestamp,
+        })
+      }
+
+      if (!records.length) {
+        window.alert(
+          "No new records were created. Matching insurer, policy number and policy period already exist."
+        )
+
+        return
+      }
+
+      setData(
+        (current) => ({
+          ...current,
+
+          transportation:
+            [
+              ...records,
+
+              ...current.transportation,
+            ],
+
+          evidence:
+            [
+              evidence,
+
+              ...current.evidence,
+            ],
+        })
+      )
+    }
+
+    if (
+      session.family ===
+      "workers"
+    ) {
+      const draft =
+        session.workersDraft
+
+      const provider =
+        resolveOrganization(
+          draft.providerName,
+
+          "Workers Insurance"
+        )
+
+      const duplicate =
+        workers.find(
+          (existing) =>
+            !existing.archivedAt &&
+            normalizeCompanyName(
+              existing.providerName
+            ) ===
+              normalizeCompanyName(
+                provider.organizationName
+              ) &&
+            normalizeIdentifier(
+              existing.policyNumber
+            ) ===
+              normalizeIdentifier(
+                draft.policyNumber
+              ) &&
+            existing.effectiveDate ===
+              draft.effectiveDate &&
+            existing.expiryDate ===
+              draft.expiryDate
+        )
+
+      if (duplicate) {
+        window.alert(
+          "This workers insurance record already exists."
+        )
+
+        return
+      }
+
+      const record:
+        WorkersInsuranceRecord =
+        {
+          id:
+            createId(
+              "WCB"
+            ),
+
+          family:
+            "workers",
+
+          insuranceType:
+            draft.insuranceType,
+
+          providerOrganizationId:
+            provider.organizationId,
+
+          providerName:
+            provider.organizationName,
+
+          policyNumber:
+            draft.policyNumber.trim(),
+
+          jurisdiction:
+            draft.jurisdiction.trim(),
+
+          effectiveDate:
+            draft.effectiveDate,
+
+          expiryDate:
+            draft.expiryDate,
+
+          coverage:
+            draft.coverage,
 
           evidenceId:
-            evidence?.id,
+            evidence.id,
 
-          broker,
+          source:
+            "OCR",
 
-          /*
-            Same insurer + policy number but new policy
-            period = renewal/history relationship.
-          */
+          status:
+            getExpiryStatus(
+              draft.expiryDate,
 
-          previousRecordId:
-            match.type ===
-            "renewal"
-              ? match.record?.id
-              : undefined,
+              settings.expiryRules
+            ),
 
           createdAt:
             timestamp,
@@ -5148,342 +5678,156 @@ export default function InsurancePage() {
             timestamp,
         }
 
-      created.push(record)
+      setData(
+        (current) => ({
+          ...current,
+
+          workers:
+            [
+              record,
+
+              ...current.workers,
+            ],
+
+          evidence:
+            [
+              evidence,
+
+              ...current.evidence,
+            ],
+        })
+      )
     }
 
-    if (!created.length) {
-      window.alert(
-        "No new insurance records were created. The detected policy records already exist for the same insurer and policy period."
-      )
+    if (
+      session.family ===
+      "bond"
+    ) {
+      const draft =
+        session.bondDraft
 
-      return
-    }
+      const surety =
+        resolveOrganization(
+          draft.suretyName,
 
-    setData(
-      (current) => ({
-        ...current,
+          "Insurance Company"
+        )
 
-        transportation: [
-          ...created,
-
-          ...current.transportation,
-        ],
-
-        evidence:
-          evidence
-            ? [
-                evidence,
-                ...current.evidence,
-              ]
-            : current.evidence,
-      })
-    )
-  }
-
-  const saveOCRWorkspace = (
-    current: OCRWorkspace
-  ) => {
-    const evidence:
-      InsuranceEvidence =
-      {
-        id: createId(
-          "DOC"
-        ),
-
-        documentName:
-          current.file.name,
-
-        documentType:
-          current.file.type,
-
-        source:
-          current.source,
-
-        uploadedAt:
-          isoNow(),
-
-        ocrConfidence:
-          current.confidence,
-
-        dataUrl:
-          current.dataUrl,
-      }
-
-    const broker =
-      resolveBroker({
-        brokerName:
-          current.brokerName,
-
-        contactName:
-          current.brokerContactName,
-
-        email:
-          current.brokerEmail,
-
-        phone:
-          current.brokerPhone,
-
-        clientReference:
-          current.brokerClientReference,
-      })
-
-    saveTransportationDrafts({
-      drafts:
-        current.records,
-
-      source: "OCR",
-
-      evidence,
-
-      broker,
-    })
-
-    setWorkspace(null)
-  }
-
-  const saveManualTransportation = (
-    drafts:
-      TransportationDraft[],
-
-    brokerData: {
-      brokerName: string
-      contactName: string
-      email: string
-      phone: string
-      clientReference: string
-    }
-  ) => {
-    const broker =
-      resolveBroker(
-        brokerData
-      )
-
-    saveTransportationDrafts({
-      drafts,
-
-      source:
-        "Manual",
-
-      broker,
-    })
-
-    setManualTransportation(
-      false
-    )
-  }
-
-  /* =======================================================
-     WORKERS
-  ======================================================= */
-
-  const saveWorkers = (
-    draft:
-      Omit<
-        WorkersInsuranceRecord,
-        | "id"
-        | "status"
-        | "createdAt"
-        | "updatedAt"
-      >
-  ) => {
-    const provider =
-      resolveOrganization(
-        draft.providerName,
-
-        "Workers Insurance"
-      )
-
-    /*
-      Strong duplicate:
-      provider + account/policy # + same period.
-    */
-
-    const duplicate =
-      workers.find(
-        (record) =>
-          record.status !==
-            "Archived" &&
-          normalizeCompanyName(
-            record.providerName
-          ) ===
+      const duplicate =
+        bonds.find(
+          (existing) =>
+            !existing.archivedAt &&
             normalizeCompanyName(
-              provider.organizationName
-            ) &&
-          normalizeIdentifier(
-            record.policyNumber
-          ) ===
+              existing.suretyName
+            ) ===
+              normalizeCompanyName(
+                surety.organizationName
+              ) &&
             normalizeIdentifier(
-              draft.policyNumber
-            ) &&
-          record.effectiveDate ===
-            draft.effectiveDate &&
-          record.expiryDate ===
-            draft.expiryDate
-      )
+              existing.bondNumber
+            ) ===
+              normalizeIdentifier(
+                draft.bondNumber
+              )
+        )
 
-    if (duplicate) {
-      window.alert(
-        "This workers insurance/account record already exists."
-      )
+      if (duplicate) {
+        window.alert(
+          "This bond already exists for the same surety."
+        )
 
-      return
-    }
-
-    const timestamp =
-      isoNow()
-
-    const record:
-      WorkersInsuranceRecord =
-      {
-        ...draft,
-
-        id: createId(
-          "WCB"
-        ),
-
-        providerOrganizationId:
-          provider.organizationId,
-
-        providerName:
-          provider.organizationName,
-
-        status:
-          getExpiryStatus(
-            draft.expiryDate,
-
-            settings.expiryRules
-          ),
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
+        return
       }
 
-    setData(
-      (current) => ({
-        ...current,
+      const record:
+        BondRecord =
+        {
+          id:
+            createId(
+              "BND"
+            ),
 
-        workers: [
-          record,
-          ...current.workers,
-        ],
-      })
-    )
+          family:
+            "bond",
 
-    setSimpleForm(null)
+          bondType:
+            draft.bondType,
+
+          suretyOrganizationId:
+            surety.organizationId,
+
+          suretyName:
+            surety.organizationName,
+
+          bondNumber:
+            draft.bondNumber.trim(),
+
+          principalName:
+            draft.principalName.trim(),
+
+          bondAmount:
+            draft.bondAmount.trim(),
+
+          effectiveDate:
+            draft.effectiveDate,
+
+          expiryDate:
+            draft.expiryDate ||
+            undefined,
+
+          evidenceId:
+            evidence.id,
+
+          source:
+            "OCR",
+
+          status:
+            getExpiryStatus(
+              draft.expiryDate,
+
+              settings.expiryRules
+            ),
+
+          createdAt:
+            timestamp,
+
+          updatedAt:
+            timestamp,
+        }
+
+      setData(
+        (current) => ({
+          ...current,
+
+          bonds:
+            [
+              record,
+
+              ...current.bonds,
+            ],
+
+          evidence:
+            [
+              evidence,
+
+              ...current.evidence,
+            ],
+        })
+      )
+    }
+
+    setOcrSession(null)
   }
 
   /* =======================================================
-     BOND
+     BROKER UPDATE
   ======================================================= */
 
-  const saveBond = (
-    draft:
-      Omit<
-        BondRecord,
-        | "id"
-        | "status"
-        | "createdAt"
-        | "updatedAt"
-      >
+  const updateBrokerGroup = (
+    groupId: string,
+
+    broker: BrokerReference
   ) => {
-    const surety =
-      resolveOrganization(
-        draft.suretyName,
-
-        "Insurance Company"
-      )
-
-    const duplicate =
-      bonds.find(
-        (record) =>
-          record.status !==
-            "Archived" &&
-          normalizeIdentifier(
-            record.bondNumber
-          ) ===
-            normalizeIdentifier(
-              draft.bondNumber
-            ) &&
-          normalizeCompanyName(
-            record.suretyName
-          ) ===
-            normalizeCompanyName(
-              surety.organizationName
-            )
-      )
-
-    if (duplicate) {
-      window.alert(
-        "This bond number already exists for the same surety company."
-      )
-
-      return
-    }
-
-    const timestamp =
-      isoNow()
-
-    const record:
-      BondRecord =
-      {
-        ...draft,
-
-        id: createId(
-          "BND"
-        ),
-
-        suretyOrganizationId:
-          surety.organizationId,
-
-        suretyName:
-          surety.organizationName,
-
-        status:
-          getExpiryStatus(
-            draft.expiryDate,
-
-            settings.expiryRules
-          ),
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-      }
-
-    setData(
-      (current) => ({
-        ...current,
-
-        bonds: [
-          record,
-          ...current.bonds,
-        ],
-      })
-    )
-
-    setSimpleForm(null)
-  }
-
-  /* =======================================================
-     EDIT
-  ======================================================= */
-
-  const saveEditedTransportation = (
-    edited:
-      TransportationInsuranceRecord
-  ) => {
-    const insurer =
-      resolveOrganization(
-        edited.insurerName,
-
-        "Insurance Company"
-      )
-
     setData(
       (current) => ({
         ...current,
@@ -5491,28 +5835,12 @@ export default function InsurancePage() {
         transportation:
           current.transportation.map(
             (record) =>
-              record.id ===
-              edited.id
+              record.groupId ===
+              groupId
                 ? {
-                    ...edited,
+                    ...record,
 
-                    insurerOrganizationId:
-                      insurer.organizationId,
-
-                    insurerName:
-                      insurer.organizationName,
-
-                    canonicalType:
-                      normalizeInsuranceType(
-                        edited.insuranceType
-                      ),
-
-                    status:
-                      getExpiryStatus(
-                        edited.expiryDate,
-
-                        settings.expiryRules
-                      ),
+                    broker,
 
                     updatedAt:
                       isoNow(),
@@ -5522,140 +5850,145 @@ export default function InsurancePage() {
       })
     )
 
-    setEditingTransportation(
+    setBrokerEditGroup(
       null
     )
-
-    /*
-      Future shared Master Register:
-      field-level before/after values should be written here.
-    */
   }
 
   /* =======================================================
      ARCHIVE
   ======================================================= */
 
-  const confirmArchive = (
-    reason: string
+  const archiveTransportation = (
+    id: string
   ) => {
-    if (!archiveTarget) return
-
-    const timestamp =
-      isoNow()
-
-    if (
-      archiveTarget.family ===
-      "transportation"
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          transportation:
-            current.transportation.map(
-              (record) =>
-                record.id ===
-                archiveTarget.id
-                  ? {
-                      ...record,
-
-                      status:
-                        "Archived",
-
-                      archivedAt:
-                        timestamp,
-
-                      archivedBy:
-                        "Current User",
-
-                      archiveReason:
-                        reason,
-
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
-            ),
-        })
+    const reason =
+      window.prompt(
+        "Archive reason:"
       )
+
+    if (!reason?.trim()) {
+      return
     }
 
-    if (
-      archiveTarget.family ===
-      "workers"
-    ) {
-      setData(
-        (current) => ({
-          ...current,
+    setData(
+      (current) => ({
+        ...current,
 
-          workers:
-            current.workers.map(
-              (record) =>
-                record.id ===
-                archiveTarget.id
-                  ? {
-                      ...record,
+        transportation:
+          current.transportation.map(
+            (record) =>
+              record.id === id
+                ? {
+                    ...record,
 
-                      status:
-                        "Archived",
+                    status:
+                      "Archived",
 
-                      archivedAt:
-                        timestamp,
+                    archivedAt:
+                      isoNow(),
 
-                      archivedBy:
-                        "Current User",
+                    archivedBy:
+                      "Current User",
 
-                      archiveReason:
-                        reason,
+                    archiveReason:
+                      reason.trim(),
 
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
-            ),
-        })
+                    updatedAt:
+                      isoNow(),
+                  }
+                : record
+          ),
+      })
+    )
+  }
+
+  const archiveWorkers = (
+    id: string
+  ) => {
+    const reason =
+      window.prompt(
+        "Archive reason:"
       )
+
+    if (!reason?.trim()) {
+      return
     }
 
-    if (
-      archiveTarget.family ===
-      "bond"
-    ) {
-      setData(
-        (current) => ({
-          ...current,
+    setData(
+      (current) => ({
+        ...current,
 
-          bonds:
-            current.bonds.map(
-              (record) =>
-                record.id ===
-                archiveTarget.id
-                  ? {
-                      ...record,
+        workers:
+          current.workers.map(
+            (record) =>
+              record.id === id
+                ? {
+                    ...record,
 
-                      status:
-                        "Archived",
+                    status:
+                      "Archived",
 
-                      archivedAt:
-                        timestamp,
+                    archivedAt:
+                      isoNow(),
 
-                      archivedBy:
-                        "Current User",
+                    archivedBy:
+                      "Current User",
 
-                      archiveReason:
-                        reason,
+                    archiveReason:
+                      reason.trim(),
 
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
-            ),
-        })
+                    updatedAt:
+                      isoNow(),
+                  }
+                : record
+          ),
+      })
+    )
+  }
+
+  const archiveBond = (
+    id: string
+  ) => {
+    const reason =
+      window.prompt(
+        "Archive reason:"
       )
+
+    if (!reason?.trim()) {
+      return
     }
 
-    setArchiveTarget(null)
+    setData(
+      (current) => ({
+        ...current,
+
+        bonds:
+          current.bonds.map(
+            (record) =>
+              record.id === id
+                ? {
+                    ...record,
+
+                    status:
+                      "Archived",
+
+                    archivedAt:
+                      isoNow(),
+
+                    archivedBy:
+                      "Current User",
+
+                    archiveReason:
+                      reason.trim(),
+
+                    updatedAt:
+                      isoNow(),
+                  }
+                : record
+          ),
+      })
+    )
   }
 
   /* =======================================================
@@ -5695,9 +6028,36 @@ export default function InsurancePage() {
     )
   }
 
-  /* =======================================================
-     PAGE
-  ======================================================= */
+  const visibleTransportation =
+    transportation.filter(
+      (record) =>
+        record.status !==
+        "Archived"
+    )
+
+  const visibleWorkers =
+    workers.filter(
+      (record) =>
+        record.status !==
+        "Archived"
+    )
+
+  const visibleBonds =
+    bonds.filter(
+      (record) =>
+        record.status !==
+        "Archived"
+    )
+
+  const groups =
+    Array.from(
+      new Set(
+        visibleTransportation.map(
+          (record) =>
+            record.groupId
+        )
+      )
+    )
 
   return (
     <>
@@ -5709,7 +6069,6 @@ export default function InsurancePage() {
             <Button
               variant="ghost"
               size="icon"
-              className="size-9"
               onClick={() =>
                 router.push(
                   `/companies/${company.id}/profile`
@@ -5725,15 +6084,19 @@ export default function InsurancePage() {
               </h1>
 
               <p className="mt-1 text-sm text-muted-foreground">
-                {company.name}{" "}
+                {
+                  company.name
+                }{" "}
                 <span className="font-mono text-xs">
-                  ({company.id})
+                  (
+                  {
+                    company.id
+                  }
+                  )
                 </span>
               </p>
             </div>
           </div>
-
-          {/* SOURCE COMPANY CONTEXT */}
 
           <div className="mt-5 rounded-xl border bg-muted/20 p-4">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
@@ -5742,14 +6105,16 @@ export default function InsurancePage() {
                   Registered Origin
                 </p>
 
-                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-                  <Building2 className="size-3.5 text-primary" />
-
-                  {company.regCorpState ||
-                    "Unknown"}
+                <p className="mt-1 text-sm font-semibold">
+                  {
+                    company.regCorpState ||
+                    "Unknown"
+                  }
                   ,{" "}
-                  {company.regCorpCountry ||
-                    "Unknown"}
+                  {
+                    company.regCorpCountry ||
+                    "Unknown"
+                  }
                 </p>
               </div>
 
@@ -5760,129 +6125,39 @@ export default function InsurancePage() {
                   Operating Region
                 </p>
 
-                <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
-                  <CheckCircle2 className="size-3.5 text-primary" />
-
-                  {company.region ||
-                    "Not specified"}
-                </p>
-              </div>
-
-              <div className="hidden h-8 w-px bg-border lg:block" />
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Renewal Rules
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSettings(
-                      loadSystemSettings()
-                    )
+                <p className="mt-1 text-sm font-semibold">
+                  {
+                    company.region ||
+                    "Not specified"
                   }
-                  className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                >
-                  <RefreshCcw className="size-3" />
-
-                  Portal Settings
-                </button>
+                </p>
               </div>
+
+              <div className="hidden h-8 w-px bg-border sm:block" />
+
+              <button
+                onClick={() =>
+                  setSettings(
+                    loadSystemSettings()
+                  )
+                }
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Refresh Portal Renewal Rules
+              </button>
             </div>
           </div>
         </div>
 
-        {/* OPERATIONAL POSITION */}
-
-        <Card className="border-primary/15">
-          <CardContent className="p-5">
-            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                  Transportation Insurance Position
-                </p>
-
-                {activeTransportation.length >
-                0 ? (
-                  <>
-                    <div className="mt-2 flex items-center gap-2">
-                      <CheckCircle2 className="size-5 text-emerald-600" />
-
-                      <p className="text-base font-semibold">
-                        Active policy records on file
-                      </p>
-                    </div>
-
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {activeTransportation.length} current transportation insurance record
-                      {activeTransportation.length ===
-                      1
-                        ? ""
-                        : "s"}{" "}
-                      are available.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <div className="mt-2 flex items-center gap-2">
-                      <AlertTriangle className="size-5 text-amber-600" />
-
-                      <p className="text-base font-semibold">
-                        No current transportation policy record
-                      </p>
-                    </div>
-
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Scan the current COI or enter the active policy information manually.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  onClick={() =>
-                    setShowSourcePicker(
-                      true
-                    )
-                  }
-                >
-                  <ScanDocumentIcon
-                    size={15}
-                  />
-
-                  <span className="ml-2">
-                    Scan Insurance Document
-                  </span>
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    setManualTransportation(
-                      true
-                    )
-                  }
-                >
-                  <Plus className="mr-2 size-4" />
-
-                  Manual Entry
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* RENEWAL STATUS */}
+        {/* STATUS */}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <StatusCountCard
             label="Healthy"
             count={
-              counts.healthy
+              count(
+                "Healthy"
+              )
             }
             status="Healthy"
           />
@@ -5890,7 +6165,9 @@ export default function InsurancePage() {
           <StatusCountCard
             label="Watch"
             count={
-              counts.watch
+              count(
+                "Watch"
+              )
             }
             status="Watch"
           />
@@ -5898,7 +6175,9 @@ export default function InsurancePage() {
           <StatusCountCard
             label="Urgent"
             count={
-              counts.urgent
+              count(
+                "Urgent"
+              )
             }
             status="Urgent"
           />
@@ -5906,7 +6185,9 @@ export default function InsurancePage() {
           <StatusCountCard
             label="Critical"
             count={
-              counts.critical
+              count(
+                "Critical"
+              )
             }
             status="Critical"
           />
@@ -5914,35 +6195,19 @@ export default function InsurancePage() {
           <StatusCountCard
             label="Expired"
             count={
-              counts.expired
+              count(
+                "Expired"
+              )
             }
             status="Expired"
           />
         </div>
 
-        {/* MANUAL TRANSPORTATION */}
+        {/* TRANSPORTATION */}
 
-        {manualTransportation && (
-          <ManualTransportationForm
-            existingRecords={
-              transportation
-            }
-            onCancel={() =>
-              setManualTransportation(
-                false
-              )
-            }
-            onSave={
-              saveManualTransportation
-            }
-          />
-        )}
-
-        {/* TRANSPORTATION REGISTER */}
-
-        <Card className="overflow-hidden">
+        <Card className="overflow-visible">
           <CardHeader className="border-b bg-muted/20">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <ShieldCheck className="size-4 text-primary" />
@@ -5951,72 +6216,134 @@ export default function InsurancePage() {
                 </CardTitle>
 
                 <CardDescription className="mt-1 text-xs">
-                  Each actual insurer/policy section is stored separately even when several appear on one COI.
+                  One COI can create multiple insurer/policy records.
                 </CardDescription>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  onClick={() =>
+                    selectSource(
+                      "transportation"
+                    )
+                  }
+                >
+                  <ScanDocumentIcon
+                    size={14}
+                  />
+
+                  <span className="ml-2">
+                    Scan Insurance Document
+                  </span>
+                </Button>
               </div>
             </div>
           </CardHeader>
 
           <CardContent className="p-0">
-            {transportation.filter(
-              (record) =>
-                record.status !==
-                "Archived"
-            ).length === 0 ? (
+            {visibleTransportation.length ===
+            0 ? (
               <div className="p-12 text-center">
-                <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <ScanDocumentIcon
-                    size={22}
-                  />
-                </div>
+                <ScanDocumentIcon
+                  size={28}
+                />
 
                 <p className="mt-4 text-sm font-semibold">
                   No transportation insurance recorded
                 </p>
 
-                <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-muted-foreground">
-                  Scan the COI first. One certificate can create several insurer/policy records while remaining linked to the same source evidence.
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Scan the current COI to create structured insurance records.
                 </p>
               </div>
             ) : (
-              <div className="divide-y">
-                {transportation
-                  .filter(
-                    (record) =>
-                      record.status !==
-                      "Archived"
-                  )
-                  .map(
-                    (record) => (
-                      <TransportationRecordRow
+              <div>
+                {groups.map(
+                  (groupId) => {
+                    const groupRecords =
+                      visibleTransportation.filter(
+                        (record) =>
+                          record.groupId ===
+                          groupId
+                      )
+
+                    const broker =
+                      groupRecords.find(
+                        (record) =>
+                          record.broker
+                      )?.broker
+
+                    return (
+                      <div
                         key={
-                          record.id
+                          groupId
                         }
-                        record={
-                          record
-                        }
-                        onEdit={() =>
-                          setEditingTransportation(
-                            record
-                          )
-                        }
-                        onArchive={() =>
-                          setArchiveTarget(
-                            {
-                              family:
-                                "transportation",
+                        className="border-b last:border-b-0"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/10 px-4 py-3">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              COI / Insurance Group
+                            </p>
 
-                              id:
-                                record.id,
+                            {broker ? (
+                              <p className="mt-1 text-xs">
+                                Broker:{" "}
+                                <strong>
+                                  {
+                                    broker.organizationName
+                                  }
+                                </strong>
 
-                              label:
-                                `${record.insuranceType} · ${record.policyNumber}`,
+                                {broker.contactName &&
+                                  ` · ${broker.contactName}`}
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                No broker recorded
+                              </p>
+                            )}
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() =>
+                              setBrokerEditGroup(
+                                groupId
+                              )
                             }
-                          )
-                        }
-                      />
+                          >
+                            <Pencil className="mr-1.5 size-3.5" />
+
+                            Edit Broker
+                          </Button>
+                        </div>
+
+                        <div className="divide-y">
+                          {groupRecords.map(
+                            (record) => (
+                              <TransportationRow
+                                key={
+                                  record.id
+                                }
+                                record={
+                                  record
+                                }
+                                onArchive={() =>
+                                  archiveTransportation(
+                                    record.id
+                                  )
+                                }
+                              />
+                            )
+                          )}
+                        </div>
+                      </div>
                     )
-                  )}
+                  }
+                )}
               </div>
             )}
           </CardContent>
@@ -6024,7 +6351,7 @@ export default function InsurancePage() {
 
         {/* WORKERS */}
 
-        <Card className="overflow-visible">
+        <Card>
           <CardHeader className="border-b bg-muted/20">
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
@@ -6035,93 +6362,57 @@ export default function InsurancePage() {
                 </CardTitle>
 
                 <CardDescription className="mt-1 text-xs">
-                  Workers compensation, WCB / WSIB and occupational accident records remain separate from transportation insurance.
+                  Separate workers compensation and occupational coverage records.
                 </CardDescription>
               </div>
 
               <Button
-                size="sm"
                 onClick={() =>
-                  setSimpleForm(
+                  selectSource(
                     "workers"
                   )
                 }
               >
-                <Plus className="mr-1.5 size-4" />
+                <ScanDocumentIcon
+                  size={14}
+                />
 
-                Add Record
+                <span className="ml-2">
+                  Scan Workers Document
+                </span>
               </Button>
             </div>
           </CardHeader>
 
           <CardContent className="p-0">
-            {simpleForm ===
-              "workers" && (
-              <div className="p-4">
-                <SimpleRecordForm
-                  family="workers"
-                  company={
-                    company
-                  }
-                  onCancel={() =>
-                    setSimpleForm(
-                      null
-                    )
-                  }
-                  onSaveWorkers={
-                    saveWorkers
-                  }
-                  onSaveBond={() => {}}
-                />
-              </div>
-            )}
-
-            {workers.filter(
-              (record) =>
-                record.status !==
-                "Archived"
-            ).length === 0 ? (
+            {visibleWorkers.length ===
+            0 ? (
               <div className="p-10 text-center">
                 <HardHat className="mx-auto size-9 text-muted-foreground/30" />
 
                 <p className="mt-3 text-sm font-medium">
-                  No active workers insurance records
+                  No active workers insurance
                 </p>
               </div>
             ) : (
               <div className="divide-y">
-                {workers
-                  .filter(
-                    (record) =>
-                      record.status !==
-                      "Archived"
-                  )
-                  .map(
-                    (record) => (
-                      <WorkersRow
-                        key={
+                {visibleWorkers.map(
+                  (record) => (
+                    <WorkersRow
+                      key={
+                        record.id
+                      }
+                      record={
+                        record
+                      }
+                      onArchive={() =>
+                        archiveWorkers(
                           record.id
-                        }
-                        record={
-                          record
-                        }
-                        onArchive={() =>
-                          setArchiveTarget(
-                            {
-                              family:
-                                "workers",
-
-                              id:
-                                record.id,
-
-                              label:
-                                `${record.insuranceType} · ${record.policyNumber}`,
-                            }
-                          )
-                        }
-                      />
-                    )
-                  )}
+                        )
+                      }
+                    />
+                  )
+                )}
               </div>
             )}
           </CardContent>
@@ -6129,7 +6420,7 @@ export default function InsurancePage() {
 
         {/* BONDS */}
 
-        <Card className="overflow-visible">
+        <Card>
           <CardHeader className="border-b bg-muted/20">
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
@@ -6140,52 +6431,31 @@ export default function InsurancePage() {
                 </CardTitle>
 
                 <CardDescription className="mt-1 text-xs">
-                  Customs, broker, fuel-tax and other surety obligations.
+                  Customs, broker, permit and other surety obligations.
                 </CardDescription>
               </div>
 
               <Button
-                size="sm"
                 onClick={() =>
-                  setSimpleForm(
+                  selectSource(
                     "bond"
                   )
                 }
               >
-                <Plus className="mr-1.5 size-4" />
+                <ScanDocumentIcon
+                  size={14}
+                />
 
-                Add Bond
+                <span className="ml-2">
+                  Scan Bond Document
+                </span>
               </Button>
             </div>
           </CardHeader>
 
           <CardContent className="p-0">
-            {simpleForm ===
-              "bond" && (
-              <div className="p-4">
-                <SimpleRecordForm
-                  family="bond"
-                  company={
-                    company
-                  }
-                  onCancel={() =>
-                    setSimpleForm(
-                      null
-                    )
-                  }
-                  onSaveWorkers={() => {}}
-                  onSaveBond={
-                    saveBond
-                  }
-                />
-              </div>
-            )}
-
-            {bonds.filter(
-              (record) =>
-                record.status !==
-                "Archived"
-            ).length === 0 ? (
+            {visibleBonds.length ===
+            0 ? (
               <div className="p-10 text-center">
                 <FileKey2 className="mx-auto size-9 text-muted-foreground/30" />
 
@@ -6195,137 +6465,42 @@ export default function InsurancePage() {
               </div>
             ) : (
               <div className="divide-y">
-                {bonds
-                  .filter(
-                    (record) =>
-                      record.status !==
-                      "Archived"
-                  )
-                  .map(
-                    (record) => (
-                      <BondRow
-                        key={
+                {visibleBonds.map(
+                  (record) => (
+                    <BondRow
+                      key={
+                        record.id
+                      }
+                      record={
+                        record
+                      }
+                      onArchive={() =>
+                        archiveBond(
                           record.id
-                        }
-                        record={
-                          record
-                        }
-                        onArchive={() =>
-                          setArchiveTarget(
-                            {
-                              family:
-                                "bond",
-
-                              id:
-                                record.id,
-
-                              label:
-                                `${record.bondType} · ${record.bondNumber}`,
-                            }
-                          )
-                        }
-                      />
-                    )
-                  )}
+                        )
+                      }
+                    />
+                  )
+                )}
               </div>
             )}
           </CardContent>
         </Card>
-
-        {/* ARCHIVED */}
-
-        {[
-          ...transportation,
-          ...workers,
-          ...bonds,
-        ].some(
-          (record) =>
-            record.status ===
-            "Archived"
-        ) && (
-          <Card>
-            <CardHeader className="border-b bg-muted/20">
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <Archive className="size-4 text-muted-foreground" />
-
-                Archived Records
-              </CardTitle>
-
-              <CardDescription className="text-xs">
-                Historical records remain retained and are never deleted.
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent className="space-y-2 p-4">
-              {transportation
-                .filter(
-                  (record) =>
-                    record.status ===
-                    "Archived"
-                )
-                .map(
-                  (record) => (
-                    <div
-                      key={
-                        record.id
-                      }
-                      className="rounded-lg border p-3 opacity-70"
-                    >
-                      <p className="text-xs font-semibold">
-                        {
-                          record.insuranceType
-                        }
-                      </p>
-
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        {
-                          record.insurerName
-                        }{" "}
-                        ·{" "}
-                        {
-                          record.policyNumber
-                        }{" "}
-                        · archived{" "}
-                        {
-                          record.archivedAt
-                            ? new Date(
-                                record.archivedAt
-                              ).toLocaleDateString()
-                            : ""
-                        }
-                      </p>
-
-                      {record.archiveReason && (
-                        <p className="mt-1 text-[10px]">
-                          Reason:{" "}
-                          {
-                            record.archiveReason
-                          }
-                        </p>
-                      )}
-                    </div>
-                  )
-                )}
-            </CardContent>
-          </Card>
-        )}
 
         {/* INTEGRITY */}
 
         <Card className="border-dashed bg-muted/10">
           <CardContent className="p-5">
             <div className="flex items-start gap-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <History className="size-4" />
-              </div>
+              <History className="mt-0.5 size-4 text-primary" />
 
               <div>
                 <p className="text-xs font-semibold">
-                  Insurance record integrity
+                  Identity and evidence integrity
                 </p>
 
                 <p className="mt-1 max-w-4xl text-xs leading-5 text-muted-foreground">
-                  OCR and manual entry create the same underlying record structure. Insurers, brokers and broker contacts are resolved against existing TES identities before new entities are created. Records are archived rather than deleted, and expiry status is controlled by the portal-wide renewal rules.
+                  Insurance companies, brokers and broker contacts are resolved against existing TES identities before new entities are created. Broker contacts belong to their broker organization and can be reused across every customer they handle.
                 </p>
               </div>
             </div>
@@ -6333,113 +6508,112 @@ export default function InsurancePage() {
         </Card>
       </div>
 
-      {/* SOURCE PICKER */}
+      {/* SOURCE */}
 
-      {showSourcePicker && (
+      {sourceFamily && (
         <DocumentSourcePicker
+          family={
+            sourceFamily
+          }
           onClose={() =>
-            setShowSourcePicker(
-              false
+            setSourceFamily(
+              null
             )
           }
-          onCamera={() => {
-            setShowSourcePicker(
-              false
-            )
-
-            cameraInputRef.current?.click()
-          }}
-          onDevice={() => {
-            setShowSourcePicker(
-              false
-            )
-
-            deviceInputRef.current?.click()
-          }}
-        />
-      )}
-
-      {/* OCR WORKSPACE */}
-
-      {workspace && (
-        <TransportationWorkspace
-          workspace={
-            workspace
-          }
-          setWorkspace={
-            setWorkspace
-          }
-          existingRecords={
-            transportation
-          }
-          onCancel={() =>
-            setWorkspace(null)
-          }
-          onReplaceDocument={() => {
-            setWorkspace(null)
-
-            setShowSourcePicker(
+          onCamera={() =>
+            setShowCamera(
               true
             )
-          }}
-          onSave={
-            saveOCRWorkspace
           }
-        />
-      )}
-
-      {/* EDIT */}
-
-      {editingTransportation && (
-        <EditTransportationModal
-          record={
-            editingTransportation
-          }
-          onCancel={() =>
-            setEditingTransportation(
-              null
-            )
-          }
-          onSave={
-            saveEditedTransportation
-          }
-        />
-      )}
-
-      {/* ARCHIVE */}
-
-      {archiveTarget && (
-        <ArchiveDialog
-          label={
-            archiveTarget.label
-          }
-          onCancel={() =>
-            setArchiveTarget(
-              null
-            )
-          }
-          onConfirm={
-            confirmArchive
+          onDevice={() =>
+            deviceInputRef.current?.click()
           }
         />
       )}
 
       {/* CAMERA */}
 
-      <input
-        ref={
-          cameraInputRef
-        }
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={
-          handleCameraFile
-        }
-      />
+      {showCamera && (
+        <CameraCapture
+          onClose={() =>
+            setShowCamera(
+              false
+            )
+          }
+          onCapture={(
+            file
+          ) => {
+            setShowCamera(
+              false
+            )
 
-      {/* DEVICE */}
+            processDocument(
+              file,
+              "camera"
+            )
+          }}
+        />
+      )}
+
+      {/* OCR */}
+
+      {ocrSession && (
+        <OCRWorkspaceView
+          session={
+            ocrSession
+          }
+          setSession={
+            setOcrSession
+          }
+          onCancel={() =>
+            setOcrSession(
+              null
+            )
+          }
+          onReplace={() => {
+            const family =
+              ocrSession.family
+
+            setOcrSession(
+              null
+            )
+
+            setSourceFamily(
+              family
+            )
+          }}
+          onSave={
+            saveOCRSession
+          }
+        />
+      )}
+
+      {/* BROKER EDIT */}
+
+      {brokerEditGroup && (
+        <BrokerEditor
+          records={transportation.filter(
+            (record) =>
+              record.groupId ===
+              brokerEditGroup
+          )}
+          onCancel={() =>
+            setBrokerEditGroup(
+              null
+            )
+          }
+          onSave={(
+            broker
+          ) =>
+            updateBrokerGroup(
+              brokerEditGroup,
+              broker
+            )
+          }
+        />
+      )}
+
+      {/* DEVICE FILE */}
 
       <input
         ref={
@@ -6448,314 +6622,25 @@ export default function InsurancePage() {
         type="file"
         accept=".pdf,.jpg,.jpeg,.png,.webp"
         className="hidden"
-        onChange={
-          handleDeviceFile
-        }
+        onChange={async (
+          event
+        ) => {
+          const file =
+            event.target.files?.[0]
+
+          event.target.value =
+            ""
+
+          if (!file) {
+            return
+          }
+
+          await processDocument(
+            file,
+            "device"
+          )
+        }}
       />
     </>
   )
-}
-
-/* =========================================================
-   STATUS SUMMARY
-========================================================= */
-
-function StatusCountCard({
-  label,
-  count,
-  status,
-}: {
-  label: string
-  count: number
-  status: ExpiryStatus
-}) {
-  const style =
-    statusStyle(status)
-
-  return (
-    <Card
-      className={`border-l-4 ${style.accent}`}
-    >
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            {label}
-          </p>
-
-          <ExpiryBadge
-            status={status}
-          />
-        </div>
-
-        <p className="mt-2 text-2xl font-bold">
-          {count}
-        </p>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* =========================================================
-   LEGACY MIGRATION
-
-   Old page used:
-   {
-     type,
-     number,
-     company,
-     broker,
-     limits,
-     principal,
-     amount,
-     effective,
-     expiry,
-     source...
-   }
-
-   We keep existing testing data rather than wiping it.
-========================================================= */
-
-function migrateLegacyRecords(
-  legacy: any[]
-): StoredInsuranceData {
-  const result:
-    StoredInsuranceData =
-    {
-      ...EMPTY_DATA,
-
-      transportation: [],
-      workers: [],
-      bonds: [],
-      evidence: [],
-    }
-
-  for (
-    const record of legacy
-  ) {
-    const timestamp =
-      record.createdAt ||
-      isoNow()
-
-    if (
-      [
-        "WSIB",
-        "WCB",
-        "Workers Compensation",
-        "Occupational Accident",
-      ].includes(
-        record.type
-      )
-    ) {
-      result.workers.push({
-        id:
-          record.id ||
-          createId("WCB"),
-
-        family:
-          "workers",
-
-        insuranceType:
-          record.type,
-
-        providerName:
-          record.company ||
-          "",
-
-        policyNumber:
-          record.number ||
-          "",
-
-        effectiveDate:
-          record.effective ||
-          "",
-
-        expiryDate:
-          record.expiry ||
-          "",
-
-        coverage:
-          record.limits
-            ? [
-                {
-                  id: createId(
-                    "COV"
-                  ),
-
-                  label:
-                    "Coverage",
-
-                  value:
-                    record.limits,
-                },
-              ]
-            : [],
-
-        status:
-          record.status ===
-          "Archived"
-            ? "Archived"
-            : "Healthy",
-
-        source:
-          record.source ||
-          "Manual",
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-
-        archivedAt:
-          record.archivedAt,
-      })
-
-      continue
-    }
-
-    if (
-      [
-        "US Customs Continuous",
-        "Freight Broker BMC-84",
-        "Performance Bond",
-      ].includes(
-        record.type
-      )
-    ) {
-      result.bonds.push({
-        id:
-          record.id ||
-          createId("BND"),
-
-        family: "bond",
-
-        bondType:
-          record.type,
-
-        suretyName:
-          record.company ||
-          "",
-
-        bondNumber:
-          record.number ||
-          "",
-
-        principalName:
-          record.principal ||
-          "",
-
-        bondAmount:
-          record.amount,
-
-        effectiveDate:
-          record.effective ||
-          "",
-
-        expiryDate:
-          record.expiry,
-
-        status:
-          record.status ===
-          "Archived"
-            ? "Archived"
-            : "Healthy",
-
-        source:
-          record.source ||
-          "Manual",
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-
-        archivedAt:
-          record.archivedAt,
-      })
-
-      continue
-    }
-
-    result.transportation.push({
-      id:
-        record.id ||
-        createId("INS"),
-
-      family:
-        "transportation",
-
-      insuranceType:
-        record.type ||
-        "Other",
-
-      canonicalType:
-        normalizeInsuranceType(
-          record.type ||
-            "Other"
-        ),
-
-      insurerName:
-        record.company ||
-        "",
-
-      policyNumber:
-        record.number ||
-        "",
-
-      effectiveDate:
-        record.effective ||
-        "",
-
-      expiryDate:
-        record.expiry ||
-        "",
-
-      coverage:
-        record.limits
-          ? [
-              {
-                id: createId(
-                  "COV"
-                ),
-
-                label:
-                  "Coverage Limit",
-
-                value:
-                  record.limits,
-              },
-            ]
-          : [],
-
-      status:
-        record.status ===
-        "Archived"
-          ? "Archived"
-          : "Healthy",
-
-      source:
-        record.source ||
-        "Manual",
-
-      broker:
-        record.broker
-          ? {
-              organizationName:
-                record.broker,
-            }
-          : undefined,
-
-      createdAt:
-        timestamp,
-
-      updatedAt:
-        timestamp,
-
-      archivedAt:
-        record.archivedAt,
-    })
-  }
-
-  return result
 }

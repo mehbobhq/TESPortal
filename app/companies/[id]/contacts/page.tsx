@@ -6,24 +6,20 @@ import {
   useRef,
   useState,
 } from "react"
-import { useParams, useRouter } from "next/navigation"
-import Link from "next/link"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 
 import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
-  Building2,
   Camera,
   Check,
   CheckCircle2,
   ChevronRight,
-  Clipboard,
   Copy,
   FileCheck2,
   FileText,
   History,
-  Mail,
   Maximize2,
   Pencil,
   Plus,
@@ -68,7 +64,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 type IdentityStatus =
   | "unverified"
-  | "verified"
+  | "documented"
   | "review_required"
 
 type OCRStatus =
@@ -101,6 +97,7 @@ type Relationship = {
   companyId: string
   companyName: string
   role: string
+  isPrimary?: boolean
   status: "active" | "ended"
   startDate: string
   endDate?: string
@@ -113,6 +110,7 @@ type Evidence = {
   fileName: string
   fileType: string
   uploadedAt: string
+  documentDate?: string
   confidence?: number
   status:
     | "uploaded"
@@ -330,6 +328,23 @@ function now() {
   return new Date().toISOString()
 }
 
+
+function threeYearCutoff() {
+  const date = new Date()
+  date.setFullYear(date.getFullYear() - 3)
+  return date
+}
+
+function evidenceReferenceDate(evidence: Evidence) {
+  return evidence.documentDate || evidence.uploadedAt
+}
+
+function evidenceInsideThreeYears(evidence: Evidence) {
+  const date = new Date(evidenceReferenceDate(evidence))
+  if (Number.isNaN(date.getTime())) return true
+  return date >= threeYearCutoff()
+}
+
 function appendEvent(
   contact: Contact,
   type: ContactEvent["type"],
@@ -400,6 +415,146 @@ function readFileAsDataUrl(
 
     reader.readAsDataURL(file)
   })
+}
+
+
+function normalizeEmail(value?: string) {
+  return String(value || "").trim().toLowerCase()
+}
+
+function normalizePhone(value?: string) {
+  return String(value || "").replace(/\D/g, "")
+}
+
+function normalizeLicence(value?: string) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+}
+
+function normalizeName(value?: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+}
+
+function relationshipForCompany(
+  contact: Contact,
+  companyId: string
+) {
+  return contact.relationships?.find(
+    (relationship) =>
+      relationship.companyId === companyId &&
+      relationship.status === "active"
+  )
+}
+
+function roleForCompany(contact: Contact, companyId: string) {
+  return relationshipForCompany(contact, companyId)?.role || contact.role || ""
+}
+
+function isPrimaryForCompany(contact: Contact, companyId: string) {
+  const relationship = relationshipForCompany(contact, companyId)
+  if (!relationship) return false
+
+  return relationship.isPrimary === true
+}
+
+function migrateContact(contact: Contact): Contact {
+  const activeRelationships = (contact.relationships || []).filter(
+    (relationship) => relationship.status === "active"
+  )
+
+  let primaryAssigned = activeRelationships.some(
+    (relationship) => relationship.isPrimary === true
+  )
+
+  const relationships = (contact.relationships || []).map((relationship) => {
+    if (relationship.isPrimary !== undefined) return relationship
+
+    if (
+      !primaryAssigned &&
+      contact.isPrimary &&
+      relationship.status === "active"
+    ) {
+      primaryAssigned = true
+      return { ...relationship, isPrimary: true }
+    }
+
+    return { ...relationship, isPrimary: false }
+  })
+
+  return {
+    ...contact,
+    identityStatus:
+      (contact.identityStatus as string) === "verified"
+        ? "documented"
+        : contact.identityStatus,
+    relationships,
+  }
+}
+
+type DuplicateMatch = {
+  contact: Contact
+  reasons: string[]
+}
+
+function findDuplicateContact(
+  draft: ContactDraft,
+  contacts: Contact[],
+  excludeContactId?: string
+): DuplicateMatch | null {
+  const email = normalizeEmail(draft.email)
+  const phone = normalizePhone(draft.phone)
+  const licence = normalizeLicence(draft.dlNumber)
+  const firstName = normalizeName(draft.firstName)
+  const lastName = normalizeName(draft.lastName)
+  const dob = draft.dob.trim()
+
+  let strongest: DuplicateMatch | null = null
+
+  for (const contact of contacts) {
+    if (contact.id === excludeContactId) continue
+
+    const reasons: string[] = []
+
+    if (licence && normalizeLicence(contact.dlNumber) === licence) {
+      reasons.push("Driver Licence #")
+    }
+
+    if (email && normalizeEmail(contact.email) === email) {
+      reasons.push("Email")
+    }
+
+    if (
+      phone.length >= 7 &&
+      normalizePhone(contact.phone) === phone
+    ) {
+      reasons.push("Phone")
+    }
+
+    if (
+      dob &&
+      contact.dob === dob &&
+      firstName &&
+      lastName &&
+      normalizeName(contact.firstName) === firstName &&
+      normalizeName(contact.lastName) === lastName
+    ) {
+      reasons.push("Name + Date of Birth")
+    }
+
+    if (reasons.length) {
+      const match = { contact, reasons }
+      if (!strongest || reasons.length > strongest.reasons.length) {
+        strongest = match
+      }
+    }
+  }
+
+  return strongest
 }
 
 /* =========================================================
@@ -525,16 +680,24 @@ function DocumentSourcePicker({
    DOCUMENT VIEWER
 ========================================================= */
 
+type ViewerDocument = {
+  fileName: string
+  fileType: string
+  dataUrl: string
+  source?: DocumentSource
+  fileSize?: number
+}
+
 function DocumentViewer({
-  session,
+  document,
   onReplace,
+  onClose,
 }: {
-  session: OCRSession
-  onReplace: () => void
+  document: ViewerDocument
+  onReplace?: () => void
+  onClose?: () => void
 }) {
-  const viewerRef = useRef<HTMLDivElement | null>(
-    null
-  )
+  const viewerRef = useRef<HTMLDivElement | null>(null)
 
   const dragRef = useRef({
     active: false,
@@ -544,43 +707,24 @@ function DocumentViewer({
 
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState(0)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
 
-  const [pan, setPan] = useState({
-    x: 0,
-    y: 0,
-  })
-
-  const isPdf =
-    session.file.type === "application/pdf"
+  const isPdf = document.fileType === "application/pdf"
 
   const fitDocument = () => {
     setZoom(1)
-    setPan({
-      x: 0,
-      y: 0,
-    })
+    setRotation(0)
+    setPan({ x: 0, y: 0 })
   }
 
   const zoomIn = () => {
-    setZoom((current) =>
-      Math.min(current + 0.25, 4)
-    )
+    setZoom((current) => Math.min(current + 0.25, 5))
   }
 
   const zoomOut = () => {
     setZoom((current) => {
-      const next = Math.max(
-        current - 0.25,
-        0.5
-      )
-
-      if (next <= 1) {
-        setPan({
-          x: 0,
-          y: 0,
-        })
-      }
-
+      const next = Math.max(current - 0.25, 0.5)
+      if (next <= 1) setPan({ x: 0, y: 0 })
       return next
     })
   }
@@ -588,27 +732,24 @@ function DocumentViewer({
   const handlePointerDown = (
     event: React.PointerEvent<HTMLDivElement>
   ) => {
+    if (isPdf) return
+
     dragRef.current = {
       active: true,
       x: event.clientX,
       y: event.clientY,
     }
 
-    event.currentTarget.setPointerCapture(
-      event.pointerId
-    )
+    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const handlePointerMove = (
     event: React.PointerEvent<HTMLDivElement>
   ) => {
-    if (!dragRef.current.active) return
+    if (isPdf || !dragRef.current.active) return
 
-    const deltaX =
-      event.clientX - dragRef.current.x
-
-    const deltaY =
-      event.clientY - dragRef.current.y
+    const deltaX = event.clientX - dragRef.current.x
+    const deltaY = event.clientY - dragRef.current.y
 
     dragRef.current.x = event.clientX
     dragRef.current.y = event.clientY
@@ -625,89 +766,82 @@ function DocumentViewer({
 
   const enterFullScreen = async () => {
     const element = viewerRef.current
-
     if (!element) return
 
     try {
-      if (!document.fullscreenElement) {
+      if (!window.document.fullscreenElement) {
         await element.requestFullscreen()
       } else {
-        await document.exitFullscreen()
+        await window.document.exitFullscreen()
       }
     } catch (error) {
-      console.error(
-        "Unable to enter fullscreen:",
-        error
-      )
+      console.error("Unable to enter fullscreen:", error)
     }
   }
 
   return (
     <div
       ref={viewerRef}
-      className="flex h-full min-h-0 flex-col bg-muted/15 fullscreen:bg-background"
+      className="flex h-full min-h-0 flex-col bg-background fullscreen:bg-background"
     >
-      {/* TOOLBAR */}
       <div className="flex min-h-12 items-center justify-between gap-3 border-b bg-background px-4">
-        <div>
-          <p className="text-xs font-semibold">
-            Original Document
-          </p>
-
-          <p className="text-[10px] text-muted-foreground">
-            Source evidence — never silently altered
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">Original Document</p>
+          <p className="max-w-[520px] truncate text-[10px] text-muted-foreground">
+            {document.fileName}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2 text-xs"
-            onClick={fitDocument}
-          >
-            Fit
-          </Button>
+          {!isPdf && (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={fitDocument}
+              >
+                Fit
+              </Button>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={zoomOut}
-          >
-            <ZoomOut className="size-4" />
-          </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={zoomOut}
+              >
+                <ZoomOut className="size-4" />
+              </Button>
 
-          <span className="w-12 text-center text-[10px] font-medium">
-            {Math.round(zoom * 100)}%
-          </span>
+              <span className="w-12 text-center text-[10px] font-medium">
+                {Math.round(zoom * 100)}%
+              </span>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={zoomIn}
-          >
-            <ZoomIn className="size-4" />
-          </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={zoomIn}
+              >
+                <ZoomIn className="size-4" />
+              </Button>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setRotation(
-                (current) =>
-                  (current + 90) % 360
-              )
-            }
-          >
-            <RotateCcw className="size-4" />
-          </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() =>
+                  setRotation((current) => (current + 90) % 360)
+                }
+              >
+                <RotateCcw className="size-4" />
+              </Button>
+            </>
+          )}
 
           <Button
             type="button"
@@ -719,103 +853,237 @@ function DocumentViewer({
           >
             <Maximize2 className="size-4" />
           </Button>
+
+          {onClose && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={onClose}
+              title="Close"
+            >
+              <X className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* DOCUMENT CANVAS */}
       <div
-        className="
-          relative
-          flex-1
-          min-h-[420px]
-          overflow-hidden
-          bg-muted/20
-          cursor-grab
-          active:cursor-grabbing
-          select-none
-        "
-        style={{
-          touchAction: "none",
-        }}
+        className={`relative min-h-0 flex-1 overflow-hidden bg-muted/15 ${
+          isPdf ? "" : "cursor-grab active:cursor-grabbing select-none"
+        }`}
+        style={{ touchAction: isPdf ? "auto" : "none" }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-0 flex items-center justify-center p-4 lg:p-6">
-          <div
-            className="flex max-h-full max-w-full items-center justify-center transition-transform duration-75"
-            style={{
-              transform: `
-                translate(${pan.x}px, ${pan.y}px)
-                scale(${zoom})
-                rotate(${rotation}deg)
-              `,
-              transformOrigin: "center center",
-            }}
-          >
-            {isPdf ? (
-              <iframe
-                src={session.dataUrl}
-                title="Uploaded identity document"
-                className="
-                  h-[min(75vh,850px)]
-                  w-[min(75vw,900px)]
-                  rounded-lg
-                  border
-                  bg-background
-                  shadow-sm
-                  pointer-events-none
-                "
-              />
-            ) : (
-              <img
-                src={session.dataUrl}
-                alt="Uploaded identity document"
-                draggable={false}
-                className="
-                  max-h-[calc(100vh-185px)]
-                  max-w-[calc(100vw-500px)]
-                  object-contain
-                  rounded-md
-                  bg-background
-                  shadow-sm
-                "
-              />
-            )}
+        {isPdf ? (
+          <embed
+            src={`${document.dataUrl}#view=FitH`}
+            type="application/pdf"
+            className="absolute inset-0 h-full w-full"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center p-4 lg:p-6">
+            <img
+              src={document.dataUrl}
+              alt={document.fileName}
+              draggable={false}
+              className="max-h-full max-w-full select-none object-contain rounded-md bg-background shadow-sm"
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
+                transformOrigin: "center center",
+              }}
+            />
           </div>
-        </div>
+        )}
       </div>
 
-      {/* FOOTER */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-background px-4 py-2">
-        <div className="min-w-0">
-          <p className="max-w-[450px] truncate text-[10px] text-muted-foreground">
-            {session.file.name}
-            {" · "}
-            {(session.file.size / 1024 / 1024).toFixed(
-              2
-            )}{" "}
-            MB
-            {" · "}
-            {session.source === "camera"
-              ? "Camera"
-              : "Device Upload"}
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-t bg-background px-4 py-2">
+        <p className="min-w-0 max-w-[540px] truncate text-[10px] text-muted-foreground">
+          {document.fileName}
+          {document.fileSize !== undefined && (
+            <> · {(document.fileSize / 1024 / 1024).toFixed(2)} MB</>
+          )}
+          {document.source && (
+            <> · {document.source === "camera" ? "Camera" : "Device Upload"}</>
+          )}
+        </p>
+
+        {onReplace && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={onReplace}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Replace Document
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EvidencePreviewModal({
+  evidence,
+  onClose,
+}: {
+  evidence: Evidence
+  onClose: () => void
+}) {
+  if (!evidence.dataUrl) return null
+
+  return (
+    <div className="fixed inset-0 z-[170] bg-background">
+      <DocumentViewer
+        document={{
+          fileName: evidence.fileName,
+          fileType: evidence.fileType,
+          dataUrl: evidence.dataUrl,
+          source: evidence.source,
+        }}
+        onClose={onClose}
+      />
+    </div>
+  )
+}
+
+function CameraCapture({
+  onCapture,
+  onClose,
+}: {
+  onCapture: (file: File) => void
+  onClose: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        })
+
+        streamRef.current = stream
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+          setReady(true)
+        }
+      } catch {
+        setError(
+          "TES could not access the camera. Check the browser camera permission."
+        )
+      }
+    }
+
+    start()
+
+    return () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+    }
+  }, [])
+
+  const capture = () => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+
+    if (!video || !canvas) return
+
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+
+    const context = canvas.getContext("2d")
+    if (!context) return
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return
+
+        streamRef.current?.getTracks().forEach((track) => track.stop())
+
+        onCapture(
+          new File([blob], `contact-id-${Date.now()}.jpg`, {
+            type: "image/jpeg",
+          })
+        )
+      },
+      "image/jpeg",
+      0.95
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-[160] flex flex-col bg-black">
+      <div className="flex min-h-16 items-center justify-between border-b border-white/10 px-5 text-white">
+        <div>
+          <p className="text-sm font-semibold">Capture Identity Document</p>
+          <p className="text-[10px] text-white/60">
+            Keep the complete document inside the frame.
           </p>
         </div>
 
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs"
-          onClick={onReplace}
+          variant="ghost"
+          size="icon"
+          className="text-white hover:bg-white/10 hover:text-white"
+          onClick={onClose}
         >
-          <RotateCcw className="mr-1.5 size-3.5" />
+          <X className="size-5" />
+        </Button>
+      </div>
 
-          {session.source === "camera"
-            ? "Retake / Replace"
-            : "Replace Document"}
+      <div className="relative flex flex-1 items-center justify-center overflow-hidden">
+        {error ? (
+          <div className="max-w-md rounded-xl border border-red-900 bg-red-950/50 p-6 text-center text-white">
+            <XCircle className="mx-auto size-8 text-red-400" />
+            <p className="mt-3 text-sm font-semibold">Camera unavailable</p>
+            <p className="mt-2 text-xs text-white/70">{error}</p>
+          </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="max-h-full max-w-full object-contain"
+            />
+            <div className="pointer-events-none absolute inset-[8%] rounded-xl border-2 border-dashed border-white/60" />
+          </>
+        )}
+
+        <canvas ref={canvasRef} className="hidden" />
+      </div>
+
+      <div className="flex min-h-24 items-center justify-center border-t border-white/10">
+        <Button
+          type="button"
+          size="lg"
+          className="rounded-full px-8"
+          disabled={!ready}
+          onClick={capture}
+        >
+          <Camera className="mr-2 size-5" />
+          Capture Photo
         </Button>
       </div>
     </div>
@@ -1118,7 +1386,7 @@ function ContactFields({
                 <SelectValue placeholder="Select relationship" />
               </SelectTrigger>
 
-            <SelectContent>
+            <SelectContent className="z-[200]">
             <SelectItem value="Owner">
             Owner / President
             </SelectItem>
@@ -1322,7 +1590,13 @@ function OCRContactWorkspace({
         {/* DOCUMENT */}
         <div className="min-h-0 border-r">
           <DocumentViewer
-            session={workingSession}
+            document={{
+              fileName: workingSession.file.name,
+              fileType: workingSession.file.type,
+              dataUrl: workingSession.dataUrl,
+              source: workingSession.source,
+              fileSize: workingSession.file.size,
+            }}
             onReplace={onReplace}
           />
         </div>
@@ -1549,13 +1823,11 @@ function CopyableValue({
 export default function ContactsPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   const companyId = params.id as string
 
   const deviceInputRef =
-    useRef<HTMLInputElement | null>(null)
-
-  const cameraInputRef =
     useRef<HTMLInputElement | null>(null)
 
   const [
@@ -1610,6 +1882,18 @@ export default function ContactsPage() {
   const [ocrSession, setOcrSession] =
     useState<OCRSession | null>(null)
 
+  const [showCamera, setShowCamera] =
+    useState(false)
+
+  const [previewEvidence, setPreviewEvidence] =
+    useState<Evidence | null>(null)
+
+  const [showOlderEvidence, setShowOlderEvidence] =
+    useState(false)
+
+  const [attachmentTargetContactId, setAttachmentTargetContactId] =
+    useState<string | null>(null)
+
   /* =======================================================
      LOAD
   ======================================================= */
@@ -1652,7 +1936,7 @@ export default function ContactsPage() {
 
       setContacts(
         Array.isArray(parsed)
-          ? parsed
+          ? parsed.map((contact: Contact) => migrateContact(contact))
           : []
       )
     } catch (error) {
@@ -1673,6 +1957,26 @@ export default function ContactsPage() {
       )
     }
   }, [contacts, loading])
+
+
+  useEffect(() => {
+    const requestedContactId = searchParams.get("contact")
+    if (!requestedContactId || !contacts.length) return
+
+    const requested = contacts.find(
+      (contact) => contact.id === requestedContactId
+    )
+
+    if (
+      requested &&
+      requested.relationships?.some(
+        (relationship) => relationship.companyId === companyId
+      )
+    ) {
+      setSelectedContactId(requested.id)
+      setNoteDraft(requested.notes || "")
+    }
+  }, [searchParams, contacts, companyId])
 
   /* =======================================================
      COMPANY CONTACTS
@@ -1738,10 +2042,11 @@ export default function ContactsPage() {
         /*
           Primary always wins.
         */
-        if (
-          a.isPrimary !== b.isPrimary
-        ) {
-          return a.isPrimary ? -1 : 1
+        const aPrimary = isPrimaryForCompany(a, companyId)
+        const bPrimary = isPrimaryForCompany(b, companyId)
+
+        if (aPrimary !== bPrimary) {
+          return aPrimary ? -1 : 1
         }
 
         return `${a.firstName} ${a.lastName}`.localeCompare(
@@ -1769,7 +2074,7 @@ export default function ContactsPage() {
   const primaryContact =
     companyContacts.find(
       (contact) =>
-        contact.isPrimary &&
+        isPrimaryForCompany(contact, companyId) &&
         !contact.isArchived
     )
 
@@ -1778,7 +2083,7 @@ export default function ContactsPage() {
       (contact) =>
         !contact.isArchived &&
         contact.identityStatus ===
-          "verified"
+          "documented"
     ).length
 
   const reviewCount =
@@ -1797,44 +2102,34 @@ export default function ContactsPage() {
     incoming: Contact,
     currentContacts: Contact[]
   ) => {
-    if (!incoming.isPrimary) {
+    if (!isPrimaryForCompany(incoming, companyId)) {
       return currentContacts
     }
 
-    return currentContacts.map(
-      (contact) => {
-        if (
-          contact.id === incoming.id
-        ) {
-          return contact
-        }
+    return currentContacts.map((contact) => {
+      if (contact.id === incoming.id) return contact
 
-        const belongsToCompany =
-          contact.relationships?.some(
-            (relationship) =>
-              relationship.companyId ===
-                companyId &&
-              relationship.status ===
-                "active"
-          )
+      const relationship = relationshipForCompany(contact, companyId)
 
-        if (
-          !belongsToCompany ||
-          !contact.isPrimary
-        ) {
-          return contact
-        }
-
-        return appendEvent(
-          {
-            ...contact,
-            isPrimary: false,
-          },
-          "PRIMARY_CHANGED",
-          `Primary contact designation transferred to ${incoming.firstName} ${incoming.lastName}.`
-        )
+      if (!relationship || relationship.isPrimary !== true) {
+        return contact
       }
-    )
+
+      const updatedRelationships = contact.relationships.map((item) =>
+        item.id === relationship.id
+          ? { ...item, isPrimary: false }
+          : item
+      )
+
+      return appendEvent(
+        {
+          ...contact,
+          relationships: updatedRelationships,
+        },
+        "PRIMARY_CHANGED",
+        `Primary contact designation transferred to ${incoming.firstName} ${incoming.lastName}.`
+      )
+    })
   }
 
   /* =======================================================
@@ -1857,8 +2152,8 @@ export default function ContactsPage() {
       email: contact.email || "",
       phone: contact.phone || "",
 
-      role: contact.role || "",
-      isPrimary: contact.isPrimary,
+      role: roleForCompany(contact, companyId),
+      isPrimary: isPrimaryForCompany(contact, companyId),
     })
 
     setIsEditingContact(true)
@@ -1889,6 +2184,23 @@ export default function ContactsPage() {
       return
     }
 
+    const duplicate = findDuplicateContact(
+      editDraft,
+      contacts,
+      selectedContact.id
+    )
+
+    if (duplicate) {
+      window.alert(
+        `Cannot save this edit. ${duplicate.reasons.join(
+          ", "
+        )} already belongs to ${duplicate.contact.firstName} ${
+          duplicate.contact.lastName
+        } (${duplicate.contact.globalId}). Merge/link the canonical contact instead of duplicating an identifier.`
+      )
+      return
+    }
+
     const fieldLabels: Partial<Record<keyof ContactDraft, string>> = {
       firstName: "First Name",
       lastName: "Last Name",
@@ -1907,7 +2219,17 @@ export default function ContactsPage() {
 
     const changedFields = (
       Object.keys(fieldLabels) as Array<keyof ContactDraft>
-    ).filter((key) => selectedContact[key] !== editDraft[key])
+    ).filter((key) => {
+      if (key === "role") {
+        return roleForCompany(selectedContact, companyId) !== editDraft.role
+      }
+
+      if (key === "isPrimary") {
+        return isPrimaryForCompany(selectedContact, companyId) !== editDraft.isPrimary
+      }
+
+      return selectedContact[key] !== editDraft[key]
+    })
 
     if (!changedFields.length) {
       setIsEditingContact(false)
@@ -1945,6 +2267,7 @@ export default function ContactsPage() {
               ? {
                   ...relationship,
                   role: editDraft.role,
+                  isPrimary: editDraft.isPrimary,
                 }
               : relationship
         ),
@@ -1974,7 +2297,7 @@ export default function ContactsPage() {
       (contact) => contact.id === selectedContact.id
     )
 
-    if (updatedContact && updatedContact.isPrimary) {
+    if (updatedContact && isPrimaryForCompany(updatedContact, companyId)) {
       updatedContacts = applyPrimaryRule(
         updatedContact,
         updatedContacts
@@ -2000,102 +2323,193 @@ export default function ContactsPage() {
     if (!company) return
 
     const timestamp = now()
+    const duplicate = findDuplicateContact(draft, contacts)
+
+    /*
+      CANONICAL CONTACT RULE
+
+      A matching DL number, email, phone, or Name + DOB does NOT
+      create another person. TES reuses the canonical Contact ID
+      and adds/updates the company relationship instead.
+    */
+    if (duplicate) {
+      const existing = duplicate.contact
+      const currentRelationship = relationshipForCompany(existing, companyId)
+
+      let updatedExisting: Contact = {
+        ...existing,
+        isArchived: false,
+
+        // Only fill missing canonical fields. Do not silently overwrite
+        // existing identity data during duplicate resolution.
+        firstName: existing.firstName || draft.firstName.trim(),
+        lastName: existing.lastName || draft.lastName.trim(),
+        dob: existing.dob || draft.dob,
+        dlNumber: existing.dlNumber || draft.dlNumber.trim(),
+        dlState: existing.dlState || draft.dlState.trim(),
+        dlExpiry: existing.dlExpiry || draft.dlExpiry,
+        dlIssueDate: existing.dlIssueDate || draft.dlIssueDate,
+        dlClass: existing.dlClass || draft.dlClass.trim(),
+        dlRestrictions:
+          existing.dlRestrictions || draft.dlRestrictions.trim(),
+        email: existing.email || draft.email.trim(),
+        phone: existing.phone || draft.phone.trim(),
+
+        identityStatus: options?.evidence
+          ? "documented"
+          : existing.identityStatus,
+        identityConfidence:
+          options?.confidence !== undefined
+            ? Math.max(existing.identityConfidence || 0, options.confidence)
+            : existing.identityConfidence,
+
+        evidence: options?.evidence
+          ? [
+              options.evidence,
+              ...(existing.evidence || []),
+            ]
+          : existing.evidence || [],
+      }
+
+      if (currentRelationship) {
+        updatedExisting = {
+          ...updatedExisting,
+          relationships: updatedExisting.relationships.map((relationship) =>
+            relationship.id === currentRelationship.id
+              ? {
+                  ...relationship,
+                  role: draft.role || relationship.role,
+                  isPrimary: draft.isPrimary || relationship.isPrimary === true,
+                }
+              : relationship
+          ),
+        }
+
+        updatedExisting = appendEvent(
+          updatedExisting,
+          options?.evidence ? "DOCUMENT_ATTACHED" : "CONTACT_UPDATED",
+          options?.evidence
+            ? `Existing canonical contact matched by ${duplicate.reasons.join(
+                ", "
+              )}. New identity evidence attached; duplicate contact was not created.`
+            : `Existing canonical contact matched by ${duplicate.reasons.join(
+                ", "
+              )}. Duplicate contact was not created.`
+        )
+      } else {
+        const relationship: Relationship = {
+          id: makeId("REL"),
+          companyId,
+          companyName: company.name,
+          role: draft.role,
+          isPrimary: draft.isPrimary,
+          status: "active",
+          startDate: timestamp.slice(0, 10),
+          source: options?.source === "document" ? "document" : "manual",
+        }
+
+        updatedExisting = appendEvent(
+          {
+            ...updatedExisting,
+            relationships: [
+              relationship,
+              ...(updatedExisting.relationships || []),
+            ],
+          },
+          "CONTACT_UPDATED",
+          `Existing canonical contact linked to ${company.name}. Match: ${duplicate.reasons.join(
+            ", "
+          )}.`
+        )
+      }
+
+      let updatedContacts = contacts.map((contact) =>
+        contact.id === existing.id ? updatedExisting : contact
+      )
+
+      if (isPrimaryForCompany(updatedExisting, companyId)) {
+        updatedContacts = applyPrimaryRule(updatedExisting, updatedContacts)
+      }
+
+      setContacts(updatedContacts)
+      setSelectedContactId(existing.id)
+      setNoteDraft(updatedExisting.notes || "")
+
+      window.alert(
+        `Existing contact matched by ${duplicate.reasons.join(
+          ", "
+        )}. TES reused ${existing.globalId} instead of creating a duplicate.`
+      )
+
+      return existing.id
+    }
 
     const relationship: Relationship = {
       id: makeId("REL"),
       companyId,
       companyName: company.name,
       role: draft.role,
+      isPrimary: draft.isPrimary,
       status: "active",
-      startDate:
-        timestamp.slice(0, 10),
-      source:
-        options?.source ===
-        "document"
-          ? "document"
-          : "manual",
+      startDate: timestamp.slice(0, 10),
+      source: options?.source === "document" ? "document" : "manual",
     }
 
     let contact: Contact = {
       id: makeId("CNT"),
       globalId: makeId("USR"),
 
-      firstName:
-        draft.firstName.trim(),
-      lastName:
-        draft.lastName.trim(),
-
+      firstName: draft.firstName.trim(),
+      lastName: draft.lastName.trim(),
       dob: draft.dob,
 
-      dlNumber:
-        draft.dlNumber.trim(),
-      dlState:
-        draft.dlState.trim(),
-      dlExpiry:
-        draft.dlExpiry,
-      dlIssueDate:
-        draft.dlIssueDate,
-      dlClass:
-        draft.dlClass.trim(),
-      dlRestrictions:
-        draft.dlRestrictions.trim(),
+      dlNumber: draft.dlNumber.trim(),
+      dlState: draft.dlState.trim(),
+      dlExpiry: draft.dlExpiry,
+      dlIssueDate: draft.dlIssueDate,
+      dlClass: draft.dlClass.trim(),
+      dlRestrictions: draft.dlRestrictions.trim(),
 
       email: draft.email.trim(),
       phone: draft.phone.trim(),
 
+      // Compatibility fields. Company-specific role/primary truth lives
+      // on Relationship and is used by this page.
       role: draft.role,
-      isPrimary:
-        draft.isPrimary,
+      isPrimary: draft.isPrimary,
 
       isArchived: false,
 
       createdAt: timestamp,
       updatedAt: timestamp,
-
       notes: "",
 
-      identityStatus:
-        options?.evidence
-          ? "verified"
-          : "unverified",
+      identityStatus: options?.evidence ? "documented" : "unverified",
+      identityConfidence: options?.confidence,
 
-      identityConfidence:
-        options?.confidence,
-
-      relationships: [
-        relationship,
-      ],
-
-      evidence:
-        options?.evidence
-          ? [options.evidence]
-          : [],
-
+      relationships: [relationship],
+      evidence: options?.evidence ? [options.evidence] : [],
       events: [],
     }
 
     contact = appendEvent(
       contact,
       "CONTACT_CREATED",
-      options?.source ===
-        "document"
-        ? `Contact created from reviewed identity document. OCR confidence ${options.confidence || 0}%.`
+      options?.source === "document"
+        ? `Contact created from identity document. OCR confidence ${
+            options.confidence || 0
+          }%.`
         : "Contact created manually."
     )
 
-    let updated = [
-      contact,
-      ...contacts,
-    ]
-
-    updated = applyPrimaryRule(
-      contact,
-      updated
-    )
+    let updated = [contact, ...contacts]
+    updated = applyPrimaryRule(contact, updated)
 
     setContacts(updated)
     setSelectedContactId(contact.id)
     setNoteDraft("")
+
+    return contact.id
   }
 
   /* =======================================================
@@ -2155,6 +2569,7 @@ export default function ContactsPage() {
   ======================================================= */
 
   const openOCRCreate = () => {
+    setAttachmentTargetContactId(null)
     setDocumentSourceMode(
       "ocr_create"
     )
@@ -2162,18 +2577,15 @@ export default function ContactsPage() {
     setShowSourcePicker(true)
   }
 
-  const openManualDocument = () => {
-    setDocumentSourceMode(
-      "manual_attachment"
-    )
-
+  const openManualDocument = (targetContactId?: string) => {
+    setAttachmentTargetContactId(targetContactId || null)
+    setDocumentSourceMode("manual_attachment")
     setShowSourcePicker(true)
   }
 
   const chooseCamera = () => {
     setShowSourcePicker(false)
-
-    cameraInputRef.current?.click()
+    setShowCamera(true)
   }
 
   const chooseDevice = () => {
@@ -2368,22 +2780,6 @@ export default function ContactsPage() {
     )
   }
 
-  const handleCameraFile = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file =
-      event.target.files?.[0]
-
-    event.target.value = ""
-
-    if (!file) return
-
-    await beginDocumentProcessing(
-      file,
-      "camera"
-    )
-  }
-
   /* =======================================================
      OCR REPLACE
   ======================================================= */
@@ -2407,36 +2803,62 @@ export default function ContactsPage() {
   const saveOCRContact = (
     session: OCRSession
   ) => {
-    const confidence =
-      averageConfidence(
-        session.fields
-      )
+    const confidence = averageConfidence(session.fields)
 
-    if (
-      hasOCRConfidenceFailure(
-        session.fields
-      )
-    ) {
+    if (hasOCRConfidenceFailure(session.fields)) {
       return
     }
 
     const evidence: Evidence = {
       id: makeId("DOC"),
       type: "Driver Licence",
-      fileName:
-        session.file.name,
-      fileType:
-        session.file.type,
+      fileName: session.file.name,
+      fileType: session.file.type,
       uploadedAt: now(),
+      documentDate: session.draft.dlIssueDate || session.draft.dlExpiry || now().slice(0, 10),
       confidence,
-      status: "verified",
+      status: "uploaded",
       source: session.source,
       dataUrl: session.dataUrl,
     }
 
     /*
-      If manual entry was in progress and document was attached,
-      the same OCR workspace becomes the final save route.
+      Existing contact evidence attachment must NEVER create
+      another contact. This fixes the previous duplicate path.
+    */
+    if (
+      session.mode === "manual_attachment" &&
+      attachmentTargetContactId
+    ) {
+      setContacts((current) =>
+        current.map((contact) => {
+          if (contact.id !== attachmentTargetContactId) return contact
+
+          return appendEvent(
+            {
+              ...contact,
+              identityStatus: "documented",
+              identityConfidence: Math.max(
+                contact.identityConfidence || 0,
+                confidence
+              ),
+              evidence: [evidence, ...(contact.evidence || [])],
+            },
+            "DOCUMENT_ATTACHED",
+            `Identity document attached. OCR confidence ${confidence}%.`
+          )
+        })
+      )
+
+      setSelectedContactId(attachmentTargetContactId)
+      setAttachmentTargetContactId(null)
+      setOcrSession(null)
+      return
+    }
+
+    /*
+      Manual-create + optional document and OCR-first creation both
+      flow through the same canonical duplicate resolver.
     */
     createContact(session.draft, {
       evidence,
@@ -2444,12 +2866,10 @@ export default function ContactsPage() {
       source: "document",
     })
 
+    setAttachmentTargetContactId(null)
     setOcrSession(null)
     setShowManualForm(false)
-
-    setManualDraft({
-      ...EMPTY_DRAFT,
-    })
+    setManualDraft({ ...EMPTY_DRAFT })
   }
 
   /* =======================================================
@@ -2663,7 +3083,7 @@ export default function ContactsPage() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <ShieldCheck className="size-4" />
-                  Verified
+                  Documented ID
                 </div>
 
                 <p className="mt-1 text-2xl font-semibold">
@@ -2753,8 +3173,8 @@ export default function ContactsPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={
-                        openManualDocument
+                      onClick={() =>
+                        openManualDocument()
                       }
                     >
                       <ScanDocumentIcon size={14} />
@@ -2887,6 +3307,11 @@ export default function ContactsPage() {
                               contact.notes ||
                                 ""
                             )
+
+                            router.replace(
+                              `/companies/${companyId}/contacts?contact=${contact.id}`,
+                              { scroll: false }
+                            )
                           }}
                           className={`grid w-full gap-4 border-l-4 p-4 text-left transition-colors md:grid-cols-[minmax(0,1fr)_230px_150px] md:items-center ${
                             selected
@@ -2910,7 +3335,7 @@ export default function ContactsPage() {
                                   }
                                 </span>
 
-                                {contact.isPrimary &&
+                                {isPrimaryForCompany(contact, companyId) &&
                                   !contact.isArchived && (
                                     <Badge className="h-5 px-2 text-[9px]">
                                       Primary Contact
@@ -2930,7 +3355,7 @@ export default function ContactsPage() {
                               <div className="mt-1 flex flex-wrap items-center gap-2">
                                 <span className="text-xs text-muted-foreground">
                                   {
-                                    contact.role
+                                    roleForCompany(contact, companyId)
                                   }
                                 </span>
 
@@ -2959,13 +3384,13 @@ export default function ContactsPage() {
 
                           <div className="flex items-center justify-end gap-2">
                             {contact.identityStatus ===
-                              "verified" && (
+                              "documented" && (
                               <Badge
                                 variant="outline"
                                 className="gap-1 text-[9px]"
                               >
                                 <CheckCircle2 className="size-3" />
-                                Verified
+                                Documented ID
                               </Badge>
                             )}
 
@@ -3017,7 +3442,7 @@ export default function ContactsPage() {
                           }
                         </CardTitle>
 
-                        {selectedContact.isPrimary &&
+                        {isPrimaryForCompany(selectedContact, companyId) &&
                           !selectedContact.isArchived && (
                             <Badge className="text-[9px]">
                               Primary Contact
@@ -3027,7 +3452,7 @@ export default function ContactsPage() {
 
                       <CardDescription className="mt-1">
                         {
-                          selectedContact.role
+                          roleForCompany(selectedContact, companyId)
                         }
                       </CardDescription>
 
@@ -3184,103 +3609,126 @@ export default function ContactsPage() {
 
                   {/* EVIDENCE */}
                   <section className="border-t pt-4">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Identity Evidence
-                      </Label>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Identity Evidence
+                        </Label>
+
+                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                          The normal view keeps at least three years of source documents readily available. Older retained evidence remains accessible when needed.
+                        </p>
+                      </div>
 
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-7 text-[10px]"
+                        className="h-7 shrink-0 text-[10px]"
                         onClick={() => {
                           setManualDraft({
-                            firstName:
-                              selectedContact.firstName,
-                            lastName:
-                              selectedContact.lastName,
-                            dob:
-                              selectedContact.dob,
-
-                            dlNumber:
-                              selectedContact.dlNumber,
-                            dlState:
-                              selectedContact.dlState,
-                            dlExpiry:
-                              selectedContact.dlExpiry,
-                            dlIssueDate:
-                              selectedContact.dlIssueDate,
-                            dlClass:
-                              selectedContact.dlClass,
-                            dlRestrictions:
-                              selectedContact.dlRestrictions,
-
-                            email:
-                              selectedContact.email,
-                            phone:
-                              selectedContact.phone,
-
-                            role:
-                              selectedContact.role,
-                            isPrimary:
-                              selectedContact.isPrimary,
+                            firstName: selectedContact.firstName,
+                            lastName: selectedContact.lastName,
+                            dob: selectedContact.dob,
+                            dlNumber: selectedContact.dlNumber,
+                            dlState: selectedContact.dlState,
+                            dlExpiry: selectedContact.dlExpiry,
+                            dlIssueDate: selectedContact.dlIssueDate,
+                            dlClass: selectedContact.dlClass,
+                            dlRestrictions: selectedContact.dlRestrictions,
+                            email: selectedContact.email,
+                            phone: selectedContact.phone,
+                            role: roleForCompany(selectedContact, companyId),
+                            isPrimary: isPrimaryForCompany(selectedContact, companyId),
                           })
 
-                          openManualDocument()
+                          openManualDocument(selectedContact.id)
                         }}
                       >
                         <ScanDocumentIcon size={12} />
-                        <span className="ml-1.5">
-                          Add
-                        </span>
+                        <span className="ml-1.5">Add</span>
                       </Button>
                     </div>
 
+                    {selectedContact.evidence?.some(
+                      (document) => !evidenceInsideThreeYears(document)
+                    ) && (
+                      <div className="mt-3 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[10px]"
+                          onClick={() =>
+                            setShowOlderEvidence((current) => !current)
+                          }
+                        >
+                          <History className="mr-1 size-3" />
+                          {showOlderEvidence
+                            ? "Standard 3-Year View"
+                            : "Show Older Evidence"}
+                        </Button>
+                      </div>
+                    )}
+
                     <div className="mt-3 space-y-2">
                       {selectedContact.evidence?.length ? (
-                        selectedContact.evidence.map(
-                          (document) => (
-                            <div
+                        [...selectedContact.evidence]
+                          .sort((a, b) =>
+                            evidenceReferenceDate(b).localeCompare(
+                              evidenceReferenceDate(a)
+                            )
+                          )
+                          .filter(
+                            (document) =>
+                              showOlderEvidence ||
+                              evidenceInsideThreeYears(document)
+                          )
+                          .map((document) => (
+                            <button
                               key={document.id}
-                              className="rounded-lg border p-3"
+                              type="button"
+                              disabled={!document.dataUrl}
+                              onClick={() =>
+                                document.dataUrl && setPreviewEvidence(document)
+                              }
+                              className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors enabled:hover:border-primary/30 enabled:hover:bg-primary/[0.025] disabled:cursor-default"
                             >
-                              <div className="flex items-start gap-3">
-                                <FileCheck2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                              <FileCheck2 className="mt-0.5 size-4 shrink-0 text-primary" />
 
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-xs font-medium">
-                                    {
-                                      document.fileName
-                                    }
-                                  </p>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-medium">
+                                  {document.fileName}
+                                </p>
 
-                                  <p className="mt-1 text-[10px] text-muted-foreground">
-                                    {
-                                      document.type
-                                    }
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  {document.type}
+                                  {` · ${evidenceReferenceDate(document).slice(0, 10)}`}
+                                  {document.confidence !== undefined &&
+                                    ` · OCR ${document.confidence}%`}
+                                </p>
+                              </div>
 
-                                    {document.confidence !==
-                                      undefined &&
-                                      ` · ${document.confidence}% confidence`}
-                                  </p>
-                                </div>
-
+                              <div className="flex shrink-0 items-center gap-2">
                                 <Badge
                                   variant="outline"
                                   className="text-[9px]"
                                 >
-                                  {
-                                    document.status
-                                  }
+                                  {document.status === "uploaded"
+                                    ? "Stored"
+                                    : document.status.replaceAll("_", " ")}
                                 </Badge>
+
+                                {document.dataUrl && (
+                                  <span className="text-[10px] font-medium text-primary">
+                                    Preview
+                                  </span>
+                                )}
                               </div>
-                            </div>
-                          )
-                        )
+                            </button>
+                          ))
                       ) : (
                         <div className="rounded-lg border border-dashed p-5 text-center">
                           <FileText className="mx-auto size-5 text-muted-foreground/40" />
-
                           <p className="mt-2 text-xs font-medium">
                             No identity evidence attached
                           </p>
@@ -3427,15 +3875,24 @@ export default function ContactsPage() {
         />
       )}
 
-      {/* CAMERA INPUT */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={handleCameraFile}
-      />
+      {/* REAL CAMERA CAPTURE */}
+      {showCamera && (
+        <CameraCapture
+          onClose={() => setShowCamera(false)}
+          onCapture={(file) => {
+            setShowCamera(false)
+            beginDocumentProcessing(file, "camera")
+          }}
+        />
+      )}
+
+      {/* SAVED EVIDENCE PREVIEW */}
+      {previewEvidence && (
+        <EvidencePreviewModal
+          evidence={previewEvidence}
+          onClose={() => setPreviewEvidence(null)}
+        />
+      )}
 
       {/* DEVICE INPUT */}
       <input

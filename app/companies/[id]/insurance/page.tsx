@@ -1277,61 +1277,41 @@ function resolveBrokerContact({
   }
 
   /*
-    Same organization + highly similar normalized name.
+    Name alone is NOT enough to merge two people.
+
+    Locked TES identity rule:
+    similar names can be a warning/candidate signal, but an
+    authoritative merge requires another matching identifier.
+
+    Email and phone have already been checked above. If neither
+    exists on the incoming record, only an EXACT normalized name
+    inside the SAME broker organization is reused. "Harpreet" and
+    "Har preet" will therefore merge automatically only when email
+    or phone confirms the identity; otherwise TES creates/reviews
+    a separate candidate rather than silently combining people.
   */
 
   if (
     !existing &&
     nameKey &&
-    brokerOrganizationId
+    brokerOrganizationId &&
+    !emailKey &&
+    !phoneKey
   ) {
-    const candidates =
-      contacts
-        .filter(
-          (contact) =>
-            contact.relationships?.some(
-              (
-                relationship
-              ) =>
-                relationship.companyId ===
-                brokerOrganizationId
-            )
-        )
-        .map(
-          (contact) => {
-            const existingName =
-              normalizePersonName(
-                `${contact.firstName} ${contact.lastName}`
-              )
-
-            return {
-              contact,
-
-              score:
-                similarity(
-                  nameKey,
-                  existingName
-                ),
-            }
-          }
-        )
-        .filter(
-          (candidate) =>
-            candidate.score >=
-            90
-        )
-        .sort(
-          (a, b) =>
-            b.score -
-            a.score
-        )
-
-    if (
-      candidates.length
-    ) {
-      existing =
-        candidates[0].contact
-    }
+    existing =
+      contacts.find(
+        (contact) =>
+          contact.relationships?.some(
+            (relationship) =>
+              relationship.companyId ===
+              brokerOrganizationId &&
+              relationship.status ===
+                "active"
+          ) &&
+          normalizePersonName(
+            `${contact.firstName} ${contact.lastName}`
+          ) === nameKey
+      )
   }
 
   /*
@@ -1485,6 +1465,32 @@ function resolveBrokerContact({
     lastName:
       names.lastName,
 
+    /*
+      Keep the canonical Contacts record structurally compatible
+      with app/companies/[id]/contacts/page.tsx.
+    */
+
+    dob:
+      "",
+
+    dlNumber:
+      "",
+
+    dlState:
+      "",
+
+    dlExpiry:
+      "",
+
+    dlIssueDate:
+      "",
+
+    dlClass:
+      "",
+
+    dlRestrictions:
+      "",
+
     email:
       email.trim(),
 
@@ -1500,8 +1506,39 @@ function resolveBrokerContact({
     isArchived:
       false,
 
+    notes:
+      "",
+
+    identityStatus:
+      "unverified",
+
     relationships:
       [],
+
+    evidence:
+      [],
+
+    events:
+      [
+        {
+          id:
+            createId(
+              "EVT"
+            ),
+
+          type:
+            "CONTACT_CREATED",
+
+          timestamp:
+            isoNow(),
+
+          actor:
+            "System",
+
+          description:
+            "Contact created from Insurance Document Intelligence and linked to the broker organization.",
+        },
+      ],
 
     createdAt:
       isoNow(),
@@ -1625,11 +1662,21 @@ function updateBrokerContact({
             names.lastName ||
             contact.lastName,
 
+          /*
+            A later COI or broker edit may omit details. Never erase
+            canonical contact data merely because the current source
+            does not contain it.
+          */
+
           email:
-            email.trim(),
+            email.trim() ||
+            contact.email ||
+            "",
 
           phone:
-            phone.trim(),
+            phone.trim() ||
+            contact.phone ||
+            "",
 
           updatedAt:
             isoNow(),
@@ -2169,6 +2216,98 @@ function CopyField({
             ) : (
               <Copy className="size-3.5" />
             )}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function LinkedEntityField({
+  label,
+  value,
+  onOpen,
+  openLabel = "Open",
+}: {
+  label: string
+  value?: string
+  onOpen?: () => void
+  openLabel?: string
+}) {
+  const [
+    copied,
+    setCopied,
+  ] =
+    useState(false)
+
+  const copy =
+    async () => {
+      if (!value) {
+        return
+      }
+
+      try {
+        await navigator.clipboard.writeText(
+          value
+        )
+
+        setCopied(true)
+
+        window.setTimeout(
+          () =>
+            setCopied(
+              false
+            ),
+          1000
+        )
+      } catch {
+        // Clipboard can fail in non-secure local environments.
+      }
+    }
+
+  return (
+    <div>
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+
+      <div className="mt-1 flex items-center gap-1">
+        <span className="min-w-0 flex-1 select-text break-words text-xs font-medium">
+          {value ||
+            "Not recorded"}
+        </span>
+
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={
+              copy
+            }
+            title={`Copy ${label}`}
+          >
+            {copied ? (
+              <Check className="size-3.5 text-emerald-600" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+          </Button>
+        )}
+
+        {value &&
+          onOpen && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-[10px]"
+            onClick={
+              onOpen
+            }
+          >
+            {openLabel}
           </Button>
         )}
       </div>
@@ -5542,6 +5681,9 @@ function InsuranceRecordInspector({
     groupId: string
   ) => void
 }) {
+  const router =
+    useRouter()
+
   if (!record) {
     return (
       <Card className="border-dashed">
@@ -5618,11 +5760,20 @@ function InsuranceRecordInspector({
               </Label>
 
               <div className="mt-3 grid gap-4">
-                <CopyField
+                <LinkedEntityField
                   label="Insurance Company"
                   value={
                     record.insurerName
                   }
+                  onOpen={
+                    record.insurerOrganizationId
+                      ? () =>
+                          router.push(
+                            `/companies/${record.insurerOrganizationId}/profile`
+                          )
+                      : undefined
+                  }
+                  openLabel="Open Company"
                 />
 
                 <CopyField
@@ -5710,20 +5861,44 @@ function InsuranceRecordInspector({
 
               {record.broker ? (
                 <div className="mt-3 space-y-4">
-                  <CopyField
+                  <LinkedEntityField
                     label="Broker Company"
                     value={
                       record.broker
                         .organizationName
                     }
+                    onOpen={
+                      record.broker
+                        .organizationId
+                        ? () =>
+                            router.push(
+                              `/companies/${record.broker!.organizationId}/profile`
+                            )
+                        : undefined
+                    }
+                    openLabel="Open Company"
                   />
 
-                  <CopyField
+                  <LinkedEntityField
                     label="Broker Contact"
                     value={
                       record.broker
                         .contactName
                     }
+                    onOpen={
+                      record.broker
+                        .organizationId &&
+                      record.broker
+                        .contactId
+                        ? () =>
+                            router.push(
+                              `/companies/${record.broker!.organizationId}/contacts?contact=${encodeURIComponent(
+                                record.broker!.contactId!
+                              )}`
+                            )
+                        : undefined
+                    }
+                    openLabel="Open Contact"
                   />
 
                   <CopyField
@@ -5759,11 +5934,20 @@ function InsuranceRecordInspector({
               </Label>
 
               <div className="mt-3 space-y-4">
-                <CopyField
+                <LinkedEntityField
                   label="Provider / Board"
                   value={
                     record.providerName
                   }
+                  onOpen={
+                    record.providerOrganizationId
+                      ? () =>
+                          router.push(
+                            `/companies/${record.providerOrganizationId}/profile`
+                          )
+                      : undefined
+                  }
+                  openLabel="Open Company"
                 />
 
                 <CopyField
@@ -5840,11 +6024,20 @@ function InsuranceRecordInspector({
             </Label>
 
             <div className="mt-3 space-y-4">
-              <CopyField
+              <LinkedEntityField
                 label="Surety Company"
                 value={
                   record.suretyName
                 }
+                onOpen={
+                  record.suretyOrganizationId
+                    ? () =>
+                        router.push(
+                          `/companies/${record.suretyOrganizationId}/profile`
+                        )
+                    : undefined
+                }
+                openLabel="Open Company"
               />
 
               <CopyField

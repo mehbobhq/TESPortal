@@ -6,19 +6,13 @@ import {
   useRef,
   useState,
 } from "react"
-import {
-  useParams,
-  useRouter,
-} from "next/navigation"
-
+import { useParams, useRouter } from "next/navigation"
 import {
   AlertTriangle,
-  Archive,
   ArrowLeft,
   Building2,
   CalendarClock,
   Camera,
-  Check,
   CheckCircle2,
   Copy,
   FileCheck2,
@@ -32,7 +26,6 @@ import {
   RefreshCcw,
   RotateCcw,
   Save,
-  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -63,8 +56,16 @@ import {
 } from "@/components/ui/select"
 
 /* =========================================================
-   CORE TYPES
+   TYPES
 ========================================================= */
+
+type DeadlineStatus =
+  | "Healthy"
+  | "Watch"
+  | "Urgent"
+  | "Critical"
+  | "Expired"
+  | "No Deadline"
 
 type DeadlineRules = {
   healthyMinDays: number
@@ -74,26 +75,46 @@ type DeadlineRules = {
   criticalMaxDays: number
 }
 
-type SystemSettings = {
-  version: number
+type Company = {
+  id: string
+  name: string
+  kind?: string
+  status?: string
+  tone?: string
 
-  expiryRules?: DeadlineRules
-  deadlineRules?: DeadlineRules
+  /*
+    DO NOT RENAME.
+    These fields are already connected across TES.
+  */
+  regCorpState?: string
+  regCorpCountry?: string
+  region?: string
 
-  updatedAt?: string
-  updatedBy?: string
+  cargoTypes?: string[]
+  cargoInformation?: unknown
+  hazmat?: boolean
 
   [key: string]: any
 }
 
-type DeadlineStatus =
-  | "Healthy"
-  | "Watch"
-  | "Urgent"
-  | "Critical"
-  | "Expired"
-  | "No Deadline"
-  | "Deleted"
+type AuthorityCategory =
+  | "canadian"
+  | "us_federal"
+  | "operating_registration"
+
+type AuthorityType =
+  | "PROVINCIAL_CARRIER_IDENTIFIER"
+  | "CANADIAN_SAFETY_AUTHORITY"
+  | "USDOT"
+  | "MC"
+  | "MCS150"
+  | "UCR"
+  | "PHMSA"
+  | "OTHER"
+
+type SafetySystem =
+  | "CARRIER_PROFILE_CVOR"
+  | "SMS_PROFILE"
 
 type SourceType =
   | "OCR"
@@ -103,67 +124,22 @@ type DocumentSource =
   | "camera"
   | "device"
 
-type AuthorityCategory =
-  | "canadian"
-  | "us_federal"
-  | "registration"
-  | "hazmat"
-  | "safety"
-  | "audit"
-
-type ApplicabilityStatus =
-  | "Required"
-  | "Not Required"
-  | "Needs Review"
-
-type Company = {
-  id: string
-  name: string
-
-  kind?: string
-  contact?: string
-
-  /*
-    LOCKED COMPANY CONTRACT.
-    Do not rename.
-  */
-  regCorpState?: string
-  regCorpCountry?: string
-  region?: string
-
-  cargoTypes?: string[]
-  cargoInformation?: any
-  hazmat?: boolean
-
-  status?: string
-  tone?: string
-
-  createdAt?: string
-
-  [key: string]: any
-}
-
 type AuthorityEvidence = {
   id: string
 
-  authorityRecordId?: string
+  recordId?: string
 
-  documentName: string
-  documentType: string
+  fileName: string
+  mimeType: string
+  dataUrl: string
 
-  documentDate?: string
-
-  source: DocumentSource
+  documentDate: string
 
   uploadedAt: string
 
-  ocrConfidence?: number
+  source: DocumentSource
 
-  /*
-    Prototype storage only.
-    Later replace with durable storage/document ID.
-  */
-  dataUrl?: string
+  ocrConfidence?: number
 }
 
 type AuthorityRecord = {
@@ -171,86 +147,88 @@ type AuthorityRecord = {
 
   category: AuthorityCategory
 
+  authorityType: AuthorityType
+
   /*
-    Example:
-    USDOT
-    MC
-    MVID
-    RIN
-    NSC
-    CVOR
-    UCR
-    PHMSA
-    MCS-150
+    Exact display/source wording.
   */
-  authorityType: string
+  name: string
+
+  number: string
+
+  issuingAuthority: string
+
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
+  country: string
+
+  status:
+    | "Active"
+    | "Pending"
+    | "Inactive"
+    | "Suspended"
+    | "Expired"
 
   /*
-    Exact public/display wording.
-  */
-  authorityName: string
-
-  authorityNumber: string
-
-  issuingAuthority?: string
-
-  country?: string
-  jurisdiction?: string
-
-  /*
-    Used for annual/biennial/renewable requirements.
+    Standard authority dates.
   */
   issueDate?: string
   effectiveDate?: string
-  renewalDate?: string
   expiryDate?: string
 
   /*
-    For requirements such as MCS-150 where there is
-    a due date rather than an expiry date.
+    Periodic event dates.
+    MCS-150 uses these instead of meaningless generic dates.
   */
-  dueDate?: string
-
-  recordStatus:
-    | "Active"
-    | "Inactive"
-    | "Pending"
-    | "Suspended"
-    | "Expired"
-    | "Unknown"
-
-  applicability:
-    ApplicabilityStatus
-
-  source: SourceType
-
-  evidenceIds: string[]
+  eventDate?: string
+  nextActionDate?: string
 
   notes?: string
 
-  /*
-    Optional linkage.
-  */
-  credentialStored?: boolean
+  evidenceIds: string[]
 
-  previousRecordId?: string
+  source: SourceType
 
   createdAt: string
   updatedAt: string
+}
 
-  deletedAt?: string
-  deletedBy?: string
+type SafetyRecord = {
+  id: string
+
+  system: SafetySystem
+
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
+  country: string
+
+  reviewDate: string
+
+  summary: string
+
+  notes?: string
+
+  evidenceIds: string[]
+
+  source: SourceType
+
+  createdAt: string
+  updatedAt: string
 }
 
 type AuditRecord = {
   id: string
 
-  category: "audit"
-
   auditType: string
 
   regulator: string
-  jurisdiction: string
+
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
+  country: string
 
   referenceNumber: string
 
@@ -269,6 +247,7 @@ type AuditRecord = {
   score?: string
 
   followUpRequired: boolean
+
   followUpDueDate?: string
 
   notes?: string
@@ -279,88 +258,76 @@ type AuditRecord = {
 
   createdAt: string
   updatedAt: string
-
-  deletedAt?: string
-  deletedBy?: string
-}
-
-type SafetyPlaceholderRecord = {
-  id: string
-
-  category: "safety"
-
-  system:
-    | "Canadian Carrier Profile"
-    | "Ontario CVOR"
-    | "FMCSA SMS"
-    | "Other"
-
-  jurisdiction: string
-
-  reviewDate: string
-
-  statusSummary: string
-
-  notes?: string
-
-  evidenceIds: string[]
-
-  source: SourceType
-
-  createdAt: string
-  updatedAt: string
-
-  deletedAt?: string
-  deletedBy?: string
 }
 
 type StoredAuthoritiesData = {
   version: number
 
   authorities: AuthorityRecord[]
+
+  safety: SafetyRecord[]
+
   audits: AuditRecord[]
-  safety: SafetyPlaceholderRecord[]
 
   evidence: AuthorityEvidence[]
 }
 
 type SelectedRecord =
-  | AuthorityRecord
-  | AuditRecord
-  | SafetyPlaceholderRecord
+  | {
+      kind: "authority"
+      record: AuthorityRecord
+    }
+  | {
+      kind: "safety"
+      record: SafetyRecord
+    }
+  | {
+      kind: "audit"
+      record: AuditRecord
+    }
 
 type AuthorityDraft = {
   category: AuthorityCategory
 
-  authorityType: string
-  authorityName: string
+  authorityType: AuthorityType
 
-  authorityNumber: string
+  name: string
+
+  number: string
 
   issuingAuthority: string
 
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
   country: string
-  jurisdiction: string
+
+  status: AuthorityRecord["status"]
 
   issueDate: string
+
   effectiveDate: string
 
-  renewalDate: string
   expiryDate: string
-  dueDate: string
 
-  recordStatus:
-    | "Active"
-    | "Inactive"
-    | "Pending"
-    | "Suspended"
-    | "Expired"
-    | "Unknown"
+  eventDate: string
 
-  applicability:
-    ApplicabilityStatus
+  nextActionDate: string
 
-  credentialStored: boolean
+  notes: string
+}
+
+type SafetyDraft = {
+  system: SafetySystem
+
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
+  country: string
+
+  reviewDate: string
+
+  summary: string
 
   notes: string
 }
@@ -369,7 +336,11 @@ type AuditDraft = {
   auditType: string
 
   regulator: string
-  jurisdiction: string
+
+  jurisdictionCode: string
+  jurisdictionLabel: string
+
+  country: string
 
   referenceNumber: string
 
@@ -377,90 +348,493 @@ type AuditDraft = {
   dueDate: string
   completedDate: string
 
-  status:
-    | "Open"
-    | "Scheduled"
-    | "In Progress"
-    | "Completed"
-    | "Closed"
+  status: AuditRecord["status"]
 
   outcome: string
+
   score: string
 
   followUpRequired: boolean
+
   followUpDueDate: string
 
   notes: string
 }
 
-type SafetyDraft = {
-  system:
-    | "Canadian Carrier Profile"
-    | "Ontario CVOR"
-    | "FMCSA SMS"
-    | "Other"
-
-  jurisdiction: string
-
-  reviewDate: string
-
-  statusSummary: string
-
-  notes: string
-}
-
 type OCRSession = {
-  category: AuthorityCategory
+  mode:
+    | "authority"
+    | "safety"
+    | "audit"
 
   source: DocumentSource
 
   file: File
+
   dataUrl: string
 
   processing: boolean
+
   extractionComplete: boolean
 
   confidence?: number
 
+  /*
+    Source-document date.
+    Used for document history, not merely upload date.
+  */
+  documentDate: string
+
   authorityDraft?: AuthorityDraft
-  auditDraft?: AuditDraft
+
   safetyDraft?: SafetyDraft
+
+  auditDraft?: AuditDraft
 }
 
 /* =========================================================
    CONSTANTS
 ========================================================= */
 
-const SETTINGS_STORAGE_KEY =
+const SYSTEM_SETTINGS_KEY =
   "tes_system_settings"
+
+const THREE_YEAR_HISTORY =
+  3
 
 const DEFAULT_DEADLINE_RULES: DeadlineRules = {
   healthyMinDays: 61,
+
   watchMinDays: 31,
+
   urgentMinDays: 11,
+
   criticalMinDays: 0,
+
   criticalMaxDays: 10,
 }
 
 const EMPTY_DATA: StoredAuthoritiesData = {
-  version: 1,
+  version: 3,
 
   authorities: [],
-  audits: [],
+
   safety: [],
+
+  audits: [],
+
   evidence: [],
 }
 
-/*
-  GLOBAL TES STANDARD:
+/* =========================================================
+   JURISDICTION MASTER
+========================================================= */
 
-  At least 3 years remain visible in the normal
-  operational interface.
+type Jurisdiction = {
+  code: string
 
-  Older records are retained and available historically.
-*/
-const STANDARD_VISIBLE_HISTORY_YEARS =
-  3
+  label: string
+
+  country:
+    | "Canada"
+    | "United States"
+
+  federal?: boolean
+}
+
+const JURISDICTIONS: Jurisdiction[] = [
+  {
+    code: "CA-FED",
+    label: "Federal — Canada",
+    country: "Canada",
+    federal: true,
+  },
+
+  {
+    code: "AB",
+    label: "Alberta",
+    country: "Canada",
+  },
+
+  {
+    code: "BC",
+    label: "British Columbia",
+    country: "Canada",
+  },
+
+  {
+    code: "MB",
+    label: "Manitoba",
+    country: "Canada",
+  },
+
+  {
+    code: "NB",
+    label: "New Brunswick",
+    country: "Canada",
+  },
+
+  {
+    code: "NL",
+    label: "Newfoundland and Labrador",
+    country: "Canada",
+  },
+
+  {
+    code: "NT",
+    label: "Northwest Territories",
+    country: "Canada",
+  },
+
+  {
+    code: "NS",
+    label: "Nova Scotia",
+    country: "Canada",
+  },
+
+  {
+    code: "NU",
+    label: "Nunavut",
+    country: "Canada",
+  },
+
+  {
+    code: "ON",
+    label: "Ontario",
+    country: "Canada",
+  },
+
+  {
+    code: "PE",
+    label: "Prince Edward Island",
+    country: "Canada",
+  },
+
+  {
+    code: "QC",
+    label: "Quebec",
+    country: "Canada",
+  },
+
+  {
+    code: "SK",
+    label: "Saskatchewan",
+    country: "Canada",
+  },
+
+  {
+    code: "YT",
+    label: "Yukon",
+    country: "Canada",
+  },
+
+  {
+    code: "US-FED",
+    label: "Federal — United States",
+    country: "United States",
+    federal: true,
+  },
+
+  {
+    code: "AL",
+    label: "Alabama",
+    country: "United States",
+  },
+
+  {
+    code: "AK",
+    label: "Alaska",
+    country: "United States",
+  },
+
+  {
+    code: "AZ",
+    label: "Arizona",
+    country: "United States",
+  },
+
+  {
+    code: "AR",
+    label: "Arkansas",
+    country: "United States",
+  },
+
+  {
+    code: "CA",
+    label: "California",
+    country: "United States",
+  },
+
+  {
+    code: "CO",
+    label: "Colorado",
+    country: "United States",
+  },
+
+  {
+    code: "CT",
+    label: "Connecticut",
+    country: "United States",
+  },
+
+  {
+    code: "DE",
+    label: "Delaware",
+    country: "United States",
+  },
+
+  {
+    code: "FL",
+    label: "Florida",
+    country: "United States",
+  },
+
+  {
+    code: "GA",
+    label: "Georgia",
+    country: "United States",
+  },
+
+  {
+    code: "HI",
+    label: "Hawaii",
+    country: "United States",
+  },
+
+  {
+    code: "ID",
+    label: "Idaho",
+    country: "United States",
+  },
+
+  {
+    code: "IL",
+    label: "Illinois",
+    country: "United States",
+  },
+
+  {
+    code: "IN",
+    label: "Indiana",
+    country: "United States",
+  },
+
+  {
+    code: "IA",
+    label: "Iowa",
+    country: "United States",
+  },
+
+  {
+    code: "KS",
+    label: "Kansas",
+    country: "United States",
+  },
+
+  {
+    code: "KY",
+    label: "Kentucky",
+    country: "United States",
+  },
+
+  {
+    code: "LA",
+    label: "Louisiana",
+    country: "United States",
+  },
+
+  {
+    code: "ME",
+    label: "Maine",
+    country: "United States",
+  },
+
+  {
+    code: "MD",
+    label: "Maryland",
+    country: "United States",
+  },
+
+  {
+    code: "MA",
+    label: "Massachusetts",
+    country: "United States",
+  },
+
+  {
+    code: "MI",
+    label: "Michigan",
+    country: "United States",
+  },
+
+  {
+    code: "MN",
+    label: "Minnesota",
+    country: "United States",
+  },
+
+  {
+    code: "MS",
+    label: "Mississippi",
+    country: "United States",
+  },
+
+  {
+    code: "MO",
+    label: "Missouri",
+    country: "United States",
+  },
+
+  {
+    code: "MT",
+    label: "Montana",
+    country: "United States",
+  },
+
+  {
+    code: "NE",
+    label: "Nebraska",
+    country: "United States",
+  },
+
+  {
+    code: "NV",
+    label: "Nevada",
+    country: "United States",
+  },
+
+  {
+    code: "NH",
+    label: "New Hampshire",
+    country: "United States",
+  },
+
+  {
+    code: "NJ",
+    label: "New Jersey",
+    country: "United States",
+  },
+
+  {
+    code: "NM",
+    label: "New Mexico",
+    country: "United States",
+  },
+
+  {
+    code: "NY",
+    label: "New York",
+    country: "United States",
+  },
+
+  {
+    code: "NC",
+    label: "North Carolina",
+    country: "United States",
+  },
+
+  {
+    code: "ND",
+    label: "North Dakota",
+    country: "United States",
+  },
+
+  {
+    code: "OH",
+    label: "Ohio",
+    country: "United States",
+  },
+
+  {
+    code: "OK",
+    label: "Oklahoma",
+    country: "United States",
+  },
+
+  {
+    code: "OR",
+    label: "Oregon",
+    country: "United States",
+  },
+
+  {
+    code: "PA",
+    label: "Pennsylvania",
+    country: "United States",
+  },
+
+  {
+    code: "RI",
+    label: "Rhode Island",
+    country: "United States",
+  },
+
+  {
+    code: "SC",
+    label: "South Carolina",
+    country: "United States",
+  },
+
+  {
+    code: "SD",
+    label: "South Dakota",
+    country: "United States",
+  },
+
+  {
+    code: "TN",
+    label: "Tennessee",
+    country: "United States",
+  },
+
+  {
+    code: "TX",
+    label: "Texas",
+    country: "United States",
+  },
+
+  {
+    code: "UT",
+    label: "Utah",
+    country: "United States",
+  },
+
+  {
+    code: "VT",
+    label: "Vermont",
+    country: "United States",
+  },
+
+  {
+    code: "VA",
+    label: "Virginia",
+    country: "United States",
+  },
+
+  {
+    code: "WA",
+    label: "Washington",
+    country: "United States",
+  },
+
+  {
+    code: "WV",
+    label: "West Virginia",
+    country: "United States",
+  },
+
+  {
+    code: "WI",
+    label: "Wisconsin",
+    country: "United States",
+  },
+
+  {
+    code: "WY",
+    label: "Wyoming",
+    country: "United States",
+  },
+]
 
 /* =========================================================
    GENERIC HELPERS
@@ -485,106 +859,11 @@ function isoNow() {
   return new Date().toISOString()
 }
 
-function todayIso() {
+function todayISO() {
   return new Date()
     .toISOString()
     .slice(0, 10)
 }
-
-/* =========================================================
-   SETTINGS
-========================================================= */
-
-function loadSystemSettings():
-  SystemSettings {
-  const fallback:
-    SystemSettings = {
-    version: 1,
-
-    deadlineRules:
-      DEFAULT_DEADLINE_RULES,
-  }
-
-  if (
-    typeof window ===
-    "undefined"
-  ) {
-    return fallback
-  }
-
-  try {
-    const raw =
-      localStorage.getItem(
-        SETTINGS_STORAGE_KEY
-      )
-
-    if (!raw) {
-      return fallback
-    }
-
-    const parsed =
-      JSON.parse(raw)
-
-    const incomingRules =
-      parsed.deadlineRules ||
-      parsed.expiryRules ||
-      {}
-
-    return {
-      ...fallback,
-      ...parsed,
-
-      deadlineRules: {
-        ...DEFAULT_DEADLINE_RULES,
-        ...incomingRules,
-      },
-    }
-  } catch {
-    return fallback
-  }
-}
-
-/* =========================================================
-   STANDARD OCR ICON
-========================================================= */
-
-function ScanDocumentIcon({
-  size = 16,
-}: {
-  size?: number
-}) {
-  return (
-    <span
-      className="relative inline-flex shrink-0 items-center justify-center"
-      style={{
-        width: size,
-        height: size,
-      }}
-    >
-      <span className="absolute inset-0">
-        <span className="absolute left-0 top-0 h-[35%] w-[35%] rounded-tl-[2px] border-l-[1.5px] border-t-[1.5px] border-current" />
-
-        <span className="absolute right-0 top-0 h-[35%] w-[35%] rounded-tr-[2px] border-r-[1.5px] border-t-[1.5px] border-current" />
-
-        <span className="absolute bottom-0 left-0 h-[35%] w-[35%] rounded-bl-[2px] border-b-[1.5px] border-l-[1.5px] border-current" />
-
-        <span className="absolute bottom-0 right-0 h-[35%] w-[35%] rounded-br-[2px] border-b-[1.5px] border-r-[1.5px] border-current" />
-      </span>
-
-      <FileText
-        style={{
-          width: size * 0.58,
-          height: size * 0.58,
-          strokeWidth: 1.8,
-        }}
-      />
-    </span>
-  )
-}
-
-/* =========================================================
-   NORMALIZATION
-========================================================= */
 
 function normalizeIdentifier(
   value?: string
@@ -604,10 +883,6 @@ function normalizeText(
     .replace(/\s+/g, " ")
 }
 
-/* =========================================================
-   COMPANY STORE
-========================================================= */
-
 function getCompanies(): Company[] {
   try {
     const parsed =
@@ -625,202 +900,122 @@ function getCompanies(): Company[] {
   }
 }
 
-/* =========================================================
-   GLOBAL DUPLICATE SCAN
+function loadDeadlineRules():
+  DeadlineRules {
+  try {
+    const raw =
+      localStorage.getItem(
+        SYSTEM_SETTINGS_KEY
+      )
 
-   Searches authority stores across all companies.
+    if (!raw) {
+      return DEFAULT_DEADLINE_RULES
+    }
 
-   In production this should become a shared global
-   identifier resolver/service.
-========================================================= */
+    const parsed =
+      JSON.parse(raw)
 
-type GlobalAuthorityMatch = {
-  companyId: string
-  companyName: string
-
-  recordId: string
-
-  authorityType: string
-  authorityNumber: string
-}
-
-function scanGlobalAuthorityIdentifier({
-  authorityType,
-  authorityNumber,
-  currentCompanyId,
-}: {
-  authorityType: string
-  authorityNumber: string
-  currentCompanyId: string
-}) {
-  const numberKey =
-    normalizeIdentifier(
-      authorityNumber
-    )
-
-  const typeKey =
-    normalizeText(
-      authorityType
-    )
-
-  if (
-    !numberKey ||
-    !typeKey
-  ) {
     return {
-      sameCompany: [],
-      otherCompanies: [],
+      ...DEFAULT_DEADLINE_RULES,
+
+      ...(parsed.deadlineRules ||
+        parsed.expiryRules ||
+        {}),
     }
-  }
-
-  const companies =
-    getCompanies()
-
-  const matches:
-    GlobalAuthorityMatch[] =
-    []
-
-  for (
-    const company of
-    companies
-  ) {
-    const key =
-      `tes_company_authorities_${company.id}`
-
-    try {
-      const raw =
-        localStorage.getItem(
-          key
-        )
-
-      if (!raw) {
-        continue
-      }
-
-      const parsed =
-        JSON.parse(raw)
-
-      const records =
-        Array.isArray(
-          parsed?.authorities
-        )
-          ? parsed.authorities
-          : []
-
-      for (
-        const record of
-        records
-      ) {
-        if (
-          record.deletedAt
-        ) {
-          continue
-        }
-
-        if (
-          normalizeText(
-            record.authorityType
-          ) === typeKey &&
-          normalizeIdentifier(
-            record.authorityNumber
-          ) === numberKey
-        ) {
-          matches.push({
-            companyId:
-              company.id,
-
-            companyName:
-              company.name,
-
-            recordId:
-              record.id,
-
-            authorityType:
-              record.authorityType,
-
-            authorityNumber:
-              record.authorityNumber,
-          })
-        }
-      }
-    } catch {
-      // Skip malformed historical prototype data.
-    }
-  }
-
-  return {
-    sameCompany:
-      matches.filter(
-        (match) =>
-          match.companyId ===
-          currentCompanyId
-      ),
-
-    otherCompanies:
-      matches.filter(
-        (match) =>
-          match.companyId !==
-          currentCompanyId
-      ),
+  } catch {
+    return DEFAULT_DEADLINE_RULES
   }
 }
 
+function readFileAsDataUrl(
+  file: File
+): Promise<string> {
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+      const reader =
+        new FileReader()
+
+      reader.onload =
+        () =>
+          resolve(
+            String(
+              reader.result ||
+                ""
+            )
+          )
+
+      reader.onerror =
+        reject
+
+      reader.readAsDataURL(
+        file
+      )
+    }
+  )
+}
+
 /* =========================================================
-   HAZMAT TRIGGER
+   COMPANY APPLICABILITY
 ========================================================= */
 
 function companyHasHazmat(
   company: Company
 ) {
   if (
-    company.hazmat === true
+    company.hazmat ===
+    true
   ) {
     return true
   }
 
-  const cargoTypes =
+  if (
     Array.isArray(
       company.cargoTypes
-    )
-      ? company.cargoTypes
-      : []
+    ) &&
+    company.cargoTypes.some(
+      (item) => {
+        const text =
+          normalizeText(
+            item
+          )
 
-  if (
-    cargoTypes.some(
-      (item) =>
-        normalizeText(item).includes(
-          "haz"
-        ) ||
-        normalizeText(item).includes(
-          "dangerous goods"
+        return (
+          text.includes(
+            "haz"
+          ) ||
+          text.includes(
+            "dangerous goods"
+          )
         )
+      }
     )
   ) {
     return true
   }
 
-  const cargoInformation =
-    company.cargoInformation
-
   if (
-    cargoInformation &&
-    typeof cargoInformation ===
-      "object"
+    company.cargoInformation
   ) {
-    const flattened =
+    const text =
       JSON.stringify(
-        cargoInformation
+        company.cargoInformation
       ).toLowerCase()
 
     if (
-      flattened.includes(
+      text.includes(
         '"hazmat":true'
       ) ||
-      flattened.includes(
+      text.includes(
         '"hazardous":true'
       ) ||
-      flattened.includes(
+      text.includes(
         '"dangerousgoods":true'
+      ) ||
+      text.includes(
+        '"dangerous_goods":true'
       )
     ) {
       return true
@@ -830,37 +1025,24 @@ function companyHasHazmat(
   return false
 }
 
-/* =========================================================
-   OPERATING SCOPE
+type AuthorityProfile = {
+  showCanadian:
+    boolean
 
-   This is only the current development fallback.
+  showUS:
+    boolean
 
-   When Company Settings gets a more explicit
-   applicability contract, this page can consume it
-   without redesigning the record model.
-========================================================= */
+  showUCR:
+    boolean
 
-type CompanyAuthorityProfile = {
-  country:
-    string
+  showPHMSA:
+    boolean
 
-  provinceState:
-    string
+  showCarrierProfile:
+    boolean
 
-  region:
-    string
-
-  canadaOperations:
-    ApplicabilityStatus
-
-  usOperations:
-    ApplicabilityStatus
-
-  ucr:
-    ApplicabilityStatus
-
-  phmsa:
-    ApplicabilityStatus
+  showSMSProfile:
+    boolean
 
   hazmat:
     boolean
@@ -868,226 +1050,163 @@ type CompanyAuthorityProfile = {
 
 function deriveAuthorityProfile(
   company: Company
-): CompanyAuthorityProfile {
+): AuthorityProfile {
   const country =
-    company.regCorpCountry ||
-    ""
-
-  const provinceState =
-    company.regCorpState ||
-    ""
+    normalizeText(
+      company.regCorpCountry
+    )
 
   const region =
-    company.region ||
-    ""
-
-  const normalizedCountry =
     normalizeText(
-      country
+      company.region
     )
-
-  const normalizedRegion =
-    normalizeText(
-      region
-    )
-
-  const canadaRegistered =
-    normalizedCountry ===
-      "canada" ||
-    normalizedCountry.includes(
-      "canada"
-    )
-
-  const usRegistered =
-    normalizedCountry.includes(
-      "united states"
-    ) ||
-    normalizedCountry ===
-      "usa" ||
-    normalizedCountry ===
-      "us"
 
   const crossBorder =
-    normalizedRegion.includes(
+    region.includes(
       "cross"
     )
 
   const canadaOnly =
-    normalizedRegion.includes(
-      "canada"
-    ) &&
-    !crossBorder
+    !crossBorder &&
+    (
+      region.includes(
+        "canada"
+      ) ||
+      (
+        country.includes(
+          "canada"
+        ) &&
+        !region.includes(
+          "united states"
+        ) &&
+        !region.includes(
+          "usa"
+        )
+      )
+    )
 
   const usOnly =
-    (normalizedRegion.includes(
-      "united states"
-    ) ||
-      normalizedRegion.includes(
+    !crossBorder &&
+    (
+      region.includes(
+        "united states"
+      ) ||
+      region.includes(
         "usa"
       ) ||
-      normalizedRegion.includes(
+      region.includes(
         "us only"
-      )) &&
-    !crossBorder
+      ) ||
+      (
+        country.includes(
+          "united states"
+        ) &&
+        !region.includes(
+          "canada"
+        )
+      )
+    )
+
+  let showCanadian =
+    false
+
+  let showUS =
+    false
+
+  if (crossBorder) {
+    showCanadian =
+      true
+
+    showUS =
+      true
+  } else if (
+    canadaOnly
+  ) {
+    showCanadian =
+      true
+  } else if (
+    usOnly
+  ) {
+    showUS =
+      true
+  } else {
+    /*
+      Fallback only when Operating Region is incomplete.
+    */
+
+    showCanadian =
+      country.includes(
+        "canada"
+      )
+
+    showUS =
+      country.includes(
+        "united states"
+      ) ||
+      country ===
+        "usa" ||
+      country ===
+        "us"
+  }
 
   const hazmat =
     companyHasHazmat(
       company
     )
 
-  let canadaOperations:
-    ApplicabilityStatus =
-    "Needs Review"
-
-  let usOperations:
-    ApplicabilityStatus =
-    "Needs Review"
-
-  if (
-    crossBorder
-  ) {
-    canadaOperations =
-      "Required"
-
-    usOperations =
-      "Required"
-  } else if (
-    canadaOnly ||
-    (canadaRegistered &&
-      !usOnly)
-  ) {
-    canadaOperations =
-      "Required"
-
-    usOperations =
-      "Not Required"
-  } else if (
-    usOnly ||
-    usRegistered
-  ) {
-    canadaOperations =
-      "Not Required"
-
-    usOperations =
-      "Required"
-  }
-
-  /*
-    UCR remains on this page as an operating registration.
-
-    At this stage we mark broad US/interstate/cross-border
-    exposure as Required according to the current TES
-    operating-profile model.
-
-    Company Settings can later override this precisely.
-  */
-
-  const ucr =
-    usOperations ===
-    "Required"
-      ? "Required"
-      : usOperations ===
-          "Not Required"
-        ? "Not Required"
-        : "Needs Review"
-
-  /*
-    User-defined current business rule:
-
-    Cargo Information is mandatory.
-    If company transports hazmat, PHMSA fleet authority/
-    registration becomes mandatory.
-  */
-
-  const phmsa:
-    ApplicabilityStatus =
-    hazmat
-      ? "Required"
-      : "Not Required"
-
   return {
-    country,
-    provinceState,
-    region,
+    showCanadian,
 
-    canadaOperations,
-    usOperations,
-    ucr,
-    phmsa,
+    showUS,
+
+    showUCR:
+      showUS,
+
+    /*
+      PHMSA disappears completely unless Hazmat +
+      US operation applies.
+    */
+    showPHMSA:
+      showUS &&
+      hazmat,
+
+    showCarrierProfile:
+      showCanadian,
+
+    showSMSProfile:
+      showUS,
+
     hazmat,
   }
 }
 
 /* =========================================================
-   3-YEAR VISIBILITY STANDARD
+   THREE-YEAR HISTORY
 ========================================================= */
 
-function getThreeYearCutoff() {
-  const cutoff =
+function historyCutoffDate() {
+  const date =
     new Date()
 
-  cutoff.setFullYear(
-    cutoff.getFullYear() -
-      STANDARD_VISIBLE_HISTORY_YEARS
+  date.setFullYear(
+    date.getFullYear() -
+      THREE_YEAR_HISTORY
   )
 
-  return cutoff
+  return date
 }
 
-function getRecordReferenceDate(
-  record:
-    | AuthorityRecord
-    | AuditRecord
-    | SafetyPlaceholderRecord
+function isDateInsideThreeYears(
+  dateValue?: string
 ) {
-  if (
-    record.category ===
-    "audit"
-  ) {
-    return (
-      record.completedDate ||
-      record.noticeDate ||
-      record.createdAt
-    )
-  }
-
-  if (
-    record.category ===
-    "safety"
-  ) {
-    return (
-      record.reviewDate ||
-      record.createdAt
-    )
-  }
-
-  return (
-    record.expiryDate ||
-    record.renewalDate ||
-    record.dueDate ||
-    record.effectiveDate ||
-    record.issueDate ||
-    record.createdAt
-  )
-}
-
-function isWithinStandardVisibleHistory(
-  record:
-    | AuthorityRecord
-    | AuditRecord
-    | SafetyPlaceholderRecord
-) {
-  const reference =
-    getRecordReferenceDate(
-      record
-    )
-
-  if (!reference) {
+  if (!dateValue) {
     return true
   }
 
   const date =
-    new Date(reference)
+    new Date(
+      dateValue
+    )
 
   if (
     Number.isNaN(
@@ -1099,7 +1218,41 @@ function isWithinStandardVisibleHistory(
 
   return (
     date >=
-    getThreeYearCutoff()
+    historyCutoffDate()
+  )
+}
+
+function authorityReferenceDate(
+  record:
+    AuthorityRecord
+) {
+  return (
+    record.expiryDate ||
+    record.eventDate ||
+    record.effectiveDate ||
+    record.issueDate ||
+    record.createdAt
+  )
+}
+
+function safetyReferenceDate(
+  record:
+    SafetyRecord
+) {
+  return (
+    record.reviewDate ||
+    record.createdAt
+  )
+}
+
+function auditReferenceDate(
+  record:
+    AuditRecord
+) {
+  return (
+    record.completedDate ||
+    record.noticeDate ||
+    record.createdAt
   )
 }
 
@@ -1114,6 +1267,11 @@ function getDaysRemaining(
     return null
   }
 
+  const target =
+    new Date(
+      `${date}T23:59:59`
+    )
+
   const now =
     new Date()
 
@@ -1124,25 +1282,12 @@ function getDaysRemaining(
       now.getDate()
     )
 
-  const target =
-    new Date(
-      `${date}T23:59:59`
-    )
-
   return Math.ceil(
-    (target.getTime() -
-      today.getTime()) /
+    (
+      target.getTime() -
+      today.getTime()
+    ) /
       86400000
-  )
-}
-
-function getAuthorityDeadlineDate(
-  record: AuthorityRecord
-) {
-  return (
-    record.dueDate ||
-    record.renewalDate ||
-    record.expiryDate
   )
 }
 
@@ -1152,14 +1297,8 @@ function getDeadlineStatus(
     | undefined,
 
   rules:
-    DeadlineRules,
-
-  deleted = false
+    DeadlineRules
 ): DeadlineStatus {
-  if (deleted) {
-    return "Deleted"
-  }
-
   if (!date) {
     return "No Deadline"
   }
@@ -1211,7 +1350,7 @@ function getDeadlineStatus(
   return "Healthy"
 }
 
-function deadlineStyle(
+function statusClasses(
   status:
     DeadlineStatus
 ) {
@@ -1221,11 +1360,8 @@ function deadlineStyle(
         badge:
           "border-emerald-200 bg-emerald-50 text-emerald-800",
 
-        accent:
+        left:
           "border-l-emerald-500",
-
-        text:
-          "text-emerald-700",
       }
 
     case "Watch":
@@ -1233,11 +1369,8 @@ function deadlineStyle(
         badge:
           "border-amber-200 bg-amber-50 text-amber-800",
 
-        accent:
+        left:
           "border-l-amber-400",
-
-        text:
-          "text-amber-700",
       }
 
     case "Urgent":
@@ -1245,11 +1378,8 @@ function deadlineStyle(
         badge:
           "border-red-200 bg-red-50 text-red-700",
 
-        accent:
+        left:
           "border-l-red-400",
-
-        text:
-          "text-red-600",
       }
 
     case "Critical":
@@ -1257,11 +1387,8 @@ function deadlineStyle(
         badge:
           "border-red-400 bg-red-100 text-red-900",
 
-        accent:
+        left:
           "border-l-red-700",
-
-        text:
-          "font-semibold text-red-800",
       }
 
     case "Expired":
@@ -1269,35 +1396,17 @@ function deadlineStyle(
         badge:
           "border-red-900 bg-red-950 text-white",
 
-        accent:
+        left:
           "border-l-red-950",
-
-        text:
-          "font-bold text-red-950",
       }
 
-    case "No Deadline":
+    default:
       return {
         badge:
-          "border-slate-200 bg-slate-50 text-slate-700",
+          "border-slate-200 bg-slate-50 text-slate-600",
 
-        accent:
+        left:
           "border-l-slate-300",
-
-        text:
-          "text-muted-foreground",
-      }
-
-    case "Deleted":
-      return {
-        badge:
-          "border-slate-200 bg-slate-100 text-slate-500",
-
-        accent:
-          "border-l-slate-300",
-
-        text:
-          "text-muted-foreground",
       }
   }
 }
@@ -1309,7 +1418,7 @@ function DeadlineBadge({
     DeadlineStatus
 }) {
   const style =
-    deadlineStyle(
+    statusClasses(
       status
     )
 
@@ -1346,60 +1455,281 @@ function DeadlineBadge({
 }
 
 /* =========================================================
-   APPLICABILITY BADGE
+   GLOBAL DUPLICATION
 ========================================================= */
 
-function ApplicabilityBadge({
-  status,
+function findGlobalAuthorityConflict({
+  currentCompanyId,
+  authorityType,
+  number,
+  editingId,
 }: {
-  status:
-    ApplicabilityStatus
+  currentCompanyId:
+    string
+
+  authorityType:
+    AuthorityType
+
+  number:
+    string
+
+  editingId?:
+    string
 }) {
-  if (
-    status ===
-    "Required"
-  ) {
-    return (
-      <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
-        Required
-      </Badge>
+  const normalizedNumber =
+    normalizeIdentifier(
+      number
     )
-  }
 
   if (
-    status ===
-    "Not Required"
+    !normalizedNumber
   ) {
-    return (
-      <Badge
-        variant="outline"
-        className="text-muted-foreground"
-      >
-        Not Required
-      </Badge>
-    )
+    return null
   }
 
+  for (
+    const company of
+    getCompanies()
+  ) {
+    try {
+      const raw =
+        localStorage.getItem(
+          `tes_company_authorities_${company.id}`
+        )
+
+      if (!raw) {
+        continue
+      }
+
+      const parsed =
+        JSON.parse(raw)
+
+      const records:
+        AuthorityRecord[] =
+        Array.isArray(
+          parsed?.authorities
+        )
+          ? parsed.authorities
+          : []
+
+      const match =
+        records.find(
+          (record) =>
+            record.id !==
+              editingId &&
+            record.authorityType ===
+              authorityType &&
+            normalizeIdentifier(
+              record.number
+            ) ===
+              normalizedNumber
+        )
+
+      if (match) {
+        return {
+          companyId:
+            company.id,
+
+          companyName:
+            company.name,
+
+          sameCompany:
+            company.id ===
+            currentCompanyId,
+
+          record:
+            match,
+        }
+      }
+    } catch {
+      // Ignore malformed development data.
+    }
+  }
+
+  return null
+}
+
+/* =========================================================
+   STANDARD OCR ICON
+========================================================= */
+
+function ScanDocumentIcon({
+  size = 16,
+}: {
+  size?: number
+}) {
   return (
-    <Badge
-      variant="outline"
-      className="border-amber-200 bg-amber-50 text-amber-800"
+    <span
+      className="relative inline-flex shrink-0 items-center justify-center"
+      style={{
+        width: size,
+        height: size,
+      }}
     >
-      Needs Review
-    </Badge>
+      <span className="absolute inset-0">
+        <span className="absolute left-0 top-0 h-[35%] w-[35%] rounded-tl-[2px] border-l-[1.5px] border-t-[1.5px] border-current" />
+
+        <span className="absolute right-0 top-0 h-[35%] w-[35%] rounded-tr-[2px] border-r-[1.5px] border-t-[1.5px] border-current" />
+
+        <span className="absolute bottom-0 left-0 h-[35%] w-[35%] rounded-bl-[2px] border-b-[1.5px] border-l-[1.5px] border-current" />
+
+        <span className="absolute bottom-0 right-0 h-[35%] w-[35%] rounded-br-[2px] border-b-[1.5px] border-r-[1.5px] border-current" />
+      </span>
+
+      <FileText
+        style={{
+          width:
+            size * 0.58,
+
+          height:
+            size * 0.58,
+
+          strokeWidth:
+            1.8,
+        }}
+      />
+    </span>
   )
 }
 
 /* =========================================================
-   COPY FIELD
+   JURISDICTION / COUNTRY
+========================================================= */
+
+function JurisdictionCountryFields({
+  jurisdictionCode,
+  country,
+  allowedCountries,
+  onChange,
+}: {
+  jurisdictionCode:
+    string
+
+  country:
+    string
+
+  allowedCountries?: (
+    | "Canada"
+    | "United States"
+  )[]
+
+  onChange: (
+    value: {
+      jurisdictionCode: string
+      jurisdictionLabel: string
+      country: string
+    }
+  ) => void
+}) {
+  const options =
+    allowedCountries?.length
+      ? JURISDICTIONS.filter(
+          (item) =>
+            allowedCountries.includes(
+              item.country
+            )
+        )
+      : JURISDICTIONS
+
+  return (
+    <>
+      {/* LOCKED STANDARD:
+          Jurisdiction first.
+      */}
+
+      <div className="space-y-2">
+        <Label>
+          Jurisdiction *
+        </Label>
+
+        <Select
+          value={
+            jurisdictionCode ||
+            undefined
+          }
+          onValueChange={(
+            code
+          ) => {
+            const selected =
+              JURISDICTIONS.find(
+                (item) =>
+                  item.code ===
+                  code
+              )
+
+            if (!selected) {
+              return
+            }
+
+            onChange({
+              jurisdictionCode:
+                selected.code,
+
+              jurisdictionLabel:
+                selected.label,
+
+              country:
+                selected.country,
+            })
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select jurisdiction" />
+          </SelectTrigger>
+
+          <SelectContent className="z-[200] max-h-[340px]">
+            {options.map(
+              (item) => (
+                <SelectItem
+                  key={
+                    item.code
+                  }
+                  value={
+                    item.code
+                  }
+                >
+                  {
+                    item.label
+                  }
+                </SelectItem>
+              )
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Country comes AFTER jurisdiction and is automatic. */}
+
+      <div className="space-y-2">
+        <Label>
+          Country
+        </Label>
+
+        <Input
+          value={
+            country
+          }
+          readOnly
+          className="bg-muted/30"
+        />
+      </div>
+    </>
+  )
+}
+
+/* =========================================================
+   COPY
 ========================================================= */
 
 function CopyField({
   label,
   value,
 }: {
-  label: string
-  value?: string
+  label:
+    string
+
+  value?:
+    string
 }) {
   const [
     copied,
@@ -1418,23 +1748,25 @@ function CopyField({
           value
         )
 
-        setCopied(true)
+        setCopied(
+          true
+        )
 
         window.setTimeout(
           () =>
             setCopied(
               false
             ),
-          1000
+          900
         )
       } catch {
-        // Clipboard may fail in local non-secure testing.
+        //
       }
     }
 
   return (
     <div>
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
 
@@ -1455,7 +1787,7 @@ function CopyField({
             }
           >
             {copied ? (
-              <Check className="size-3.5 text-emerald-600" />
+              <CheckCircle2 className="size-3.5 text-emerald-600" />
             ) : (
               <Copy className="size-3.5" />
             )}
@@ -1467,115 +1799,273 @@ function CopyField({
 }
 
 /* =========================================================
-   FILE READER
+   AUTHORITY CONFIG
 ========================================================= */
 
-function readFileAsDataUrl(
-  file: File
-): Promise<string> {
-  return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      const reader =
-        new FileReader()
+function authorityDisplayName(
+  type:
+    AuthorityType
+) {
+  switch (type) {
+    case "PROVINCIAL_CARRIER_IDENTIFIER":
+      return "Provincial Carrier Identifier (MVID / RIN)"
 
-      reader.onload =
-        () =>
-          resolve(
-            String(
-              reader.result ||
-                ""
-            )
-          )
+    case "CANADIAN_SAFETY_AUTHORITY":
+      return "NSC / Safety Fitness Certificate / CVOR"
 
-      reader.onerror =
-        reject
+    case "USDOT":
+      return "USDOT Number"
 
-      reader.readAsDataURL(
-        file
-      )
-    }
-  )
+    case "MC":
+      return "MC Operating Authority"
+
+    case "MCS150":
+      return "MCS-150 Biennial Update"
+
+    case "UCR":
+      return "Unified Carrier Registration (UCR)"
+
+    case "PHMSA":
+      return "PHMSA Registration"
+
+    default:
+      return "Other Authority / Registration"
+  }
 }
 
-/* =========================================================
-   DEFAULT DRAFTS
-========================================================= */
+function defaultIssuingAuthority(
+  type:
+    AuthorityType
+) {
+  switch (type) {
+    case "USDOT":
+    case "MC":
+    case "MCS150":
+      return "FMCSA"
 
-function emptyAuthorityDraft({
-  category,
-  company,
-  profile,
-}: {
+    case "PHMSA":
+      return "PHMSA"
+
+    case "UCR":
+      return "UCR"
+
+    default:
+      return ""
+  }
+}
+
+function authorityOptions(
   category:
-    AuthorityCategory
-
-  company:
-    Company
+    AuthorityCategory,
 
   profile:
-    CompanyAuthorityProfile
-}): AuthorityDraft {
-  let applicability:
-    ApplicabilityStatus =
-    "Needs Review"
+    AuthorityProfile
+): {
+  value:
+    AuthorityType
 
+  label:
+    string
+}[] {
   if (
     category ===
     "canadian"
   ) {
-    applicability =
-      profile.canadaOperations
+    return [
+      {
+        value:
+          "PROVINCIAL_CARRIER_IDENTIFIER",
+
+        label:
+          "Provincial Carrier Identifier (MVID / RIN)",
+      },
+
+      {
+        value:
+          "CANADIAN_SAFETY_AUTHORITY",
+
+        label:
+          "NSC / Safety Fitness Certificate / CVOR",
+      },
+    ]
   }
 
   if (
     category ===
     "us_federal"
   ) {
-    applicability =
-      profile.usOperations
+    return [
+      {
+        value:
+          "USDOT",
+
+        label:
+          "USDOT Number",
+      },
+
+      {
+        value:
+          "MC",
+
+        label:
+          "MC Operating Authority",
+      },
+
+      {
+        value:
+          "MCS150",
+
+        label:
+          "MCS-150 Biennial Update",
+      },
+    ]
+  }
+
+  const options: {
+    value:
+      AuthorityType
+
+    label:
+      string
+  }[] = []
+
+  if (
+    profile.showUCR
+  ) {
+    options.push({
+      value:
+        "UCR",
+
+      label:
+        "Unified Carrier Registration (UCR)",
+    })
   }
 
   if (
-    category ===
-    "registration"
+    profile.showPHMSA
   ) {
-    applicability =
-      profile.ucr
+    options.push({
+      value:
+        "PHMSA",
+
+      label:
+        "PHMSA Registration",
+    })
   }
 
+  return options
+}
+
+/* =========================================================
+   DEFAULT JURISDICTIONS / DRAFTS
+========================================================= */
+
+function defaultJurisdictionFor(
+  company:
+    Company,
+
+  category:
+    AuthorityCategory
+) {
   if (
     category ===
-    "hazmat"
+      "us_federal" ||
+    category ===
+      "operating_registration"
   ) {
-    applicability =
-      profile.phmsa
+    return JURISDICTIONS.find(
+      (item) =>
+        item.code ===
+        "US-FED"
+    )!
   }
+
+  const state =
+    normalizeText(
+      company.regCorpState
+    )
+
+  return (
+    JURISDICTIONS.find(
+      (item) =>
+        item.country ===
+          "Canada" &&
+        (
+          normalizeText(
+            item.code
+          ) ===
+            state ||
+          normalizeText(
+            item.label
+          ) ===
+            state
+        )
+    ) ||
+    JURISDICTIONS.find(
+      (item) =>
+        item.code ===
+        "CA-FED"
+    )!
+  )
+}
+
+function emptyAuthorityDraft(
+  company:
+    Company,
+
+  category:
+    AuthorityCategory,
+
+  type?:
+    AuthorityType
+): AuthorityDraft {
+  const jurisdiction =
+    defaultJurisdictionFor(
+      company,
+      category
+    )
+
+  const authorityType =
+    type ||
+    (
+      category ===
+      "canadian"
+        ? "PROVINCIAL_CARRIER_IDENTIFIER"
+        : category ===
+            "us_federal"
+          ? "USDOT"
+          : "UCR"
+    )
 
   return {
     category,
 
-    authorityType:
-      "",
+    authorityType,
 
-    authorityName:
-      "",
+    name:
+      authorityDisplayName(
+        authorityType
+      ),
 
-    authorityNumber:
+    number:
       "",
 
     issuingAuthority:
-      "",
+      defaultIssuingAuthority(
+        authorityType
+      ),
+
+    jurisdictionCode:
+      jurisdiction.code,
+
+    jurisdictionLabel:
+      jurisdiction.label,
 
     country:
-      company.regCorpCountry ||
-      "",
+      jurisdiction.country,
 
-    jurisdiction:
-      company.regCorpState ||
-      "",
+    status:
+      "Active",
 
     issueDate:
       "",
@@ -1583,30 +2073,102 @@ function emptyAuthorityDraft({
     effectiveDate:
       "",
 
-    renewalDate:
-      "",
-
     expiryDate:
       "",
 
-    dueDate:
+    eventDate:
       "",
 
-    recordStatus:
-      "Active",
-
-    applicability,
-
-    credentialStored:
-      false,
+    nextActionDate:
+      "",
 
     notes:
       "",
   }
 }
 
-function emptyAuditDraft():
-  AuditDraft {
+function emptySafetyDraft(
+  company:
+    Company,
+
+  system:
+    SafetySystem
+): SafetyDraft {
+  const jurisdiction =
+    system ===
+    "SMS_PROFILE"
+      ? JURISDICTIONS.find(
+          (item) =>
+            item.code ===
+            "US-FED"
+        )!
+      : defaultJurisdictionFor(
+          company,
+          "canadian"
+        )
+
+  return {
+    system,
+
+    jurisdictionCode:
+      jurisdiction.code,
+
+    jurisdictionLabel:
+      jurisdiction.label,
+
+    country:
+      jurisdiction.country,
+
+    reviewDate:
+      todayISO(),
+
+    summary:
+      "",
+
+    notes:
+      "",
+  }
+}
+
+function emptyAuditDraft(
+  company:
+    Company
+): AuditDraft {
+  const canada =
+    normalizeText(
+      company.regCorpCountry
+    ).includes(
+      "canada"
+    )
+
+  const country =
+    canada
+      ? "Canada"
+      : "United States"
+
+  const jurisdiction =
+    JURISDICTIONS.find(
+      (item) =>
+        item.country ===
+          country &&
+        normalizeText(
+          item.label
+        ) ===
+          normalizeText(
+            company.regCorpState
+          )
+    ) ||
+    JURISDICTIONS.find(
+      (item) =>
+        item.code ===
+        (
+          country ===
+          "Canada"
+            ? "CA-FED"
+            : "US-FED"
+        )
+    )!
+
   return {
     auditType:
       "",
@@ -1614,8 +2176,14 @@ function emptyAuditDraft():
     regulator:
       "",
 
-    jurisdiction:
-      "",
+    jurisdictionCode:
+      jurisdiction.code,
+
+    jurisdictionLabel:
+      jurisdiction.label,
+
+    country:
+      jurisdiction.country,
 
     referenceNumber:
       "",
@@ -1649,45 +2217,21 @@ function emptyAuditDraft():
   }
 }
 
-function emptySafetyDraft():
-  SafetyDraft {
-  return {
-    system:
-      "Canadian Carrier Profile",
-
-    jurisdiction:
-      "",
-
-    reviewDate:
-      todayIso(),
-
-    statusSummary:
-      "",
-
-    notes:
-      "",
-  }
-}
-
 /* =========================================================
-   DOCUMENT SOURCE PICKER
+   DOCUMENT SOURCE
 ========================================================= */
 
 function DocumentSourcePicker({
-  category,
   onCamera,
   onDevice,
   onClose,
 }: {
-  category:
-    AuthorityCategory
-
   onCamera: () => void
   onDevice: () => void
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <Card className="w-full max-w-lg">
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
@@ -1697,11 +2241,11 @@ function DocumentSourcePicker({
                   size={18}
                 />
 
-                Scan Authority Document
+                Scan Document
               </CardTitle>
 
               <CardDescription className="mt-1">
-                Choose the evidence source.
+                Select where the source document is coming from.
               </CardDescription>
             </div>
 
@@ -1723,18 +2267,16 @@ function DocumentSourcePicker({
             onClick={
               onCamera
             }
-            className="rounded-xl border p-5 text-left hover:border-primary/40 hover:bg-primary/[0.035]"
+            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
           >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Camera className="size-5" />
-            </div>
+            <Camera className="size-6 text-primary" />
 
             <p className="mt-4 text-sm font-semibold">
               Take Photo
             </p>
 
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Capture the authority, registration, audit notice, or other supporting document.
+              Capture the complete source document.
             </p>
           </button>
 
@@ -1743,18 +2285,16 @@ function DocumentSourcePicker({
             onClick={
               onDevice
             }
-            className="rounded-xl border p-5 text-left hover:border-primary/40 hover:bg-primary/[0.035]"
+            className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
           >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Upload className="size-5" />
-            </div>
+            <Upload className="size-6 text-primary" />
 
             <p className="mt-4 text-sm font-semibold">
               Upload from Device
             </p>
 
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Select a PDF or image already stored on the device.
+              Select an existing PDF or image.
             </p>
           </button>
         </CardContent>
@@ -1771,11 +2311,13 @@ function CameraCapture({
   onCapture,
   onClose,
 }: {
-  onCapture: (
-    file: File
-  ) => void
+  onCapture:
+    (
+      file: File
+    ) => void
 
-  onClose: () => void
+  onClose:
+    () => void
 }) {
   const videoRef =
     useRef<HTMLVideoElement | null>(
@@ -1867,88 +2409,86 @@ function CameraCapture({
     }
   }, [])
 
-  const capture = () => {
-    const video =
-      videoRef.current
+  const capture =
+    () => {
+      const video =
+        videoRef.current
 
-    const canvas =
-      canvasRef.current
+      const canvas =
+        canvasRef.current
 
-    if (
-      !video ||
-      !canvas
-    ) {
-      return
-    }
+      if (
+        !video ||
+        !canvas
+      ) {
+        return
+      }
 
-    canvas.width =
-      video.videoWidth
+      canvas.width =
+        video.videoWidth
 
-    canvas.height =
-      video.videoHeight
+      canvas.height =
+        video.videoHeight
 
-    const context =
-      canvas.getContext(
-        "2d"
+      const context =
+        canvas.getContext(
+          "2d"
+        )
+
+      if (!context) {
+        return
+      }
+
+      context.drawImage(
+        video,
+        0,
+        0,
+        canvas.width,
+        canvas.height
       )
 
-    if (!context) {
-      return
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            return
+          }
+
+          streamRef.current
+            ?.getTracks()
+            .forEach(
+              (track) =>
+                track.stop()
+            )
+
+          onCapture(
+            new File(
+              [blob],
+
+              `authority-capture-${Date.now()}.jpg`,
+
+              {
+                type:
+                  "image/jpeg",
+              }
+            )
+          )
+        },
+
+        "image/jpeg",
+
+        0.95
+      )
     }
 
-    context.drawImage(
-      video,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    )
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          return
-        }
-
-        const file =
-          new File(
-            [blob],
-
-            `authority-capture-${Date.now()}.jpg`,
-
-            {
-              type:
-                "image/jpeg",
-            }
-          )
-
-        streamRef.current
-          ?.getTracks()
-          .forEach(
-            (track) =>
-              track.stop()
-          )
-
-        onCapture(
-          file
-        )
-      },
-
-      "image/jpeg",
-
-      0.94
-    )
-  }
-
   return (
-    <div className="fixed inset-0 z-[120] flex flex-col bg-black">
+    <div className="fixed inset-0 z-[150] flex flex-col bg-black">
       <div className="flex min-h-16 items-center justify-between border-b border-white/10 px-5 text-white">
         <div>
           <p className="text-sm font-semibold">
             Capture Document
           </p>
 
-          <p className="mt-0.5 text-[10px] text-white/60">
+          <p className="text-[10px] text-white/60">
             Keep the complete document inside the frame.
           </p>
         </div>
@@ -2023,17 +2563,41 @@ function CameraCapture({
 
 /* =========================================================
    DOCUMENT VIEWER
+
+   Images:
+   - fit
+   - zoom
+   - pan
+   - rotate
+   - fullscreen
+
+   PDFs:
+   - use ALL available viewer space
+   - browser PDF controls remain usable
+   - fullscreen works on the complete TES viewer
 ========================================================= */
 
 function DocumentViewer({
-  file,
+  fileName,
+  mimeType,
   dataUrl,
+  onClose,
   onReplace,
 }: {
-  file: File
-  dataUrl: string
+  fileName:
+    string
 
-  onReplace: () => void
+  mimeType:
+    string
+
+  dataUrl:
+    string
+
+  onClose?:
+    () => void
+
+  onReplace?:
+    () => void
 }) {
   const rootRef =
     useRef<HTMLDivElement | null>(
@@ -2046,6 +2610,7 @@ function DocumentViewer({
         false,
 
       x: 0,
+
       y: 0,
     })
 
@@ -2067,23 +2632,30 @@ function DocumentViewer({
   ] =
     useState({
       x: 0,
+
       y: 0,
     })
 
-  const reset = () => {
-    setZoom(
-      1
-    )
+  const isPdf =
+    mimeType ===
+    "application/pdf"
 
-    setRotation(
-      0
-    )
+  const reset =
+    () => {
+      setZoom(
+        1
+      )
 
-    setPan({
-      x: 0,
-      y: 0,
-    })
-  }
+      setRotation(
+        0
+      )
+
+      setPan({
+        x: 0,
+
+        y: 0,
+      })
+    }
 
   const fullscreen =
     async () => {
@@ -2093,167 +2665,121 @@ function DocumentViewer({
         return
       }
 
-      if (
-        !document.fullscreenElement
-      ) {
-        await rootRef.current.requestFullscreen()
-      } else {
-        await document.exitFullscreen()
+      try {
+        if (
+          !document.fullscreenElement
+        ) {
+          await rootRef.current.requestFullscreen()
+        } else {
+          await document.exitFullscreen()
+        }
+      } catch {
+        //
       }
     }
-
-  const pointerDown = (
-    event:
-      React.PointerEvent<HTMLDivElement>
-  ) => {
-    dragRef.current = {
-      active:
-        true,
-
-      x:
-        event.clientX,
-
-      y:
-        event.clientY,
-    }
-
-    event.currentTarget.setPointerCapture(
-      event.pointerId
-    )
-  }
-
-  const pointerMove = (
-    event:
-      React.PointerEvent<HTMLDivElement>
-  ) => {
-    if (
-      !dragRef.current
-        .active
-    ) {
-      return
-    }
-
-    const dx =
-      event.clientX -
-      dragRef.current.x
-
-    const dy =
-      event.clientY -
-      dragRef.current.y
-
-    dragRef.current.x =
-      event.clientX
-
-    dragRef.current.y =
-      event.clientY
-
-    setPan(
-      (current) => ({
-        x:
-          current.x +
-          dx,
-
-        y:
-          current.y +
-          dy,
-      })
-    )
-  }
-
-  const pdf =
-    file.type ===
-    "application/pdf"
 
   return (
     <div
       ref={
         rootRef
       }
-      className="flex h-full min-h-0 flex-col bg-muted/15 fullscreen:bg-background"
+      className="flex h-full min-h-0 flex-col bg-background fullscreen:bg-background"
     >
-      <div className="flex min-h-12 items-center justify-between gap-2 border-b bg-background px-4">
+      <div className="flex min-h-12 items-center justify-between gap-3 border-b px-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold">
             Original Document
           </p>
 
-          <p className="max-w-[320px] truncate text-[10px] text-muted-foreground">
-            {file.name}
+          <p className="max-w-[450px] truncate text-[10px] text-muted-foreground">
+            {fileName}
           </p>
         </div>
 
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={
-              reset
-            }
-          >
-            Fit
-          </Button>
+          {!isPdf && (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={
+                  reset
+                }
+              >
+                Fit
+              </Button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setZoom(
-                (current) =>
-                  Math.max(
-                    0.5,
-                    current -
-                      0.25
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() =>
+                  setZoom(
+                    (current) =>
+                      Math.max(
+                        0.5,
+                        current -
+                          0.25
+                      )
                   )
-              )
-            }
-          >
-            <ZoomOut className="size-4" />
-          </Button>
+                }
+              >
+                <ZoomOut className="size-4" />
+              </Button>
 
-          <span className="w-12 text-center text-[10px]">
-            {Math.round(
-              zoom * 100
-            )}
-            %
-          </span>
+              <span className="w-12 text-center text-[10px]">
+                {Math.round(
+                  zoom *
+                    100
+                )}
+                %
+              </span>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setZoom(
-                (current) =>
-                  Math.min(
-                    4,
-                    current +
-                      0.25
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() =>
+                  setZoom(
+                    (current) =>
+                      Math.min(
+                        5,
+                        current +
+                          0.25
+                      )
                   )
-              )
-            }
-          >
-            <ZoomIn className="size-4" />
-          </Button>
+                }
+              >
+                <ZoomIn className="size-4" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() =>
+                  setRotation(
+                    (current) =>
+                      (
+                        current +
+                        90
+                      ) %
+                      360
+                  )
+                }
+              >
+                <RotateCcw className="size-4" />
+              </Button>
+            </>
+          )}
 
           <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() =>
-              setRotation(
-                (current) =>
-                  (current +
-                    90) %
-                  360
-              )
-            }
-          >
-            <RotateCcw className="size-4" />
-          </Button>
-
-          <Button
+            type="button"
             variant="ghost"
             size="icon"
             className="size-8"
@@ -2263,287 +2789,259 @@ function DocumentViewer({
           >
             <Maximize2 className="size-4" />
           </Button>
+
+          {onClose && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={
+                onClose
+              }
+            >
+              <X className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
 
-      <div
-        className="relative min-h-[500px] flex-1 cursor-grab overflow-hidden active:cursor-grabbing"
-        onPointerDown={
-          pointerDown
-        }
-        onPointerMove={
-          pointerMove
-        }
-        onPointerUp={() => {
-          dragRef.current.active =
-            false
-        }}
-        onPointerCancel={() => {
-          dragRef.current.active =
-            false
-        }}
-        style={{
-          touchAction:
-            "none",
-        }}
-      >
-        <div className="absolute inset-0 flex items-center justify-center p-5">
-          <div
-            style={{
-              transform: `
-                translate(${pan.x}px, ${pan.y}px)
-                scale(${zoom})
-                rotate(${rotation}deg)
-              `,
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/15">
+        {isPdf ? (
+          /*
+            IMPORTANT:
 
-              transformOrigin:
-                "center center",
+            Do not place the PDF inside another tiny fixed-size
+            iframe. It consumes the full document workspace.
+
+            The native PDF viewer provides PDF scrolling/zoom,
+            while TES controls fullscreen at the workspace level.
+          */
+
+          <embed
+            src={
+              dataUrl
+            }
+            type="application/pdf"
+            className="absolute inset-0 h-full w-full"
+          />
+        ) : (
+          <div
+            className="absolute inset-0 flex cursor-grab items-center justify-center overflow-hidden p-5 active:cursor-grabbing"
+            style={{
+              touchAction:
+                "none",
+            }}
+            onPointerDown={(
+              event
+            ) => {
+              dragRef.current = {
+                active:
+                  true,
+
+                x:
+                  event.clientX,
+
+                y:
+                  event.clientY,
+              }
+
+              event.currentTarget.setPointerCapture(
+                event.pointerId
+              )
+            }}
+            onPointerMove={(
+              event
+            ) => {
+              if (
+                !dragRef.current
+                  .active
+              ) {
+                return
+              }
+
+              const dx =
+                event.clientX -
+                dragRef.current.x
+
+              const dy =
+                event.clientY -
+                dragRef.current.y
+
+              dragRef.current.x =
+                event.clientX
+
+              dragRef.current.y =
+                event.clientY
+
+              setPan(
+                (current) => ({
+                  x:
+                    current.x +
+                    dx,
+
+                  y:
+                    current.y +
+                    dy,
+                })
+              )
+            }}
+            onPointerUp={() => {
+              dragRef.current.active =
+                false
+            }}
+            onPointerCancel={() => {
+              dragRef.current.active =
+                false
             }}
           >
-            {pdf ? (
-              <iframe
-                src={
-                  dataUrl
-                }
-                title="Authority document"
-                className="h-[72vh] w-[62vw] max-w-[1000px] rounded-lg border bg-background pointer-events-none"
-              />
-            ) : (
-              <img
-                src={
-                  dataUrl
-                }
-                alt="Authority document"
-                draggable={
-                  false
-                }
-                className="max-h-[calc(100vh-190px)] max-w-[calc(100vw-500px)] rounded-lg object-contain shadow-sm"
-              />
-            )}
+            <img
+              src={
+                dataUrl
+              }
+              alt={
+                fileName
+              }
+              draggable={
+                false
+              }
+              className="max-h-full max-w-full select-none object-contain shadow-sm"
+              style={{
+                transform: `
+                  translate(${pan.x}px, ${pan.y}px)
+                  scale(${zoom})
+                  rotate(${rotation}deg)
+                `,
+
+                transformOrigin:
+                  "center center",
+              }}
+            />
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-between border-t bg-background px-4 py-2">
-        <p className="max-w-[70%] truncate text-[10px] text-muted-foreground">
-          {file.name}
+      <div className="flex min-h-12 items-center justify-between gap-3 border-t px-4">
+        <p className="min-w-0 truncate text-[10px] text-muted-foreground">
+          {fileName}
         </p>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs"
-          onClick={
-            onReplace
-          }
-        >
-          <RefreshCcw className="mr-1.5 size-3.5" />
+        {onReplace && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={
+              onReplace
+            }
+          >
+            <RefreshCcw className="mr-1.5 size-3.5" />
 
-          Replace Document
-        </Button>
+            Replace Document
+          </Button>
+        )}
       </div>
     </div>
   )
 }
 
-/* =========================================================
-   AUTHORITY TYPE OPTIONS
-========================================================= */
+function DocumentPreviewModal({
+  evidence,
+  onClose,
+}: {
+  evidence:
+    AuthorityEvidence
 
-const AUTHORITY_OPTIONS: Record<
-  Exclude<
-    AuthorityCategory,
-    "audit" | "safety"
-  >,
-  {
-    value: string
-    label: string
-  }[]
-> = {
-  canadian: [
-    {
-      value:
-        "MVID",
-
-      label:
-        "MVID",
-    },
-
-    {
-      value:
-        "RIN",
-
-      label:
-        "RIN",
-    },
-
-    {
-      value:
-        "NSC",
-
-      label:
-        "NSC / Safety Fitness Certificate",
-    },
-
-    {
-      value:
-        "CVOR",
-
-      label:
-        "CVOR",
-    },
-
-    {
-      value:
-        "OTHER_CANADIAN",
-
-      label:
-        "Other Canadian Authority",
-    },
-  ],
-
-  us_federal: [
-    {
-      value:
-        "USDOT",
-
-      label:
-        "USDOT Number",
-    },
-
-    {
-      value:
-        "MC",
-
-      label:
-        "MC Operating Authority",
-    },
-
-    {
-      value:
-        "MCS150",
-
-      label:
-        "MCS-150 Biennial Update",
-    },
-
-    {
-      value:
-        "OTHER_US",
-
-      label:
-        "Other US Federal Authority",
-    },
-  ],
-
-  registration: [
-    {
-      value:
-        "UCR",
-
-      label:
-        "Unified Carrier Registration (UCR)",
-    },
-
-    {
-      value:
-        "OTHER_OPERATING_REGISTRATION",
-
-      label:
-        "Other Operating Registration",
-    },
-  ],
-
-  hazmat: [
-    {
-      value:
-        "PHMSA",
-
-      label:
-        "PHMSA Hazmat Registration",
-    },
-
-    {
-      value:
-        "OTHER_HAZMAT_FLEET",
-
-      label:
-        "Other Fleet-Level Hazmat Authority",
-    },
-  ],
+  onClose:
+    () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[170] bg-background">
+      <DocumentViewer
+        fileName={
+          evidence.fileName
+        }
+        mimeType={
+          evidence.mimeType
+        }
+        dataUrl={
+          evidence.dataUrl
+        }
+        onClose={
+          onClose
+        }
+      />
+    </div>
+  )
 }
 
 /* =========================================================
-   AUTHORITY DRAFT FORM
+   AUTHORITY FORM
 ========================================================= */
 
-function AuthorityDraftForm({
+function AuthorityForm({
   draft,
+  profile,
   onChange,
 }: {
   draft:
     AuthorityDraft
 
-  onChange: (
-    draft:
-      AuthorityDraft
-  ) => void
+  profile:
+    AuthorityProfile
+
+  onChange:
+    (
+      draft:
+        AuthorityDraft
+    ) => void
 }) {
   const options =
+    authorityOptions(
+      draft.category,
+      profile
+    )
+
+  const periodic =
+    draft.authorityType ===
+    "MCS150"
+
+  const allowedCountries:
+    (
+      | "Canada"
+      | "United States"
+    )[] =
     draft.category ===
-      "audit" ||
-    draft.category ===
-      "safety"
-      ? []
-      : AUTHORITY_OPTIONS[
-          draft.category
+    "canadian"
+      ? [
+          "Canada",
+        ]
+      : [
+          "United States",
         ]
 
-  const update = <
-    K extends keyof AuthorityDraft
-  >(
-    key: K,
-    value:
-      AuthorityDraft[K]
-  ) => {
-    const next = {
-      ...draft,
+  const patch =
+    (
+      value:
+        Partial<AuthorityDraft>
+    ) => {
+      onChange({
+        ...draft,
 
-      [key]:
-        value,
+        ...value,
+      })
     }
-
-    if (
-      key ===
-      "authorityType"
-    ) {
-      const selected =
-        options.find(
-          (option) =>
-            option.value ===
-            value
-        )
-
-      if (selected) {
-        next.authorityName =
-          selected.label
-      }
-    }
-
-    onChange(
-      next
-    )
-  }
 
   return (
     <Card className="overflow-visible shadow-none">
       <CardHeader className="border-b bg-muted/15 py-4">
         <CardTitle className="text-sm">
-          Authority / Registration Record
+          Authority / Registration Information
         </CardTitle>
 
         <CardDescription className="text-xs">
-          Manual and OCR entry use the same record fields.
+          OCR and manual entry use the same authoritative fields.
         </CardDescription>
       </CardHeader>
 
@@ -2555,25 +3053,40 @@ function AuthorityDraftForm({
 
           <Select
             value={
-              draft.authorityType ||
-              undefined
+              draft.authorityType
             }
             onValueChange={(
               value
-            ) =>
-              update(
-                "authorityType",
-                value
-              )
-            }
+            ) => {
+              const type =
+                value as
+                  AuthorityType
+
+              patch({
+                authorityType:
+                  type,
+
+                name:
+                  authorityDisplayName(
+                    type
+                  ),
+
+                issuingAuthority:
+                  defaultIssuingAuthority(
+                    type
+                  ),
+              })
+            }}
           >
             <SelectTrigger>
-              <SelectValue placeholder="Select authority" />
+              <SelectValue />
             </SelectTrigger>
 
-            <SelectContent className="z-[170]">
+            <SelectContent className="z-[200]">
               {options.map(
-                (option) => (
+                (
+                  option
+                ) => (
                   <SelectItem
                     key={
                       option.value
@@ -2582,7 +3095,9 @@ function AuthorityDraftForm({
                       option.value
                     }
                   >
-                    {option.label}
+                    {
+                      option.label
+                    }
                   </SelectItem>
                 )
               )}
@@ -2597,35 +3112,39 @@ function AuthorityDraftForm({
 
           <Input
             value={
-              draft.authorityName
+              draft.name
             }
             onChange={(
               event
             ) =>
-              update(
-                "authorityName",
-                event.target.value
-              )
+              patch({
+                name:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
 
         <div className="space-y-2">
           <Label>
-            Authority / Registration Number *
+            {periodic
+              ? "Reference / Filing Number"
+              : "Authority / Registration Number *"}
           </Label>
 
           <Input
             value={
-              draft.authorityNumber
+              draft.number
             }
             onChange={(
               event
             ) =>
-              update(
-                "authorityNumber",
-                event.target.value
-              )
+              patch({
+                number:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -2639,57 +3158,36 @@ function AuthorityDraftForm({
             value={
               draft.issuingAuthority
             }
-            placeholder="e.g. FMCSA"
             onChange={(
               event
             ) =>
-              update(
-                "issuingAuthority",
-                event.target.value
-              )
+              patch({
+                issuingAuthority:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>
-            Country
-          </Label>
-
-          <Input
-            value={
-              draft.country
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "country",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Province / State / Jurisdiction
-          </Label>
-
-          <Input
-            value={
-              draft.jurisdiction
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "jurisdiction",
-                event.target.value
-              )
-            }
-          />
-        </div>
+        <JurisdictionCountryFields
+          jurisdictionCode={
+            draft.jurisdictionCode
+          }
+          country={
+            draft.country
+          }
+          allowedCountries={
+            allowedCountries
+          }
+          onChange={(
+            value
+          ) =>
+            patch(
+              value
+            )
+          }
+        />
 
         <div className="space-y-2">
           <Label>
@@ -2698,22 +3196,23 @@ function AuthorityDraftForm({
 
           <Select
             value={
-              draft.recordStatus
+              draft.status
             }
             onValueChange={(
               value
             ) =>
-              update(
-                "recordStatus",
-                value as AuthorityDraft["recordStatus"]
-              )
+              patch({
+                status:
+                  value as
+                    AuthorityRecord["status"],
+              })
             }
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
 
-            <SelectContent className="z-[170]">
+            <SelectContent className="z-[200]">
               <SelectItem value="Active">
                 Active
               </SelectItem>
@@ -2733,200 +3232,267 @@ function AuthorityDraftForm({
               <SelectItem value="Expired">
                 Expired
               </SelectItem>
-
-              <SelectItem value="Unknown">
-                Unknown
-              </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        <div className="space-y-2">
+        {periodic ? (
+          <>
+            <div className="space-y-2">
+              <Label>
+                Filed / Update Date
+              </Label>
+
+              <Input
+                type="date"
+                value={
+                  draft.eventDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  patch({
+                    eventDate:
+                      event.target
+                        .value,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Next Action Date
+              </Label>
+
+              <Input
+                type="date"
+                value={
+                  draft.nextActionDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  patch({
+                    nextActionDate:
+                      event.target
+                        .value,
+                  })
+                }
+              />
+
+              <p className="text-[10px] text-muted-foreground">
+                This can later be populated automatically by the central regulatory rule engine.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <Label>
+                Issue Date
+              </Label>
+
+              <Input
+                type="date"
+                value={
+                  draft.issueDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  patch({
+                    issueDate:
+                      event.target
+                        .value,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Effective Date
+              </Label>
+
+              <Input
+                type="date"
+                value={
+                  draft.effectiveDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  patch({
+                    effectiveDate:
+                      event.target
+                        .value,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Expiry Date
+              </Label>
+
+              <Input
+                type="date"
+                value={
+                  draft.expiryDate
+                }
+                onChange={(
+                  event
+                ) =>
+                  patch({
+                    expiryDate:
+                      event.target
+                        .value,
+                  })
+                }
+              />
+            </div>
+          </>
+        )}
+
+        <div className="space-y-2 md:col-span-2">
           <Label>
-            Applicability
+            Notes
           </Label>
 
-          <Select
+          <Input
             value={
-              draft.applicability
+              draft.notes
             }
-            onValueChange={(
+            onChange={(
+              event
+            ) =>
+              patch({
+                notes:
+                  event.target
+                    .value,
+              })
+            }
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   SAFETY FORM
+========================================================= */
+
+function SafetyForm({
+  draft,
+  onChange,
+}: {
+  draft:
+    SafetyDraft
+
+  onChange:
+    (
+      draft:
+        SafetyDraft
+    ) => void
+}) {
+  const patch =
+    (
+      value:
+        Partial<SafetyDraft>
+    ) => {
+      onChange({
+        ...draft,
+
+        ...value,
+      })
+    }
+
+  return (
+    <Card className="overflow-visible shadow-none">
+      <CardHeader className="border-b bg-muted/15 py-4">
+        <CardTitle className="text-sm">
+          {draft.system ===
+          "CARRIER_PROFILE_CVOR"
+            ? "Carrier Profile / CVOR"
+            : "SMS Profile"}
+        </CardTitle>
+
+        <CardDescription className="text-xs">
+          High-level structure only. Detailed Safety architecture will be built separately.
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+        <JurisdictionCountryFields
+          jurisdictionCode={
+            draft.jurisdictionCode
+          }
+          country={
+            draft.country
+          }
+          allowedCountries={
+            draft.system ===
+            "CARRIER_PROFILE_CVOR"
+              ? [
+                  "Canada",
+                ]
+              : [
+                  "United States",
+                ]
+          }
+          onChange={(
+            value
+          ) =>
+            patch(
               value
-            ) =>
-              update(
-                "applicability",
-                value as ApplicabilityStatus
-              )
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-
-            <SelectContent className="z-[170]">
-              <SelectItem value="Required">
-                Required
-              </SelectItem>
-
-              <SelectItem value="Not Required">
-                Not Required
-              </SelectItem>
-
-              <SelectItem value="Needs Review">
-                Needs Review
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+            )
+          }
+        />
 
         <div className="space-y-2">
           <Label>
-            Issue Date
+            Review Date
           </Label>
 
           <Input
             type="date"
             value={
-              draft.issueDate
+              draft.reviewDate
             }
             onChange={(
               event
             ) =>
-              update(
-                "issueDate",
-                event.target.value
-              )
+              patch({
+                reviewDate:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
 
         <div className="space-y-2">
           <Label>
-            Effective Date
+            Status Summary
           </Label>
 
           <Input
-            type="date"
             value={
-              draft.effectiveDate
+              draft.summary
             }
             onChange={(
               event
             ) =>
-              update(
-                "effectiveDate",
-                event.target.value
-              )
+              patch({
+                summary:
+                  event.target
+                    .value,
+              })
             }
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Renewal Date
-          </Label>
-
-          <Input
-            type="date"
-            value={
-              draft.renewalDate
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "renewalDate",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Expiry Date
-          </Label>
-
-          <Input
-            type="date"
-            value={
-              draft.expiryDate
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "expiryDate",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Due Date
-          </Label>
-
-          <Input
-            type="date"
-            value={
-              draft.dueDate
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "dueDate",
-                event.target.value
-              )
-            }
-          />
-
-          <p className="text-[10px] text-muted-foreground">
-            Use for periodic requirements such as MCS-150.
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Credential Stored
-          </Label>
-
-          <Select
-            value={
-              draft.credentialStored
-                ? "yes"
-                : "no"
-            }
-            onValueChange={(
-              value
-            ) =>
-              update(
-                "credentialStored",
-                value ===
-                  "yes"
-              )
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-
-            <SelectContent className="z-[170]">
-              <SelectItem value="yes">
-                Yes
-              </SelectItem>
-
-              <SelectItem value="no">
-                No
-              </SelectItem>
-            </SelectContent>
-          </Select>
-
-          <p className="text-[10px] text-muted-foreground">
-            Sensitive credential values belong in Credentials, not on this page.
-          </p>
         </div>
 
         <div className="space-y-2 md:col-span-2">
@@ -2941,10 +3507,11 @@ function AuthorityDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "notes",
-                event.target.value
-              )
+              patch({
+                notes:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -2957,32 +3524,30 @@ function AuthorityDraftForm({
    AUDIT FORM
 ========================================================= */
 
-function AuditDraftForm({
+function AuditForm({
   draft,
   onChange,
 }: {
   draft:
     AuditDraft
 
-  onChange: (
-    draft:
-      AuditDraft
-  ) => void
+  onChange:
+    (
+      draft:
+        AuditDraft
+    ) => void
 }) {
-  const update = <
-    K extends keyof AuditDraft
-  >(
-    key: K,
-    value:
-      AuditDraft[K]
-  ) => {
-    onChange({
-      ...draft,
+  const patch =
+    (
+      value:
+        Partial<AuditDraft>
+    ) => {
+      onChange({
+        ...draft,
 
-      [key]:
-        value,
-    })
-  }
+        ...value,
+      })
+    }
 
   return (
     <Card className="overflow-visible shadow-none">
@@ -3005,10 +3570,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "auditType",
-                event.target.value
-              )
+              patch({
+                auditType:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3025,33 +3591,30 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "regulator",
-                event.target.value
-              )
+              patch({
+                regulator:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>
-            Jurisdiction
-          </Label>
-
-          <Input
-            value={
-              draft.jurisdiction
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "jurisdiction",
-                event.target.value
-              )
-            }
-          />
-        </div>
+        <JurisdictionCountryFields
+          jurisdictionCode={
+            draft.jurisdictionCode
+          }
+          country={
+            draft.country
+          }
+          onChange={(
+            value
+          ) =>
+            patch(
+              value
+            )
+          }
+        />
 
         <div className="space-y-2">
           <Label>
@@ -3065,10 +3628,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "referenceNumber",
-                event.target.value
-              )
+              patch({
+                referenceNumber:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3086,10 +3650,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "noticeDate",
-                event.target.value
-              )
+              patch({
+                noticeDate:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3107,10 +3672,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "dueDate",
-                event.target.value
-              )
+              patch({
+                dueDate:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3128,10 +3694,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "completedDate",
-                event.target.value
-              )
+              patch({
+                completedDate:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3148,17 +3715,18 @@ function AuditDraftForm({
             onValueChange={(
               value
             ) =>
-              update(
-                "status",
-                value as AuditDraft["status"]
-              )
+              patch({
+                status:
+                  value as
+                    AuditRecord["status"],
+              })
             }
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
 
-            <SelectContent className="z-[170]">
+            <SelectContent className="z-[200]">
               <SelectItem value="Open">
                 Open
               </SelectItem>
@@ -3194,10 +3762,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "outcome",
-                event.target.value
-              )
+              patch({
+                outcome:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3214,10 +3783,11 @@ function AuditDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "score",
-                event.target.value
-              )
+              patch({
+                score:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3236,18 +3806,18 @@ function AuditDraftForm({
             onValueChange={(
               value
             ) =>
-              update(
-                "followUpRequired",
-                value ===
-                  "yes"
-              )
+              patch({
+                followUpRequired:
+                  value ===
+                  "yes",
+              })
             }
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
 
-            <SelectContent className="z-[170]">
+            <SelectContent className="z-[200]">
               <SelectItem value="yes">
                 Yes
               </SelectItem>
@@ -3259,201 +3829,29 @@ function AuditDraftForm({
           </Select>
         </div>
 
-        <div className="space-y-2">
-          <Label>
-            Follow-up Due Date
-          </Label>
+        {draft.followUpRequired && (
+          <div className="space-y-2">
+            <Label>
+              Follow-up Due Date
+            </Label>
 
-          <Input
-            type="date"
-            value={
-              draft.followUpDueDate
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "followUpDueDate",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2 md:col-span-2">
-          <Label>
-            Notes
-          </Label>
-
-          <Input
-            value={
-              draft.notes
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "notes",
-                event.target.value
-              )
-            }
-          />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* =========================================================
-   SAFETY PLACEHOLDER FORM
-
-   Deliberately shallow.
-   Detailed Carrier Profile / CVOR / SMS system comes later.
-========================================================= */
-
-function SafetyDraftForm({
-  draft,
-  onChange,
-}: {
-  draft:
-    SafetyDraft
-
-  onChange: (
-    draft:
-      SafetyDraft
-  ) => void
-}) {
-  const update = <
-    K extends keyof SafetyDraft
-  >(
-    key: K,
-    value:
-      SafetyDraft[K]
-  ) => {
-    onChange({
-      ...draft,
-
-      [key]:
-        value,
-    })
-  }
-
-  return (
-    <Card className="overflow-visible shadow-none">
-      <CardHeader className="border-b bg-muted/15 py-4">
-        <CardTitle className="text-sm">
-          Safety Performance Snapshot
-        </CardTitle>
-
-        <CardDescription className="text-xs">
-          Temporary structure only. Detailed safety architecture will be developed separately.
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label>
-            Safety System
-          </Label>
-
-          <Select
-            value={
-              draft.system
-            }
-            onValueChange={(
-              value
-            ) =>
-              update(
-                "system",
-                value as SafetyDraft["system"]
-              )
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-
-            <SelectContent className="z-[170]">
-              <SelectItem value="Canadian Carrier Profile">
-                Canadian Carrier Profile
-              </SelectItem>
-
-              <SelectItem value="Ontario CVOR">
-                Ontario CVOR
-              </SelectItem>
-
-              <SelectItem value="FMCSA SMS">
-                FMCSA SMS
-              </SelectItem>
-
-              <SelectItem value="Other">
-                Other
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Jurisdiction
-          </Label>
-
-          <Input
-            value={
-              draft.jurisdiction
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "jurisdiction",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Review Date
-          </Label>
-
-          <Input
-            type="date"
-            value={
-              draft.reviewDate
-            }
-            onChange={(
-              event
-            ) =>
-              update(
-                "reviewDate",
-                event.target.value
-              )
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>
-            Status Summary
-          </Label>
-
-          <Input
-            value={
-              draft.statusSummary
-            }
-            placeholder="High-level summary only"
-            onChange={(
-              event
-            ) =>
-              update(
-                "statusSummary",
-                event.target.value
-              )
-            }
-          />
-        </div>
+            <Input
+              type="date"
+              value={
+                draft.followUpDueDate
+              }
+              onChange={(
+                event
+              ) =>
+                patch({
+                  followUpDueDate:
+                    event.target
+                      .value,
+                })
+              }
+            />
+          </div>
+        )}
 
         <div className="space-y-2 md:col-span-2">
           <Label>
@@ -3467,10 +3865,11 @@ function SafetyDraftForm({
             onChange={(
               event
             ) =>
-              update(
-                "notes",
-                event.target.value
-              )
+              patch({
+                notes:
+                  event.target
+                    .value,
+              })
             }
           />
         </div>
@@ -3483,117 +3882,94 @@ function SafetyDraftForm({
    MANUAL MODAL
 ========================================================= */
 
-function ManualRecordModal({
-  category,
-  company,
+type ManualState =
+  | {
+      mode:
+        "authority"
+
+      draft:
+        AuthorityDraft
+    }
+  | {
+      mode:
+        "safety"
+
+      draft:
+        SafetyDraft
+    }
+  | {
+      mode:
+        "audit"
+
+      draft:
+        AuditDraft
+    }
+
+function ManualModal({
+  state,
   profile,
-
+  onChange,
   onCancel,
-
-  onSaveAuthority,
-  onSaveAudit,
-  onSaveSafety,
+  onSave,
 }: {
-  category:
-    AuthorityCategory
-
-  company:
-    Company
+  state:
+    ManualState
 
   profile:
-    CompanyAuthorityProfile
+    AuthorityProfile
 
-  onCancel: () => void
+  onChange:
+    (
+      state:
+        ManualState
+    ) => void
 
-  onSaveAuthority: (
-    draft:
-      AuthorityDraft
-  ) => void
+  onCancel:
+    () => void
 
-  onSaveAudit: (
-    draft:
-      AuditDraft
-  ) => void
-
-  onSaveSafety: (
-    draft:
-      SafetyDraft
-  ) => void
+  onSave:
+    () => void
 }) {
-  const [
-    authorityDraft,
-    setAuthorityDraft,
-  ] =
-    useState(
-      emptyAuthorityDraft({
-        category,
-        company,
-        profile,
-      })
-    )
-
-  const [
-    auditDraft,
-    setAuditDraft,
-  ] =
-    useState(
-      emptyAuditDraft()
-    )
-
-  const [
-    safetyDraft,
-    setSafetyDraft,
-  ] =
-    useState(
-      emptySafetyDraft()
-    )
-
-  const authorityReady =
-    Boolean(
-      authorityDraft.authorityType &&
-        authorityDraft.authorityName.trim() &&
-        authorityDraft.authorityNumber.trim()
-    )
-
-  const auditReady =
-    Boolean(
-      auditDraft.auditType.trim() &&
-        auditDraft.regulator.trim()
-    )
-
-  const safetyReady =
-    Boolean(
-      safetyDraft.reviewDate
-    )
-
   const ready =
-    category ===
-    "audit"
-      ? auditReady
-      : category ===
+    state.mode ===
+    "authority"
+      ? Boolean(
+          state.draft.name.trim() &&
+          (
+            state.draft.authorityType ===
+              "MCS150" ||
+            state.draft.number.trim()
+          )
+        )
+      : state.mode ===
           "safety"
-        ? safetyReady
-        : authorityReady
+        ? Boolean(
+            state.draft.reviewDate
+          )
+        : Boolean(
+            state.draft.auditType.trim() &&
+            state.draft.regulator.trim()
+          )
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-y-auto bg-black/45 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[120] overflow-y-auto bg-black/45 p-4 backdrop-blur-sm">
       <div className="mx-auto my-6 max-w-5xl">
         <Card>
           <CardHeader className="border-b">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <CardTitle className="text-base">
-                  {category ===
-                  "audit"
-                    ? "Add Audit / Intervention"
-                    : category ===
+                  {state.mode ===
+                  "authority"
+                    ? "Add Authority / Registration"
+                    : state.mode ===
                         "safety"
                       ? "Add Safety Snapshot"
-                      : "Add Authority / Registration"}
+                      : "Add Audit / Intervention"}
                 </CardTitle>
 
                 <CardDescription className="mt-1">
-                  Manual entry uses the same underlying record structure as OCR.
+                  Manual entry uses the same record model as OCR.
                 </CardDescription>
               </div>
 
@@ -3610,33 +3986,62 @@ function ManualRecordModal({
           </CardHeader>
 
           <CardContent className="space-y-5 pt-5">
-            {category ===
-              "audit" ? (
-              <AuditDraftForm
+            {state.mode ===
+              "authority" && (
+              <AuthorityForm
                 draft={
-                  auditDraft
+                  state.draft
                 }
-                onChange={
-                  setAuditDraft
+                profile={
+                  profile
+                }
+                onChange={(
+                  draft
+                ) =>
+                  onChange({
+                    mode:
+                      "authority",
+
+                    draft,
+                  })
                 }
               />
-            ) : category ===
-              "safety" ? (
-              <SafetyDraftForm
+            )}
+
+            {state.mode ===
+              "safety" && (
+              <SafetyForm
                 draft={
-                  safetyDraft
+                  state.draft
                 }
-                onChange={
-                  setSafetyDraft
+                onChange={(
+                  draft
+                ) =>
+                  onChange({
+                    mode:
+                      "safety",
+
+                    draft,
+                  })
                 }
               />
-            ) : (
-              <AuthorityDraftForm
+            )}
+
+            {state.mode ===
+              "audit" && (
+              <AuditForm
                 draft={
-                  authorityDraft
+                  state.draft
                 }
-                onChange={
-                  setAuthorityDraft
+                onChange={(
+                  draft
+                ) =>
+                  onChange({
+                    mode:
+                      "audit",
+
+                    draft,
+                  })
                 }
               />
             )}
@@ -3655,33 +4060,9 @@ function ManualRecordModal({
                 disabled={
                   !ready
                 }
-                onClick={() => {
-                  if (
-                    category ===
-                    "audit"
-                  ) {
-                    onSaveAudit(
-                      auditDraft
-                    )
-
-                    return
-                  }
-
-                  if (
-                    category ===
-                    "safety"
-                  ) {
-                    onSaveSafety(
-                      safetyDraft
-                    )
-
-                    return
-                  }
-
-                  onSaveAuthority(
-                    authorityDraft
-                  )
-                }}
+                onClick={
+                  onSave
+                }
               >
                 <Save className="mr-2 size-4" />
 
@@ -3697,9 +4078,6 @@ function ManualRecordModal({
 
 /* =========================================================
    OCR REQUEST
-
-   Backend endpoint first.
-   No fabricated authority values if backend is absent.
 ========================================================= */
 
 async function requestOCR(
@@ -3718,9 +4096,32 @@ async function requestOCR(
     )
 
     body.append(
-      "category",
-      session.category
+      "mode",
+      session.mode
     )
+
+    if (
+      session.authorityDraft
+    ) {
+      body.append(
+        "category",
+        session.authorityDraft.category
+      )
+
+      body.append(
+        "authorityType",
+        session.authorityDraft.authorityType
+      )
+    }
+
+    if (
+      session.safetyDraft
+    ) {
+      body.append(
+        "safetySystem",
+        session.safetyDraft.system
+      )
+    }
 
     const response =
       await fetch(
@@ -3740,21 +4141,16 @@ async function requestOCR(
       return await response.json()
     }
   } catch {
-    // Development fallback below.
+    //
   }
 
   /*
-    We deliberately do not invent authority numbers or
-    regulatory facts when no real OCR backend exists.
-
-    The user can still verify/fill fields manually while
-    testing the complete document workflow.
+    Never fabricate authority identifiers/dates.
+    The workflow still remains testable if OCR backend
+    isn't connected yet.
   */
 
   return {
-    confidence:
-      90,
-
     extractionComplete:
       true,
   }
@@ -3766,38 +4162,33 @@ async function requestOCR(
 
 function OCRWorkspace({
   session,
-  setSession,
-
-  company,
   profile,
-
-  onReplace,
+  setSession,
   onCancel,
+  onReplace,
   onSave,
 }: {
   session:
     OCRSession
+
+  profile:
+    AuthorityProfile
 
   setSession:
     React.Dispatch<
       React.SetStateAction<OCRSession | null>
     >
 
-  company:
-    Company
+  onCancel:
+    () => void
 
-  profile:
-    CompanyAuthorityProfile
+  onReplace:
+    () => void
 
-  onReplace: () => void
-  onCancel: () => void
-
-  onSave: (
-    session:
-      OCRSession
-  ) => void
+  onSave:
+    () => void
 }) {
-  const runOCR =
+  const run =
     async () => {
       setSession(
         (current) =>
@@ -3834,45 +4225,29 @@ function OCRWorkspace({
       )
     }
 
-  const authorityReady =
-    Boolean(
-      session.authorityDraft
-        ?.authorityType &&
-        session.authorityDraft
-          .authorityName
-          .trim() &&
-        session.authorityDraft
-          .authorityNumber
-          .trim()
-    )
-
-  const auditReady =
-    Boolean(
-      session.auditDraft
-        ?.auditType
-        .trim() &&
-        session.auditDraft
-          .regulator
-          .trim()
-    )
-
-  const safetyReady =
-    Boolean(
-      session.safetyDraft
-        ?.reviewDate
-    )
-
   const ready =
-    session.category ===
-    "audit"
-      ? auditReady
-      : session.category ===
+    session.mode ===
+    "authority"
+      ? Boolean(
+          session.authorityDraft?.name.trim() &&
+          (
+            session.authorityDraft?.authorityType ===
+              "MCS150" ||
+            session.authorityDraft?.number.trim()
+          )
+        )
+      : session.mode ===
           "safety"
-        ? safetyReady
-        : authorityReady
+        ? Boolean(
+            session.safetyDraft?.reviewDate
+          )
+        : Boolean(
+            session.auditDraft?.auditType.trim() &&
+            session.auditDraft?.regulator.trim()
+          )
 
   return (
-    <div className="fixed inset-0 z-[90] flex flex-col bg-background">
+    <div className="fixed inset-0 z-[110] flex flex-col bg-background">
       <div className="flex min-h-16 items-center justify-between gap-4 border-b px-5">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -3884,7 +4259,7 @@ function OCRWorkspace({
           <div>
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold">
-                Authority Document Intelligence
+                Document Intelligence Review
               </p>
 
               <Badge
@@ -3898,7 +4273,9 @@ function OCRWorkspace({
             </div>
 
             <p className="text-[10px] text-muted-foreground">
-              {session.file.name}
+              {
+                session.file.name
+              }
             </p>
           </div>
         </div>
@@ -3914,11 +4291,14 @@ function OCRWorkspace({
         </Button>
       </div>
 
-      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(420px,0.92fr)_minmax(640px,1.08fr)]">
+      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(520px,1fr)_minmax(620px,1fr)]">
         <div className="min-h-0 border-r">
           <DocumentViewer
-            file={
-              session.file
+            fileName={
+              session.file.name
+            }
+            mimeType={
+              session.file.type
             }
             dataUrl={
               session.dataUrl
@@ -3934,11 +4314,11 @@ function OCRWorkspace({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-base font-semibold">
-                  Extracted Record
+                  Extracted Information
                 </h2>
 
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Verify the extracted information against the original evidence before saving.
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  OCR is the primary data-entry layer. Review or correct only what is necessary before saving.
                 </p>
               </div>
 
@@ -3966,7 +4346,7 @@ function OCRWorkspace({
                   session.processing
                 }
                 onClick={
-                  runOCR
+                  run
                 }
               >
                 {session.processing ? (
@@ -3991,115 +4371,139 @@ function OCRWorkspace({
           </div>
 
           <div className="flex-1 overflow-y-auto p-5">
-            {session.extractionComplete && (
-              <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
-                <div className="flex gap-2">
-                  <CheckCircle2 className="mt-0.5 size-4 text-emerald-600" />
+            <div className="mb-5 grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>
+                  Document Date
+                </Label>
 
-                  <div>
-                    <p className="text-xs font-semibold">
-                      Extraction ready for review
-                    </p>
+                <Input
+                  type="date"
+                  value={
+                    session.documentDate
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setSession(
+                      (
+                        current
+                      ) =>
+                        current
+                          ? {
+                              ...current,
 
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      TES will not silently create an authority record without your verification.
-                    </p>
-                  </div>
-                </div>
+                              documentDate:
+                                event
+                                  .target
+                                  .value,
+                            }
+                          : current
+                    )
+                  }
+                />
+
+                <p className="text-[10px] text-muted-foreground">
+                  Used to organize the document in TES history.
+                </p>
               </div>
-            )}
+            </div>
 
-            {session.category ===
-              "audit" ? (
-              <AuditDraftForm
-                draft={
-                  session.auditDraft ||
-                  emptyAuditDraft()
-                }
-                onChange={(
-                  auditDraft
-                ) =>
-                  setSession(
-                    (current) =>
-                      current
-                        ? {
-                            ...current,
+            {session.mode ===
+              "authority" &&
+              session.authorityDraft && (
+                <AuthorityForm
+                  draft={
+                    session.authorityDraft
+                  }
+                  profile={
+                    profile
+                  }
+                  onChange={(
+                    authorityDraft
+                  ) =>
+                    setSession(
+                      (
+                        current
+                      ) =>
+                        current
+                          ? {
+                              ...current,
 
-                            auditDraft,
-                          }
-                        : current
-                  )
-                }
-              />
-            ) : session.category ===
-              "safety" ? (
-              <SafetyDraftForm
-                draft={
-                  session.safetyDraft ||
-                  emptySafetyDraft()
-                }
-                onChange={(
-                  safetyDraft
-                ) =>
-                  setSession(
-                    (current) =>
-                      current
-                        ? {
-                            ...current,
+                              authorityDraft,
+                            }
+                          : current
+                    )
+                  }
+                />
+              )}
 
-                            safetyDraft,
-                          }
-                        : current
-                  )
-                }
-              />
-            ) : (
-              <AuthorityDraftForm
-                draft={
-                  session.authorityDraft ||
-                  emptyAuthorityDraft({
-                    category:
-                      session.category,
+            {session.mode ===
+              "safety" &&
+              session.safetyDraft && (
+                <SafetyForm
+                  draft={
+                    session.safetyDraft
+                  }
+                  onChange={(
+                    safetyDraft
+                  ) =>
+                    setSession(
+                      (
+                        current
+                      ) =>
+                        current
+                          ? {
+                              ...current,
 
-                    company,
-                    profile,
-                  })
-                }
-                onChange={(
-                  authorityDraft
-                ) =>
-                  setSession(
-                    (current) =>
-                      current
-                        ? {
-                            ...current,
+                              safetyDraft,
+                            }
+                          : current
+                    )
+                  }
+                />
+              )}
 
-                            authorityDraft,
-                          }
-                        : current
-                  )
-                }
-              />
-            )}
+            {session.mode ===
+              "audit" &&
+              session.auditDraft && (
+                <AuditForm
+                  draft={
+                    session.auditDraft
+                  }
+                  onChange={(
+                    auditDraft
+                  ) =>
+                    setSession(
+                      (
+                        current
+                      ) =>
+                        current
+                          ? {
+                              ...current,
+
+                              auditDraft,
+                            }
+                          : current
+                    )
+                  }
+                />
+              )}
           </div>
 
-          <div className="border-t p-4">
-            <div className="flex justify-end">
-              <Button
-                disabled={
-                  !ready
-                }
-                onClick={() =>
-                  onSave(
-                    session
-                  )
-                }
-              >
-                <Check className="mr-2 size-4" />
+          <div className="flex justify-end border-t p-4">
+            <Button
+              disabled={
+                !ready
+              }
+              onClick={
+                onSave
+              }
+            >
+              <CheckCircle2 className="mr-2 size-4" />
 
-                Verify & Save
-              </Button>
-            </div>
+              Save Record
+            </Button>
           </div>
         </div>
       </div>
@@ -4108,456 +4512,51 @@ function OCRWorkspace({
 }
 
 /* =========================================================
-   RECORD INSPECTOR
-========================================================= */
-
-function RecordInspector({
-  record,
-  evidence,
-
-  deadlineRules,
-
-  onClose,
-  onEdit,
-  onDelete,
-}: {
-  record:
-    SelectedRecord | null
-
-  evidence:
-    AuthorityEvidence[]
-
-  deadlineRules:
-    DeadlineRules
-
-  onClose: () => void
-  onEdit: () => void
-  onDelete: () => void
-}) {
-  if (!record) {
-    return (
-      <Card className="border-dashed">
-        <CardContent className="flex min-h-[520px] flex-col items-center justify-center p-10 text-center">
-          <Landmark className="size-10 text-muted-foreground/30" />
-
-          <p className="mt-4 text-sm font-medium">
-            Select a record
-          </p>
-
-          <p className="mt-1 max-w-[280px] text-xs leading-5 text-muted-foreground">
-            Open an authority, registration, safety snapshot, or audit record to review its details and evidence.
-          </p>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const attachedEvidence =
-    evidence.filter(
-      (item) =>
-        record.evidenceIds.includes(
-          item.id
-        )
-    )
-
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-primary/[0.03]">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="text-base">
-                {record.category ===
-                "audit"
-                  ? record.auditType
-                  : record.category ===
-                      "safety"
-                    ? record.system
-                    : record.authorityName}
-              </CardTitle>
-
-              {record.category !==
-                "audit" &&
-                record.category !==
-                  "safety" && (
-                  <DeadlineBadge
-                    status={getDeadlineStatus(
-                      getAuthorityDeadlineDate(
-                        record
-                      ),
-
-                      deadlineRules,
-
-                      Boolean(
-                        record.deletedAt
-                      )
-                    )}
-                  />
-                )}
-            </div>
-
-            <CardDescription className="mt-1 font-mono text-[10px]">
-              {record.id}
-            </CardDescription>
-          </div>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={
-              onClose
-            }
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-5 p-4">
-        {record.category ===
-        "audit" ? (
-          <>
-            <CopyField
-              label="Regulator"
-              value={
-                record.regulator
-              }
-            />
-
-            <CopyField
-              label="Jurisdiction"
-              value={
-                record.jurisdiction
-              }
-            />
-
-            <CopyField
-              label="Reference"
-              value={
-                record.referenceNumber
-              }
-            />
-
-            <CopyField
-              label="Notice Date"
-              value={
-                record.noticeDate
-              }
-            />
-
-            <CopyField
-              label="Due Date"
-              value={
-                record.dueDate
-              }
-            />
-
-            <CopyField
-              label="Completed Date"
-              value={
-                record.completedDate
-              }
-            />
-
-            <CopyField
-              label="Status"
-              value={
-                record.status
-              }
-            />
-
-            <CopyField
-              label="Outcome"
-              value={
-                record.outcome
-              }
-            />
-
-            <CopyField
-              label="Score / Rating"
-              value={
-                record.score
-              }
-            />
-          </>
-        ) : record.category ===
-          "safety" ? (
-          <>
-            <CopyField
-              label="Safety System"
-              value={
-                record.system
-              }
-            />
-
-            <CopyField
-              label="Jurisdiction"
-              value={
-                record.jurisdiction
-              }
-            />
-
-            <CopyField
-              label="Review Date"
-              value={
-                record.reviewDate
-              }
-            />
-
-            <CopyField
-              label="Status Summary"
-              value={
-                record.statusSummary
-              }
-            />
-
-            <div className="rounded-lg border border-dashed bg-muted/20 p-3">
-              <p className="text-[11px] leading-5 text-muted-foreground">
-                Detailed Canadian Carrier Profile / CVOR / FMCSA SMS architecture will be developed separately.
-              </p>
-            </div>
-          </>
-        ) : (
-          <>
-            <CopyField
-              label="Authority / Registration"
-              value={
-                record.authorityName
-              }
-            />
-
-            <CopyField
-              label="Number"
-              value={
-                record.authorityNumber
-              }
-            />
-
-            <CopyField
-              label="Issuing Authority"
-              value={
-                record.issuingAuthority
-              }
-            />
-
-            <CopyField
-              label="Country"
-              value={
-                record.country
-              }
-            />
-
-            <CopyField
-              label="Jurisdiction"
-              value={
-                record.jurisdiction
-              }
-            />
-
-            <CopyField
-              label="Record Status"
-              value={
-                record.recordStatus
-              }
-            />
-
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Applicability
-              </p>
-
-              <div className="mt-2">
-                <ApplicabilityBadge
-                  status={
-                    record.applicability
-                  }
-                />
-              </div>
-            </div>
-
-            <CopyField
-              label="Issue Date"
-              value={
-                record.issueDate
-              }
-            />
-
-            <CopyField
-              label="Effective Date"
-              value={
-                record.effectiveDate
-              }
-            />
-
-            <CopyField
-              label="Renewal Date"
-              value={
-                record.renewalDate
-              }
-            />
-
-            <CopyField
-              label="Expiry Date"
-              value={
-                record.expiryDate
-              }
-            />
-
-            <CopyField
-              label="Due Date"
-              value={
-                record.dueDate
-              }
-            />
-
-            <CopyField
-              label="Credential"
-              value={
-                record.credentialStored
-                  ? "Stored in Credentials"
-                  : "Not recorded"
-              }
-            />
-          </>
-        )}
-
-        <section className="border-t pt-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            Evidence
-          </p>
-
-          {attachedEvidence.length ===
-          0 ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              No evidence attached.
-            </p>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {attachedEvidence.map(
-                (document) => (
-                  <div
-                    key={
-                      document.id
-                    }
-                    className="rounded-lg border p-3"
-                  >
-                    <div className="flex gap-3">
-                      <FileText className="mt-0.5 size-4 text-primary" />
-
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium">
-                          {
-                            document.documentName
-                          }
-                        </p>
-
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {document.documentDate ||
-                            document.uploadedAt.slice(
-                              0,
-                              10
-                            )}
-
-                          {document.ocrConfidence !==
-                            undefined &&
-                            ` · OCR ${document.ocrConfidence}%`}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-        </section>
-
-        <section className="border-t pt-4">
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={
-                onEdit
-              }
-            >
-              <Pencil className="mr-2 size-4" />
-
-              Edit
-            </Button>
-
-            <Button
-              variant="outline"
-              className="flex-1 text-destructive hover:text-destructive"
-              onClick={
-                onDelete
-              }
-            >
-              <Trash2 className="mr-2 size-4" />
-
-              Delete
-            </Button>
-          </div>
-
-          <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
-            Delete remains available during portal development for testing. It will be replaced by Archive when development is complete.
-          </p>
-        </section>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* =========================================================
-   AUTHORITY ROW
+   ROWS
 ========================================================= */
 
 function AuthorityRow({
   record,
-
-  deadlineRules,
-
+  rules,
   selected,
-
-  onSelect,
+  onClick,
 }: {
   record:
     AuthorityRecord
 
-  deadlineRules:
+  rules:
     DeadlineRules
 
   selected:
     boolean
 
-  onSelect: () => void
+  onClick:
+    () => void
 }) {
   const deadline =
-    getAuthorityDeadlineDate(
-      record
-    )
+    record.authorityType ===
+    "MCS150"
+      ? record.nextActionDate
+      : record.expiryDate
 
-  const status =
+  const deadlineStatus =
     getDeadlineStatus(
       deadline,
-
-      deadlineRules,
-
-      Boolean(
-        record.deletedAt
-      )
+      rules
     )
 
   const style =
-    deadlineStyle(
-      status
+    statusClasses(
+      deadlineStatus
     )
 
   return (
-    <div
+    <button
+      type="button"
       onClick={
-        onSelect
+        onClick
       }
-      className={`grid cursor-pointer gap-4 border-l-4 p-4 transition-colors md:grid-cols-12 ${style.accent} ${
+      className={`grid w-full gap-4 border-l-4 p-4 text-left transition-colors md:grid-cols-12 ${style.left} ${
         selected
           ? "bg-primary/[0.045]"
           : "hover:bg-muted/25"
@@ -4566,7 +4565,7 @@ function AuthorityRow({
       <div className="md:col-span-3">
         <p className="text-sm font-semibold">
           {
-            record.authorityName
+            record.name
           }
         </p>
 
@@ -4580,46 +4579,40 @@ function AuthorityRow({
       <div className="md:col-span-3">
         <p className="select-text font-mono text-xs font-medium">
           {
-            record.authorityNumber
+            record.number ||
+            "—"
+          }
+        </p>
+
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          {record.issuingAuthority ||
+            "Issuing authority not recorded"}
+        </p>
+      </div>
+
+      <div className="md:col-span-2">
+        <p className="text-xs font-medium">
+          {
+            record.jurisdictionLabel
           }
         </p>
 
         <p className="mt-1 text-[10px] text-muted-foreground">
           {
-            record.issuingAuthority ||
-            "Issuing authority not recorded"
+            record.country
           }
         </p>
       </div>
 
-      <div className="md:col-span-2 text-xs">
-        <p>
-          {
-            record.jurisdiction ||
-            record.country ||
-            "—"
-          }
+      <div className="md:col-span-2">
+        <p className="text-[10px] text-muted-foreground">
+          {record.authorityType ===
+          "MCS150"
+            ? "Next Action"
+            : "Expiry"}
         </p>
 
-        <div className="mt-1">
-          <ApplicabilityBadge
-            status={
-              record.applicability
-            }
-          />
-        </div>
-      </div>
-
-      <div className="md:col-span-2 text-xs">
-        <p className="text-muted-foreground">
-          {deadline
-            ? "Next deadline"
-            : "No deadline"}
-        </p>
-
-        <p
-          className={`mt-1 font-medium ${style.text}`}
-        >
+        <p className="mt-1 text-xs font-medium">
           {deadline ||
             "—"}
         </p>
@@ -4628,22 +4621,81 @@ function AuthorityRow({
       <div className="flex items-center justify-end md:col-span-2">
         <DeadlineBadge
           status={
-            status
+            deadlineStatus
           }
         />
       </div>
-    </div>
+    </button>
   )
 }
 
-/* =========================================================
-   AUDIT ROW
-========================================================= */
+function SafetyRow({
+  record,
+  selected,
+  onClick,
+}: {
+  record:
+    SafetyRecord
+
+  selected:
+    boolean
+
+  onClick:
+    () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={
+        onClick
+      }
+      className={`grid w-full gap-4 p-4 text-left transition-colors md:grid-cols-12 ${
+        selected
+          ? "bg-primary/[0.045]"
+          : "hover:bg-muted/25"
+      }`}
+    >
+      <div className="md:col-span-4">
+        <p className="text-sm font-semibold">
+          {record.system ===
+          "CARRIER_PROFILE_CVOR"
+            ? "Carrier Profile / CVOR"
+            : "SMS Profile"}
+        </p>
+
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          {
+            record.jurisdictionLabel
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-3">
+        <p className="text-[10px] text-muted-foreground">
+          Review Date
+        </p>
+
+        <p className="mt-1 text-xs font-medium">
+          {
+            record.reviewDate
+          }
+        </p>
+      </div>
+
+      <div className="md:col-span-5">
+        <p className="text-xs">
+          {record.summary ||
+            "No summary recorded."}
+        </p>
+      </div>
+    </button>
+  )
+}
 
 function AuditRow({
   record,
   selected,
-  onSelect,
+  onClick,
 }: {
   record:
     AuditRecord
@@ -4651,14 +4703,16 @@ function AuditRow({
   selected:
     boolean
 
-  onSelect: () => void
+  onClick:
+    () => void
 }) {
   return (
-    <div
+    <button
+      type="button"
       onClick={
-        onSelect
+        onClick
       }
-      className={`grid cursor-pointer gap-4 p-4 transition-colors md:grid-cols-12 ${
+      className={`grid w-full gap-4 p-4 text-left transition-colors md:grid-cols-12 ${
         selected
           ? "bg-primary/[0.045]"
           : "hover:bg-muted/25"
@@ -4672,9 +4726,8 @@ function AuditRow({
         </p>
 
         <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-          {
-            record.id
-          }
+          {record.referenceNumber ||
+            record.id}
         </p>
       </div>
 
@@ -4687,18 +4740,17 @@ function AuditRow({
 
         <p className="mt-1 text-[10px] text-muted-foreground">
           {
-            record.referenceNumber ||
-            "No reference"
+            record.jurisdictionLabel
           }
         </p>
       </div>
 
-      <div className="md:col-span-2 text-xs">
-        <p className="text-muted-foreground">
+      <div className="md:col-span-2">
+        <p className="text-[10px] text-muted-foreground">
           Due
         </p>
 
-        <p className="mt-1 font-medium">
+        <p className="mt-1 text-xs">
           {
             record.dueDate ||
             "—"
@@ -4706,12 +4758,12 @@ function AuditRow({
         </p>
       </div>
 
-      <div className="md:col-span-2 text-xs">
-        <p className="text-muted-foreground">
+      <div className="md:col-span-2">
+        <p className="text-[10px] text-muted-foreground">
           Completed
         </p>
 
-        <p className="mt-1 font-medium">
+        <p className="mt-1 text-xs">
           {
             record.completedDate ||
             "—"
@@ -4720,155 +4772,72 @@ function AuditRow({
       </div>
 
       <div className="flex justify-end md:col-span-2">
-        <Badge
-          variant="outline"
-        >
+        <Badge variant="outline">
           {
             record.status
           }
         </Badge>
       </div>
-    </div>
+    </button>
   )
 }
 
 /* =========================================================
-   SAFETY ROW
-========================================================= */
-
-function SafetyRow({
-  record,
-  selected,
-  onSelect,
-}: {
-  record:
-    SafetyPlaceholderRecord
-
-  selected:
-    boolean
-
-  onSelect: () => void
-}) {
-  return (
-    <div
-      onClick={
-        onSelect
-      }
-      className={`grid cursor-pointer gap-4 p-4 transition-colors md:grid-cols-12 ${
-        selected
-          ? "bg-primary/[0.045]"
-          : "hover:bg-muted/25"
-      }`}
-    >
-      <div className="md:col-span-4">
-        <p className="text-sm font-semibold">
-          {
-            record.system
-          }
-        </p>
-
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          {
-            record.jurisdiction ||
-            "—"
-          }
-        </p>
-      </div>
-
-      <div className="md:col-span-3 text-xs">
-        <p className="text-muted-foreground">
-          Review Date
-        </p>
-
-        <p className="mt-1 font-medium">
-          {
-            record.reviewDate
-          }
-        </p>
-      </div>
-
-      <div className="md:col-span-5 text-xs">
-        {
-          record.statusSummary ||
-          "No summary"
-        }
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   SECTION COMPONENT
+   AUTHORITY SECTION
 ========================================================= */
 
 function AuthoritySection({
   title,
   description,
-
-  applicability,
-
-  emptyMessage,
-
   records,
-
-  deadlineRules,
-
+  rules,
   selectedId,
-
   onSelect,
-
   onScan,
   onManual,
 }: {
-  title: string
-  description: string
+  title:
+    string
 
-  applicability:
-    ApplicabilityStatus
-
-  emptyMessage:
+  description:
     string
 
   records:
     AuthorityRecord[]
 
-  deadlineRules:
+  rules:
     DeadlineRules
 
   selectedId?:
     string
 
-  onSelect: (
-    record:
-      AuthorityRecord
-  ) => void
+  onSelect:
+    (
+      record:
+        AuthorityRecord
+    ) => void
 
-  onScan: () => void
-  onManual: () => void
+  onScan:
+    () => void
+
+  onManual:
+    () => void
 }) {
   return (
-    <Card className="overflow-visible">
+    <Card>
       <CardHeader className="border-b bg-muted/20">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="text-sm">
-                {title}
-              </CardTitle>
-
-              <ApplicabilityBadge
-                status={
-                  applicability
-                }
-              />
-            </div>
+            <CardTitle className="text-sm">
+              {title}
+            </CardTitle>
 
             <CardDescription className="mt-1 text-xs">
               {description}
             </CardDescription>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2">
             <Button
               onClick={
                 onScan
@@ -4904,7 +4873,7 @@ function AuthoritySection({
             <Landmark className="mx-auto size-9 text-muted-foreground/30" />
 
             <p className="mt-3 text-sm font-medium">
-              {emptyMessage}
+              No records found.
             </p>
           </div>
         ) : (
@@ -4918,14 +4887,14 @@ function AuthoritySection({
                   record={
                     record
                   }
-                  deadlineRules={
-                    deadlineRules
+                  rules={
+                    rules
                   }
                   selected={
                     selectedId ===
                     record.id
                   }
-                  onSelect={() =>
+                  onClick={() =>
                     onSelect(
                       record
                     )
@@ -4935,6 +4904,645 @@ function AuthoritySection({
             )}
           </div>
         )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   SAFETY SECTION
+========================================================= */
+
+function SafetySection({
+  title,
+  records,
+  selected,
+  onSelect,
+  onScan,
+  onManual,
+}: {
+  title:
+    string
+
+  records:
+    SafetyRecord[]
+
+  selected:
+    SelectedRecord | null
+
+  onSelect:
+    (
+      record:
+        SafetyRecord
+    ) => void
+
+  onScan:
+    () => void
+
+  onManual:
+    () => void
+}) {
+  return (
+    <Card>
+      <CardHeader className="border-b bg-muted/20">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <CardTitle className="text-sm">
+              {title}
+            </CardTitle>
+
+            <CardDescription className="mt-1 text-xs">
+              High-level safety snapshot. Full scoring architecture will be developed separately.
+            </CardDescription>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              onClick={
+                onScan
+              }
+            >
+              <ScanDocumentIcon
+                size={14}
+              />
+
+              <span className="ml-2">
+                Scan Document
+              </span>
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={
+                onManual
+              }
+            >
+              <Plus className="mr-2 size-4" />
+
+              Add Snapshot
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="p-0">
+        {records.length ===
+        0 ? (
+          <div className="p-10 text-center">
+            <ShieldCheck className="mx-auto size-9 text-muted-foreground/30" />
+
+            <p className="mt-3 text-sm font-medium">
+              No safety snapshot found.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y">
+            {records.map(
+              (record) => (
+                <SafetyRow
+                  key={
+                    record.id
+                  }
+                  record={
+                    record
+                  }
+                  selected={
+                    selected?.kind ===
+                      "safety" &&
+                    selected.record.id ===
+                      record.id
+                  }
+                  onClick={() =>
+                    onSelect(
+                      record
+                    )
+                  }
+                />
+              )
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/* =========================================================
+   EVIDENCE HISTORY
+========================================================= */
+
+function EvidenceHistory({
+  evidence,
+  onPreview,
+}: {
+  evidence:
+    AuthorityEvidence[]
+
+  onPreview:
+    (
+      evidence:
+        AuthorityEvidence
+    ) => void
+}) {
+  const [
+    showOlder,
+    setShowOlder,
+  ] =
+    useState(false)
+
+  const sorted =
+    [
+      ...evidence,
+    ].sort(
+      (a, b) =>
+        (
+          b.documentDate ||
+          b.uploadedAt
+        ).localeCompare(
+          a.documentDate ||
+          a.uploadedAt
+        )
+    )
+
+  const recent =
+    sorted.filter(
+      (item) =>
+        isDateInsideThreeYears(
+          item.documentDate ||
+          item.uploadedAt
+        )
+    )
+
+  const older =
+    sorted.filter(
+      (item) =>
+        !isDateInsideThreeYears(
+          item.documentDate ||
+          item.uploadedAt
+        )
+    )
+
+  const visible =
+    showOlder
+      ? sorted
+      : recent
+
+  return (
+    <section className="border-t pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Documents & 3-Year History
+          </p>
+
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            OCR confidence does not prevent optional human inspection of the original source.
+          </p>
+        </div>
+
+        {older.length >
+          0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[10px]"
+            onClick={() =>
+              setShowOlder(
+                (current) =>
+                  !current
+              )
+            }
+          >
+            <History className="mr-1 size-3" />
+
+            {showOlder
+              ? "Standard View"
+              : `Older History (${older.length})`}
+          </Button>
+        )}
+      </div>
+
+      {visible.length ===
+      0 ? (
+        <div className="mt-3 rounded-lg border border-dashed p-4 text-center">
+          <p className="text-xs text-muted-foreground">
+            No supporting documents attached.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {visible.map(
+            (item) => (
+              <button
+                key={
+                  item.id
+                }
+                type="button"
+                onClick={() =>
+                  onPreview(
+                    item
+                  )
+                }
+                className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/30 hover:bg-primary/[0.025]"
+              >
+                <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium">
+                    {
+                      item.fileName
+                    }
+                  </p>
+
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {item.documentDate ||
+                      item.uploadedAt.slice(
+                        0,
+                        10
+                      )}
+
+                    {item.ocrConfidence !==
+                      undefined &&
+                      ` · OCR ${item.ocrConfidence}%`}
+                  </p>
+                </div>
+
+                <span className="text-[10px] font-medium text-primary">
+                  Preview
+                </span>
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* =========================================================
+   INSPECTOR
+========================================================= */
+
+function RecordInspector({
+  selected,
+  evidence,
+  rules,
+  onClose,
+  onEdit,
+  onDelete,
+  onPreview,
+}: {
+  selected:
+    SelectedRecord | null
+
+  evidence:
+    AuthorityEvidence[]
+
+  rules:
+    DeadlineRules
+
+  onClose:
+    () => void
+
+  onEdit:
+    () => void
+
+  onDelete:
+    () => void
+
+  onPreview:
+    (
+      evidence:
+        AuthorityEvidence
+    ) => void
+}) {
+  if (!selected) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="flex min-h-[520px] flex-col items-center justify-center p-10 text-center">
+          <Landmark className="size-10 text-muted-foreground/30" />
+
+          <p className="mt-4 text-sm font-medium">
+            Select a record
+          </p>
+
+          <p className="mt-1 max-w-[280px] text-xs leading-5 text-muted-foreground">
+            Open a record to review identifiers, dates, documents and history.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const record =
+    selected.record
+
+  const attached =
+    evidence.filter(
+      (item) =>
+        record.evidenceIds.includes(
+          item.id
+        )
+    )
+
+  const title =
+    selected.kind ===
+    "authority"
+      ? selected.record.name
+      : selected.kind ===
+          "safety"
+        ? selected.record.system ===
+            "CARRIER_PROFILE_CVOR"
+          ? "Carrier Profile / CVOR"
+          : "SMS Profile"
+        : selected.record.auditType
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-primary/[0.03]">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="text-base">
+              {title}
+            </CardTitle>
+
+            <CardDescription className="mt-1 font-mono text-[10px]">
+              {
+                record.id
+              }
+            </CardDescription>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={
+              onClose
+            }
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-4 p-4">
+        {selected.kind ===
+          "authority" && (
+          <>
+            <CopyField
+              label="Number"
+              value={
+                selected.record.number
+              }
+            />
+
+            <CopyField
+              label="Issuing Authority"
+              value={
+                selected.record.issuingAuthority
+              }
+            />
+
+            <CopyField
+              label="Jurisdiction"
+              value={
+                selected.record.jurisdictionLabel
+              }
+            />
+
+            <CopyField
+              label="Country"
+              value={
+                selected.record.country
+              }
+            />
+
+            <CopyField
+              label="Status"
+              value={
+                selected.record.status
+              }
+            />
+
+            {selected.record.authorityType ===
+            "MCS150" ? (
+              <>
+                <CopyField
+                  label="Filed / Update Date"
+                  value={
+                    selected.record.eventDate
+                  }
+                />
+
+                <CopyField
+                  label="Next Action Date"
+                  value={
+                    selected.record.nextActionDate
+                  }
+                />
+
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Deadline Status
+                  </p>
+
+                  <div className="mt-2">
+                    <DeadlineBadge
+                      status={getDeadlineStatus(
+                        selected.record.nextActionDate,
+                        rules
+                      )}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <CopyField
+                  label="Issue Date"
+                  value={
+                    selected.record.issueDate
+                  }
+                />
+
+                <CopyField
+                  label="Effective Date"
+                  value={
+                    selected.record.effectiveDate
+                  }
+                />
+
+                <CopyField
+                  label="Expiry Date"
+                  value={
+                    selected.record.expiryDate
+                  }
+                />
+
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Deadline Status
+                  </p>
+
+                  <div className="mt-2">
+                    <DeadlineBadge
+                      status={getDeadlineStatus(
+                        selected.record.expiryDate,
+                        rules
+                      )}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {selected.kind ===
+          "safety" && (
+          <>
+            <CopyField
+              label="Jurisdiction"
+              value={
+                selected.record.jurisdictionLabel
+              }
+            />
+
+            <CopyField
+              label="Country"
+              value={
+                selected.record.country
+              }
+            />
+
+            <CopyField
+              label="Review Date"
+              value={
+                selected.record.reviewDate
+              }
+            />
+
+            <CopyField
+              label="Summary"
+              value={
+                selected.record.summary
+              }
+            />
+
+            <div className="rounded-lg border border-dashed bg-muted/20 p-3">
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                Detailed Safety Performance architecture will be built separately after the main portal pages are completed.
+              </p>
+            </div>
+          </>
+        )}
+
+        {selected.kind ===
+          "audit" && (
+          <>
+            <CopyField
+              label="Regulator"
+              value={
+                selected.record.regulator
+              }
+            />
+
+            <CopyField
+              label="Jurisdiction"
+              value={
+                selected.record.jurisdictionLabel
+              }
+            />
+
+            <CopyField
+              label="Reference"
+              value={
+                selected.record.referenceNumber
+              }
+            />
+
+            <CopyField
+              label="Notice Date"
+              value={
+                selected.record.noticeDate
+              }
+            />
+
+            <CopyField
+              label="Due Date"
+              value={
+                selected.record.dueDate
+              }
+            />
+
+            <CopyField
+              label="Completed Date"
+              value={
+                selected.record.completedDate
+              }
+            />
+
+            <CopyField
+              label="Status"
+              value={
+                selected.record.status
+              }
+            />
+
+            <CopyField
+              label="Outcome"
+              value={
+                selected.record.outcome
+              }
+            />
+
+            <CopyField
+              label="Score / Rating"
+              value={
+                selected.record.score
+              }
+            />
+          </>
+        )}
+
+        <EvidenceHistory
+          evidence={
+            attached
+          }
+          onPreview={
+            onPreview
+          }
+        />
+
+        <div className="flex gap-2 border-t pt-4">
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={
+              onEdit
+            }
+          >
+            <Pencil className="mr-2 size-4" />
+
+            Edit
+          </Button>
+
+          <Button
+            variant="outline"
+            className="flex-1 text-destructive hover:text-destructive"
+            onClick={
+              onDelete
+            }
+          >
+            <Trash2 className="mr-2 size-4" />
+
+            Delete
+          </Button>
+        </div>
+
+        <p className="text-[10px] leading-4 text-muted-foreground">
+          Delete remains available during development. It will become Archive before production.
+        </p>
       </CardContent>
     </Card>
   )
@@ -4976,11 +5584,11 @@ export default function AuthoritiesPage() {
     )
 
   const [
-    settings,
-    setSettings,
+    rules,
+    setRules,
   ] =
-    useState<SystemSettings>(
-      loadSystemSettings()
+    useState<DeadlineRules>(
+      DEFAULT_DEADLINE_RULES
     )
 
   const [
@@ -4996,26 +5604,56 @@ export default function AuthoritiesPage() {
     useState(false)
 
   const [
-    selectedRecord,
-    setSelectedRecord,
+    selected,
+    setSelected,
   ] =
     useState<SelectedRecord | null>(
       null
     )
 
   const [
-    manualCategory,
-    setManualCategory,
+    previewEvidence,
+    setPreviewEvidence,
   ] =
-    useState<AuthorityCategory | null>(
+    useState<AuthorityEvidence | null>(
       null
     )
 
   const [
-    sourceCategory,
-    setSourceCategory,
+    manualState,
+    setManualState,
   ] =
-    useState<AuthorityCategory | null>(
+    useState<ManualState | null>(
+      null
+    )
+
+  const [
+    editingState,
+    setEditingState,
+  ] =
+    useState<ManualState | null>(
+      null
+    )
+
+  const [
+    sourceContext,
+    setSourceContext,
+  ] =
+    useState<{
+      mode:
+        | "authority"
+        | "safety"
+        | "audit"
+
+      category?:
+        AuthorityCategory
+
+      authorityType?:
+        AuthorityType
+
+      safetySystem?:
+        SafetySystem
+    } | null>(
       null
     )
 
@@ -5033,14 +5671,6 @@ export default function AuthoritiesPage() {
       null
     )
 
-  const [
-    editingRecord,
-    setEditingRecord,
-  ] =
-    useState<SelectedRecord | null>(
-      null
-    )
-
   const storageKey =
     `tes_company_authorities_${companyId}`
 
@@ -5050,11 +5680,8 @@ export default function AuthoritiesPage() {
 
   useEffect(() => {
     try {
-      const companies =
-        getCompanies()
-
       const found =
-        companies.find(
+        getCompanies().find(
           (item) =>
             item.id ===
             companyId
@@ -5076,6 +5703,7 @@ export default function AuthoritiesPage() {
 
         setData({
           ...EMPTY_DATA,
+
           ...parsed,
 
           authorities:
@@ -5085,18 +5713,18 @@ export default function AuthoritiesPage() {
               ? parsed.authorities
               : [],
 
-          audits:
-            Array.isArray(
-              parsed.audits
-            )
-              ? parsed.audits
-              : [],
-
           safety:
             Array.isArray(
               parsed.safety
             )
               ? parsed.safety
+              : [],
+
+          audits:
+            Array.isArray(
+              parsed.audits
+            )
+              ? parsed.audits
               : [],
 
           evidence:
@@ -5108,10 +5736,12 @@ export default function AuthoritiesPage() {
         })
       }
 
-      setSettings(
-        loadSystemSettings()
+      setRules(
+        loadDeadlineRules()
       )
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "Unable to load Authorities page",
         error
@@ -5131,9 +5761,7 @@ export default function AuthoritiesPage() {
   ======================================================= */
 
   useEffect(() => {
-    if (
-      !loading
-    ) {
+    if (!loading) {
       localStorage.setItem(
         storageKey,
 
@@ -5148,10 +5776,6 @@ export default function AuthoritiesPage() {
     storageKey,
   ])
 
-  /* =======================================================
-     PROFILE
-  ======================================================= */
-
   const profile =
     useMemo(
       () =>
@@ -5161,128 +5785,809 @@ export default function AuthoritiesPage() {
             )
           : null,
 
-      [company]
+      [
+        company,
+      ]
     )
 
-  const deadlineRules =
-    settings.deadlineRules ||
-    settings.expiryRules ||
-    DEFAULT_DEADLINE_RULES
-
   /* =======================================================
-     HISTORY
+     3-YEAR RECORD WINDOW
   ======================================================= */
 
-  const visibleAuthorities =
+  const filteredAuthorities =
     data.authorities.filter(
       (record) =>
-        !record.deletedAt &&
-        (showOlderHistory ||
-          isWithinStandardVisibleHistory(
+        showOlderHistory ||
+        isDateInsideThreeYears(
+          authorityReferenceDate(
             record
-          ))
+          )
+        )
     )
 
-  const visibleAudits =
-    data.audits.filter(
-      (record) =>
-        !record.deletedAt &&
-        (showOlderHistory ||
-          isWithinStandardVisibleHistory(
-            record
-          ))
-    )
-
-  const visibleSafety =
+  const filteredSafety =
     data.safety.filter(
       (record) =>
-        !record.deletedAt &&
-        (showOlderHistory ||
-          isWithinStandardVisibleHistory(
+        showOlderHistory ||
+        isDateInsideThreeYears(
+          safetyReferenceDate(
             record
-          ))
+          )
+        )
     )
 
-  const oldRecordCount =
+  const filteredAudits =
+    data.audits.filter(
+      (record) =>
+        showOlderHistory ||
+        isDateInsideThreeYears(
+          auditReferenceDate(
+            record
+          )
+        )
+    )
+
+  const olderRecordCount =
     [
-      ...data.authorities,
-      ...data.audits,
-      ...data.safety,
-    ].filter(
-      (record) =>
-        !record.deletedAt &&
-        !isWithinStandardVisibleHistory(
-          record
+      ...data.authorities.filter(
+        (record) =>
+          !isDateInsideThreeYears(
+            authorityReferenceDate(
+              record
+            )
+          )
+      ),
+
+      ...data.safety.filter(
+        (record) =>
+          !isDateInsideThreeYears(
+            safetyReferenceDate(
+              record
+            )
+          )
+      ),
+
+      ...data.audits.filter(
+        (record) =>
+          !isDateInsideThreeYears(
+            auditReferenceDate(
+              record
+            )
+          )
+      ),
+    ].length
+
+  const categoryAuthorities =
+    (
+      category:
+        AuthorityCategory
+    ) =>
+      filteredAuthorities.filter(
+        (record) =>
+          record.category ===
+          category
+      )
+
+  /* =======================================================
+     SAVE AUTHORITY
+  ======================================================= */
+
+  const saveAuthority =
+    (
+      draft:
+        AuthorityDraft,
+
+      source:
+        SourceType,
+
+      evidence?:
+        AuthorityEvidence,
+
+      editingId?:
+        string
+    ) => {
+      const conflict =
+        findGlobalAuthorityConflict({
+          currentCompanyId:
+            companyId,
+
+          authorityType:
+            draft.authorityType,
+
+          number:
+            draft.number,
+
+          editingId,
+        })
+
+      if (conflict) {
+        if (
+          conflict.sameCompany
+        ) {
+          window.alert(
+            `This identifier already exists for this company.\n\nOpen the existing ${draft.name} record instead of creating a duplicate.`
+          )
+        } else {
+          window.alert(
+            `Duplicate identifier conflict.\n\n${draft.name} ${draft.number} is already connected to ${conflict.companyName} (${conflict.companyId}). TES will not create a second authoritative record.`
+          )
+        }
+
+        return false
+      }
+
+      const now =
+        isoNow()
+
+      if (
+        editingId
+      ) {
+        setData(
+          (current) => ({
+            ...current,
+
+            authorities:
+              current.authorities.map(
+                (record) =>
+                  record.id ===
+                  editingId
+                    ? {
+                        ...record,
+
+                        ...draft,
+
+                        evidenceIds:
+                          evidence
+                            ? Array.from(
+                                new Set([
+                                  ...record.evidenceIds,
+
+                                  evidence.id,
+                                ])
+                              )
+                            : record.evidenceIds,
+
+                        source,
+
+                        updatedAt:
+                          now,
+                      }
+                    : record
+              ),
+
+            evidence:
+              evidence
+                ? [
+                    {
+                      ...evidence,
+
+                      recordId:
+                        editingId,
+                    },
+
+                    ...current.evidence,
+                  ]
+                : current.evidence,
+          })
         )
-    ).length
+
+        return true
+      }
+
+      const record:
+        AuthorityRecord =
+        {
+          id:
+            createId(
+              "AUTH"
+            ),
+
+          ...draft,
+
+          evidenceIds:
+            evidence
+              ? [
+                  evidence.id,
+                ]
+              : [],
+
+          source,
+
+          createdAt:
+            now,
+
+          updatedAt:
+            now,
+        }
+
+      setData(
+        (current) => ({
+          ...current,
+
+          authorities:
+            [
+              record,
+
+              ...current.authorities,
+            ],
+
+          evidence:
+            evidence
+              ? [
+                  {
+                    ...evidence,
+
+                    recordId:
+                      record.id,
+                  },
+
+                  ...current.evidence,
+                ]
+              : current.evidence,
+        })
+      )
+
+      setSelected({
+        kind:
+          "authority",
+
+        record,
+      })
+
+      return true
+    }
 
   /* =======================================================
-     CATEGORY RECORDS
+     SAVE SAFETY
   ======================================================= */
 
-  const categoryRecords = (
-    category:
-      AuthorityCategory
-  ) =>
-    visibleAuthorities.filter(
-      (record) =>
-        record.category ===
-        category
-    )
+  const saveSafety =
+    (
+      draft:
+        SafetyDraft,
 
-  /* =======================================================
-     SUMMARY COUNTS
-  ======================================================= */
+      source:
+        SourceType,
 
-  const liveAuthorityStatuses =
-    visibleAuthorities.map(
-      (record) =>
-        getDeadlineStatus(
-          getAuthorityDeadlineDate(
-            record
-          ),
+      evidence?:
+        AuthorityEvidence,
 
-          deadlineRules
+      editingId?:
+        string
+    ) => {
+      const now =
+        isoNow()
+
+      if (
+        editingId
+      ) {
+        setData(
+          (current) => ({
+            ...current,
+
+            safety:
+              current.safety.map(
+                (record) =>
+                  record.id ===
+                  editingId
+                    ? {
+                        ...record,
+
+                        ...draft,
+
+                        evidenceIds:
+                          evidence
+                            ? Array.from(
+                                new Set([
+                                  ...record.evidenceIds,
+
+                                  evidence.id,
+                                ])
+                              )
+                            : record.evidenceIds,
+
+                        source,
+
+                        updatedAt:
+                          now,
+                      }
+                    : record
+              ),
+
+            evidence:
+              evidence
+                ? [
+                    {
+                      ...evidence,
+
+                      recordId:
+                        editingId,
+                    },
+
+                    ...current.evidence,
+                  ]
+                : current.evidence,
+          })
         )
-    )
 
-  const countStatus = (
-    status:
-      DeadlineStatus
-  ) =>
-    liveAuthorityStatuses.filter(
-      (item) =>
-        item ===
-        status
-    ).length
+        return
+      }
+
+      const record:
+        SafetyRecord =
+        {
+          id:
+            createId(
+              "SAFE"
+            ),
+
+          ...draft,
+
+          evidenceIds:
+            evidence
+              ? [
+                  evidence.id,
+                ]
+              : [],
+
+          source,
+
+          createdAt:
+            now,
+
+          updatedAt:
+            now,
+        }
+
+      setData(
+        (current) => ({
+          ...current,
+
+          safety:
+            [
+              record,
+
+              ...current.safety,
+            ],
+
+          evidence:
+            evidence
+              ? [
+                  {
+                    ...evidence,
+
+                    recordId:
+                      record.id,
+                  },
+
+                  ...current.evidence,
+                ]
+              : current.evidence,
+        })
+      )
+
+      setSelected({
+        kind:
+          "safety",
+
+        record,
+      })
+    }
 
   /* =======================================================
-     DOCUMENT PROCESSING
+     SAVE AUDIT
   ======================================================= */
 
-  const processDocument =
+  const saveAudit =
+    (
+      draft:
+        AuditDraft,
+
+      source:
+        SourceType,
+
+      evidence?:
+        AuthorityEvidence,
+
+      editingId?:
+        string
+    ) => {
+      const now =
+        isoNow()
+
+      if (
+        editingId
+      ) {
+        setData(
+          (current) => ({
+            ...current,
+
+            audits:
+              current.audits.map(
+                (record) =>
+                  record.id ===
+                  editingId
+                    ? {
+                        ...record,
+
+                        ...draft,
+
+                        evidenceIds:
+                          evidence
+                            ? Array.from(
+                                new Set([
+                                  ...record.evidenceIds,
+
+                                  evidence.id,
+                                ])
+                              )
+                            : record.evidenceIds,
+
+                        source,
+
+                        updatedAt:
+                          now,
+                      }
+                    : record
+              ),
+
+            evidence:
+              evidence
+                ? [
+                    {
+                      ...evidence,
+
+                      recordId:
+                        editingId,
+                    },
+
+                    ...current.evidence,
+                  ]
+                : current.evidence,
+          })
+        )
+
+        return
+      }
+
+      const record:
+        AuditRecord =
+        {
+          id:
+            createId(
+              "AUD"
+            ),
+
+          ...draft,
+
+          evidenceIds:
+            evidence
+              ? [
+                  evidence.id,
+                ]
+              : [],
+
+          source,
+
+          createdAt:
+            now,
+
+          updatedAt:
+            now,
+        }
+
+      setData(
+        (current) => ({
+          ...current,
+
+          audits:
+            [
+              record,
+
+              ...current.audits,
+            ],
+
+          evidence:
+            evidence
+              ? [
+                  {
+                    ...evidence,
+
+                    recordId:
+                      record.id,
+                  },
+
+                  ...current.evidence,
+                ]
+              : current.evidence,
+        })
+      )
+
+      setSelected({
+        kind:
+          "audit",
+
+        record,
+      })
+    }
+
+  /* =======================================================
+     DELETE — DEVELOPMENT ONLY
+  ======================================================= */
+
+  const deleteSelected =
+    () => {
+      if (!selected) {
+        return
+      }
+
+      if (
+        !window.confirm(
+          "Delete this development/test record? This function will become Archive before production."
+        )
+      ) {
+        return
+      }
+
+      const id =
+        selected.record.id
+
+      setData(
+        (current) => ({
+          ...current,
+
+          authorities:
+            selected.kind ===
+            "authority"
+              ? current.authorities.filter(
+                  (record) =>
+                    record.id !==
+                    id
+                )
+              : current.authorities,
+
+          safety:
+            selected.kind ===
+            "safety"
+              ? current.safety.filter(
+                  (record) =>
+                    record.id !==
+                    id
+                )
+              : current.safety,
+
+          audits:
+            selected.kind ===
+            "audit"
+              ? current.audits.filter(
+                  (record) =>
+                    record.id !==
+                    id
+                )
+              : current.audits,
+
+          evidence:
+            current.evidence.filter(
+              (item) =>
+                !selected.record.evidenceIds.includes(
+                  item.id
+                )
+            ),
+        })
+      )
+
+      setSelected(
+        null
+      )
+    }
+
+  /* =======================================================
+     EDIT
+  ======================================================= */
+
+  const openEdit =
+    () => {
+      if (!selected) {
+        return
+      }
+
+      if (
+        selected.kind ===
+        "authority"
+      ) {
+        const record =
+          selected.record
+
+        setEditingState({
+          mode:
+            "authority",
+
+          draft: {
+            category:
+              record.category,
+
+            authorityType:
+              record.authorityType,
+
+            name:
+              record.name,
+
+            number:
+              record.number,
+
+            issuingAuthority:
+              record.issuingAuthority,
+
+            jurisdictionCode:
+              record.jurisdictionCode,
+
+            jurisdictionLabel:
+              record.jurisdictionLabel,
+
+            country:
+              record.country,
+
+            status:
+              record.status,
+
+            issueDate:
+              record.issueDate ||
+              "",
+
+            effectiveDate:
+              record.effectiveDate ||
+              "",
+
+            expiryDate:
+              record.expiryDate ||
+              "",
+
+            eventDate:
+              record.eventDate ||
+              "",
+
+            nextActionDate:
+              record.nextActionDate ||
+              "",
+
+            notes:
+              record.notes ||
+              "",
+          },
+        })
+
+        return
+      }
+
+      if (
+        selected.kind ===
+        "safety"
+      ) {
+        const record =
+          selected.record
+
+        setEditingState({
+          mode:
+            "safety",
+
+          draft: {
+            system:
+              record.system,
+
+            jurisdictionCode:
+              record.jurisdictionCode,
+
+            jurisdictionLabel:
+              record.jurisdictionLabel,
+
+            country:
+              record.country,
+
+            reviewDate:
+              record.reviewDate,
+
+            summary:
+              record.summary,
+
+            notes:
+              record.notes ||
+              "",
+          },
+        })
+
+        return
+      }
+
+      const record =
+        selected.record
+
+      setEditingState({
+        mode:
+          "audit",
+
+        draft: {
+          auditType:
+            record.auditType,
+
+          regulator:
+            record.regulator,
+
+          jurisdictionCode:
+            record.jurisdictionCode,
+
+          jurisdictionLabel:
+            record.jurisdictionLabel,
+
+          country:
+            record.country,
+
+          referenceNumber:
+            record.referenceNumber,
+
+          noticeDate:
+            record.noticeDate ||
+            "",
+
+          dueDate:
+            record.dueDate ||
+            "",
+
+          completedDate:
+            record.completedDate ||
+            "",
+
+          status:
+            record.status,
+
+          outcome:
+            record.outcome ||
+            "",
+
+          score:
+            record.score ||
+            "",
+
+          followUpRequired:
+            record.followUpRequired,
+
+          followUpDueDate:
+            record.followUpDueDate ||
+            "",
+
+          notes:
+            record.notes ||
+            "",
+        },
+      })
+    }
+
+  /* =======================================================
+     START OCR
+  ======================================================= */
+
+  const startOCRFile =
     async (
-      file: File,
+      file:
+        File,
 
       source:
         DocumentSource
     ) => {
       if (
-        !sourceCategory ||
+        !sourceContext ||
         !company ||
         !profile
       ) {
         return
       }
 
-      const allowed =
-        file.type.startsWith(
+      if (
+        !file.type.startsWith(
           "image/"
-        ) ||
-        file.type ===
+        ) &&
+        file.type !==
           "application/pdf"
-
-      if (!allowed) {
+      ) {
         window.alert(
           "Please select a PDF or image."
         )
@@ -5295,747 +6600,215 @@ export default function AuthoritiesPage() {
           file
         )
 
-      setOcrSession({
-        category:
-          sourceCategory,
+      if (
+        sourceContext.mode ===
+        "authority"
+      ) {
+        const category =
+          sourceContext.category!
 
-        source,
+        const options =
+          authorityOptions(
+            category,
+            profile
+          )
 
-        file,
+        const type =
+          sourceContext.authorityType ||
+          options[0]?.value ||
+          "OTHER"
 
-        dataUrl,
+        setOcrSession({
+          mode:
+            "authority",
 
-        processing:
-          false,
+          source,
 
-        extractionComplete:
-          false,
+          file,
 
-        confidence:
-          undefined,
+          dataUrl,
 
-        authorityDraft:
-          sourceCategory ===
-            "audit" ||
-          sourceCategory ===
-            "safety"
-            ? undefined
-            : emptyAuthorityDraft({
-                category:
-                  sourceCategory,
+          processing:
+            false,
 
-                company,
+          extractionComplete:
+            false,
 
-                profile,
-              }),
+          documentDate:
+            todayISO(),
 
-        auditDraft:
-          sourceCategory ===
-          "audit"
-            ? emptyAuditDraft()
-            : undefined,
+          authorityDraft:
+            emptyAuthorityDraft(
+              company,
+              category,
+              type
+            ),
+        })
+      } else if (
+        sourceContext.mode ===
+        "safety"
+      ) {
+        setOcrSession({
+          mode:
+            "safety",
 
-        safetyDraft:
-          sourceCategory ===
-          "safety"
-            ? emptySafetyDraft()
-            : undefined,
-      })
+          source,
 
-      setSourceCategory(
+          file,
+
+          dataUrl,
+
+          processing:
+            false,
+
+          extractionComplete:
+            false,
+
+          documentDate:
+            todayISO(),
+
+          safetyDraft:
+            emptySafetyDraft(
+              company,
+              sourceContext.safetySystem!
+            ),
+        })
+      } else {
+        setOcrSession({
+          mode:
+            "audit",
+
+          source,
+
+          file,
+
+          dataUrl,
+
+          processing:
+            false,
+
+          extractionComplete:
+            false,
+
+          documentDate:
+            todayISO(),
+
+          auditDraft:
+            emptyAuditDraft(
+              company
+            ),
+        })
+      }
+
+      setSourceContext(
         null
       )
     }
 
   /* =======================================================
-     AUTHORITY SAVE
+     SAVE OCR
   ======================================================= */
 
-  const saveAuthorityDraft = ({
-    draft,
-    source,
-    evidence,
-    existingId,
-  }: {
-    draft:
-      AuthorityDraft
+  const saveOCR =
+    () => {
+      if (!ocrSession) {
+        return
+      }
 
-    source:
-      SourceType
-
-    evidence?:
-      AuthorityEvidence
-
-    existingId?:
-      string
-  }) => {
-    /*
-      HARD DUPLICATION CONTROL.
-  */
-
-    const globalMatch =
-      scanGlobalAuthorityIdentifier({
-        authorityType:
-          draft.authorityType,
-
-        authorityNumber:
-          draft.authorityNumber,
-
-        currentCompanyId:
-          companyId,
-      })
-
-    if (
-      globalMatch.otherCompanies.length >
-      0
-    ) {
-      const first =
-        globalMatch.otherCompanies[0]
-
-      window.alert(
-        `Duplicate identifier conflict.\n\n${draft.authorityType} ${draft.authorityNumber} is already connected to ${first.companyName} (${first.companyId}).\n\nTES will not create a second authoritative record.`
-      )
-
-      return false
-    }
-
-    /*
-      Same company, same identifier.
-      If not editing that exact record, treat as duplicate.
-    */
-
-    const localDuplicate =
-      globalMatch.sameCompany.find(
-        (match) =>
-          match.recordId !==
-          existingId
-      )
-
-    if (
-      localDuplicate
-    ) {
-      window.alert(
-        "This authority identifier already exists for this company. Open the existing record and edit/update it instead of creating a duplicate."
-      )
-
-      return false
-    }
-
-    const timestamp =
-      isoNow()
-
-    if (
-      existingId
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          authorities:
-            current.authorities.map(
-              (record) =>
-                record.id ===
-                existingId
-                  ? {
-                      ...record,
-
-                      ...draft,
-
-                      source,
-
-                      evidenceIds:
-                        evidence
-                          ? Array.from(
-                              new Set([
-                                ...record.evidenceIds,
-                                evidence.id,
-                              ])
-                            )
-                          : record.evidenceIds,
-
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
+      const evidence:
+        AuthorityEvidence =
+        {
+          id:
+            createId(
+              "DOC"
             ),
 
-          evidence:
-            evidence
-              ? [
-                  evidence,
+          fileName:
+            ocrSession.file.name,
 
-                  ...current.evidence,
-                ]
-              : current.evidence,
-        })
-      )
+          mimeType:
+            ocrSession.file.type,
 
-      return true
-    }
+          dataUrl:
+            ocrSession.dataUrl,
 
-    /*
-      Renewal/history logic:
-      same authority type but different identifier/period
-      can remain separate and reference history where useful.
-    */
+          documentDate:
+            ocrSession.documentDate,
 
-    const previous =
-      data.authorities
-        .filter(
-          (record) =>
-            !record.deletedAt &&
-            normalizeText(
-              record.authorityType
-            ) ===
-              normalizeText(
-                draft.authorityType
-              )
-        )
-        .sort(
-          (a, b) =>
-            b.createdAt.localeCompare(
-              a.createdAt
-            )
-        )[0]
-
-    const record:
-      AuthorityRecord =
-      {
-        id:
-          createId(
-            "AUTH"
-          ),
-
-        ...draft,
-
-        source,
-
-        evidenceIds:
-          evidence
-            ? [
-                evidence.id,
-              ]
-            : [],
-
-        previousRecordId:
-          previous?.id,
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-      }
-
-    setData(
-      (current) => ({
-        ...current,
-
-        authorities:
-          [
-            record,
-
-            ...current.authorities,
-          ],
-
-        evidence:
-          evidence
-            ? [
-                {
-                  ...evidence,
-
-                  authorityRecordId:
-                    record.id,
-                },
-
-                ...current.evidence,
-              ]
-            : current.evidence,
-      })
-    )
-
-    setSelectedRecord(
-      record
-    )
-
-    return true
-  }
-
-  /* =======================================================
-     AUDIT SAVE
-  ======================================================= */
-
-  const saveAuditDraft = ({
-    draft,
-    source,
-    evidence,
-    existingId,
-  }: {
-    draft:
-      AuditDraft
-
-    source:
-      SourceType
-
-    evidence?:
-      AuthorityEvidence
-
-    existingId?:
-      string
-  }) => {
-    const timestamp =
-      isoNow()
-
-    if (
-      existingId
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          audits:
-            current.audits.map(
-              (record) =>
-                record.id ===
-                existingId
-                  ? {
-                      ...record,
-
-                      ...draft,
-
-                      source,
-
-                      evidenceIds:
-                        evidence
-                          ? Array.from(
-                              new Set([
-                                ...record.evidenceIds,
-                                evidence.id,
-                              ])
-                            )
-                          : record.evidenceIds,
-
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
-            ),
-
-          evidence:
-            evidence
-              ? [
-                  evidence,
-
-                  ...current.evidence,
-                ]
-              : current.evidence,
-        })
-      )
-
-      return true
-    }
-
-    const record:
-      AuditRecord =
-      {
-        id:
-          createId(
-            "AUD"
-          ),
-
-        category:
-          "audit",
-
-        ...draft,
-
-        source,
-
-        evidenceIds:
-          evidence
-            ? [
-                evidence.id,
-              ]
-            : [],
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-      }
-
-    setData(
-      (current) => ({
-        ...current,
-
-        audits:
-          [
-            record,
-
-            ...current.audits,
-          ],
-
-        evidence:
-          evidence
-            ? [
-                evidence,
-
-                ...current.evidence,
-              ]
-            : current.evidence,
-      })
-    )
-
-    setSelectedRecord(
-      record
-    )
-
-    return true
-  }
-
-  /* =======================================================
-     SAFETY SAVE
-  ======================================================= */
-
-  const saveSafetyDraft = ({
-    draft,
-    source,
-    evidence,
-    existingId,
-  }: {
-    draft:
-      SafetyDraft
-
-    source:
-      SourceType
-
-    evidence?:
-      AuthorityEvidence
-
-    existingId?:
-      string
-  }) => {
-    const timestamp =
-      isoNow()
-
-    if (
-      existingId
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          safety:
-            current.safety.map(
-              (record) =>
-                record.id ===
-                existingId
-                  ? {
-                      ...record,
-
-                      ...draft,
-
-                      source,
-
-                      evidenceIds:
-                        evidence
-                          ? Array.from(
-                              new Set([
-                                ...record.evidenceIds,
-                                evidence.id,
-                              ])
-                            )
-                          : record.evidenceIds,
-
-                      updatedAt:
-                        timestamp,
-                    }
-                  : record
-            ),
-
-          evidence:
-            evidence
-              ? [
-                  evidence,
-
-                  ...current.evidence,
-                ]
-              : current.evidence,
-        })
-      )
-
-      return true
-    }
-
-    const record:
-      SafetyPlaceholderRecord =
-      {
-        id:
-          createId(
-            "SAFE"
-          ),
-
-        category:
-          "safety",
-
-        ...draft,
-
-        source,
-
-        evidenceIds:
-          evidence
-            ? [
-                evidence.id,
-              ]
-            : [],
-
-        createdAt:
-          timestamp,
-
-        updatedAt:
-          timestamp,
-      }
-
-    setData(
-      (current) => ({
-        ...current,
-
-        safety:
-          [
-            record,
-
-            ...current.safety,
-          ],
-
-        evidence:
-          evidence
-            ? [
-                evidence,
-
-                ...current.evidence,
-              ]
-            : current.evidence,
-      })
-    )
-
-    setSelectedRecord(
-      record
-    )
-
-    return true
-  }
-
-  /* =======================================================
-     OCR SAVE
-  ======================================================= */
-
-  const saveOCRSession = (
-    session:
-      OCRSession
-  ) => {
-    const evidence:
-      AuthorityEvidence =
-      {
-        id:
-          createId(
-            "DOC"
-          ),
-
-        documentName:
-          session.file.name,
-
-        documentType:
-          session.file.type,
-
-        source:
-          session.source,
-
-        uploadedAt:
-          isoNow(),
-
-        ocrConfidence:
-          session.confidence,
-
-        dataUrl:
-          session.dataUrl,
-      }
-
-    if (
-      session.category ===
-      "audit" &&
-      session.auditDraft
-    ) {
-      const saved =
-        saveAuditDraft({
-          draft:
-            session.auditDraft,
+          uploadedAt:
+            isoNow(),
 
           source:
+            ocrSession.source,
+
+          ocrConfidence:
+            ocrSession.confidence,
+        }
+
+      if (
+        ocrSession.mode ===
+          "authority" &&
+        ocrSession.authorityDraft
+      ) {
+        const saved =
+          saveAuthority(
+            ocrSession.authorityDraft,
+
             "OCR",
 
-          evidence,
-        })
+            evidence
+          )
 
-      if (saved) {
+        if (saved) {
+          setOcrSession(
+            null
+          )
+        }
+
+        return
+      }
+
+      if (
+        ocrSession.mode ===
+          "safety" &&
+        ocrSession.safetyDraft
+      ) {
+        saveSafety(
+          ocrSession.safetyDraft,
+
+          "OCR",
+
+          evidence
+        )
+
         setOcrSession(
           null
         )
+
+        return
       }
 
-      return
-    }
+      if (
+        ocrSession.mode ===
+          "audit" &&
+        ocrSession.auditDraft
+      ) {
+        saveAudit(
+          ocrSession.auditDraft,
 
-    if (
-      session.category ===
-      "safety" &&
-      session.safetyDraft
-    ) {
-      const saved =
-        saveSafetyDraft({
-          draft:
-            session.safetyDraft,
+          "OCR",
 
-          source:
-            "OCR",
-
-          evidence,
-        })
-
-      if (saved) {
-        setOcrSession(
-          null
+          evidence
         )
-      }
 
-      return
-    }
-
-    if (
-      session.authorityDraft
-    ) {
-      const saved =
-        saveAuthorityDraft({
-          draft:
-            session.authorityDraft,
-
-          source:
-            "OCR",
-
-          evidence,
-        })
-
-      if (saved) {
         setOcrSession(
           null
         )
       }
     }
-  }
 
   /* =======================================================
-     DELETE FOR DEVELOPMENT
-  ======================================================= */
-
-  const deleteRecord = (
-    record:
-      SelectedRecord
-  ) => {
-    const confirmed =
-      window.confirm(
-        "Delete this development/test record?\n\nThis temporary delete function will be replaced by Archive once portal development is complete."
-      )
-
-    if (!confirmed) {
-      return
-    }
-
-    const timestamp =
-      isoNow()
-
-    if (
-      record.category ===
-      "audit"
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          audits:
-            current.audits.map(
-              (item) =>
-                item.id ===
-                record.id
-                  ? {
-                      ...item,
-
-                      deletedAt:
-                        timestamp,
-
-                      deletedBy:
-                        "Current User",
-                    }
-                  : item
-            ),
-        })
-      )
-    } else if (
-      record.category ===
-      "safety"
-    ) {
-      setData(
-        (current) => ({
-          ...current,
-
-          safety:
-            current.safety.map(
-              (item) =>
-                item.id ===
-                record.id
-                  ? {
-                      ...item,
-
-                      deletedAt:
-                        timestamp,
-
-                      deletedBy:
-                        "Current User",
-                    }
-                  : item
-            ),
-        })
-      )
-    } else {
-      setData(
-        (current) => ({
-          ...current,
-
-          authorities:
-            current.authorities.map(
-              (item) =>
-                item.id ===
-                record.id
-                  ? {
-                      ...item,
-
-                      deletedAt:
-                        timestamp,
-
-                      deletedBy:
-                        "Current User",
-                    }
-                  : item
-            ),
-        })
-      )
-    }
-
-    setSelectedRecord(
-      null
-    )
-  }
-
-  /* =======================================================
-     LOADING
+     PAGE STATES
   ======================================================= */
 
   if (
@@ -6076,12 +6849,65 @@ export default function AuthoritiesPage() {
     )
   }
 
+  /* =======================================================
+     SUMMARY
+  ======================================================= */
+
+  const deadlineStatuses =
+    filteredAuthorities.map(
+      (record) =>
+        getDeadlineStatus(
+          record.authorityType ===
+          "MCS150"
+            ? record.nextActionDate
+            : record.expiryDate,
+
+          rules
+        )
+    )
+
+  const countStatus =
+    (
+      status:
+        DeadlineStatus
+    ) =>
+      deadlineStatuses.filter(
+        (item) =>
+          item ===
+          status
+      ).length
+
+  const registrations =
+    categoryAuthorities(
+      "operating_registration"
+    ).filter(
+      (record) => {
+        if (
+          record.authorityType ===
+          "PHMSA"
+        ) {
+          return profile.showPHMSA
+        }
+
+        if (
+          record.authorityType ===
+          "UCR"
+        ) {
+          return profile.showUCR
+        }
+
+        return true
+      }
+    )
+
+  const showOperatingRegistrations =
+    profile.showUCR ||
+    profile.showPHMSA
+
   return (
     <>
       <div className="flex max-w-[1600px] flex-col gap-6 pb-12">
-        {/* =================================================
-            HEADER
-        ================================================= */}
+        {/* HEADER */}
 
         <div>
           <div className="flex items-start gap-3">
@@ -6104,6 +6930,7 @@ export default function AuthoritiesPage() {
 
               <p className="mt-1 text-sm text-muted-foreground">
                 {company.name}{" "}
+
                 <span className="font-mono text-xs">
                   ({company.id})
                 </span>
@@ -6144,13 +6971,13 @@ export default function AuthoritiesPage() {
 
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Hazmat
+                  Cargo / Hazmat
                 </p>
 
                 <p className="mt-1 text-sm font-semibold">
                   {profile.hazmat
-                    ? "Yes"
-                    : "No"}
+                    ? "Hazmat operation"
+                    : "No Hazmat trigger"}
                 </p>
               </div>
 
@@ -6159,77 +6986,74 @@ export default function AuthoritiesPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setSettings(
-                    loadSystemSettings()
+                  setRules(
+                    loadDeadlineRules()
                   )
                 }
-                className="text-xs font-medium text-primary hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
               >
+                <RefreshCcw className="size-3" />
+
                 Refresh Deadline Settings
               </button>
             </div>
           </div>
         </div>
 
-        {/* =================================================
-            HEALTH SUMMARY
-        ================================================= */}
+        {/* DEADLINES */}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <SummaryCard
-            label="Healthy"
-            value={
-              countStatus(
-                "Healthy"
-              )
-            }
-            status="Healthy"
-          />
+          {(
+            [
+              "Healthy",
+              "Watch",
+              "Urgent",
+              "Critical",
+              "Expired",
+            ] as
+              DeadlineStatus[]
+          ).map(
+            (status) => {
+              const style =
+                statusClasses(
+                  status
+                )
 
-          <SummaryCard
-            label="Watch"
-            value={
-              countStatus(
-                "Watch"
-              )
-            }
-            status="Watch"
-          />
+              return (
+                <Card
+                  key={
+                    status
+                  }
+                  className={`border-l-4 ${style.left}`}
+                >
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">
+                      {status}
+                    </p>
 
-          <SummaryCard
-            label="Urgent"
-            value={
-              countStatus(
-                "Urgent"
-              )
-            }
-            status="Urgent"
-          />
+                    <div className="mt-2 flex items-end justify-between gap-2">
+                      <p className="text-2xl font-bold">
+                        {
+                          countStatus(
+                            status
+                          )
+                        }
+                      </p>
 
-          <SummaryCard
-            label="Critical"
-            value={
-              countStatus(
-                "Critical"
+                      <DeadlineBadge
+                        status={
+                          status
+                        }
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
               )
             }
-            status="Critical"
-          />
-
-          <SummaryCard
-            label="Expired"
-            value={
-              countStatus(
-                "Expired"
-              )
-            }
-            status="Expired"
-          />
+          )}
         </div>
 
-        {/* =================================================
-            3-YEAR VISIBILITY STANDARD
-        ================================================= */}
+        {/* 3 YEAR RULE */}
 
         <Card className="border-primary/15 bg-primary/[0.025]">
           <CardContent className="flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
@@ -6242,12 +7066,12 @@ export default function AuthoritiesPage() {
                 </p>
 
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                  TES keeps at least the most recent three years of records and documents visible in the normal operational view. Older retained history remains available when needed for extended audit requests.
+                  The normal TES view keeps at least the most recent three years of records and documents readily visible. Older retained history remains available for extended audit requests.
                 </p>
               </div>
             </div>
 
-            {oldRecordCount >
+            {olderRecordCount >
               0 && (
               <Button
                 variant="outline"
@@ -6263,237 +7087,280 @@ export default function AuthoritiesPage() {
 
                 {showOlderHistory
                   ? "Show Standard View"
-                  : `Show Older History (${oldRecordCount})`}
+                  : `Show Older History (${olderRecordCount})`}
               </Button>
             )}
           </CardContent>
         </Card>
 
-        {/* =================================================
-            WORKSPACE
-        ================================================= */}
+        {/* MAIN */}
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
           <div className="space-y-6">
-            <AuthoritySection
-              title="Canadian Operations"
-              description="Provincial carrier identifiers and safety/operating authorities."
-              applicability={
-                profile.canadaOperations
-              }
-              emptyMessage="No Canadian authority records found."
-              records={categoryRecords(
-                "canadian"
-              )}
-              deadlineRules={
-                deadlineRules
-              }
-              selectedId={
-                selectedRecord?.id
-              }
-              onSelect={
-                setSelectedRecord
-              }
-              onScan={() =>
-                setSourceCategory(
+            {/* CANADA */}
+
+            {profile.showCanadian && (
+              <AuthoritySection
+                title="Canadian Operations"
+                description="Provincial carrier identifier and NSC / Safety Fitness Certificate / CVOR records."
+                records={categoryAuthorities(
                   "canadian"
-                )
-              }
-              onManual={() =>
-                setManualCategory(
-                  "canadian"
-                )
-              }
-            />
-
-            <AuthoritySection
-              title="US Federal Operations"
-              description="USDOT, MC operating authority, MCS-150 and related federal records."
-              applicability={
-                profile.usOperations
-              }
-              emptyMessage="No US federal authority records found."
-              records={categoryRecords(
-                "us_federal"
-              )}
-              deadlineRules={
-                deadlineRules
-              }
-              selectedId={
-                selectedRecord?.id
-              }
-              onSelect={
-                setSelectedRecord
-              }
-              onScan={() =>
-                setSourceCategory(
-                  "us_federal"
-                )
-              }
-              onManual={() =>
-                setManualCategory(
-                  "us_federal"
-                )
-              }
-            />
-
-            <AuthoritySection
-              title="Operating Registrations"
-              description="Carrier-level recurring registrations such as UCR."
-              applicability={
-                profile.ucr
-              }
-              emptyMessage="No operating registration records found."
-              records={categoryRecords(
-                "registration"
-              )}
-              deadlineRules={
-                deadlineRules
-              }
-              selectedId={
-                selectedRecord?.id
-              }
-              onSelect={
-                setSelectedRecord
-              }
-              onScan={() =>
-                setSourceCategory(
-                  "registration"
-                )
-              }
-              onManual={() =>
-                setManualCategory(
-                  "registration"
-                )
-              }
-            />
-
-            <AuthoritySection
-              title="Hazmat / Special Fleet Authorities"
-              description="Fleet-level hazardous materials authorities. Vehicle-specific permits remain with Vehicles."
-              applicability={
-                profile.phmsa
-              }
-              emptyMessage={
-                profile.hazmat
-                  ? "Hazmat operation detected, but no fleet-level hazmat authority is recorded."
-                  : "No fleet-level hazmat authority is required by the current cargo profile."
-              }
-              records={categoryRecords(
-                "hazmat"
-              )}
-              deadlineRules={
-                deadlineRules
-              }
-              selectedId={
-                selectedRecord?.id
-              }
-              onSelect={
-                setSelectedRecord
-              }
-              onScan={() =>
-                setSourceCategory(
-                  "hazmat"
-                )
-              }
-              onManual={() =>
-                setManualCategory(
-                  "hazmat"
-                )
-              }
-            />
-
-            {/* =============================================
-                SAFETY — DELIBERATELY SHALLOW
-            ============================================= */}
-
-            <Card>
-              <CardHeader className="border-b bg-muted/20">
-                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                  <div>
-                    <CardTitle className="text-sm">
-                      Safety Performance
-                    </CardTitle>
-
-                    <CardDescription className="mt-1 text-xs">
-                      Carrier Profile / CVOR / FMCSA SMS structure will be developed as a dedicated pillar later.
-                    </CardDescription>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() =>
-                        setSourceCategory(
-                          "safety"
-                        )
-                      }
-                    >
-                      <ScanDocumentIcon
-                        size={14}
-                      />
-
-                      <span className="ml-2">
-                        Scan
-                      </span>
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        setManualCategory(
-                          "safety"
-                        )
-                      }
-                    >
-                      <Plus className="mr-2 size-4" />
-
-                      Add Snapshot
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="p-0">
-                {visibleSafety.length ===
-                0 ? (
-                  <div className="p-10 text-center">
-                    <ShieldCheck className="mx-auto size-9 text-muted-foreground/30" />
-
-                    <p className="mt-3 text-sm font-medium">
-                      No safety snapshots recorded.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {visibleSafety.map(
-                      (record) => (
-                        <SafetyRow
-                          key={
-                            record.id
-                          }
-                          record={
-                            record
-                          }
-                          selected={
-                            selectedRecord?.id ===
-                            record.id
-                          }
-                          onSelect={() =>
-                            setSelectedRecord(
-                              record
-                            )
-                          }
-                        />
-                      )
-                    )}
-                  </div>
                 )}
-              </CardContent>
-            </Card>
+                rules={
+                  rules
+                }
+                selectedId={
+                  selected?.kind ===
+                  "authority"
+                    ? selected.record.id
+                    : undefined
+                }
+                onSelect={(
+                  record
+                ) =>
+                  setSelected({
+                    kind:
+                      "authority",
 
-            {/* =============================================
-                AUDITS
-            ============================================= */}
+                    record,
+                  })
+                }
+                onScan={() =>
+                  setSourceContext({
+                    mode:
+                      "authority",
+
+                    category:
+                      "canadian",
+                  })
+                }
+                onManual={() =>
+                  setManualState({
+                    mode:
+                      "authority",
+
+                    draft:
+                      emptyAuthorityDraft(
+                        company,
+
+                        "canadian"
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {/* US */}
+
+            {profile.showUS && (
+              <AuthoritySection
+                title="US Federal Operations"
+                description="USDOT identifier, MC operating authority and MCS-150 biennial update."
+                records={categoryAuthorities(
+                  "us_federal"
+                )}
+                rules={
+                  rules
+                }
+                selectedId={
+                  selected?.kind ===
+                  "authority"
+                    ? selected.record.id
+                    : undefined
+                }
+                onSelect={(
+                  record
+                ) =>
+                  setSelected({
+                    kind:
+                      "authority",
+
+                    record,
+                  })
+                }
+                onScan={() =>
+                  setSourceContext({
+                    mode:
+                      "authority",
+
+                    category:
+                      "us_federal",
+                  })
+                }
+                onManual={() =>
+                  setManualState({
+                    mode:
+                      "authority",
+
+                    draft:
+                      emptyAuthorityDraft(
+                        company,
+
+                        "us_federal"
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {/* UCR + PHMSA */}
+
+            {showOperatingRegistrations && (
+              <AuthoritySection
+                title="Operating Registrations"
+                description={
+                  profile.showPHMSA
+                    ? "UCR and applicable fleet-level PHMSA registration."
+                    : "Carrier-level operating registrations such as UCR."
+                }
+                records={
+                  registrations
+                }
+                rules={
+                  rules
+                }
+                selectedId={
+                  selected?.kind ===
+                  "authority"
+                    ? selected.record.id
+                    : undefined
+                }
+                onSelect={(
+                  record
+                ) =>
+                  setSelected({
+                    kind:
+                      "authority",
+
+                    record,
+                  })
+                }
+                onScan={() =>
+                  setSourceContext({
+                    mode:
+                      "authority",
+
+                    category:
+                      "operating_registration",
+                  })
+                }
+                onManual={() =>
+                  setManualState({
+                    mode:
+                      "authority",
+
+                    draft:
+                      emptyAuthorityDraft(
+                        company,
+
+                        "operating_registration",
+
+                        profile.showUCR
+                          ? "UCR"
+                          : "PHMSA"
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {/* CANADIAN SAFETY ONLY IF CANADA APPLIES */}
+
+            {profile.showCarrierProfile && (
+              <SafetySection
+                title="Carrier Profile / CVOR"
+                records={filteredSafety.filter(
+                  (record) =>
+                    record.system ===
+                    "CARRIER_PROFILE_CVOR"
+                )}
+                selected={
+                  selected
+                }
+                onSelect={(
+                  record
+                ) =>
+                  setSelected({
+                    kind:
+                      "safety",
+
+                    record,
+                  })
+                }
+                onScan={() =>
+                  setSourceContext({
+                    mode:
+                      "safety",
+
+                    safetySystem:
+                      "CARRIER_PROFILE_CVOR",
+                  })
+                }
+                onManual={() =>
+                  setManualState({
+                    mode:
+                      "safety",
+
+                    draft:
+                      emptySafetyDraft(
+                        company,
+
+                        "CARRIER_PROFILE_CVOR"
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {/* SMS ONLY IF US APPLIES */}
+
+            {profile.showSMSProfile && (
+              <SafetySection
+                title="SMS Profile"
+                records={filteredSafety.filter(
+                  (record) =>
+                    record.system ===
+                    "SMS_PROFILE"
+                )}
+                selected={
+                  selected
+                }
+                onSelect={(
+                  record
+                ) =>
+                  setSelected({
+                    kind:
+                      "safety",
+
+                    record,
+                  })
+                }
+                onScan={() =>
+                  setSourceContext({
+                    mode:
+                      "safety",
+
+                    safetySystem:
+                      "SMS_PROFILE",
+                  })
+                }
+                onManual={() =>
+                  setManualState({
+                    mode:
+                      "safety",
+
+                    draft:
+                      emptySafetyDraft(
+                        company,
+
+                        "SMS_PROFILE"
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {/* AUDITS */}
 
             <Card>
               <CardHeader className="border-b bg-muted/20">
@@ -6504,16 +7371,17 @@ export default function AuthoritiesPage() {
                     </CardTitle>
 
                     <CardDescription className="mt-1 text-xs">
-                      Regulatory audits, notices, interventions, due dates, outcomes and follow-up.
+                      Regulatory notices, audits, interventions, outcomes and follow-up.
                     </CardDescription>
                   </div>
 
                   <div className="flex gap-2">
                     <Button
                       onClick={() =>
-                        setSourceCategory(
-                          "audit"
-                        )
+                        setSourceContext({
+                          mode:
+                            "audit",
+                        })
                       }
                     >
                       <ScanDocumentIcon
@@ -6528,9 +7396,15 @@ export default function AuthoritiesPage() {
                     <Button
                       variant="outline"
                       onClick={() =>
-                        setManualCategory(
-                          "audit"
-                        )
+                        setManualState({
+                          mode:
+                            "audit",
+
+                          draft:
+                            emptyAuditDraft(
+                              company
+                            ),
+                        })
                       }
                     >
                       <Plus className="mr-2 size-4" />
@@ -6542,7 +7416,7 @@ export default function AuthoritiesPage() {
               </CardHeader>
 
               <CardContent className="p-0">
-                {visibleAudits.length ===
+                {filteredAudits.length ===
                 0 ? (
                   <div className="p-10 text-center">
                     <FileCheck2 className="mx-auto size-9 text-muted-foreground/30" />
@@ -6553,8 +7427,10 @@ export default function AuthoritiesPage() {
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {visibleAudits.map(
-                      (record) => (
+                    {filteredAudits.map(
+                      (
+                        record
+                      ) => (
                         <AuditRow
                           key={
                             record.id
@@ -6563,13 +7439,18 @@ export default function AuthoritiesPage() {
                             record
                           }
                           selected={
-                            selectedRecord?.id ===
-                            record.id
+                            selected?.kind ===
+                              "audit" &&
+                            selected.record.id ===
+                              record.id
                           }
-                          onSelect={() =>
-                            setSelectedRecord(
-                              record
-                            )
+                          onClick={() =>
+                            setSelected({
+                              kind:
+                                "audit",
+
+                              record,
+                            })
                           }
                         />
                       )
@@ -6580,124 +7461,243 @@ export default function AuthoritiesPage() {
             </Card>
           </div>
 
-          {/* ===============================================
-              RIGHT SIDE INSPECTOR
-          =============================================== */}
+          {/* RIGHT INSPECTOR */}
 
           <div className="xl:sticky xl:top-6">
             <RecordInspector
-              record={
-                selectedRecord
+              selected={
+                selected
               }
               evidence={
                 data.evidence
               }
-              deadlineRules={
-                deadlineRules
+              rules={
+                rules
               }
               onClose={() =>
-                setSelectedRecord(
+                setSelected(
                   null
                 )
               }
-              onEdit={() =>
-                setEditingRecord(
-                  selectedRecord
-                )
+              onEdit={
+                openEdit
               }
-              onDelete={() => {
-                if (
-                  selectedRecord
-                ) {
-                  deleteRecord(
-                    selectedRecord
-                  )
-                }
-              }}
+              onDelete={
+                deleteSelected
+              }
+              onPreview={
+                setPreviewEvidence
+              }
             />
           </div>
         </div>
       </div>
 
-      {/* ===================================================
-          MANUAL ADD
-      =================================================== */}
+      {/* MANUAL */}
 
-      {manualCategory && (
-        <ManualRecordModal
-          category={
-            manualCategory
-          }
-          company={
-            company
+      {manualState && (
+        <ManualModal
+          state={
+            manualState
           }
           profile={
             profile
           }
+          onChange={
+            setManualState
+          }
           onCancel={() =>
-            setManualCategory(
+            setManualState(
               null
             )
           }
-          onSaveAuthority={(
-            draft
-          ) => {
-            const saved =
-              saveAuthorityDraft({
-                draft,
+          onSave={() => {
+            if (
+              manualState.mode ===
+              "authority"
+            ) {
+              const saved =
+                saveAuthority(
+                  manualState.draft,
 
-                source:
-                  "Manual",
-              })
+                  "Manual"
+                )
 
-            if (saved) {
-              setManualCategory(
+              if (saved) {
+                setManualState(
+                  null
+                )
+              }
+
+              return
+            }
+
+            if (
+              manualState.mode ===
+              "safety"
+            ) {
+              saveSafety(
+                manualState.draft,
+
+                "Manual"
+              )
+
+              setManualState(
                 null
               )
+
+              return
             }
-          }}
-          onSaveAudit={(
-            draft
-          ) => {
-            saveAuditDraft({
-              draft,
 
-              source:
-                "Manual",
-            })
+            saveAudit(
+              manualState.draft,
 
-            setManualCategory(
-              null
+              "Manual"
             )
-          }}
-          onSaveSafety={(
-            draft
-          ) => {
-            saveSafetyDraft({
-              draft,
 
-              source:
-                "Manual",
-            })
-
-            setManualCategory(
+            setManualState(
               null
             )
           }}
         />
       )}
 
-      {/* ===================================================
-          SOURCE PICKER
-      =================================================== */}
+      {/* EDIT */}
 
-      {sourceCategory && (
-        <DocumentSourcePicker
-          category={
-            sourceCategory
+      {editingState &&
+        selected && (
+        <ManualModal
+          state={
+            editingState
           }
+          profile={
+            profile
+          }
+          onChange={
+            setEditingState
+          }
+          onCancel={() =>
+            setEditingState(
+              null
+            )
+          }
+          onSave={() => {
+            const editingId =
+              selected.record.id
+
+            if (
+              editingState.mode ===
+              "authority"
+            ) {
+              const saved =
+                saveAuthority(
+                  editingState.draft,
+
+                  selected.record.source,
+
+                  undefined,
+
+                  editingId
+                )
+
+              if (saved) {
+                setSelected({
+                  kind:
+                    "authority",
+
+                  record: {
+                    ...(selected.record as
+                      AuthorityRecord),
+
+                    ...editingState.draft,
+
+                    updatedAt:
+                      isoNow(),
+                  },
+                })
+
+                setEditingState(
+                  null
+                )
+              }
+
+              return
+            }
+
+            if (
+              editingState.mode ===
+              "safety"
+            ) {
+              saveSafety(
+                editingState.draft,
+
+                selected.record.source,
+
+                undefined,
+
+                editingId
+              )
+
+              setSelected({
+                kind:
+                  "safety",
+
+                record: {
+                  ...(selected.record as
+                    SafetyRecord),
+
+                  ...editingState.draft,
+
+                  updatedAt:
+                    isoNow(),
+                },
+              })
+
+              setEditingState(
+                null
+              )
+
+              return
+            }
+
+            saveAudit(
+              editingState.draft,
+
+              selected.record.source,
+
+              undefined,
+
+              editingId
+            )
+
+            setSelected({
+              kind:
+                "audit",
+
+              record: {
+                ...(selected.record as
+                  AuditRecord),
+
+                ...editingState.draft,
+
+                updatedAt:
+                  isoNow(),
+              },
+            })
+
+            setEditingState(
+              null
+            )
+          }}
+        />
+      )}
+
+      {/* SOURCE */}
+
+      {sourceContext && (
+        <DocumentSourcePicker
           onClose={() =>
-            setSourceCategory(
+            setSourceContext(
               null
             )
           }
@@ -6712,9 +7712,7 @@ export default function AuthoritiesPage() {
         />
       )}
 
-      {/* ===================================================
-          CAMERA
-      =================================================== */}
+      {/* CAMERA */}
 
       {showCamera && (
         <CameraCapture
@@ -6730,31 +7728,27 @@ export default function AuthoritiesPage() {
               false
             )
 
-            processDocument(
+            startOCRFile(
               file,
+
               "camera"
             )
           }}
         />
       )}
 
-      {/* ===================================================
-          OCR WORKSPACE
-      =================================================== */}
+      {/* OCR */}
 
       {ocrSession && (
         <OCRWorkspace
           session={
             ocrSession
           }
-          setSession={
-            setOcrSession
-          }
-          company={
-            company
-          }
           profile={
             profile
+          }
+          setSession={
+            setOcrSession
           }
           onCancel={() =>
             setOcrSession(
@@ -6762,136 +7756,63 @@ export default function AuthoritiesPage() {
             )
           }
           onReplace={() => {
-            const category =
-              ocrSession.category
+            const context =
+              ocrSession.mode ===
+              "authority"
+                ? {
+                    mode:
+                      "authority" as const,
+
+                    category:
+                      ocrSession.authorityDraft!.category,
+
+                    authorityType:
+                      ocrSession.authorityDraft!.authorityType,
+                  }
+                : ocrSession.mode ===
+                    "safety"
+                  ? {
+                      mode:
+                        "safety" as const,
+
+                      safetySystem:
+                        ocrSession.safetyDraft!.system,
+                    }
+                  : {
+                      mode:
+                        "audit" as const,
+                    }
 
             setOcrSession(
               null
             )
 
-            setSourceCategory(
-              category
+            setSourceContext(
+              context
             )
           }}
           onSave={
-            saveOCRSession
+            saveOCR
           }
         />
       )}
 
-      {/* ===================================================
-          EDIT
-      =================================================== */}
+      {/* SAVED DOCUMENT PREVIEW */}
 
-      {editingRecord && (
-        <EditRecordModal
-          record={
-            editingRecord
+      {previewEvidence && (
+        <DocumentPreviewModal
+          evidence={
+            previewEvidence
           }
-          company={
-            company
-          }
-          profile={
-            profile
-          }
-          onCancel={() =>
-            setEditingRecord(
+          onClose={() =>
+            setPreviewEvidence(
               null
             )
           }
-          onSaveAuthority={(
-            draft
-          ) => {
-            const saved =
-              saveAuthorityDraft({
-                draft,
-
-                source:
-                  editingRecord.source,
-
-                existingId:
-                  editingRecord.id,
-              })
-
-            if (saved) {
-              const updated:
-                AuthorityRecord =
-                {
-                  ...(editingRecord as AuthorityRecord),
-
-                  ...draft,
-
-                  updatedAt:
-                    isoNow(),
-                }
-
-              setSelectedRecord(
-                updated
-              )
-
-              setEditingRecord(
-                null
-              )
-            }
-          }}
-          onSaveAudit={(
-            draft
-          ) => {
-            saveAuditDraft({
-              draft,
-
-              source:
-                editingRecord.source,
-
-              existingId:
-                editingRecord.id,
-            })
-
-            setSelectedRecord({
-              ...(editingRecord as AuditRecord),
-
-              ...draft,
-
-              updatedAt:
-                isoNow(),
-            })
-
-            setEditingRecord(
-              null
-            )
-          }}
-          onSaveSafety={(
-            draft
-          ) => {
-            saveSafetyDraft({
-              draft,
-
-              source:
-                editingRecord.source,
-
-              existingId:
-                editingRecord.id,
-            })
-
-            setSelectedRecord({
-              ...(editingRecord as SafetyPlaceholderRecord),
-
-              ...draft,
-
-              updatedAt:
-                isoNow(),
-            })
-
-            setEditingRecord(
-              null
-            )
-          }}
         />
       )}
 
-      {/* ===================================================
-          DEVICE FILE INPUT
-      =================================================== */}
+      {/* DEVICE FILE INPUT */}
 
       <input
         ref={
@@ -6913,382 +7834,13 @@ export default function AuthoritiesPage() {
             return
           }
 
-          await processDocument(
+          await startOCRFile(
             file,
+
             "device"
           )
         }}
       />
     </>
-  )
-}
-
-/* =========================================================
-   SUMMARY CARD
-========================================================= */
-
-function SummaryCard({
-  label,
-  value,
-  status,
-}: {
-  label: string
-  value: number
-
-  status:
-    DeadlineStatus
-}) {
-  const style =
-    deadlineStyle(
-      status
-    )
-
-  return (
-    <Card
-      className={`border-l-4 ${style.accent}`}
-    >
-      <CardContent className="p-4">
-        <p className="text-xs text-muted-foreground">
-          {label}
-        </p>
-
-        <div className="mt-2 flex items-end justify-between gap-2">
-          <p className="text-2xl font-bold">
-            {value}
-          </p>
-
-          <DeadlineBadge
-            status={
-              status
-            }
-          />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* =========================================================
-   EDIT MODAL
-========================================================= */
-
-function EditRecordModal({
-  record,
-  company,
-  profile,
-
-  onCancel,
-
-  onSaveAuthority,
-  onSaveAudit,
-  onSaveSafety,
-}: {
-  record:
-    SelectedRecord
-
-  company:
-    Company
-
-  profile:
-    CompanyAuthorityProfile
-
-  onCancel: () => void
-
-  onSaveAuthority: (
-    draft:
-      AuthorityDraft
-  ) => void
-
-  onSaveAudit: (
-    draft:
-      AuditDraft
-  ) => void
-
-  onSaveSafety: (
-    draft:
-      SafetyDraft
-  ) => void
-}) {
-  const authorityRecord =
-    record.category !==
-      "audit" &&
-    record.category !==
-      "safety"
-      ? (record as AuthorityRecord)
-      : null
-
-  const auditRecord =
-    record.category ===
-    "audit"
-      ? (record as AuditRecord)
-      : null
-
-  const safetyRecord =
-    record.category ===
-    "safety"
-      ? (record as SafetyPlaceholderRecord)
-      : null
-
-  const [
-    authorityDraft,
-    setAuthorityDraft,
-  ] =
-    useState<AuthorityDraft>(
-      authorityRecord
-        ? {
-            category:
-              authorityRecord.category,
-
-            authorityType:
-              authorityRecord.authorityType,
-
-            authorityName:
-              authorityRecord.authorityName,
-
-            authorityNumber:
-              authorityRecord.authorityNumber,
-
-            issuingAuthority:
-              authorityRecord.issuingAuthority ||
-              "",
-
-            country:
-              authorityRecord.country ||
-              "",
-
-            jurisdiction:
-              authorityRecord.jurisdiction ||
-              "",
-
-            issueDate:
-              authorityRecord.issueDate ||
-              "",
-
-            effectiveDate:
-              authorityRecord.effectiveDate ||
-              "",
-
-            renewalDate:
-              authorityRecord.renewalDate ||
-              "",
-
-            expiryDate:
-              authorityRecord.expiryDate ||
-              "",
-
-            dueDate:
-              authorityRecord.dueDate ||
-              "",
-
-            recordStatus:
-              authorityRecord.recordStatus,
-
-            applicability:
-              authorityRecord.applicability,
-
-            credentialStored:
-              Boolean(
-                authorityRecord.credentialStored
-              ),
-
-            notes:
-              authorityRecord.notes ||
-              "",
-          }
-        : emptyAuthorityDraft({
-            category:
-              "canadian",
-
-            company,
-            profile,
-          })
-    )
-
-  const [
-    auditDraft,
-    setAuditDraft,
-  ] =
-    useState<AuditDraft>(
-      auditRecord
-        ? {
-            auditType:
-              auditRecord.auditType,
-
-            regulator:
-              auditRecord.regulator,
-
-            jurisdiction:
-              auditRecord.jurisdiction,
-
-            referenceNumber:
-              auditRecord.referenceNumber,
-
-            noticeDate:
-              auditRecord.noticeDate ||
-              "",
-
-            dueDate:
-              auditRecord.dueDate ||
-              "",
-
-            completedDate:
-              auditRecord.completedDate ||
-              "",
-
-            status:
-              auditRecord.status,
-
-            outcome:
-              auditRecord.outcome ||
-              "",
-
-            score:
-              auditRecord.score ||
-              "",
-
-            followUpRequired:
-              auditRecord.followUpRequired,
-
-            followUpDueDate:
-              auditRecord.followUpDueDate ||
-              "",
-
-            notes:
-              auditRecord.notes ||
-              "",
-          }
-        : emptyAuditDraft()
-    )
-
-  const [
-    safetyDraft,
-    setSafetyDraft,
-  ] =
-    useState<SafetyDraft>(
-      safetyRecord
-        ? {
-            system:
-              safetyRecord.system,
-
-            jurisdiction:
-              safetyRecord.jurisdiction,
-
-            reviewDate:
-              safetyRecord.reviewDate,
-
-            statusSummary:
-              safetyRecord.statusSummary,
-
-            notes:
-              safetyRecord.notes ||
-              "",
-          }
-        : emptySafetyDraft()
-    )
-
-  return (
-    <div className="fixed inset-0 z-[110] overflow-y-auto bg-black/45 p-4 backdrop-blur-sm">
-      <div className="mx-auto my-6 max-w-5xl">
-        <Card>
-          <CardHeader className="border-b">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <CardTitle className="text-base">
-                  Edit Record
-                </CardTitle>
-
-                <CardDescription className="mt-1">
-                  Changes update the existing record rather than creating another record.
-                </CardDescription>
-              </div>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={
-                  onCancel
-                }
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-5 pt-5">
-            {auditRecord ? (
-              <AuditDraftForm
-                draft={
-                  auditDraft
-                }
-                onChange={
-                  setAuditDraft
-                }
-              />
-            ) : safetyRecord ? (
-              <SafetyDraftForm
-                draft={
-                  safetyDraft
-                }
-                onChange={
-                  setSafetyDraft
-                }
-              />
-            ) : (
-              <AuthorityDraftForm
-                draft={
-                  authorityDraft
-                }
-                onChange={
-                  setAuthorityDraft
-                }
-              />
-            )}
-
-            <div className="flex justify-end gap-2 border-t pt-5">
-              <Button
-                variant="outline"
-                onClick={
-                  onCancel
-                }
-              >
-                Cancel
-              </Button>
-
-              <Button
-                onClick={() => {
-                  if (
-                    auditRecord
-                  ) {
-                    onSaveAudit(
-                      auditDraft
-                    )
-
-                    return
-                  }
-
-                  if (
-                    safetyRecord
-                  ) {
-                    onSaveSafety(
-                      safetyDraft
-                    )
-
-                    return
-                  }
-
-                  onSaveAuthority(
-                    authorityDraft
-                  )
-                }}
-              >
-                <Save className="mr-2 size-4" />
-
-                Save Changes
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
   )
 }

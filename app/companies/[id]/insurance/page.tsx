@@ -21,7 +21,6 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  Eye,
   FileKey2,
   FileText,
   HardHat,
@@ -37,7 +36,6 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
-  UserRound,
   X,
   XCircle,
   ZoomIn,
@@ -64,7 +62,7 @@ import {
 } from "@/components/ui/select"
 
 /* =========================================================
-   TYPES
+   CORE TYPES
 ========================================================= */
 
 type ExpiryRules = {
@@ -110,9 +108,9 @@ type Company = {
   region?: string
 
   /*
-    LOCKED COMPANY CONTRACT.
-    These fields are already connected elsewhere.
-    Do not rename.
+    LOCKED COMPANY FIELDS.
+    These are already connected to other TES pages.
+    Do not rename them.
   */
   regCorpState?: string
   regCorpCountry?: string
@@ -179,9 +177,18 @@ type CoverageItem = {
 }
 
 type BrokerReference = {
+  /*
+    Sonic Insurance
+  */
   organizationId?: string
   organizationName: string
 
+  /*
+    Harpreet Kaur
+
+    This is a REFERENCE to the canonical Contact record.
+    It is not a new Harpreet record created under each client.
+  */
   contactId?: string
   contactName?: string
   contactEmail?: string
@@ -203,27 +210,31 @@ type InsuranceEvidence = {
   ocrConfidence?: number
 
   /*
-    Prototype storage only.
-
-    Later this should become a durable document ID/storage
-    reference rather than browser-local data.
+    Development/prototype storage only.
+    Replace later with permanent document storage reference.
   */
   dataUrl?: string
 }
 
 type TransportationInsuranceRecord = {
   id: string
+
+  /*
+    Multiple insurance lines coming from the same COI
+    share the same groupId.
+  */
   groupId: string
 
   family: "transportation"
 
   /*
     Exact source-document wording.
+    Example: COMMERCIAL GENERAL LIABILITY
   */
   insuranceType: string
 
   /*
-    TES normalized grouping.
+    Internal TES normalization.
   */
   canonicalType: string
 
@@ -242,7 +253,6 @@ type TransportationInsuranceRecord = {
   evidenceId?: string
 
   source: SourceType
-
   status: ExpiryStatus
 
   previousRecordId?: string
@@ -277,7 +287,6 @@ type WorkersInsuranceRecord = {
   evidenceId?: string
 
   source: SourceType
-
   status: ExpiryStatus
 
   createdAt: string
@@ -310,7 +319,6 @@ type BondRecord = {
   evidenceId?: string
 
   source: SourceType
-
   status: ExpiryStatus
 
   createdAt: string
@@ -337,7 +345,7 @@ type SelectedInsuranceRecord =
   | BondRecord
 
 /* =========================================================
-   DRAFTS
+   DRAFT TYPES
 ========================================================= */
 
 type TransportationDraft = {
@@ -383,13 +391,8 @@ type BondDraft = {
   expiryDate: string
 }
 
-/* =========================================================
-   OCR SESSION
-========================================================= */
-
 type OCRSession = {
   family: RecordFamily
-
   source: DocumentSource
 
   file: File
@@ -418,6 +421,9 @@ type OCRSession = {
 const SETTINGS_STORAGE_KEY =
   "tes_system_settings"
 
+/*
+  This MUST remain aligned with the Contacts page.
+*/
 const CONTACT_STORAGE_KEYS = [
   "tes_contacts_v5",
   "tes_contacts_v4",
@@ -436,7 +442,7 @@ const DEFAULT_EXPIRY_RULES: ExpiryRules = {
 }
 
 const EMPTY_DATA: StoredInsuranceData = {
-  version: 5,
+  version: 6,
 
   transportation: [],
   workers: [],
@@ -446,10 +452,12 @@ const EMPTY_DATA: StoredInsuranceData = {
 }
 
 /* =========================================================
-   IDS / TIME
+   GENERIC HELPERS
 ========================================================= */
 
-function createId(prefix: string) {
+function createId(
+  prefix: string
+) {
   if (
     typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
@@ -470,14 +478,19 @@ function isoNow() {
    SETTINGS
 ========================================================= */
 
-function loadSystemSettings(): SystemSettings {
+function loadSystemSettings():
+  SystemSettings {
   const fallback: SystemSettings = {
     version: 1,
+
     expiryRules:
       DEFAULT_EXPIRY_RULES,
   }
 
-  if (typeof window === "undefined") {
+  if (
+    typeof window ===
+    "undefined"
+  ) {
     return fallback
   }
 
@@ -487,7 +500,9 @@ function loadSystemSettings(): SystemSettings {
         SETTINGS_STORAGE_KEY
       )
 
-    if (!raw) return fallback
+    if (!raw) {
+      return fallback
+    }
 
     const parsed =
       JSON.parse(raw)
@@ -498,7 +513,9 @@ function loadSystemSettings(): SystemSettings {
 
       expiryRules: {
         ...DEFAULT_EXPIRY_RULES,
-        ...(parsed.expiryRules || {}),
+
+        ...(parsed.expiryRules ||
+          {}),
       },
     }
   } catch {
@@ -570,7 +587,8 @@ function normalizePhone(
     digits.length === 11 &&
     digits.startsWith("1")
   ) {
-    digits = digits.slice(1)
+    digits =
+      digits.slice(1)
   }
 
   return digits
@@ -608,21 +626,31 @@ function normalizePersonName(
 }
 
 /* =========================================================
-   SIMILARITY
+   STRING SIMILARITY
 ========================================================= */
 
 function levenshtein(
   a: string,
   b: string
 ) {
-  if (!a.length) return b.length
-  if (!b.length) return a.length
+  if (!a.length) {
+    return b.length
+  }
+
+  if (!b.length) {
+    return a.length
+  }
 
   const matrix =
     Array.from(
-      { length: b.length + 1 },
+      {
+        length:
+          b.length + 1,
+      },
       () =>
-        Array(a.length + 1).fill(0)
+        Array(
+          a.length + 1
+        ).fill(0)
     )
 
   for (
@@ -652,28 +680,38 @@ function levenshtein(
       j++
     ) {
       const cost =
-        b[i - 1] === a[j - 1]
+        b[i - 1] ===
+        a[j - 1]
           ? 0
           : 1
 
       matrix[i][j] =
         Math.min(
-          matrix[i - 1][j] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j - 1] +
-            cost
+          matrix[i - 1][j] +
+            1,
+
+          matrix[i][j - 1] +
+            1,
+
+          matrix[i - 1][
+            j - 1
+          ] + cost
         )
     }
   }
 
-  return matrix[b.length][a.length]
+  return matrix[b.length][
+    a.length
+  ]
 }
 
 function similarity(
   a: string,
   b: string
 ) {
-  if (!a || !b) return 0
+  if (!a || !b) {
+    return 0
+  }
 
   const max =
     Math.max(
@@ -681,7 +719,9 @@ function similarity(
       b.length
     )
 
-  if (!max) return 100
+  if (!max) {
+    return 100
+  }
 
   const distance =
     levenshtein(a, b)
@@ -706,7 +746,9 @@ function getCompanies(): Company[] {
         ) || "[]"
       )
 
-    return Array.isArray(parsed)
+    return Array.isArray(
+      parsed
+    )
       ? parsed
       : []
   } catch {
@@ -719,7 +761,10 @@ function saveCompanies(
 ) {
   localStorage.setItem(
     "tes_companies",
-    JSON.stringify(companies)
+
+    JSON.stringify(
+      companies
+    )
   )
 }
 
@@ -748,7 +793,9 @@ function createCompanyId(
         )
       }`
 
-    if (!existing.has(id)) {
+    if (
+      !existing.has(id)
+    ) {
       return id
     }
   }
@@ -758,10 +805,16 @@ function createCompanyId(
 
 /* =========================================================
    ORGANIZATION RESOLVER
+
+   Extract freely.
+   Normalize carefully.
+   Resolve aggressively.
+   Create reluctantly.
 ========================================================= */
 
 function resolveOrganization(
   name: string,
+
   desiredKind:
     | "Insurance Company"
     | "Insurance Broker"
@@ -776,7 +829,8 @@ function resolveOrganization(
       organizationId:
         undefined,
 
-      organizationName: "",
+      organizationName:
+        "",
 
       created: false,
     }
@@ -789,6 +843,10 @@ function resolveOrganization(
     normalizeCompanyName(
       clean
     )
+
+  /*
+    Exact normalized name.
+  */
 
   const exact =
     companies.find(
@@ -810,30 +868,44 @@ function resolveOrganization(
     }
   }
 
+  /*
+    Strong fuzzy match.
+
+    Insurance organizations are a relatively controlled
+    universe, so this intentionally favors resolution
+    over unnecessary duplicate creation.
+  */
+
   const probable =
     companies
-      .map((company) => ({
-        company,
+      .map(
+        (company) => ({
+          company,
 
-        score:
-          similarity(
-            normalized,
+          score:
+            similarity(
+              normalized,
 
-            normalizeCompanyName(
-              company.name
-            )
-          ),
-      }))
+              normalizeCompanyName(
+                company.name
+              )
+            ),
+        })
+      )
       .filter(
         (result) =>
-          result.score >= 92
+          result.score >=
+          92
       )
       .sort(
         (a, b) =>
-          b.score - a.score
+          b.score -
+          a.score
       )
 
-  if (probable.length) {
+  if (
+    probable.length
+  ) {
     const company =
       probable[0].company
 
@@ -848,6 +920,10 @@ function resolveOrganization(
     }
   }
 
+  /*
+    Truly new organization.
+  */
+
   const created: Company = {
     id:
       createCompanyId(
@@ -856,9 +932,11 @@ function resolveOrganization(
 
     name: clean,
 
-    kind: desiredKind,
+    kind:
+      desiredKind,
 
-    contact: "N/A",
+    contact:
+      "N/A",
 
     region:
       "Not specified",
@@ -866,7 +944,8 @@ function resolveOrganization(
     status:
       "Active",
 
-    tone: "ok",
+    tone:
+      "ok",
 
     createdAt:
       isoNow(),
@@ -887,7 +966,8 @@ function resolveOrganization(
     organizationName:
       created.name,
 
-    created: true,
+    created:
+      true,
   }
 }
 
@@ -906,13 +986,17 @@ function getContacts(): Contact[] {
           key
         )
 
-      if (!raw) continue
+      if (!raw) {
+        continue
+      }
 
       const parsed =
         JSON.parse(raw)
 
       if (
-        Array.isArray(parsed)
+        Array.isArray(
+          parsed
+        )
       ) {
         return parsed
       }
@@ -928,11 +1012,28 @@ function saveContacts(
   contacts: Contact[]
 ) {
   /*
-    Contacts page should use this same store.
+    IMPORTANT:
+
+    Insurance writes broker contacts to the SAME
+    canonical Contact store used by the Company Contacts
+    page.
+
+    Therefore:
+
+    Sonic Insurance
+        ↓
+    Harpreet Kaur
+
+    will appear when Sonic's Contacts page filters by
+    Sonic's company ID.
   */
+
   localStorage.setItem(
     PRIMARY_CONTACT_STORAGE_KEY,
-    JSON.stringify(contacts)
+
+    JSON.stringify(
+      contacts
+    )
   )
 }
 
@@ -952,12 +1053,15 @@ function splitPersonName(
     }
   }
 
-  if (parts.length === 1) {
+  if (
+    parts.length === 1
+  ) {
     return {
       firstName:
         parts[0],
 
-      lastName: "",
+      lastName:
+        "",
     }
   }
 
@@ -973,32 +1077,78 @@ function splitPersonName(
 }
 
 /* =========================================================
-   ENSURE BROKER → CONTACT RELATIONSHIP
+   ORGANIZATION → CONTACT RELATIONSHIP
+
+   This is the key architecture.
+
+   Sonic Insurance owns the relationship with Harpreet.
+
+   Client A / Client B / Client C do NOT each get another
+   Harpreet contact record.
 ========================================================= */
 
-function ensureBrokerRelationship(
-  contact: Contact,
+function ensureContactOrganizationRelationship({
+  contact,
 
-  brokerOrganizationId: string,
+  organizationId,
+  organizationName,
 
-  brokerOrganizationName: string
-): Contact {
+  role,
+
+  source = "document",
+}: {
+  contact: Contact
+
+  organizationId: string
+  organizationName: string
+
+  role: string
+
+  source?:
+    | "manual"
+    | "document"
+    | "system"
+}): Contact {
   const relationships =
     [
       ...(contact.relationships ||
         []),
     ]
 
-  const alreadyExists =
-    relationships.some(
+  const existingIndex =
+    relationships.findIndex(
       (relationship) =>
         relationship.companyId ===
-          brokerOrganizationId &&
-        relationship.status ===
-          "active"
+        organizationId
     )
 
-  if (!alreadyExists) {
+  /*
+    If relationship already exists, update/reactivate it
+    instead of creating another relationship.
+  */
+
+  if (
+    existingIndex >= 0
+  ) {
+    relationships[
+      existingIndex
+    ] = {
+      ...relationships[
+        existingIndex
+      ],
+
+      companyId:
+        organizationId,
+
+      companyName:
+        organizationName,
+
+      role,
+
+      status:
+        "active",
+    }
+  } else {
     relationships.push({
       id:
         createId(
@@ -1006,13 +1156,12 @@ function ensureBrokerRelationship(
         ),
 
       companyId:
-        brokerOrganizationId,
+        organizationId,
 
       companyName:
-        brokerOrganizationName,
+        organizationName,
 
-      role:
-        "Insurance Broker Contact",
+      role,
 
       status:
         "active",
@@ -1023,8 +1172,7 @@ function ensureBrokerRelationship(
           10
         ),
 
-      source:
-        "document",
+      source,
     })
   }
 
@@ -1040,11 +1188,26 @@ function ensureBrokerRelationship(
 
 /* =========================================================
    BROKER CONTACT RESOLVER
+
+   GLOBAL PERSON IDENTITY FIRST.
+
+   1. Same email → same person.
+   2. Same phone → same person.
+   3. Same broker + strong name match → same person.
+   4. Only then create new Contact.
+
+   Example:
+
+   Harpreet Kaur
+   Har preet Kaur
+   HARPREET KAUR
+
+   must not become separate records when the identity
+   evidence says they are the same person.
 ========================================================= */
 
 function resolveBrokerContact({
   brokerOrganizationId,
-
   brokerOrganizationName,
 
   contactName,
@@ -1052,7 +1215,6 @@ function resolveBrokerContact({
   phone,
 }: {
   brokerOrganizationId?: string
-
   brokerOrganizationName: string
 
   contactName: string
@@ -1063,49 +1225,59 @@ function resolveBrokerContact({
     getContacts()
 
   const emailKey =
-    normalizeEmail(email)
+    normalizeEmail(
+      email
+    )
 
   const phoneKey =
-    normalizePhone(phone)
+    normalizePhone(
+      phone
+    )
 
   const nameKey =
     normalizePersonName(
       contactName
     )
 
-  /*
-    1. Email.
-  */
-
-  let existing =
-    contacts.find(
-      (contact) =>
-        Boolean(emailKey) &&
-        normalizeEmail(
-          contact.email
-        ) === emailKey
-    )
+  let existing:
+    | Contact
+    | undefined
 
   /*
-    2. Phone.
+    Strong identity: email.
   */
 
-  if (!existing) {
+  if (emailKey) {
     existing =
       contacts.find(
         (contact) =>
-          Boolean(phoneKey) &&
-          normalizePhone(
-            contact.phone
-          ) === phoneKey
+          normalizeEmail(
+            contact.email
+          ) ===
+          emailKey
       )
   }
 
   /*
-    3. Strong name similarity inside same broker company.
+    Strong identity: phone.
+  */
 
-    Harpreet / Har Preet / Harpreet Kaur should not
-    automatically become separate records.
+  if (
+    !existing &&
+    phoneKey
+  ) {
+    existing =
+      contacts.find(
+        (contact) =>
+          normalizePhone(
+            contact.phone
+          ) ===
+          phoneKey
+      )
+  }
+
+  /*
+    Same organization + highly similar normalized name.
   */
 
   if (
@@ -1113,45 +1285,61 @@ function resolveBrokerContact({
     nameKey &&
     brokerOrganizationId
   ) {
-    const matches =
+    const candidates =
       contacts
         .filter(
           (contact) =>
             contact.relationships?.some(
-              (relationship) =>
+              (
+                relationship
+              ) =>
                 relationship.companyId ===
                 brokerOrganizationId
             )
         )
-        .map((contact) => ({
-          contact,
-
-          score:
-            similarity(
-              nameKey,
-
+        .map(
+          (contact) => {
+            const existingName =
               normalizePersonName(
                 `${contact.firstName} ${contact.lastName}`
               )
-            ),
-        }))
+
+            return {
+              contact,
+
+              score:
+                similarity(
+                  nameKey,
+                  existingName
+                ),
+            }
+          }
+        )
         .filter(
-          (result) =>
-            result.score >= 90
+          (candidate) =>
+            candidate.score >=
+            90
         )
         .sort(
           (a, b) =>
-            b.score - a.score
+            b.score -
+            a.score
         )
 
-    if (matches.length) {
+    if (
+      candidates.length
+    ) {
       existing =
-        matches[0].contact
+        candidates[0].contact
     }
   }
 
   /*
-    Existing contact.
+    Existing person found.
+
+    Preserve canonical Contact ID.
+    Fill missing details.
+    Ensure person is attached to Sonic / broker company.
   */
 
   if (existing) {
@@ -1167,6 +1355,11 @@ function resolveBrokerContact({
 
           let next: Contact = {
             ...contact,
+
+            /*
+              Never erase known data because a later COI
+              contains less information.
+            */
 
             email:
               contact.email ||
@@ -1184,13 +1377,22 @@ function resolveBrokerContact({
             brokerOrganizationId
           ) {
             next =
-              ensureBrokerRelationship(
-                next,
+              ensureContactOrganizationRelationship({
+                contact:
+                  next,
 
-                brokerOrganizationId,
+                organizationId:
+                  brokerOrganizationId,
 
-                brokerOrganizationName
-              )
+                organizationName:
+                  brokerOrganizationName,
+
+                role:
+                  "Insurance Broker Contact",
+
+                source:
+                  "document",
+              })
           }
 
           return next
@@ -1201,7 +1403,7 @@ function resolveBrokerContact({
       updatedContacts
     )
 
-    const refreshed =
+    const canonical =
       updatedContacts.find(
         (contact) =>
           contact.id ===
@@ -1210,23 +1412,26 @@ function resolveBrokerContact({
 
     return {
       contactId:
-        refreshed.id,
+        canonical.id,
 
       contactName:
-        `${refreshed.firstName} ${refreshed.lastName}`.trim(),
+        `${canonical.firstName} ${canonical.lastName}`.trim(),
 
       contactEmail:
-        refreshed.email || "",
+        canonical.email ||
+        "",
 
       contactPhone:
-        refreshed.phone || "",
+        canonical.phone ||
+        "",
 
-      created: false,
+      created:
+        false,
     }
   }
 
   /*
-    No identity information = no Contact creation.
+    Do not create an empty Contact.
   */
 
   if (
@@ -1238,15 +1443,25 @@ function resolveBrokerContact({
       contactId:
         undefined,
 
-      contactName: "",
+      contactName:
+        "",
 
-      contactEmail: "",
+      contactEmail:
+        "",
 
-      contactPhone: "",
+      contactPhone:
+        "",
 
-      created: false,
+      created:
+        false,
     }
   }
+
+  /*
+    New person.
+
+    This only happens after duplicate resolution failed.
+  */
 
   const names =
     splitPersonName(
@@ -1285,7 +1500,8 @@ function resolveBrokerContact({
     isArchived:
       false,
 
-    relationships: [],
+    relationships:
+      [],
 
     createdAt:
       isoNow(),
@@ -1297,17 +1513,35 @@ function resolveBrokerContact({
       "Insurance Document Intelligence",
   }
 
+  /*
+    IMPORTANT:
+
+    Harpreet is attached to SONIC INSURANCE.
+
+    We intentionally do not attach her as an owned
+    Contact of the trucking client.
+  */
+
   if (
     brokerOrganizationId
   ) {
     created =
-      ensureBrokerRelationship(
-        created,
+      ensureContactOrganizationRelationship({
+        contact:
+          created,
 
-        brokerOrganizationId,
+        organizationId:
+          brokerOrganizationId,
 
-        brokerOrganizationName
-      )
+        organizationName:
+          brokerOrganizationName,
+
+        role:
+          "Insurance Broker Contact",
+
+        source:
+          "document",
+      })
   }
 
   saveContacts([
@@ -1323,24 +1557,26 @@ function resolveBrokerContact({
       `${created.firstName} ${created.lastName}`.trim(),
 
     contactEmail:
-      created.email || "",
+      created.email ||
+      "",
 
     contactPhone:
-      created.phone || "",
+      created.phone ||
+      "",
 
-    created: true,
+    created:
+      true,
   }
 }
 
 /* =========================================================
-   UPDATE BROKER CONTACT
+   UPDATE EXISTING BROKER CONTACT
 ========================================================= */
 
 function updateBrokerContact({
   contactId,
 
   brokerOrganizationId,
-
   brokerOrganizationName,
 
   name,
@@ -1350,14 +1586,15 @@ function updateBrokerContact({
   contactId?: string
 
   brokerOrganizationId?: string
-
   brokerOrganizationName: string
 
   name: string
   email: string
   phone: string
 }) {
-  if (!contactId) return
+  if (!contactId) {
+    return
+  }
 
   const contacts =
     getContacts()
@@ -1402,20 +1639,31 @@ function updateBrokerContact({
           brokerOrganizationId
         ) {
           next =
-            ensureBrokerRelationship(
-              next,
+            ensureContactOrganizationRelationship({
+              contact:
+                next,
 
-              brokerOrganizationId,
+              organizationId:
+                brokerOrganizationId,
 
-              brokerOrganizationName
-            )
+              organizationName:
+                brokerOrganizationName,
+
+              role:
+                "Insurance Broker Contact",
+
+              source:
+                "document",
+            })
         }
 
         return next
       }
     )
 
-  saveContacts(updated)
+  saveContacts(
+    updated
+  )
 }
 
 /* =========================================================
@@ -1544,7 +1792,8 @@ function getExpiryStatus(
     | string
     | undefined,
 
-  rules: ExpiryRules,
+  rules:
+    ExpiryRules,
 
   archived = false
 ): ExpiryStatus {
@@ -1604,7 +1853,8 @@ function getExpiryStatus(
 ========================================================= */
 
 function statusStyle(
-  status: ExpiryStatus
+  status:
+    ExpiryStatus
 ) {
   switch (status) {
     case "Healthy":
@@ -1684,10 +1934,13 @@ function statusStyle(
 function ExpiryBadge({
   status,
 }: {
-  status: ExpiryStatus
+  status:
+    ExpiryStatus
 }) {
   const style =
-    statusStyle(status)
+    statusStyle(
+      status
+    )
 
   return (
     <Badge
@@ -1727,7 +1980,7 @@ function ExpiryBadge({
 }
 
 /* =========================================================
-   FILE
+   FILE READER
 ========================================================= */
 
 function readFileAsDataUrl(
@@ -1741,13 +1994,14 @@ function readFileAsDataUrl(
       const reader =
         new FileReader()
 
-      reader.onload = () =>
-        resolve(
-          String(
-            reader.result ||
-              ""
+      reader.onload =
+        () =>
+          resolve(
+            String(
+              reader.result ||
+                ""
+            )
           )
-        )
 
       reader.onerror =
         reject
@@ -1771,39 +2025,52 @@ function emptyTransportationDraft():
         "TMP"
       ),
 
-    insuranceType: "",
+    insuranceType:
+      "",
 
     canonicalType:
       "OTHER",
 
-    insurerName: "",
+    insurerName:
+      "",
 
-    policyNumber: "",
+    policyNumber:
+      "",
 
-    effectiveDate: "",
+    effectiveDate:
+      "",
 
-    expiryDate: "",
+    expiryDate:
+      "",
 
-    coverage: [],
+    coverage:
+      [],
   }
 }
 
 function emptyWorkersDraft():
   WorkersDraft {
   return {
-    insuranceType: "",
+    insuranceType:
+      "",
 
-    providerName: "",
+    providerName:
+      "",
 
-    policyNumber: "",
+    policyNumber:
+      "",
 
-    jurisdiction: "",
+    jurisdiction:
+      "",
 
-    effectiveDate: "",
+    effectiveDate:
+      "",
 
-    expiryDate: "",
+    expiryDate:
+      "",
 
-    coverage: [],
+    coverage:
+      [],
   }
 }
 
@@ -1811,19 +2078,25 @@ function emptyBondDraft(
   principalName = ""
 ): BondDraft {
   return {
-    bondType: "",
+    bondType:
+      "",
 
-    suretyName: "",
+    suretyName:
+      "",
 
-    bondNumber: "",
+    bondNumber:
+      "",
 
     principalName,
 
-    bondAmount: "",
+    bondAmount:
+      "",
 
-    effectiveDate: "",
+    effectiveDate:
+      "",
 
-    expiryDate: "",
+    expiryDate:
+      "",
   }
 }
 
@@ -1838,12 +2111,17 @@ function CopyField({
   label: string
   value?: string
 }) {
-  const [copied, setCopied] =
+  const [
+    copied,
+    setCopied,
+  ] =
     useState(false)
 
   const copy =
     async () => {
-      if (!value) return
+      if (!value) {
+        return
+      }
 
       try {
         await navigator.clipboard.writeText(
@@ -1860,7 +2138,7 @@ function CopyField({
           1000
         )
       } catch {
-        // Clipboard may fail in non-secure dev environments.
+        // Clipboard may fail during local/non-secure testing.
       }
     }
 
@@ -1882,8 +2160,9 @@ function CopyField({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
-            onClick={copy}
-            title={`Copy ${label}`}
+            onClick={
+              copy
+            }
           >
             {copied ? (
               <Check className="size-3.5 text-emerald-600" />
@@ -1898,7 +2177,7 @@ function CopyField({
 }
 
 /* =========================================================
-   ORGANIZATION INPUT
+   ORGANIZATION AUTOCOMPLETE
 ========================================================= */
 
 function OrganizationInput({
@@ -1917,7 +2196,10 @@ function OrganizationInput({
 
   kindFilter?: string[]
 }) {
-  const [open, setOpen] =
+  const [
+    open,
+    setOpen,
+  ] =
     useState(false)
 
   const companies =
@@ -1949,14 +2231,11 @@ function OrganizationInput({
               )
           )
 
-        /*
-          If old records don't yet use the new kind names,
-          still allow search across all companies.
-        */
         if (
           filtered.length
         ) {
-          pool = filtered
+          pool =
+            filtered
         }
       }
 
@@ -1968,18 +2247,20 @@ function OrganizationInput({
       }
 
       return pool
-        .map((company) => ({
-          company,
+        .map(
+          (company) => ({
+            company,
 
-          score:
-            similarity(
-              query,
+            score:
+              similarity(
+                query,
 
-              normalizeCompanyName(
-                company.name
-              )
-            ),
-        }))
+                normalizeCompanyName(
+                  company.name
+                )
+              ),
+          })
+        )
         .filter(
           (result) =>
             result.company.name
@@ -1995,7 +2276,10 @@ function OrganizationInput({
             b.score -
             a.score
         )
-        .slice(0, 8)
+        .slice(
+          0,
+          8
+        )
         .map(
           (result) =>
             result.company
@@ -2014,10 +2298,14 @@ function OrganizationInput({
 
       <div className="relative">
         <Input
-          value={value}
+          value={
+            value
+          }
           autoComplete="off"
           onFocus={() =>
-            setOpen(true)
+            setOpen(
+              true
+            )
           }
           onBlur={() =>
             window.setTimeout(
@@ -2036,7 +2324,9 @@ function OrganizationInput({
                 .value
             )
 
-            setOpen(true)
+            setOpen(
+              true
+            )
           }}
         />
 
@@ -2046,7 +2336,7 @@ function OrganizationInput({
       {open &&
         matches.length >
           0 && (
-          <div className="absolute left-0 right-0 z-[150] mt-1 max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
+          <div className="absolute left-0 right-0 z-[160] mt-1 max-h-60 overflow-y-auto rounded-lg border bg-popover p-1 shadow-xl">
             {matches.map(
               (company) => (
                 <button
@@ -2064,7 +2354,9 @@ function OrganizationInput({
                       company.name
                     )
 
-                    setOpen(false)
+                    setOpen(
+                      false
+                    )
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left hover:bg-muted"
                 >
@@ -2105,10 +2397,12 @@ function CoverageEditor({
   items,
   onChange,
 }: {
-  items: CoverageItem[]
+  items:
+    CoverageItem[]
 
   onChange: (
-    items: CoverageItem[]
+    items:
+      CoverageItem[]
   ) => void
 }) {
   return (
@@ -2120,7 +2414,7 @@ function CoverageEditor({
           </Label>
 
           <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-            Keep the most useful coverage values visible. Full details remain in the source evidence.
+            Keep the most useful coverage values visible. Full details remain available in the source document.
           </p>
         </div>
 
@@ -2139,13 +2433,17 @@ function CoverageEditor({
                     "COV"
                   ),
 
-                label: "",
-                value: "",
+                label:
+                  "",
+
+                value:
+                  "",
               },
             ])
           }
         >
           <Plus className="mr-1 size-3.5" />
+
           Add
         </Button>
       </div>
@@ -2250,7 +2548,7 @@ function CoverageEditor({
 }
 
 /* =========================================================
-   DOCUMENT SOURCE PICKER
+   DOCUMENT SOURCE
 ========================================================= */
 
 function DocumentSourcePicker({
@@ -2259,7 +2557,8 @@ function DocumentSourcePicker({
   onDevice,
   onClose,
 }: {
-  family: RecordFamily
+  family:
+    RecordFamily
 
   onCamera: () => void
   onDevice: () => void
@@ -2296,7 +2595,9 @@ function DocumentSourcePicker({
             <Button
               variant="ghost"
               size="icon"
-              onClick={onClose}
+              onClick={
+                onClose
+              }
             >
               <X className="size-4" />
             </Button>
@@ -2306,7 +2607,9 @@ function DocumentSourcePicker({
         <CardContent className="grid gap-3 sm:grid-cols-2">
           <button
             type="button"
-            onClick={onCamera}
+            onClick={
+              onCamera
+            }
             className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
           >
             <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -2318,13 +2621,15 @@ function DocumentSourcePicker({
             </p>
 
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Open a live camera preview and capture the document directly.
+              Open the camera, preview the complete document and capture it directly.
             </p>
           </button>
 
           <button
             type="button"
-            onClick={onDevice}
+            onClick={
+              onDevice
+            }
             className="rounded-xl border p-5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.035]"
           >
             <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -2346,7 +2651,7 @@ function DocumentSourcePicker({
 }
 
 /* =========================================================
-   CAMERA
+   REAL CAMERA
 ========================================================= */
 
 function CameraCapture({
@@ -2374,10 +2679,16 @@ function CameraCapture({
       null
     )
 
-  const [ready, setReady] =
+  const [
+    ready,
+    setReady,
+  ] =
     useState(false)
 
-  const [error, setError] =
+  const [
+    error,
+    setError,
+  ] =
     useState("")
 
   useEffect(() => {
@@ -2415,7 +2726,8 @@ function CameraCapture({
                   },
                 },
 
-                audio: false,
+                audio:
+                  false,
               }
             )
 
@@ -2430,10 +2742,14 @@ function CameraCapture({
 
             await videoRef.current.play()
 
-            setReady(true)
+            setReady(
+              true
+            )
           }
         } catch (err) {
-          console.error(err)
+          console.error(
+            err
+          )
 
           setError(
             "TES could not access the camera. Check browser camera permissions."
@@ -2492,7 +2808,9 @@ function CameraCapture({
 
     canvas.toBlob(
       (blob) => {
-        if (!blob) return
+        if (!blob) {
+          return
+        }
 
         const file =
           new File(
@@ -2513,7 +2831,9 @@ function CameraCapture({
               track.stop()
           )
 
-        onCapture(file)
+        onCapture(
+          file
+        )
       },
 
       "image/jpeg",
@@ -2539,7 +2859,9 @@ function CameraCapture({
           variant="ghost"
           size="icon"
           className="text-white hover:bg-white/10 hover:text-white"
-          onClick={onClose}
+          onClick={
+            onClose
+          }
         >
           <X className="size-5" />
         </Button>
@@ -2561,7 +2883,9 @@ function CameraCapture({
         ) : (
           <>
             <video
-              ref={videoRef}
+              ref={
+                videoRef
+              }
               playsInline
               muted
               className="max-h-full max-w-full object-contain"
@@ -2572,7 +2896,9 @@ function CameraCapture({
         )}
 
         <canvas
-          ref={canvasRef}
+          ref={
+            canvasRef
+          }
           className="hidden"
         />
       </div>
@@ -2581,10 +2907,15 @@ function CameraCapture({
         <Button
           size="lg"
           className="rounded-full px-8"
-          disabled={!ready}
-          onClick={capture}
+          disabled={
+            !ready
+          }
+          onClick={
+            capture
+          }
         >
           <Camera className="mr-2 size-5" />
+
           Capture Photo
         </Button>
       </div>
@@ -2603,6 +2934,7 @@ function DocumentViewer({
 }: {
   file: File
   dataUrl: string
+
   onReplace: () => void
 }) {
   const rootRef =
@@ -2612,20 +2944,29 @@ function DocumentViewer({
 
   const dragRef =
     useRef({
-      active: false,
+      active:
+        false,
+
       x: 0,
       y: 0,
     })
 
-  const [zoom, setZoom] =
+  const [
+    zoom,
+    setZoom,
+  ] =
     useState(1)
 
   const [
     rotation,
     setRotation,
-  ] = useState(0)
+  ] =
+    useState(0)
 
-  const [pan, setPan] =
+  const [
+    pan,
+    setPan,
+  ] =
     useState({
       x: 0,
       y: 0,
@@ -2672,7 +3013,8 @@ function DocumentViewer({
       React.PointerEvent<HTMLDivElement>
   ) => {
     dragRef.current = {
-      active: true,
+      active:
+        true,
 
       x:
         event.clientX,
@@ -2735,7 +3077,9 @@ function DocumentViewer({
 
   return (
     <div
-      ref={rootRef}
+      ref={
+        rootRef
+      }
       className="flex h-full min-h-0 flex-col bg-muted/15 fullscreen:bg-background"
     >
       <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b bg-background px-4">
@@ -2755,7 +3099,9 @@ function DocumentViewer({
             variant="ghost"
             size="sm"
             className="h-8 text-xs"
-            onClick={reset}
+            onClick={
+              reset
+            }
           >
             Fit
           </Button>
@@ -2870,13 +3216,17 @@ function DocumentViewer({
           >
             {pdf ? (
               <iframe
-                src={dataUrl}
+                src={
+                  dataUrl
+                }
                 title="Insurance document"
                 className="h-[72vh] w-[62vw] max-w-[1000px] rounded-lg border bg-background pointer-events-none"
               />
             ) : (
               <img
-                src={dataUrl}
+                src={
+                  dataUrl
+                }
                 alt="Insurance document"
                 draggable={
                   false
@@ -2898,7 +3248,9 @@ function DocumentViewer({
           variant="outline"
           size="sm"
           className="h-8 text-xs"
-          onClick={onReplace}
+          onClick={
+            onReplace
+          }
         >
           <RefreshCcw className="mr-1.5 size-3.5" />
 
@@ -2910,7 +3262,7 @@ function DocumentViewer({
 }
 
 /* =========================================================
-   TRANSPORTATION DRAFT
+   TRANSPORTATION DRAFT EDITOR
 ========================================================= */
 
 function TransportationDraftEditor({
@@ -2922,15 +3274,18 @@ function TransportationDraftEditor({
 }: {
   index: number
 
-  draft: TransportationDraft
+  draft:
+    TransportationDraft
 
   onChange: (
-    draft: TransportationDraft
+    draft:
+      TransportationDraft
   ) => void
 
   onRemove: () => void
 
-  allowRemove: boolean
+  allowRemove:
+    boolean
 }) {
   const update = <
     K extends keyof TransportationDraft
@@ -2943,7 +3298,8 @@ function TransportationDraftEditor({
     const next = {
       ...draft,
 
-      [key]: value,
+      [key]:
+        value,
     }
 
     if (
@@ -2952,11 +3308,15 @@ function TransportationDraftEditor({
     ) {
       next.canonicalType =
         normalizeInsuranceType(
-          String(value)
+          String(
+            value
+          )
         )
     }
 
-    onChange(next)
+    onChange(
+      next
+    )
   }
 
   return (
@@ -3035,6 +3395,7 @@ function TransportationDraftEditor({
             ) =>
               update(
                 "insurerName",
+
                 value
               )
             }
@@ -3122,6 +3483,7 @@ function TransportationDraftEditor({
             ) =>
               update(
                 "coverage",
+
                 coverage
               )
             }
@@ -3140,10 +3502,12 @@ function WorkersDraftForm({
   draft,
   onChange,
 }: {
-  draft: WorkersDraft
+  draft:
+    WorkersDraft
 
   onChange: (
-    draft: WorkersDraft
+    draft:
+      WorkersDraft
   ) => void
 }) {
   const update = <
@@ -3153,11 +3517,14 @@ function WorkersDraftForm({
 
     value:
       WorkersDraft[K]
-  ) =>
+  ) => {
     onChange({
       ...draft,
-      [key]: value,
+
+      [key]:
+        value,
     })
+  }
 
   return (
     <Card className="overflow-visible shadow-none">
@@ -3184,6 +3551,7 @@ function WorkersDraftForm({
               ) =>
                 update(
                   "insuranceType",
+
                   value
                 )
               }
@@ -3192,7 +3560,7 @@ function WorkersDraftForm({
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
 
-              <SelectContent className="z-[160]">
+              <SelectContent className="z-[170]">
                 <SelectItem value="Workers Compensation">
                   Workers Compensation
                 </SelectItem>
@@ -3230,6 +3598,7 @@ function WorkersDraftForm({
             ) =>
               update(
                 "providerName",
+
                 value
               )
             }
@@ -3270,6 +3639,7 @@ function WorkersDraftForm({
               value={
                 draft.jurisdiction
               }
+              placeholder="e.g. Ontario"
               onChange={(
                 event
               ) =>
@@ -3280,7 +3650,6 @@ function WorkersDraftForm({
                     .value
                 )
               }
-              placeholder="e.g. Ontario"
             />
           </div>
 
@@ -3340,6 +3709,7 @@ function WorkersDraftForm({
           ) =>
             update(
               "coverage",
+
               coverage
             )
           }
@@ -3357,10 +3727,12 @@ function BondDraftForm({
   draft,
   onChange,
 }: {
-  draft: BondDraft
+  draft:
+    BondDraft
 
   onChange: (
-    draft: BondDraft
+    draft:
+      BondDraft
   ) => void
 }) {
   const update = <
@@ -3370,11 +3742,14 @@ function BondDraftForm({
 
     value:
       BondDraft[K]
-  ) =>
+  ) => {
     onChange({
       ...draft,
-      [key]: value,
+
+      [key]:
+        value,
     })
+  }
 
   return (
     <Card className="overflow-visible shadow-none">
@@ -3400,6 +3775,7 @@ function BondDraftForm({
             ) =>
               update(
                 "bondType",
+
                 value
               )
             }
@@ -3408,7 +3784,7 @@ function BondDraftForm({
               <SelectValue placeholder="Select type" />
             </SelectTrigger>
 
-            <SelectContent className="z-[160]">
+            <SelectContent className="z-[170]">
               <SelectItem value="BMC-84 Freight Broker Bond">
                 BMC-84 Freight Broker Bond
               </SelectItem>
@@ -3454,6 +3830,7 @@ function BondDraftForm({
           ) =>
             update(
               "suretyName",
+
               value
             )
           }
@@ -3586,13 +3963,18 @@ function BondDraftForm({
 /* =========================================================
    OCR REQUEST
 
-   Real endpoint first.
-   Development fallback only when endpoint is unavailable.
+   Production endpoint first.
+
+   Fallback remains for the COI we were using during
+   development so you can test the complete workflow.
 ========================================================= */
 
 async function requestOCR(
-  session: OCRSession
-): Promise<Partial<OCRSession>> {
+  session:
+    OCRSession
+): Promise<
+  Partial<OCRSession>
+> {
   try {
     const body =
       new FormData()
@@ -3626,24 +4008,18 @@ async function requestOCR(
     }
   } catch {
     /*
-      Backend not connected yet.
-      Continue with development fallback.
+      OCR API not connected yet.
+      Continue with prototype fallback.
     */
   }
-
-  /*
-    The supplied COI can be used to test the
-    transportation workflow.
-
-    Redacted policy numbers are NEVER invented.
-  */
 
   if (
     session.family ===
     "transportation"
   ) {
     return {
-      confidence: 90,
+      confidence:
+        90,
 
       extractionComplete:
         true,
@@ -3665,7 +4041,12 @@ async function requestOCR(
             insurerName:
               "Aurora Underwriting Solutions Inc.",
 
-            policyNumber: "",
+            /*
+              Source policy number was redacted in the
+              test document. Never invent evidence.
+            */
+            policyNumber:
+              "",
 
             effectiveDate:
               "2025-12-24",
@@ -3673,46 +4054,47 @@ async function requestOCR(
             expiryDate:
               "2026-12-24",
 
-            coverage: [
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+            coverage:
+              [
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "General Aggregate",
+                  label:
+                    "General Aggregate",
 
-                value:
-                  "$2,000,000",
-              },
+                  value:
+                    "$2,000,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Each Occurrence",
+                  label:
+                    "Each Occurrence",
 
-                value:
-                  "$2,000,000",
-              },
+                  value:
+                    "$2,000,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Products / Completed Operations",
+                  label:
+                    "Products / Completed Operations",
 
-                value:
-                  "$2,000,000",
-              },
-            ],
+                  value:
+                    "$2,000,000",
+                },
+              ],
           },
 
           {
@@ -3730,7 +4112,8 @@ async function requestOCR(
             insurerName:
               "The Nordic Insurance Company of Canada",
 
-            policyNumber: "",
+            policyNumber:
+              "",
 
             effectiveDate:
               "2025-12-24",
@@ -3738,46 +4121,47 @@ async function requestOCR(
             expiryDate:
               "2026-12-24",
 
-            coverage: [
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+            coverage:
+              [
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Bodily Injury / Property Damage",
+                  label:
+                    "Bodily Injury / Property Damage",
 
-                value:
-                  "$2,000,000",
-              },
+                  value:
+                    "$2,000,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Bodily Injury Per Person",
+                  label:
+                    "Bodily Injury Per Person",
 
-                value:
-                  "$2,000,000",
-              },
+                  value:
+                    "$2,000,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Property Damage",
+                  label:
+                    "Property Damage",
 
-                value:
-                  "$2,000,000",
-              },
-            ],
+                  value:
+                    "$2,000,000",
+                },
+              ],
           },
 
           {
@@ -3795,7 +4179,8 @@ async function requestOCR(
             insurerName:
               "Aurora Underwriting Solutions Inc.",
 
-            policyNumber: "",
+            policyNumber:
+              "",
 
             effectiveDate:
               "2025-12-24",
@@ -3803,46 +4188,47 @@ async function requestOCR(
             expiryDate:
               "2026-12-24",
 
-            coverage: [
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+            coverage:
+              [
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Motor Truck Cargo",
+                  label:
+                    "Motor Truck Cargo",
 
-                value:
-                  "$250,000",
-              },
+                  value:
+                    "$250,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Non-Owned Trailer",
+                  label:
+                    "Non-Owned Trailer",
 
-                value:
-                  "$100,000",
-              },
+                  value:
+                    "$100,000",
+                },
 
-              {
-                id:
-                  createId(
-                    "COV"
-                  ),
+                {
+                  id:
+                    createId(
+                      "COV"
+                    ),
 
-                label:
-                  "Deductible",
+                  label:
+                    "Deductible",
 
-                value:
-                  "$5,000",
-              },
-            ],
+                  value:
+                    "$5,000",
+                },
+              ],
           },
         ],
 
@@ -3855,12 +4241,14 @@ async function requestOCR(
   }
 
   /*
-    Workers/Bond OCR workflow is active.
-    No sample values are invented.
+    Workers/Bond OCR uses the complete extraction UI,
+    but we intentionally do not fabricate fields without
+    a real sample document.
   */
 
   return {
-    confidence: 90,
+    confidence:
+      90,
 
     extractionComplete:
       true,
@@ -3878,7 +4266,8 @@ function OCRWorkspaceView({
   onCancel,
   onSave,
 }: {
-  session: OCRSession
+  session:
+    OCRSession
 
   setSession:
     React.Dispatch<
@@ -3890,7 +4279,8 @@ function OCRWorkspaceView({
   onCancel: () => void
 
   onSave: (
-    session: OCRSession
+    session:
+      OCRSession
   ) => void
 }) {
   const runOCR =
@@ -4043,7 +4433,7 @@ function OCRWorkspaceView({
                 </h2>
 
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Verify the extracted information against the original evidence before saving.
+                  Verify the extracted information against the source document before saving.
                 </p>
               </div>
 
@@ -4107,7 +4497,7 @@ function OCRWorkspaceView({
                     </p>
 
                     <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                      Correct any field before creating the authoritative TES record.
+                      Correct any field necessary before creating the authoritative TES record.
                     </p>
                   </div>
                 </div>
@@ -4225,7 +4615,7 @@ function OCRWorkspaceView({
                     </CardTitle>
 
                     <CardDescription className="text-xs">
-                      Broker company and broker contact are separate linked records.
+                      Broker company and broker contact are separate reusable TES identities.
                     </CardDescription>
                   </CardHeader>
 
@@ -4409,7 +4799,9 @@ function OCRWorkspaceView({
           <div className="border-t bg-background p-4">
             <div className="flex justify-end">
               <Button
-                disabled={!ready}
+                disabled={
+                  !ready
+                }
                 onClick={() =>
                   onSave(
                     session
@@ -4435,13 +4827,20 @@ function OCRWorkspaceView({
 function ManualInsuranceModal({
   family,
   company,
+
   onCancel,
+
   onSaveTransportation,
+
   onSaveWorkers,
+
   onSaveBond,
 }: {
-  family: RecordFamily
-  company: Company
+  family:
+    RecordFamily
+
+  company:
+    Company
 
   onCancel: () => void
 
@@ -4485,7 +4884,10 @@ function ManualInsuranceModal({
       emptyWorkersDraft()
     )
 
-  const [bondDraft, setBondDraft] =
+  const [
+    bondDraft,
+    setBondDraft,
+  ] =
     useState(
       emptyBondDraft(
         company.name
@@ -4495,22 +4897,26 @@ function ManualInsuranceModal({
   const [
     brokerCompany,
     setBrokerCompany,
-  ] = useState("")
+  ] =
+    useState("")
 
   const [
     brokerContact,
     setBrokerContact,
-  ] = useState("")
+  ] =
+    useState("")
 
   const [
     brokerEmail,
     setBrokerEmail,
-  ] = useState("")
+  ] =
+    useState("")
 
   const [
     brokerPhone,
     setBrokerPhone,
-  ] = useState("")
+  ] =
+    useState("")
 
   const transportationReady =
     transportationDrafts.every(
@@ -4566,7 +4972,7 @@ function ManualInsuranceModal({
                 </CardTitle>
 
                 <CardDescription className="mt-1">
-                  Manual entry uses the same authoritative fields as OCR.
+                  Manual entry creates the same record structure used by OCR.
                 </CardDescription>
               </div>
 
@@ -4669,6 +5075,10 @@ function ManualInsuranceModal({
                     <CardTitle className="text-sm">
                       Insurance Broker
                     </CardTitle>
+
+                    <CardDescription className="text-xs">
+                      Existing broker organizations and contacts are reused whenever possible.
+                    </CardDescription>
                   </CardHeader>
 
                   <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
@@ -4782,7 +5192,9 @@ function ManualInsuranceModal({
               </Button>
 
               <Button
-                disabled={!ready}
+                disabled={
+                  !ready
+                }
                 onClick={() => {
                   if (
                     family ===
@@ -4843,7 +5255,9 @@ function ManualInsuranceModal({
 
 function BrokerEditor({
   records,
+
   onCancel,
+
   onSave,
 }: {
   records:
@@ -4880,25 +5294,41 @@ function BrokerEditor({
         ""
     )
 
-  const [email, setEmail] =
+  const [
+    email,
+    setEmail,
+  ] =
     useState(
       current?.contactEmail ||
         ""
     )
 
-  const [phone, setPhone] =
+  const [
+    phone,
+    setPhone,
+  ] =
     useState(
       current?.contactPhone ||
         ""
     )
 
   const save = () => {
+    /*
+      FIRST:
+      resolve Sonic Insurance.
+    */
+
     const organization =
       resolveOrganization(
         companyName,
 
         "Insurance Broker"
       )
+
+    /*
+      SECOND:
+      resolve Harpreet globally and attach her to Sonic.
+    */
 
     const contact =
       resolveBrokerContact({
@@ -4915,6 +5345,11 @@ function BrokerEditor({
         phone,
       })
 
+    /*
+      If editing an existing contact, update the canonical
+      Contact record itself.
+    */
+
     updateBrokerContact({
       contactId:
         contact.contactId,
@@ -4929,8 +5364,13 @@ function BrokerEditor({
         contactName,
 
       email,
+
       phone,
     })
+
+    /*
+      Insurance stores references only.
+    */
 
     onSave({
       organizationId:
@@ -4964,7 +5404,7 @@ function BrokerEditor({
               </CardTitle>
 
               <CardDescription className="mt-1">
-                Broker company and broker contact remain separate linked TES records.
+                Changes update the reusable broker organization/contact relationship.
               </CardDescription>
             </div>
 
@@ -5020,7 +5460,9 @@ function BrokerEditor({
 
             <Input
               type="email"
-              value={email}
+              value={
+                email
+              }
               onChange={(
                 event
               ) =>
@@ -5037,7 +5479,9 @@ function BrokerEditor({
             </Label>
 
             <Input
-              value={phone}
+              value={
+                phone
+              }
               onChange={(
                 event
               ) =>
@@ -5059,7 +5503,9 @@ function BrokerEditor({
             </Button>
 
             <Button
-              onClick={save}
+              onClick={
+                save
+              }
             >
               <Save className="mr-2 size-4" />
 
@@ -5073,12 +5519,11 @@ function BrokerEditor({
 }
 
 /* =========================================================
-   RECORD INSPECTOR
+   RIGHT SIDE RECORD INSPECTOR
 ========================================================= */
 
 function InsuranceRecordInspector({
   record,
-
   evidence,
 
   onClose,
@@ -5117,11 +5562,11 @@ function InsuranceRecordInspector({
     )
   }
 
-  const isTransportation =
+  const transportation =
     record.family ===
     "transportation"
 
-  const isWorkers =
+  const workers =
     record.family ===
     "workers"
 
@@ -5132,11 +5577,9 @@ function InsuranceRecordInspector({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-base">
-                {record.family ===
-                "transportation"
+                {transportation
                   ? record.insuranceType
-                  : record.family ===
-                      "workers"
+                  : workers
                     ? record.insuranceType
                     : record.bondType}
               </CardTitle>
@@ -5167,7 +5610,7 @@ function InsuranceRecordInspector({
       </CardHeader>
 
       <CardContent className="space-y-5 p-4">
-        {isTransportation && (
+        {transportation && (
           <>
             <section>
               <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -5211,7 +5654,8 @@ function InsuranceRecordInspector({
               </Label>
 
               <div className="mt-3 space-y-2">
-                {record.coverage.length ? (
+                {record.coverage.length >
+                0 ? (
                   record.coverage.map(
                     (item) => (
                       <div
@@ -5236,7 +5680,7 @@ function InsuranceRecordInspector({
                   )
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    See source document for coverage details.
+                    See the source document for full coverage details.
                   </p>
                 )}
               </div>
@@ -5307,7 +5751,7 @@ function InsuranceRecordInspector({
           </>
         )}
 
-        {isWorkers && (
+        {workers && (
           <>
             <section>
               <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -5366,7 +5810,7 @@ function InsuranceRecordInspector({
                         key={
                           item.id
                         }
-                        className="flex justify-between gap-3 rounded-lg border p-3"
+                        className="flex items-center justify-between gap-3 rounded-lg border p-3"
                       >
                         <span className="text-xs text-muted-foreground">
                           {
@@ -5525,9 +5969,11 @@ function TransportationRow({
   record:
     TransportationInsuranceRecord
 
-  selected: boolean
+  selected:
+    boolean
 
   onSelect: () => void
+
   onArchive: () => void
 }) {
   const style =
@@ -5594,9 +6040,14 @@ function TransportationRow({
 
       <div className="md:col-span-2">
         {record.coverage
-          .slice(0, 3)
+          .slice(
+            0,
+            3
+          )
           .map(
-            (coverage) => (
+            (
+              coverage
+            ) => (
               <div
                 key={
                   coverage.id
@@ -5654,24 +6105,21 @@ function TransportationRow({
           }
         />
 
-        {record.status !==
-          "Archived" && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={(
-              event
-            ) => {
-              event.stopPropagation()
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          onClick={(
+            event
+          ) => {
+            event.stopPropagation()
 
-              onArchive()
-            }}
-          >
-            <Archive className="size-4" />
-          </Button>
-        )}
+            onArchive()
+          }}
+        >
+          <Archive className="size-4" />
+        </Button>
       </div>
     </div>
   )
@@ -5686,7 +6134,8 @@ function WorkersRow({
   record:
     WorkersInsuranceRecord
 
-  selected: boolean
+  selected:
+    boolean
 
   onSelect: () => void
   onArchive: () => void
@@ -5714,7 +6163,7 @@ function WorkersRow({
           }
         </p>
 
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="mt-1 select-text font-mono text-[10px] text-muted-foreground">
           {
             record.policyNumber
           }
@@ -5738,7 +6187,10 @@ function WorkersRow({
 
       <div className="md:col-span-2">
         {record.coverage
-          .slice(0, 2)
+          .slice(
+            0,
+            2
+          )
           .map(
             (item) => (
               <p
@@ -5810,9 +6262,11 @@ function BondRow({
   onSelect,
   onArchive,
 }: {
-  record: BondRecord
+  record:
+    BondRecord
 
-  selected: boolean
+  selected:
+    boolean
 
   onSelect: () => void
   onArchive: () => void
@@ -5840,7 +6294,7 @@ function BondRow({
           }
         </p>
 
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="mt-1 select-text font-mono text-[10px] text-muted-foreground">
           {
             record.bondNumber
           }
@@ -5914,7 +6368,7 @@ function BondRow({
 }
 
 /* =========================================================
-   STATUS CARD
+   STATUS SUMMARY CARD
 ========================================================= */
 
 function StatusCountCard({
@@ -5924,10 +6378,13 @@ function StatusCountCard({
 }: {
   label: string
   count: number
-  status: ExpiryStatus
+  status:
+    ExpiryStatus
 }) {
   const style =
-    statusStyle(status)
+    statusStyle(
+      status
+    )
 
   return (
     <Card
@@ -5973,25 +6430,38 @@ export default function InsurancePage() {
       null
     )
 
-  const [company, setCompany] =
+  const [
+    company,
+    setCompany,
+  ] =
     useState<Company | null>(
       null
     )
 
-  const [data, setData] =
+  const [
+    data,
+    setData,
+  ] =
     useState<StoredInsuranceData>(
       EMPTY_DATA
     )
 
-  const [settings, setSettings] =
+  const [
+    settings,
+    setSettings,
+  ] =
     useState<SystemSettings>({
-      version: 1,
+      version:
+        1,
 
       expiryRules:
         DEFAULT_EXPIRY_RULES,
     })
 
-  const [loading, setLoading] =
+  const [
+    loading,
+    setLoading,
+  ] =
     useState(true)
 
   const [
@@ -6052,12 +6522,16 @@ export default function InsurancePage() {
       const companies =
         getCompanies()
 
-      setCompany(
+      const found =
         companies.find(
           (item) =>
             item.id ===
             companyId
-        ) || null
+        )
+
+      setCompany(
+        found ||
+        null
       )
 
       const raw =
@@ -6099,7 +6573,9 @@ export default function InsurancePage() {
               [],
           })
         } else if (
-          Array.isArray(parsed)
+          Array.isArray(
+            parsed
+          )
         ) {
           setData(
             migrateLegacyRecords(
@@ -6114,7 +6590,7 @@ export default function InsurancePage() {
       )
     } catch (error) {
       console.error(
-        "Unable to load Insurance page",
+        "Unable to load Insurance page:",
         error
       )
 
@@ -6122,7 +6598,9 @@ export default function InsurancePage() {
         EMPTY_DATA
       )
     } finally {
-      setLoading(false)
+      setLoading(
+        false
+      )
     }
   }, [
     companyId,
@@ -6137,7 +6615,10 @@ export default function InsurancePage() {
     if (!loading) {
       localStorage.setItem(
         storageKey,
-        JSON.stringify(data)
+
+        JSON.stringify(
+          data
+        )
       )
     }
   }, [
@@ -6147,7 +6628,7 @@ export default function InsurancePage() {
   ])
 
   /* =======================================================
-     LIVE STATUS
+     LIVE EXPIRY STATUS
   ======================================================= */
 
   const transportation =
@@ -6242,7 +6723,8 @@ export default function InsurancePage() {
     ]
 
   const countStatus = (
-    status: ExpiryStatus
+    status:
+      ExpiryStatus
   ) =>
     allRecords.filter(
       (record) =>
@@ -6251,14 +6733,15 @@ export default function InsurancePage() {
     ).length
 
   /* =======================================================
-     DOCUMENT SOURCE
+     DOCUMENT PROCESSING
   ======================================================= */
 
   const processDocument =
     async (
       file: File,
 
-      source: DocumentSource
+      source:
+        DocumentSource
     ) => {
       if (!sourceFamily) {
         return
@@ -6294,7 +6777,8 @@ export default function InsurancePage() {
 
         dataUrl,
 
-        processing: false,
+        processing:
+          false,
 
         extractionComplete:
           false,
@@ -6313,14 +6797,17 @@ export default function InsurancePage() {
               ""
           ),
 
-        brokerName: "",
+        brokerName:
+          "",
 
         brokerContactName:
           "",
 
-        brokerEmail: "",
+        brokerEmail:
+          "",
 
-        brokerPhone: "",
+        brokerPhone:
+          "",
       })
 
       setSourceFamily(
@@ -6330,6 +6817,10 @@ export default function InsurancePage() {
 
   /* =======================================================
      BROKER RESOLUTION
+
+     Sonic = Organization.
+     Harpreet = canonical Contact belonging to Sonic.
+     Insurance record = references both.
   ======================================================= */
 
   const resolveBroker = ({
@@ -6338,10 +6829,17 @@ export default function InsurancePage() {
     email,
     phone,
   }: {
-    companyName: string
-    contactName: string
-    email: string
-    phone: string
+    companyName:
+      string
+
+    contactName:
+      string
+
+    email:
+      string
+
+    phone:
+      string
   }): BrokerReference | undefined => {
     if (
       !companyName.trim() &&
@@ -6352,20 +6850,33 @@ export default function InsurancePage() {
       return undefined
     }
 
-    const broker =
+    /*
+      First layer:
+      Sonic Insurance.
+    */
+
+    const brokerOrganization =
       resolveOrganization(
         companyName,
 
         "Insurance Broker"
       )
 
-    const contact =
+    /*
+      Second layer:
+      Harpreet Kaur.
+
+      This function globally searches Contacts before
+      creating anything.
+    */
+
+    const brokerContact =
       resolveBrokerContact({
         brokerOrganizationId:
-          broker.organizationId,
+          brokerOrganization.organizationId,
 
         brokerOrganizationName:
-          broker.organizationName,
+          brokerOrganization.organizationName,
 
         contactName,
 
@@ -6374,36 +6885,42 @@ export default function InsurancePage() {
         phone,
       })
 
+    /*
+      Third layer:
+      Insurance references existing entities.
+    */
+
     return {
       organizationId:
-        broker.organizationId,
+        brokerOrganization.organizationId,
 
       organizationName:
-        broker.organizationName,
+        brokerOrganization.organizationName,
 
       contactId:
-        contact.contactId,
+        brokerContact.contactId,
 
       contactName:
-        contact.contactName,
+        brokerContact.contactName,
 
       contactEmail:
-        contact.contactEmail,
+        brokerContact.contactEmail,
 
       contactPhone:
-        contact.contactPhone,
+        brokerContact.contactPhone,
     }
   }
 
   /* =======================================================
-     POLICY MATCH
+     POLICY DUPLICATE / RENEWAL
   ======================================================= */
 
   const locatePolicyMatch = (
     draft:
       TransportationDraft,
 
-    insurerName: string
+    insurerName:
+      string
   ) => {
     const insurer =
       normalizeCompanyName(
@@ -6437,7 +6954,9 @@ export default function InsurancePage() {
             draft.expiryDate
       )
 
-    if (exactPeriod) {
+    if (
+      exactPeriod
+    ) {
       return {
         type:
           "duplicate" as const,
@@ -6447,7 +6966,9 @@ export default function InsurancePage() {
       }
     }
 
-    if (matches.length) {
+    if (
+      matches.length
+    ) {
       const recent =
         [...matches].sort(
           (a, b) =>
@@ -6475,9 +6996,7 @@ export default function InsurancePage() {
   }
 
   /* =======================================================
-     TRANSPORTATION SAVE CORE
-
-     Used by OCR and Manual.
+     TRANSPORTATION CORE SAVE
   ======================================================= */
 
   const saveTransportationDrafts = ({
@@ -6489,7 +7008,8 @@ export default function InsurancePage() {
     drafts:
       TransportationDraft[]
 
-    source: SourceType
+    source:
+      SourceType
 
     evidence?:
       InsuranceEvidence
@@ -6525,8 +7045,8 @@ export default function InsurancePage() {
         )
 
       /*
-        Exact policy already exists.
-        Do not create duplicate.
+        Same insurer + policy # + policy period:
+        do not duplicate.
       */
 
       if (
@@ -6613,7 +7133,9 @@ export default function InsurancePage() {
       })
     }
 
-    if (!created.length) {
+    if (
+      !created.length
+    ) {
       window.alert(
         "No new record was created because the insurer, policy number and policy period already exist."
       )
@@ -6651,11 +7173,12 @@ export default function InsurancePage() {
   }
 
   /* =======================================================
-     SAVE OCR SESSION
+     OCR SAVE
   ======================================================= */
 
   const saveOCRSession = (
-    session: OCRSession
+    session:
+      OCRSession
   ) => {
     const evidence:
       InsuranceEvidence =
@@ -6686,6 +7209,8 @@ export default function InsurancePage() {
         dataUrl:
           session.dataUrl,
       }
+
+    /* ---------------- TRANSPORTATION ---------------- */
 
     if (
       session.family ===
@@ -6728,6 +7253,8 @@ export default function InsurancePage() {
       return
     }
 
+    /* ---------------- WORKERS ---------------- */
+
     if (
       session.family ===
       "workers"
@@ -6765,7 +7292,9 @@ export default function InsurancePage() {
               draft.expiryDate
         )
 
-      if (duplicate) {
+      if (
+        duplicate
+      ) {
         window.alert(
           "This workers insurance record already exists."
         )
@@ -6862,6 +7391,8 @@ export default function InsurancePage() {
       return
     }
 
+    /* ---------------- BOND ---------------- */
+
     const draft =
       session.bondDraft
 
@@ -6891,7 +7422,9 @@ export default function InsurancePage() {
             )
       )
 
-    if (duplicate) {
+    if (
+      duplicate
+    ) {
       window.alert(
         "This bond already exists for the same surety company."
       )
@@ -6982,7 +7515,9 @@ export default function InsurancePage() {
       record
     )
 
-    setOcrSession(null)
+    setOcrSession(
+      null
+    )
   }
 
   /* =======================================================
@@ -7060,7 +7595,9 @@ export default function InsurancePage() {
             draft.expiryDate
       )
 
-    if (duplicate) {
+    if (
+      duplicate
+    ) {
       window.alert(
         "This workers insurance record already exists."
       )
@@ -7179,7 +7716,9 @@ export default function InsurancePage() {
             )
       )
 
-    if (duplicate) {
+    if (
+      duplicate
+    ) {
       window.alert(
         "This bond already exists for the same surety company."
       )
@@ -7270,11 +7809,15 @@ export default function InsurancePage() {
   ======================================================= */
 
   const updateBrokerGroup = (
-    groupId: string,
+    groupId:
+      string,
 
     broker:
       BrokerReference
   ) => {
+    const updatedAt =
+      isoNow()
+
     setData(
       (current) => ({
         ...current,
@@ -7289,8 +7832,7 @@ export default function InsurancePage() {
 
                     broker,
 
-                    updatedAt:
-                      isoNow(),
+                    updatedAt,
                   }
                 : record
           ),
@@ -7308,8 +7850,7 @@ export default function InsurancePage() {
 
         broker,
 
-        updatedAt:
-          isoNow(),
+        updatedAt,
       })
     }
 
@@ -7323,16 +7864,20 @@ export default function InsurancePage() {
   ======================================================= */
 
   const archiveRecord = (
-    family: RecordFamily,
+    family:
+      RecordFamily,
 
-    id: string
+    id:
+      string
   ) => {
     const reason =
       window.prompt(
         "Archive reason:"
       )
 
-    if (!reason?.trim()) {
+    if (
+      !reason?.trim()
+    ) {
       return
     }
 
@@ -7461,10 +8006,12 @@ export default function InsurancePage() {
   }
 
   /* =======================================================
-     LOADING
+     LOADING / MISSING COMPANY
   ======================================================= */
 
-  if (loading) {
+  if (
+    loading
+  ) {
     return (
       <div className="flex min-h-[300px] items-center justify-center">
         <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -7472,7 +8019,9 @@ export default function InsurancePage() {
     )
   }
 
-  if (!company) {
+  if (
+    !company
+  ) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Building2 className="size-10 text-muted-foreground/40" />
@@ -7631,7 +8180,7 @@ export default function InsurancePage() {
         </div>
 
         {/* =================================================
-            STATUS
+            EXPIRY STATUS
         ================================================= */}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -7687,13 +8236,13 @@ export default function InsurancePage() {
         </div>
 
         {/* =================================================
-            WORKSPACE
+            MAIN WORKSPACE
         ================================================= */}
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
           <div className="space-y-6">
             {/* =============================================
-                TRANSPORTATION
+                TRANSPORTATION INSURANCE
             ============================================= */}
 
             <Card className="overflow-visible">
@@ -7707,7 +8256,7 @@ export default function InsurancePage() {
                     </CardTitle>
 
                     <CardDescription className="mt-1 text-xs">
-                      One COI can create several insurer and policy records.
+                      One COI can create multiple insurer and policy records.
                     </CardDescription>
                   </div>
 
@@ -7755,7 +8304,7 @@ export default function InsurancePage() {
                     </p>
 
                     <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-muted-foreground">
-                      Scan the current COI or add the active insurance record manually.
+                      Scan the current COI or add the active insurance information manually.
                     </p>
                   </div>
                 ) : (
@@ -7794,7 +8343,7 @@ export default function InsurancePage() {
             </Card>
 
             {/* =============================================
-                WORKERS
+                WORKERS INSURANCE
             ============================================= */}
 
             <Card className="overflow-visible">
@@ -7891,7 +8440,7 @@ export default function InsurancePage() {
             </Card>
 
             {/* =============================================
-                BONDS
+                SURETY BONDS
             ============================================= */}
 
             <Card className="overflow-visible">
@@ -7989,7 +8538,7 @@ export default function InsurancePage() {
           </div>
 
           {/* ===============================================
-              INSPECTOR
+              RIGHT SIDE RECORD DETAILS
           =============================================== */}
 
           <div className="xl:sticky xl:top-6">
@@ -8017,7 +8566,7 @@ export default function InsurancePage() {
         </div>
 
         {/* =================================================
-            INTEGRITY
+            ARCHITECTURE NOTE
         ================================================= */}
 
         <Card className="border-dashed bg-muted/10">
@@ -8031,7 +8580,7 @@ export default function InsurancePage() {
                 </p>
 
                 <p className="mt-1 max-w-5xl text-xs leading-5 text-muted-foreground">
-                  OCR and manual entry create the same underlying record structure. Insurers, brokers and broker contacts are resolved against existing TES identities before new records are created. Broker contacts belong to their broker organization and can be reused across every customer they handle. Records are archived rather than deleted.
+                  OCR and manual entry create the same structured records. Insurance companies and broker companies are resolved against the Companies registry before creation. Broker contacts exist once in the global Contacts registry and belong to their broker organization, allowing the same person to support multiple TES clients without duplicate contact records. Insurance records reference those existing identities rather than recreating them.
                 </p>
               </div>
             </div>
@@ -8040,7 +8589,7 @@ export default function InsurancePage() {
       </div>
 
       {/* ===================================================
-          SOURCE PICKER
+          DOCUMENT SOURCE
       =================================================== */}
 
       {sourceFamily && (
@@ -8126,7 +8675,7 @@ export default function InsurancePage() {
       )}
 
       {/* ===================================================
-          MANUAL
+          MANUAL ENTRY
       =================================================== */}
 
       {manualFamily && (
@@ -8183,7 +8732,7 @@ export default function InsurancePage() {
         )}
 
       {/* ===================================================
-          DEVICE INPUT
+          DEVICE UPLOAD
       =================================================== */}
 
       <input
@@ -8202,7 +8751,9 @@ export default function InsurancePage() {
           event.target.value =
             ""
 
-          if (!file) return
+          if (!file) {
+            return
+          }
 
           await processDocument(
             file,
@@ -8229,15 +8780,19 @@ function migrateLegacyRecords(
       transportation:
         [],
 
-      workers: [],
+      workers:
+        [],
 
-      bonds: [],
+      bonds:
+        [],
 
-      evidence: [],
+      evidence:
+        [],
     }
 
   for (
-    const record of legacy
+    const record of
+    legacy
   ) {
     const timestamp =
       record.createdAt ||
@@ -8245,8 +8800,11 @@ function migrateLegacyRecords(
 
     const type =
       String(
-        record.type || ""
+        record.type ||
+          ""
       )
+
+    /* ---------------- WORKERS ---------------- */
 
     if (
       [
@@ -8255,12 +8813,16 @@ function migrateLegacyRecords(
         "Workers Compensation",
         "Occupational Accident",
         "Employer Liability",
-      ].includes(type)
+      ].includes(
+        type
+      )
     ) {
       migrated.workers.push({
         id:
           record.id ||
-          createId("WCB"),
+          createId(
+            "WCB"
+          ),
 
         family:
           "workers",
@@ -8329,10 +8891,14 @@ function migrateLegacyRecords(
       continue
     }
 
+    /* ---------------- BONDS ---------------- */
+
     if (
-      type.toLowerCase().includes(
-        "bond"
-      ) ||
+      type
+        .toLowerCase()
+        .includes(
+          "bond"
+        ) ||
       type.includes(
         "BMC-84"
       ) ||
@@ -8343,7 +8909,9 @@ function migrateLegacyRecords(
       migrated.bonds.push({
         id:
           record.id ||
-          createId("BND"),
+          createId(
+            "BND"
+          ),
 
         family:
           "bond",
@@ -8398,13 +8966,19 @@ function migrateLegacyRecords(
       continue
     }
 
+    /* ---------------- TRANSPORTATION ---------------- */
+
     migrated.transportation.push({
       id:
         record.id ||
-        createId("INS"),
+        createId(
+          "INS"
+        ),
 
       groupId:
-        createId("COI"),
+        createId(
+          "COI"
+        ),
 
       family:
         "transportation",
@@ -8416,7 +8990,7 @@ function migrateLegacyRecords(
       canonicalType:
         normalizeInsuranceType(
           type ||
-            "Other"
+          "Other"
         ),
 
       insurerName:

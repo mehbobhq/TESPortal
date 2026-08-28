@@ -9,8 +9,6 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
-  Copy,
-  Eye,
   FileText,
   Landmark,
   Loader2,
@@ -18,7 +16,6 @@ import {
   Plus,
   Receipt,
   RefreshCcw,
-  ScanLine,
   Settings2,
   Upload,
   X,
@@ -229,6 +226,7 @@ type TaxDefinition = {
   defaultFrequency: FilingFrequency
   accountLabel: string
   accountRequired: boolean
+  companyField?: string
   historicalOnly?: boolean
 }
 
@@ -261,8 +259,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Quarterly fuel-tax reporting for applicable interstate / cross-border operations.",
     frequencyOptions: ["quarterly"],
     defaultFrequency: "quarterly",
-    accountLabel: "IFTA Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accIfta",
   },
   {
     code: "ct_huf",
@@ -272,8 +271,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Connecticut highway-use filing obligation for applicable carriers.",
     frequencyOptions: ["quarterly"],
     defaultFrequency: "quarterly",
-    accountLabel: "Connecticut Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accCt",
   },
   {
     code: "ny_hut",
@@ -283,8 +283,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Current filing frequency is company-specific and can move between quarterly and annual.",
     frequencyOptions: ["quarterly", "annual"],
     defaultFrequency: "quarterly",
-    accountLabel: "NY HUT Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accNyhut",
   },
   {
     code: "kyu",
@@ -294,8 +295,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Kentucky weight-distance filing obligation for applicable carriers.",
     frequencyOptions: ["quarterly"],
     defaultFrequency: "quarterly",
-    accountLabel: "KYU Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accKyu",
   },
   {
     code: "nm_wdt",
@@ -305,8 +307,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "New Mexico weight-distance filing obligation for applicable carriers.",
     frequencyOptions: ["quarterly"],
     defaultFrequency: "quarterly",
-    accountLabel: "New Mexico Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accNm",
   },
   {
     code: "or_wmt",
@@ -316,8 +319,9 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Current company frequency may be monthly or quarterly.",
     frequencyOptions: ["monthly", "quarterly"],
     defaultFrequency: "monthly",
-    accountLabel: "Oregon Account Number",
+    accountLabel: "Account Number",
     accountRequired: true,
+    companyField: "accOr",
   },
   {
     code: "form_2290",
@@ -327,7 +331,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Annual tax-period filing with event-based first-use obligations.",
     frequencyOptions: ["annual", "event-based"],
     defaultFrequency: "annual",
-    accountLabel: "EIN / Account Number",
+    accountLabel: "EIN / Filing Account Reference",
     accountRequired: false,
   },
   {
@@ -372,7 +376,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Ontario tobacco tax filing obligation for applicable interjurisdictional transport activity.",
     frequencyOptions: ["monthly"],
     defaultFrequency: "monthly",
-    accountLabel: "Ontario Tobacco Tax Account Number",
+    accountLabel: "Ontario Tobacco Tax Account / Permit Number",
     accountRequired: true,
   },
 ]
@@ -435,6 +439,61 @@ function getTaxApplicability(companyId: string, taxCode: TaxCode): RuleValue {
   return settings.rules?.[taxCode] ?? "not-configured"
 }
 
+function normalizeAccountNumber(value: string) {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
+}
+
+function getCompanyAccountNumber(company: Company, definition: TaxDefinition) {
+  if (!definition.companyField) return ""
+  const value = company[definition.companyField]
+  return typeof value === "string" || typeof value === "number" ? String(value) : ""
+}
+
+function updateCanonicalCompanyAccount(companyId: string, definition: TaxDefinition, accountNumber: string) {
+  if (!definition.companyField) return
+
+  try {
+    const companies = readCompanies()
+    const nextCompanies = companies.map((item) =>
+      item.id === companyId
+        ? { ...item, [definition.companyField!]: accountNumber.trim() }
+        : item
+    )
+    localStorage.setItem("tes_companies", JSON.stringify(nextCompanies))
+  } catch {
+    // Tax Filing remains the local fallback if the company store cannot be updated.
+  }
+}
+
+function findGlobalAccountConflict(companyId: string, taxCode: TaxCode, accountNumber: string) {
+  const normalized = normalizeAccountNumber(accountNumber)
+  if (!normalized) return undefined
+
+  const definition = getDefinition(taxCode)
+  const companies = readCompanies()
+
+  for (const otherCompany of companies) {
+    if (otherCompany.id === companyId) continue
+    const otherValue = getCompanyAccountNumber(otherCompany, definition)
+    if (normalizeAccountNumber(otherValue) === normalized) return otherCompany
+  }
+
+  for (const otherCompany of companies) {
+    if (otherCompany.id === companyId) continue
+    const otherData = loadTaxData(otherCompany.id)
+    const conflict = otherData.profiles.find(
+      (profile) =>
+        profile.taxCode === taxCode &&
+        profile.accountStatus !== "Closed" &&
+        profile.accountStatus !== "Inactive" &&
+        normalizeAccountNumber(profile.accountNumber || "") === normalized
+    )
+    if (conflict) return otherCompany
+  }
+
+  return undefined
+}
+
 function loadTaxData(companyId: string): TaxData {
   try {
     const raw = localStorage.getItem(`${TAX_STORAGE_PREFIX}${companyId}`)
@@ -456,119 +515,6 @@ function loadTaxData(companyId: string): TaxData {
 
 function saveTaxData(companyId: string, data: TaxData) {
   localStorage.setItem(`${TAX_STORAGE_PREFIX}${companyId}`, JSON.stringify(data))
-}
-
-
-function normalizeIdentifier(value?: string) {
-  return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
-}
-
-function profileAccountField(code: TaxCode) {
-  const map: Record<TaxCode, string> = {
-    ifta: "iftaAccountNumber",
-    ct_huf: "ctHufAccountNumber",
-    ny_hut: "nyHutAccountNumber",
-    kyu: "kyuAccountNumber",
-    nm_wdt: "nmWdtAccountNumber",
-    or_wmt: "oregonAccountNumber",
-    form_2290: "ein",
-    fuel_charge_registration: "fuelChargeRegistrationNumber",
-    texas_excise_tax: "texasExciseTaxAccountNumber",
-    arkansas_motor_fuel_tax: "arkansasMotorFuelTaxAccountNumber",
-    ontario_tobacco_tax: "ontarioTobaccoTaxAccountNumber",
-  }
-  return map[code]
-}
-
-function readAccountFromCompany(company: Company | null, code: TaxCode) {
-  if (!company) return ""
-  const canonical = company.taxAccounts?.[code]?.accountNumber
-  if (canonical) return String(canonical)
-
-  const field = profileAccountField(code)
-  const direct = company[field]
-  if (direct) return String(direct)
-
-  // Conservative legacy aliases only. These are read-only migration fallbacks.
-  const aliases: Partial<Record<TaxCode, string[]>> = {
-    ifta: ["iftaAccount", "iftaNumber", "iftaLicenseNumber", "iftaLicenceNumber"],
-    ny_hut: ["nyHutAccount", "nyHutNumber"],
-    kyu: ["kyuAccount", "kyuNumber"],
-    nm_wdt: ["nmWdtAccount", "newMexicoAccountNumber"],
-    or_wmt: ["oregonAccount", "oregonWmtAccountNumber"],
-    ct_huf: ["ctHufAccount", "connecticutHufAccountNumber"],
-  }
-
-  for (const alias of aliases[code] || []) {
-    if (company[alias]) return String(company[alias])
-  }
-
-  return ""
-}
-
-function syncAccountToCompany(companyId: string, code: TaxCode, accountNumber?: string) {
-  const companies = readCompanies()
-  const index = companies.findIndex((item) => item.id === companyId)
-  if (index < 0) return
-
-  const company = { ...companies[index] }
-  const clean = (accountNumber || "").trim()
-  const field = profileAccountField(code)
-
-  company[field] = clean
-  company.taxAccounts = {
-    ...(company.taxAccounts || {}),
-    [code]: {
-      ...(company.taxAccounts?.[code] || {}),
-      accountNumber: clean,
-      updatedAt: isoNow(),
-    },
-  }
-
-  companies[index] = company
-  localStorage.setItem("tes_companies", JSON.stringify(companies))
-}
-
-function findDuplicateTaxAccount(
-  currentCompanyId: string,
-  taxCode: TaxCode,
-  accountNumber?: string
-) {
-  const normalized = normalizeIdentifier(accountNumber)
-  if (!normalized) return null
-
-  for (const otherCompany of readCompanies()) {
-    if (otherCompany.id === currentCompanyId) continue
-    const other = normalizeIdentifier(readAccountFromCompany(otherCompany, taxCode))
-    if (other && other === normalized) {
-      return { companyId: otherCompany.id, companyName: otherCompany.name }
-    }
-  }
-
-  // Also inspect the tax-profile stores so a stale profile cannot bypass the guard.
-  for (const otherCompany of readCompanies()) {
-    if (otherCompany.id === currentCompanyId) continue
-    const otherData = loadTaxData(otherCompany.id)
-    const profile = otherData.profiles.find((item) => item.taxCode === taxCode)
-    if (
-      profile?.accountNumber &&
-      normalizeIdentifier(profile.accountNumber) === normalized
-    ) {
-      return { companyId: otherCompany.id, companyName: otherCompany.name }
-    }
-  }
-
-  return null
-}
-
-function isWithinVisibleEvidenceWindow(document: TaxDocument) {
-  const raw = document.documentDate || document.uploadedAt.slice(0, 10)
-  if (!raw) return true
-  const date = parseDate(raw)
-  if (Number.isNaN(date.getTime())) return true
-  const cutoff = new Date()
-  cutoff.setFullYear(cutoff.getFullYear() - 3)
-  return date >= cutoff
 }
 
 function parseDate(value: string) {
@@ -664,6 +610,16 @@ function getCurrentAssignment(profile: TaxProfile) {
   )[0]
 }
 
+function getFrequencyAssignmentForDate(profile: TaxProfile, date: string) {
+  return [...profile.frequencyHistory]
+    .filter((assignment) => assignment.effectiveFrom <= date)
+    .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]
+}
+
+function getFrequencyForDate(profile: TaxProfile, date: string) {
+  return getFrequencyAssignmentForDate(profile, date)?.frequency || profile.filingFrequency
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -688,127 +644,104 @@ function DocumentViewer({
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const dragRef = useRef({ active: false, x: 0, y: 0 })
   const isPdf = document.mimeType === "application/pdf"
-  const watermark = `TES • VIEW ONLY • ${new Date().toLocaleString()}`
-
-  const resetView = () => {
-    setZoom(1)
-    setPan({ x: 0, y: 0 })
-  }
 
   return (
     <div
-      className="fixed inset-0 z-[180] flex flex-col bg-background"
+      className="fixed inset-0 z-[180] flex items-center justify-center bg-black/45 p-4 sm:p-6"
       role="dialog"
       aria-modal="true"
-      aria-label={`View ${document.fileName}`}
-      onContextMenu={(event) => event.preventDefault()}
+      aria-label={`Document viewer: ${document.fileName}`}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
     >
-      <div className="flex min-h-14 items-center justify-between border-b bg-background/95 px-4 backdrop-blur">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">TES Evidence Viewer</p>
-          <p className="max-w-[650px] truncate text-[10px] text-muted-foreground">
-            {document.fileName} · View only
-          </p>
+      <div className="flex h-[min(92vh,900px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
+        <div className="flex min-h-14 items-center justify-between border-b px-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">Document Viewer</p>
+            <p className="max-w-[650px] truncate text-[10px] text-muted-foreground">
+              {document.fileName} · {document.documentType}
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            {!isPdf && (
+              <>
+                <Button variant="ghost" size="icon" aria-label="Zoom out" onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))}>
+                  <ZoomOut className="size-4" />
+                </Button>
+                <span className="w-12 text-center text-[10px]">{Math.round(zoom * 100)}%</span>
+                <Button variant="ghost" size="icon" aria-label="Zoom in" onClick={() => setZoom((current) => Math.min(5, current + 0.25))}>
+                  <ZoomIn className="size-4" />
+                </Button>
+              </>
+            )}
+            <Button variant="ghost" size="icon" aria-label="Close document viewer" onClick={onClose}>
+              <X className="size-4" />
+            </Button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1">
-          {!isPdf && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                title="Zoom out"
-                onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))}
-              >
-                <ZoomOut className="size-4" />
-              </Button>
-              <span className="w-12 text-center text-[10px]">
-                {Math.round(zoom * 100)}%
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                title="Zoom in"
-                onClick={() => setZoom((current) => Math.min(5, current + 0.25))}
-              >
-                <ZoomIn className="size-4" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={resetView}>
-                Reset
-              </Button>
-            </>
-          )}
-
-          <Button variant="ghost" size="icon" title="Close viewer" onClick={onClose}>
-            <X className="size-4" />
-          </Button>
-        </div>
-      </div>
-
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/20">
-        {isPdf ? (
-          <iframe
-            // Browser PDF engines differ. The toolbar fragment hides native controls
-            // where supported; production should replace this iframe with the shared
-            // TES PDF renderer (PDF.js/canvas) for enforceable UI-level control.
-            src={`${document.dataUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
-            title={document.fileName}
-            className="absolute inset-0 h-full w-full border-0"
-          />
-        ) : (
-          <div
-            className="absolute inset-0 flex cursor-grab items-center justify-center overflow-hidden p-5 active:cursor-grabbing"
-            style={{ touchAction: "none" }}
-            onPointerDown={(event) => {
-              dragRef.current = { active: true, x: event.clientX, y: event.clientY }
-              event.currentTarget.setPointerCapture(event.pointerId)
-            }}
-            onPointerMove={(event) => {
-              if (!dragRef.current.active) return
-              const dx = event.clientX - dragRef.current.x
-              const dy = event.clientY - dragRef.current.y
-              dragRef.current.x = event.clientX
-              dragRef.current.y = event.clientY
-              setPan((current) => ({ x: current.x + dx, y: current.y + dy }))
-            }}
-            onPointerUp={() => {
-              dragRef.current.active = false
-            }}
-            onPointerCancel={() => {
-              dragRef.current.active = false
-            }}
-          >
-            <img
-              src={document.dataUrl}
-              alt={document.fileName}
-              draggable={false}
-              className="max-h-full max-w-full select-none object-contain shadow-sm"
-              style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                transformOrigin: "center center",
+        <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/15">
+          {isPdf ? (
+            <div className="flex h-full items-center justify-center p-8 text-center">
+              <div className="max-w-md rounded-xl border bg-background p-6 shadow-sm">
+                <FileText className="mx-auto size-10 text-primary/70" />
+                <p className="mt-4 text-sm font-semibold">PDF document</p>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  This document is kept inside the TES evidence viewer. Native browser PDF controls,
+                  download, print, save-as and fullscreen actions are intentionally unavailable.
+                </p>
+                <p className="mt-3 text-[10px] text-muted-foreground">
+                  Connect the portal PDF.js renderer here when PDF.js is installed; the Tax Filing data model does not need to change.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="absolute inset-0 flex cursor-grab items-center justify-center overflow-hidden p-5 active:cursor-grabbing"
+              style={{ touchAction: "none" }}
+              onPointerDown={(event) => {
+                dragRef.current = { active: true, x: event.clientX, y: event.clientY }
+                event.currentTarget.setPointerCapture(event.pointerId)
               }}
-            />
-          </div>
-        )}
-
-        {/* Universal dense watermark overlay. Pointer-events remain disabled so the
-            document can still be inspected/panned. This discourages clean reuse of
-            screenshots without blocking legitimate internal review. */}
-        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden select-none">
-          <div className="absolute -inset-[20%] grid rotate-[-24deg] grid-cols-3 gap-x-10 gap-y-16 opacity-[0.13]">
-            {Array.from({ length: 42 }).map((_, index) => (
-              <span
-                key={index}
-                className="whitespace-nowrap text-[11px] font-semibold tracking-[0.14em] text-foreground"
-              >
-                {watermark}
-              </span>
-            ))}
-          </div>
+              onPointerMove={(event) => {
+                if (!dragRef.current.active) return
+                const dx = event.clientX - dragRef.current.x
+                const dy = event.clientY - dragRef.current.y
+                dragRef.current.x = event.clientX
+                dragRef.current.y = event.clientY
+                setPan((current) => ({ x: current.x + dx, y: current.y + dy }))
+              }}
+              onPointerUp={() => { dragRef.current.active = false }}
+              onPointerCancel={() => { dragRef.current.active = false }}
+              onWheel={(event) => {
+                if (event.ctrlKey || event.metaKey) {
+                  event.preventDefault()
+                  setZoom((current) => Math.min(5, Math.max(0.5, current + (event.deltaY < 0 ? 0.1 : -0.1))))
+                }
+              }}
+            >
+              <div className="relative max-h-full max-w-full">
+                <img
+                  src={document.dataUrl}
+                  alt={document.fileName}
+                  draggable={false}
+                  className="max-h-[calc(92vh-100px)] max-w-full select-none object-contain shadow-sm"
+                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center" }}
+                />
+                <div aria-hidden="true" className="pointer-events-none absolute inset-0 select-none overflow-hidden opacity-30" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center" }}>
+                  <div className="grid h-full w-full grid-cols-2 grid-rows-4 gap-8 p-8 text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-foreground/70 sm:text-xs">
+                    {Array.from({ length: 8 }).map((_, index) => (
+                      <span key={index} className="flex rotate-[-24deg] items-center justify-center">TES · CONTROLLED VIEW · {document.fileName}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-
-        <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/85 px-3 py-1 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
-          Internal evidence view · Printing, downloading and browser fullscreen are intentionally not exposed
+        <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
+          Controlled evidence view · Normal access does not expose download, print or fullscreen controls.
         </div>
       </div>
     </div>
@@ -823,10 +756,12 @@ function TaxProfileForm({
   profile,
   definition,
   onChange,
+  readOnly = false,
 }: {
   profile: TaxProfile
   definition: TaxDefinition
   onChange: (profile: TaxProfile) => void
+  readOnly?: boolean
 }) {
   const patch = (value: Partial<TaxProfile>) => {
     onChange({ ...profile, ...value, updatedAt: isoNow() })
@@ -846,11 +781,11 @@ function TaxProfileForm({
 
       <div className="space-y-2">
         <Label>
-          {definition.accountLabel}
-          {definition.accountRequired ? " *" : ""}
+          Account Number{definition.accountRequired ? " *" : ""}
         </Label>
         <Input
           value={profile.accountNumber || ""}
+          readOnly={readOnly}
           onChange={(event) => patch({ accountNumber: event.target.value })}
         />
       </div>
@@ -858,6 +793,7 @@ function TaxProfileForm({
       <div className="space-y-2">
         <Label>Account Status *</Label>
         <Select
+          disabled={readOnly}
           value={profile.accountStatus}
           onValueChange={(value) =>
             patch({ accountStatus: value as TaxProfileStatus })
@@ -875,24 +811,12 @@ function TaxProfileForm({
       </div>
 
       <div className="space-y-2">
-        <Label>Filing Frequency *</Label>
-        <Select
-          value={profile.filingFrequency}
-          onValueChange={(value) =>
-            patch({ filingFrequency: value as FilingFrequency })
-          }
-        >
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {definition.frequencyOptions.map((frequency) => (
-              <SelectItem key={frequency} value={frequency}>
-                {formatFrequency(frequency)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Label>Filing Frequency</Label>
+        <div className="flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm">
+          {formatFrequency(profile.filingFrequency)}
+        </div>
         <p className="text-[10px] leading-4 text-muted-foreground">
-          Current frequency in force for this company.
+          Current frequency in force. Change it through Frequency History so prior filing periods remain unchanged.
         </p>
       </div>
 
@@ -900,6 +824,7 @@ function TaxProfileForm({
         <Label>Effective Date</Label>
         <Input
           type="date"
+          readOnly={readOnly}
           value={profile.effectiveDate || ""}
           onChange={(event) => patch({ effectiveDate: event.target.value })}
         />
@@ -909,6 +834,7 @@ function TaxProfileForm({
         <Label>Closure Date</Label>
         <Input
           type="date"
+          readOnly={readOnly}
           value={profile.closureDate || ""}
           onChange={(event) => patch({ closureDate: event.target.value })}
         />
@@ -917,6 +843,7 @@ function TaxProfileForm({
       <div className="space-y-2">
         <Label>Verification Source</Label>
         <Select
+          disabled={readOnly}
           value={profile.verificationSource || undefined}
           onValueChange={(value) =>
             patch({ verificationSource: value as VerificationSource })
@@ -938,6 +865,7 @@ function TaxProfileForm({
         <Label>Verification Reference</Label>
         <Input
           value={profile.verificationReference || ""}
+          readOnly={readOnly}
           onChange={(event) =>
             patch({ verificationReference: event.target.value })
           }
@@ -948,6 +876,7 @@ function TaxProfileForm({
         <Label>Last Verified Date</Label>
         <Input
           type="date"
+          readOnly={readOnly}
           value={profile.lastVerifiedDate || ""}
           onChange={(event) => patch({ lastVerifiedDate: event.target.value })}
         />
@@ -957,6 +886,7 @@ function TaxProfileForm({
         <Label>Last Verified By</Label>
         <Input
           value={profile.lastVerifiedBy || ""}
+          readOnly={readOnly}
           onChange={(event) => patch({ lastVerifiedBy: event.target.value })}
         />
       </div>
@@ -965,6 +895,7 @@ function TaxProfileForm({
         <Label>Notes</Label>
         <Input
           value={profile.notes || ""}
+          readOnly={readOnly}
           onChange={(event) => patch({ notes: event.target.value })}
         />
       </div>
@@ -1282,7 +1213,7 @@ export default function TaxFilingsPage() {
   const [selectedTaxCode, setSelectedTaxCode] = useState<TaxCode | null>(null)
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
   const [profileDraft, setProfileDraft] = useState<TaxProfile | null>(null)
-  const [profileMode, setProfileMode] = useState<"view" | "edit">("view")
+  const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [showFrequencyForm, setShowFrequencyForm] = useState(false)
   const [selectedObligationId, setSelectedObligationId] = useState<string | null>(null)
   const [editingSubmission, setEditingSubmission] = useState<FilingSubmission | undefined>(undefined)
@@ -1296,21 +1227,22 @@ export default function TaxFilingsPage() {
   } | null>(null)
   const [previewDocument, setPreviewDocument] = useState<TaxDocument | null>(null)
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear())
+  const autoGeneratedRef = useRef(false)
 
   useEffect(() => {
     const found = readCompanies().find((item) => item.id === companyId)
     setCompany(found || null)
-    const loaded = loadTaxData(companyId)
-    if (found) {
-      loaded.profiles = loaded.profiles.map((profile) => ({
-        ...profile,
-        accountNumber:
-          profile.accountNumber || readAccountFromCompany(found, profile.taxCode) || "",
-      }))
-    }
-    setData(loaded)
+    setData(loadTaxData(companyId))
     setLoading(false)
   }, [companyId])
+
+  useEffect(() => {
+    if (loading || !companyId || autoGeneratedRef.current) return
+    autoGeneratedRef.current = true
+
+    const activeProfiles = data.profiles.filter((profile) => profile.accountStatus === "Active")
+    activeProfiles.forEach((profile) => generateObligations(profile, new Date().getFullYear()))
+  }, [loading, companyId, data.profiles])
 
   useEffect(() => {
     if (!loading) saveTaxData(companyId, data)
@@ -1348,38 +1280,47 @@ export default function TaxFilingsPage() {
     const existing = profileByCode(taxCode)
 
     if (existing) {
-      const companyAccount = readAccountFromCompany(company, taxCode)
+      const canonicalAccount = getCompanyAccountNumber(company || {}, definition)
       const hydrated = {
         ...existing,
-        accountNumber: existing.accountNumber || companyAccount || "",
+        accountNumber: canonicalAccount || existing.accountNumber || undefined,
         frequencyHistory: [...existing.frequencyHistory],
       }
       setSelectedProfileId(existing.id)
       setProfileDraft(hydrated)
       setSelectedTaxCode(taxCode)
-      setProfileMode("view")
+      setIsEditingProfile(false)
       return
     }
 
     const now = isoNow()
+    const canonicalAccount = getCompanyAccountNumber(company || {}, definition)
+    const initialFrequency: FrequencyAssignment = {
+      id: createId("FREQ"),
+      frequency: definition.defaultFrequency,
+      effectiveFrom: todayISO(),
+      assignmentType: "Regulatory Default",
+      source: "",
+      createdAt: now,
+    }
     const draft: TaxProfile = {
       id: createId("TAX"),
       taxCode,
+      accountNumber: canonicalAccount || undefined,
       accountStatus: "Pending",
       filingFrequency: definition.defaultFrequency,
-      frequencyHistory: [],
-      effectiveDate: "",
+      frequencyHistory: [initialFrequency],
+      effectiveDate: todayISO(),
       closureDate: "",
       verificationSource: "",
       createdAt: now,
       updatedAt: now,
     }
 
-    draft.accountNumber = readAccountFromCompany(company, taxCode)
     setSelectedTaxCode(taxCode)
     setSelectedProfileId(draft.id)
     setProfileDraft(draft)
-    setProfileMode("edit")
+    setIsEditingProfile(true)
   }
 
   const saveProfile = () => {
@@ -1387,60 +1328,71 @@ export default function TaxFilingsPage() {
 
     const definition = getDefinition(profileDraft.taxCode)
     if (definition.accountRequired && !profileDraft.accountNumber?.trim()) {
-      window.alert(`${definition.accountLabel} is required.`)
+      window.alert("Account Number is required.")
       return
     }
 
-    const duplicate = findDuplicateTaxAccount(
-      companyId,
-      profileDraft.taxCode,
-      profileDraft.accountNumber
+    const conflict = profileDraft.accountNumber
+      ? findGlobalAccountConflict(companyId, profileDraft.taxCode, profileDraft.accountNumber)
+      : undefined
+    if (conflict) {
+      window.alert(`This Account Number is already associated with another company (${conflict.name}). The record was not saved.`)
+      return
+    }
+
+    const profileToSave: TaxProfile = {
+      ...profileDraft,
+      frequencyHistory:
+        profileDraft.frequencyHistory.length > 0
+          ? profileDraft.frequencyHistory
+          : [{
+              id: createId("FREQ"),
+              frequency: profileDraft.filingFrequency,
+              effectiveFrom: profileDraft.effectiveDate || todayISO(),
+              assignmentType: "Manual Override",
+              source: "",
+              createdAt: isoNow(),
+            }],
+      updatedAt: isoNow(),
+    }
+
+    updateCanonicalCompanyAccount(companyId, definition, profileToSave.accountNumber || "")
+    setCompany((current) =>
+      current && definition.companyField
+        ? { ...current, [definition.companyField]: profileToSave.accountNumber || "" }
+        : current
     )
-    if (duplicate) {
-      window.alert(
-        `Duplicate blocked: this ${definition.shortName} account number is already linked to ${duplicate.companyName}. TES will not create a second canonical record.`
-      )
-      return
-    }
 
-    const existing = data.profiles.some((profile) => profile.id === profileDraft.id)
+    const existing = data.profiles.some((profile) => profile.id === profileToSave.id)
 
     setData((current) => ({
       ...current,
       profiles: existing
         ? current.profiles.map((profile) =>
             profile.id === profileDraft.id
-              ? { ...profileDraft, updatedAt: isoNow() }
+              ? profileToSave
               : profile
           )
-        : [{ ...profileDraft, updatedAt: isoNow() }, ...current.profiles],
+        : [profileToSave, ...current.profiles],
     }))
 
-    syncAccountToCompany(companyId, profileDraft.taxCode, profileDraft.accountNumber)
-    setCompany((current) =>
-      current
-        ? {
-            ...current,
-            [profileAccountField(profileDraft.taxCode)]: profileDraft.accountNumber || "",
-            taxAccounts: {
-              ...(current.taxAccounts || {}),
-              [profileDraft.taxCode]: {
-                ...(current.taxAccounts?.[profileDraft.taxCode] || {}),
-                accountNumber: profileDraft.accountNumber || "",
-                updatedAt: isoNow(),
-              },
-            },
-          }
-        : current
-    )
-    setProfileMode("view")
-    setShowFrequencyForm(false)
+    setSelectedProfileId(profileToSave.id)
+    setProfileDraft(profileToSave)
+    setIsEditingProfile(false)
+
+    if (profileToSave.accountStatus === "Active") {
+      generateObligations(profileToSave, new Date().getFullYear())
+    }
   }
 
   const addFrequencyAssignment = (assignment: FrequencyAssignment) => {
     if (!profileDraft) return
 
     const history = [...profileDraft.frequencyHistory]
+    if (history.some((item) => item.effectiveFrom === assignment.effectiveFrom)) {
+      window.alert("A frequency assignment already exists for this effective date.")
+      return
+    }
     const previous = [...history]
       .filter((item) => item.effectiveFrom < assignment.effectiveFrom)
       .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]
@@ -1464,50 +1416,46 @@ export default function TaxFilingsPage() {
   const generateObligations = (profile: TaxProfile, year: number) => {
     if (profile.accountStatus === "Closed" || profile.accountStatus === "Inactive") return
 
-    if (
-      profile.filingFrequency === "historical-only" ||
-      profile.filingFrequency === "event-based" ||
-      profile.filingFrequency === "not-set"
-    ) {
-      window.alert(
-        `${formatFrequency(profile.filingFrequency)} obligations are not auto-generated. Add the specific period manually when required.`
-      )
-      return
-    }
-
-    const currentAssignment = getCurrentAssignment(profile)
-    const periods: {
+    const candidates: {
       label: string
       start: string
       end: string
       nominalDue: string
       due: string
+      frequency: FilingFrequency
+      assignmentId?: string
     }[] = []
-
-    if (profile.filingFrequency === "monthly") {
-      for (let month = 0; month < 12; month++) {
-        periods.push(monthlyPeriod(year, month))
-      }
-    }
-
-    if (profile.filingFrequency === "quarterly") {
-      ;([1, 2, 3, 4] as const).forEach((quarter) =>
-        periods.push(quarterlyPeriod(year, quarter))
-      )
-    }
-
-    if (profile.filingFrequency === "annual") {
-      periods.push(annualPeriod(year))
-    }
 
     const effective = profile.effectiveDate || ""
     const closure = profile.closureDate || ""
 
-    const filtered = periods.filter((period) => {
-      if (effective && period.end < effective) return false
-      if (closure && period.start > closure) return false
-      return true
+    const addPeriod = (
+      period: { label: string; start: string; end: string; nominalDue: string; due: string },
+      frequency: FilingFrequency
+    ) => {
+      if (effective && period.end < effective) return
+      if (closure && period.start > closure) return
+      const assignment = getFrequencyAssignmentForDate(profile, period.start)
+      candidates.push({ ...period, frequency, assignmentId: assignment?.id })
+    }
+
+    // Generate the year from the effective-dated frequency history.
+    // This prevents a later frequency change from rewriting the period model.
+    for (let month = 0; month < 12; month++) {
+      const monthStart = toISODate(new Date(year, month, 1))
+      const frequency = getFrequencyForDate(profile, monthStart)
+      if (frequency === "monthly") addPeriod(monthlyPeriod(year, month), frequency)
+    }
+
+    ;([1, 2, 3, 4] as const).forEach((quarter) => {
+      const quarterStart = toISODate(new Date(year, (quarter - 1) * 3, 1))
+      const frequency = getFrequencyForDate(profile, quarterStart)
+      if (frequency === "quarterly") addPeriod(quarterlyPeriod(year, quarter), frequency)
     })
+
+    const annualFrequency = getFrequencyForDate(profile, `${year}-01-01`)
+    if (annualFrequency === "annual") addPeriod(annualPeriod(year), annualFrequency)
+
 
     setData((current) => {
       const existingKeys = new Set(
@@ -1517,33 +1465,27 @@ export default function TaxFilingsPage() {
       )
 
       const now = isoNow()
-      const newItems = filtered
-        .filter(
-          (period) => !existingKeys.has(`${period.start}|${period.end}`)
-        )
-        .map(
-          (period): FilingObligation => ({
-            id: createId("OBL"),
-            taxProfileId: profile.id,
-            taxCode: profile.taxCode,
-            frequencySnapshot: profile.filingFrequency,
-            reportingPeriodLabel: period.label,
-            reportingPeriodStart: period.start,
-            reportingPeriodEnd: period.end,
-            nominalDueDate: period.nominalDue,
-            dueDate: period.due,
-            status: "Not Started",
-            profileUpdatedAtSnapshot: profile.updatedAt,
-            frequencyAssignmentId: currentAssignment?.id,
-            createdAt: now,
-            updatedAt: now,
-          })
-        )
+      const newItems = candidates
+        .filter((period) => !existingKeys.has(`${period.start}|${period.end}`))
+        .map((period): FilingObligation => ({
+          id: createId("OBL"),
+          taxProfileId: profile.id,
+          taxCode: profile.taxCode,
+          frequencySnapshot: period.frequency,
+          reportingPeriodLabel: period.label,
+          reportingPeriodStart: period.start,
+          reportingPeriodEnd: period.end,
+          nominalDueDate: period.nominalDue,
+          dueDate: period.due,
+          status: "Not Started",
+          profileUpdatedAtSnapshot: profile.updatedAt,
+          frequencyAssignmentId: period.assignmentId,
+          createdAt: now,
+          updatedAt: now,
+        }))
 
-      return {
-        ...current,
-        obligations: [...newItems, ...current.obligations],
-      }
+      if (newItems.length === 0) return current
+      return { ...current, obligations: [...newItems, ...current.obligations] }
     })
   }
 
@@ -1869,16 +1811,16 @@ export default function TaxFilingsPage() {
                           }`}
                         >
                           <div className="md:col-span-4">
-                            <p className="text-[13px] font-semibold leading-5">{definition.name}</p>
+                            <p className="text-sm font-semibold">{definition.name}</p>
                             <p className="mt-1 text-[10px] text-muted-foreground">
                               {definition.jurisdiction}
                             </p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Account Number</p>
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Account</p>
                             <p className="mt-1 select-text font-mono text-xs">
-                              {profile?.accountNumber || "Not configured"}
+                              {getCompanyAccountNumber(company, definition) || profile?.accountNumber || "Not configured"}
                             </p>
                           </div>
 
@@ -1940,8 +1882,7 @@ export default function TaxFilingsPage() {
                           setProfileDraft(null)
                           setSelectedTaxCode(null)
                           setSelectedProfileId(null)
-                          setProfileMode("view")
-                          setShowFrequencyForm(false)
+                          setIsEditingProfile(false)
                         }}
                       >
                         <X className="size-4" />
@@ -1950,37 +1891,59 @@ export default function TaxFilingsPage() {
                   </CardHeader>
 
                   <CardContent className="space-y-5 pt-5">
-                    {profileMode === "edit" ? (
+                    {isEditingProfile ? (
                       <TaxProfileForm
                         profile={profileDraft}
                         definition={getDefinition(selectedTaxCode)}
                         onChange={setProfileDraft}
                       />
                     ) : (
-                      <TaxProfileView
-                        profile={profileDraft}
-                        definition={getDefinition(selectedTaxCode)}
-                      />
+                      <div className="space-y-5">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {[
+                            ["Tax Type", getDefinition(selectedTaxCode).name],
+                            ["Jurisdiction", getDefinition(selectedTaxCode).jurisdiction],
+                            ["Account Number", profileDraft.accountNumber || "Not configured"],
+                            ["Account Status", profileDraft.accountStatus],
+                            ["Filing Frequency", formatFrequency(profileDraft.filingFrequency)],
+                            ["Effective Date", profileDraft.effectiveDate || "—"],
+                            ["Closure Date", profileDraft.closureDate || "—"],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-lg border bg-muted/10 p-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+                              <p className={`mt-1 text-sm ${label === "Account Number" ? "select-text font-mono" : "font-medium"}`}>{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="border-t pt-5">
+                          <p className="text-xs font-semibold">Verification</p>
+                          <div className="mt-3 grid gap-4 md:grid-cols-2">
+                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Verification Source</p><p className="mt-1 text-xs font-medium">{profileDraft.verificationSource || "—"}</p></div>
+                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Verification Reference</p><p className="mt-1 select-text text-xs font-medium">{profileDraft.verificationReference || "—"}</p></div>
+                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Last Verified Date</p><p className="mt-1 text-xs font-medium">{profileDraft.lastVerifiedDate || "—"}</p></div>
+                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Last Verified By</p><p className="mt-1 text-xs font-medium">{profileDraft.lastVerifiedBy || "—"}</p></div>
+                          </div>
+                          {profileDraft.notes && <p className="mt-4 text-xs leading-5 text-muted-foreground">{profileDraft.notes}</p>}
+                        </div>
+                      </div>
                     )}
 
                     <div className="border-t pt-5">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs font-semibold">Configuration History</p>
+                          <p className="text-xs font-semibold">Filing Frequency History</p>
                           <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                             Frequency changes are effective-dated and never rewrite historical filings.
                           </p>
                         </div>
 
-                        {profileMode === "edit" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setShowFrequencyForm(true)}
-                          >
-                            <Plus className="mr-1.5 size-3.5" /> Add Change
-                          </Button>
-                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setIsEditingProfile(true); setShowFrequencyForm(true) }}
+                        >
+                          <Plus className="mr-1.5 size-3.5" /> Add Change
+                        </Button>
                       </div>
 
                       {showFrequencyForm && (
@@ -2031,37 +1994,27 @@ export default function TaxFilingsPage() {
                     </div>
 
                     <div className="border-t pt-5">
-                      <div className="flex flex-wrap gap-2">
-                        {profileMode === "edit" ? (
+                      <div className="flex gap-2">
+                        {isEditingProfile ? (
                           <>
-                            <Button className="min-w-[150px] flex-1" onClick={saveProfile}>
+                            <Button className="flex-1" onClick={saveProfile}>
                               <Check className="mr-2 size-4" /> Save Changes
                             </Button>
-                            {data.profiles.some((profile) => profile.id === profileDraft.id) && (
-                              <Button
-                                variant="outline"
-                                onClick={() => {
-                                  const saved = data.profiles.find((profile) => profile.id === profileDraft.id)
-                                  if (saved) {
-                                    setProfileDraft({
-                                      ...saved,
-                                      frequencyHistory: [...saved.frequencyHistory],
-                                    })
-                                  }
-                                  setShowFrequencyForm(false)
-                                  setProfileMode("view")
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            )}
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                if (data.profiles.some((profile) => profile.id === profileDraft.id)) {
+                                  const stored = data.profiles.find((profile) => profile.id === profileDraft.id)
+                                  if (stored) setProfileDraft({ ...stored, frequencyHistory: [...stored.frequencyHistory] })
+                                  setIsEditingProfile(false)
+                                }
+                              }}
+                            >
+                              Cancel
+                            </Button>
                           </>
                         ) : (
-                          <Button
-                            className="min-w-[150px] flex-1"
-                            variant="outline"
-                            onClick={() => setProfileMode("edit")}
-                          >
+                          <Button className="flex-1" onClick={() => setIsEditingProfile(true)}>
                             <Pencil className="mr-2 size-4" /> Edit
                           </Button>
                         )}
@@ -2076,7 +2029,7 @@ export default function TaxFilingsPage() {
                             })
                           }
                         >
-                          <ScanLine className="mr-2 size-4" /> Scan / Add Evidence
+                          <Upload className="mr-2 size-4" /> Evidence
                         </Button>
                       </div>
 
@@ -2100,27 +2053,15 @@ export default function TaxFilingsPage() {
                     </div>
 
                     <div className="border-t pt-5">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs font-semibold">Profile Evidence</p>
-                        <span className="text-[10px] text-muted-foreground">Last 3 years visible · older records retained</span>
-                      </div>
+                      <p className="text-xs font-semibold">Profile Evidence</p>
                       <div className="mt-3 space-y-2">
-                        {data.documents.filter(
-                          (document) =>
-                            document.profileId === profileDraft.id &&
-                            isWithinVisibleEvidenceWindow(document)
-                        ).length === 0 ? (
+                        {data.documents.filter((document) => document.profileId === profileDraft.id).length === 0 ? (
                           <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
                             No profile evidence uploaded.
                           </div>
                         ) : (
                           data.documents
-                            .filter(
-                              (document) =>
-                                document.profileId === profileDraft.id &&
-                                isWithinVisibleEvidenceWindow(document)
-                            )
-                            .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
+                            .filter((document) => document.profileId === profileDraft.id)
                             .map((document) => (
                               <button
                                 key={document.id}
@@ -2479,6 +2420,8 @@ export default function TaxFilingsPage() {
                         onClick={() => {
                           setActiveTab("calendar")
                           setSelectedObligationId(obligation.id)
+                          setShowFilingForm(false)
+                          setEditingSubmission(undefined)
                         }}
                         className="grid w-full gap-4 p-4 text-left transition-colors hover:bg-muted/25 md:grid-cols-12"
                       >

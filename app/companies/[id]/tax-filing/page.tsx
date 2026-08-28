@@ -9,14 +9,16 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
+  Copy,
+  Eye,
   FileText,
   Landmark,
   Loader2,
-  Maximize2,
   Pencil,
   Plus,
   Receipt,
   RefreshCcw,
+  ScanLine,
   Settings2,
   Upload,
   X,
@@ -259,7 +261,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Quarterly fuel-tax reporting for applicable interstate / cross-border operations.",
     frequencyOptions: ["quarterly"],
     defaultFrequency: "quarterly",
-    accountLabel: "IFTA Account / Licence Number",
+    accountLabel: "IFTA Account Number",
     accountRequired: true,
   },
   {
@@ -281,7 +283,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Current filing frequency is company-specific and can move between quarterly and annual.",
     frequencyOptions: ["quarterly", "annual"],
     defaultFrequency: "quarterly",
-    accountLabel: "NY HUT Account / Certificate Number",
+    accountLabel: "NY HUT Account Number",
     accountRequired: true,
   },
   {
@@ -325,7 +327,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Annual tax-period filing with event-based first-use obligations.",
     frequencyOptions: ["annual", "event-based"],
     defaultFrequency: "annual",
-    accountLabel: "EIN / Filing Account Reference",
+    accountLabel: "EIN / Account Number",
     accountRequired: false,
   },
   {
@@ -370,7 +372,7 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
     description: "Ontario tobacco tax filing obligation for applicable interjurisdictional transport activity.",
     frequencyOptions: ["monthly"],
     defaultFrequency: "monthly",
-    accountLabel: "Ontario Tobacco Tax Account / Permit Number",
+    accountLabel: "Ontario Tobacco Tax Account Number",
     accountRequired: true,
   },
 ]
@@ -454,6 +456,119 @@ function loadTaxData(companyId: string): TaxData {
 
 function saveTaxData(companyId: string, data: TaxData) {
   localStorage.setItem(`${TAX_STORAGE_PREFIX}${companyId}`, JSON.stringify(data))
+}
+
+
+function normalizeIdentifier(value?: string) {
+  return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+}
+
+function profileAccountField(code: TaxCode) {
+  const map: Record<TaxCode, string> = {
+    ifta: "iftaAccountNumber",
+    ct_huf: "ctHufAccountNumber",
+    ny_hut: "nyHutAccountNumber",
+    kyu: "kyuAccountNumber",
+    nm_wdt: "nmWdtAccountNumber",
+    or_wmt: "oregonAccountNumber",
+    form_2290: "ein",
+    fuel_charge_registration: "fuelChargeRegistrationNumber",
+    texas_excise_tax: "texasExciseTaxAccountNumber",
+    arkansas_motor_fuel_tax: "arkansasMotorFuelTaxAccountNumber",
+    ontario_tobacco_tax: "ontarioTobaccoTaxAccountNumber",
+  }
+  return map[code]
+}
+
+function readAccountFromCompany(company: Company | null, code: TaxCode) {
+  if (!company) return ""
+  const canonical = company.taxAccounts?.[code]?.accountNumber
+  if (canonical) return String(canonical)
+
+  const field = profileAccountField(code)
+  const direct = company[field]
+  if (direct) return String(direct)
+
+  // Conservative legacy aliases only. These are read-only migration fallbacks.
+  const aliases: Partial<Record<TaxCode, string[]>> = {
+    ifta: ["iftaAccount", "iftaNumber", "iftaLicenseNumber", "iftaLicenceNumber"],
+    ny_hut: ["nyHutAccount", "nyHutNumber"],
+    kyu: ["kyuAccount", "kyuNumber"],
+    nm_wdt: ["nmWdtAccount", "newMexicoAccountNumber"],
+    or_wmt: ["oregonAccount", "oregonWmtAccountNumber"],
+    ct_huf: ["ctHufAccount", "connecticutHufAccountNumber"],
+  }
+
+  for (const alias of aliases[code] || []) {
+    if (company[alias]) return String(company[alias])
+  }
+
+  return ""
+}
+
+function syncAccountToCompany(companyId: string, code: TaxCode, accountNumber?: string) {
+  const companies = readCompanies()
+  const index = companies.findIndex((item) => item.id === companyId)
+  if (index < 0) return
+
+  const company = { ...companies[index] }
+  const clean = (accountNumber || "").trim()
+  const field = profileAccountField(code)
+
+  company[field] = clean
+  company.taxAccounts = {
+    ...(company.taxAccounts || {}),
+    [code]: {
+      ...(company.taxAccounts?.[code] || {}),
+      accountNumber: clean,
+      updatedAt: isoNow(),
+    },
+  }
+
+  companies[index] = company
+  localStorage.setItem("tes_companies", JSON.stringify(companies))
+}
+
+function findDuplicateTaxAccount(
+  currentCompanyId: string,
+  taxCode: TaxCode,
+  accountNumber?: string
+) {
+  const normalized = normalizeIdentifier(accountNumber)
+  if (!normalized) return null
+
+  for (const otherCompany of readCompanies()) {
+    if (otherCompany.id === currentCompanyId) continue
+    const other = normalizeIdentifier(readAccountFromCompany(otherCompany, taxCode))
+    if (other && other === normalized) {
+      return { companyId: otherCompany.id, companyName: otherCompany.name }
+    }
+  }
+
+  // Also inspect the tax-profile stores so a stale profile cannot bypass the guard.
+  for (const otherCompany of readCompanies()) {
+    if (otherCompany.id === currentCompanyId) continue
+    const otherData = loadTaxData(otherCompany.id)
+    const profile = otherData.profiles.find((item) => item.taxCode === taxCode)
+    if (
+      profile?.accountNumber &&
+      normalizeIdentifier(profile.accountNumber) === normalized
+    ) {
+      return { companyId: otherCompany.id, companyName: otherCompany.name }
+    }
+  }
+
+  return null
+}
+
+function isWithinVisibleEvidenceWindow(document: TaxDocument) {
+  const raw = document.documentDate || document.uploadedAt.slice(0, 10)
+  if (!raw) return true
+  const date = parseDate(raw)
+  if (Number.isNaN(date.getTime())) return true
+  const cutoff = new Date()
+  cutoff.setFullYear(cutoff.getFullYear() - 3)
+  return date >= cutoff
 }
 
 function parseDate(value: string) {
@@ -569,33 +684,30 @@ function DocumentViewer({
   document: TaxDocument
   onClose: () => void
 }) {
-  const rootRef = useRef<HTMLDivElement | null>(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const dragRef = useRef({ active: false, x: 0, y: 0 })
   const isPdf = document.mimeType === "application/pdf"
+  const watermark = `TES • VIEW ONLY • ${new Date().toLocaleString()}`
 
-  const fullscreen = async () => {
-    if (!rootRef.current) return
-
-    try {
-      if (!window.document.fullscreenElement) {
-        await rootRef.current.requestFullscreen()
-      } else {
-        await window.document.exitFullscreen()
-      }
-    } catch {
-      // Browser may block fullscreen in some contexts.
-    }
+  const resetView = () => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
   }
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-[180] flex flex-col bg-background">
-      <div className="flex min-h-14 items-center justify-between border-b px-4">
+    <div
+      className="fixed inset-0 z-[180] flex flex-col bg-background"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`View ${document.fileName}`}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <div className="flex min-h-14 items-center justify-between border-b bg-background/95 px-4 backdrop-blur">
         <div className="min-w-0">
-          <p className="text-sm font-semibold">Original Document</p>
+          <p className="text-sm font-semibold">TES Evidence Viewer</p>
           <p className="max-w-[650px] truncate text-[10px] text-muted-foreground">
-            {document.fileName}
+            {document.fileName} · View only
           </p>
         </div>
 
@@ -605,68 +717,64 @@ function DocumentViewer({
               <Button
                 variant="ghost"
                 size="icon"
+                title="Zoom out"
                 onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))}
               >
                 <ZoomOut className="size-4" />
               </Button>
-
               <span className="w-12 text-center text-[10px]">
                 {Math.round(zoom * 100)}%
               </span>
-
               <Button
                 variant="ghost"
                 size="icon"
+                title="Zoom in"
                 onClick={() => setZoom((current) => Math.min(5, current + 0.25))}
               >
                 <ZoomIn className="size-4" />
               </Button>
+              <Button variant="ghost" size="sm" onClick={resetView}>
+                Reset
+              </Button>
             </>
           )}
 
-          <Button variant="ghost" size="icon" onClick={fullscreen}>
-            <Maximize2 className="size-4" />
-          </Button>
-
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <Button variant="ghost" size="icon" title="Close viewer" onClick={onClose}>
             <X className="size-4" />
           </Button>
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/15">
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/20">
         {isPdf ? (
-          <embed
-            src={document.dataUrl}
-            type="application/pdf"
-            className="absolute inset-0 h-full w-full"
+          <iframe
+            // Browser PDF engines differ. The toolbar fragment hides native controls
+            // where supported; production should replace this iframe with the shared
+            // TES PDF renderer (PDF.js/canvas) for enforceable UI-level control.
+            src={`${document.dataUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
+            title={document.fileName}
+            className="absolute inset-0 h-full w-full border-0"
           />
         ) : (
           <div
             className="absolute inset-0 flex cursor-grab items-center justify-center overflow-hidden p-5 active:cursor-grabbing"
             style={{ touchAction: "none" }}
             onPointerDown={(event) => {
-              dragRef.current = {
-                active: true,
-                x: event.clientX,
-                y: event.clientY,
-              }
+              dragRef.current = { active: true, x: event.clientX, y: event.clientY }
               event.currentTarget.setPointerCapture(event.pointerId)
             }}
             onPointerMove={(event) => {
               if (!dragRef.current.active) return
-
               const dx = event.clientX - dragRef.current.x
               const dy = event.clientY - dragRef.current.y
               dragRef.current.x = event.clientX
               dragRef.current.y = event.clientY
-
-              setPan((current) => ({
-                x: current.x + dx,
-                y: current.y + dy,
-              }))
+              setPan((current) => ({ x: current.x + dx, y: current.y + dy }))
             }}
             onPointerUp={() => {
+              dragRef.current.active = false
+            }}
+            onPointerCancel={() => {
               dragRef.current.active = false
             }}
           >
@@ -682,6 +790,26 @@ function DocumentViewer({
             />
           </div>
         )}
+
+        {/* Universal dense watermark overlay. Pointer-events remain disabled so the
+            document can still be inspected/panned. This discourages clean reuse of
+            screenshots without blocking legitimate internal review. */}
+        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden select-none">
+          <div className="absolute -inset-[20%] grid rotate-[-24deg] grid-cols-3 gap-x-10 gap-y-16 opacity-[0.13]">
+            {Array.from({ length: 42 }).map((_, index) => (
+              <span
+                key={index}
+                className="whitespace-nowrap text-[11px] font-semibold tracking-[0.14em] text-foreground"
+              >
+                {watermark}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/85 px-3 py-1 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
+          Internal evidence view · Printing, downloading and browser fullscreen are intentionally not exposed
+        </div>
       </div>
     </div>
   )
@@ -1154,6 +1282,7 @@ export default function TaxFilingsPage() {
   const [selectedTaxCode, setSelectedTaxCode] = useState<TaxCode | null>(null)
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
   const [profileDraft, setProfileDraft] = useState<TaxProfile | null>(null)
+  const [profileMode, setProfileMode] = useState<"view" | "edit">("view")
   const [showFrequencyForm, setShowFrequencyForm] = useState(false)
   const [selectedObligationId, setSelectedObligationId] = useState<string | null>(null)
   const [editingSubmission, setEditingSubmission] = useState<FilingSubmission | undefined>(undefined)
@@ -1171,7 +1300,15 @@ export default function TaxFilingsPage() {
   useEffect(() => {
     const found = readCompanies().find((item) => item.id === companyId)
     setCompany(found || null)
-    setData(loadTaxData(companyId))
+    const loaded = loadTaxData(companyId)
+    if (found) {
+      loaded.profiles = loaded.profiles.map((profile) => ({
+        ...profile,
+        accountNumber:
+          profile.accountNumber || readAccountFromCompany(found, profile.taxCode) || "",
+      }))
+    }
+    setData(loaded)
     setLoading(false)
   }, [companyId])
 
@@ -1211,12 +1348,16 @@ export default function TaxFilingsPage() {
     const existing = profileByCode(taxCode)
 
     if (existing) {
-      setSelectedProfileId(existing.id)
-      setProfileDraft({
+      const companyAccount = readAccountFromCompany(company, taxCode)
+      const hydrated = {
         ...existing,
+        accountNumber: existing.accountNumber || companyAccount || "",
         frequencyHistory: [...existing.frequencyHistory],
-      })
+      }
+      setSelectedProfileId(existing.id)
+      setProfileDraft(hydrated)
       setSelectedTaxCode(taxCode)
+      setProfileMode("view")
       return
     }
 
@@ -1234,9 +1375,11 @@ export default function TaxFilingsPage() {
       updatedAt: now,
     }
 
+    draft.accountNumber = readAccountFromCompany(company, taxCode)
     setSelectedTaxCode(taxCode)
     setSelectedProfileId(draft.id)
     setProfileDraft(draft)
+    setProfileMode("edit")
   }
 
   const saveProfile = () => {
@@ -1245,6 +1388,18 @@ export default function TaxFilingsPage() {
     const definition = getDefinition(profileDraft.taxCode)
     if (definition.accountRequired && !profileDraft.accountNumber?.trim()) {
       window.alert(`${definition.accountLabel} is required.`)
+      return
+    }
+
+    const duplicate = findDuplicateTaxAccount(
+      companyId,
+      profileDraft.taxCode,
+      profileDraft.accountNumber
+    )
+    if (duplicate) {
+      window.alert(
+        `Duplicate blocked: this ${definition.shortName} account number is already linked to ${duplicate.companyName}. TES will not create a second canonical record.`
+      )
       return
     }
 
@@ -1261,7 +1416,25 @@ export default function TaxFilingsPage() {
         : [{ ...profileDraft, updatedAt: isoNow() }, ...current.profiles],
     }))
 
-    setSelectedProfileId(profileDraft.id)
+    syncAccountToCompany(companyId, profileDraft.taxCode, profileDraft.accountNumber)
+    setCompany((current) =>
+      current
+        ? {
+            ...current,
+            [profileAccountField(profileDraft.taxCode)]: profileDraft.accountNumber || "",
+            taxAccounts: {
+              ...(current.taxAccounts || {}),
+              [profileDraft.taxCode]: {
+                ...(current.taxAccounts?.[profileDraft.taxCode] || {}),
+                accountNumber: profileDraft.accountNumber || "",
+                updatedAt: isoNow(),
+              },
+            },
+          }
+        : current
+    )
+    setProfileMode("view")
+    setShowFrequencyForm(false)
   }
 
   const addFrequencyAssignment = (assignment: FrequencyAssignment) => {
@@ -1696,14 +1869,14 @@ export default function TaxFilingsPage() {
                           }`}
                         >
                           <div className="md:col-span-4">
-                            <p className="text-sm font-semibold">{definition.name}</p>
+                            <p className="text-[13px] font-semibold leading-5">{definition.name}</p>
                             <p className="mt-1 text-[10px] text-muted-foreground">
                               {definition.jurisdiction}
                             </p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Account</p>
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Account Number</p>
                             <p className="mt-1 select-text font-mono text-xs">
                               {profile?.accountNumber || "Not configured"}
                             </p>
@@ -1767,6 +1940,8 @@ export default function TaxFilingsPage() {
                           setProfileDraft(null)
                           setSelectedTaxCode(null)
                           setSelectedProfileId(null)
+                          setProfileMode("view")
+                          setShowFrequencyForm(false)
                         }}
                       >
                         <X className="size-4" />
@@ -1775,28 +1950,37 @@ export default function TaxFilingsPage() {
                   </CardHeader>
 
                   <CardContent className="space-y-5 pt-5">
-                    <TaxProfileForm
-                      profile={profileDraft}
-                      definition={getDefinition(selectedTaxCode)}
-                      onChange={setProfileDraft}
-                    />
+                    {profileMode === "edit" ? (
+                      <TaxProfileForm
+                        profile={profileDraft}
+                        definition={getDefinition(selectedTaxCode)}
+                        onChange={setProfileDraft}
+                      />
+                    ) : (
+                      <TaxProfileView
+                        profile={profileDraft}
+                        definition={getDefinition(selectedTaxCode)}
+                      />
+                    )}
 
                     <div className="border-t pt-5">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs font-semibold">Filing Frequency History</p>
+                          <p className="text-xs font-semibold">Configuration History</p>
                           <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                             Frequency changes are effective-dated and never rewrite historical filings.
                           </p>
                         </div>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setShowFrequencyForm(true)}
-                        >
-                          <Plus className="mr-1.5 size-3.5" /> Add Change
-                        </Button>
+                        {profileMode === "edit" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setShowFrequencyForm(true)}
+                          >
+                            <Plus className="mr-1.5 size-3.5" /> Add Change
+                          </Button>
+                        )}
                       </div>
 
                       {showFrequencyForm && (
@@ -1847,10 +2031,40 @@ export default function TaxFilingsPage() {
                     </div>
 
                     <div className="border-t pt-5">
-                      <div className="flex gap-2">
-                        <Button className="flex-1" onClick={saveProfile}>
-                          <Check className="mr-2 size-4" /> Save Tax Profile
-                        </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {profileMode === "edit" ? (
+                          <>
+                            <Button className="min-w-[150px] flex-1" onClick={saveProfile}>
+                              <Check className="mr-2 size-4" /> Save Changes
+                            </Button>
+                            {data.profiles.some((profile) => profile.id === profileDraft.id) && (
+                              <Button
+                                variant="outline"
+                                onClick={() => {
+                                  const saved = data.profiles.find((profile) => profile.id === profileDraft.id)
+                                  if (saved) {
+                                    setProfileDraft({
+                                      ...saved,
+                                      frequencyHistory: [...saved.frequencyHistory],
+                                    })
+                                  }
+                                  setShowFrequencyForm(false)
+                                  setProfileMode("view")
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                          </>
+                        ) : (
+                          <Button
+                            className="min-w-[150px] flex-1"
+                            variant="outline"
+                            onClick={() => setProfileMode("edit")}
+                          >
+                            <Pencil className="mr-2 size-4" /> Edit
+                          </Button>
+                        )}
 
                         <Button
                           variant="outline"
@@ -1862,7 +2076,7 @@ export default function TaxFilingsPage() {
                             })
                           }
                         >
-                          <Upload className="mr-2 size-4" /> Evidence
+                          <ScanLine className="mr-2 size-4" /> Scan / Add Evidence
                         </Button>
                       </div>
 
@@ -1886,15 +2100,27 @@ export default function TaxFilingsPage() {
                     </div>
 
                     <div className="border-t pt-5">
-                      <p className="text-xs font-semibold">Profile Evidence</p>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold">Profile Evidence</p>
+                        <span className="text-[10px] text-muted-foreground">Last 3 years visible · older records retained</span>
+                      </div>
                       <div className="mt-3 space-y-2">
-                        {data.documents.filter((document) => document.profileId === profileDraft.id).length === 0 ? (
+                        {data.documents.filter(
+                          (document) =>
+                            document.profileId === profileDraft.id &&
+                            isWithinVisibleEvidenceWindow(document)
+                        ).length === 0 ? (
                           <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
                             No profile evidence uploaded.
                           </div>
                         ) : (
                           data.documents
-                            .filter((document) => document.profileId === profileDraft.id)
+                            .filter(
+                              (document) =>
+                                document.profileId === profileDraft.id &&
+                                isWithinVisibleEvidenceWindow(document)
+                            )
+                            .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
                             .map((document) => (
                               <button
                                 key={document.id}

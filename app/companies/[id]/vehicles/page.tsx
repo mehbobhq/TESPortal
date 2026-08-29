@@ -1,265 +1,127 @@
 "use client"
 
-import { useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { 
-  ArrowLeft, 
-  Camera, 
-  FileText, 
-  Settings2, 
-  Wrench, 
-  ScrollText, 
-  FileBadge 
-} from "lucide-react"
+import { CheckCircle2, AlertCircle, Search, Filter, Plus, MoreHorizontal, Truck } from "lucide-react"
 
-// --- ENUMS & CONSTANTS ---
-const EQUIPMENT_TYPES = ['Tractor', 'Trailer', 'Converter Dolly']
-const OPERATING_REGIONS = ['Canada', 'US', 'Cross Border']
-const OWNERSHIP_TYPES = ['Owned', 'Financed', 'Leased', 'Owner Operator']
-const PERMIT_TYPES = [
-  'New Mexico - Permit', 'Arber', 'Clean Truck Check', 'Crossing Fee - Annual Transponder',
-  'Crossing Fee - Single', 'Fuel Permit', 'Idaho DG Registration', 'Kentucky',
-  'New York - HUT', 'Oregon', 'Oregon Temp Pass', 'Trip Permit', 'Axle Lift'
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+
+// Mock Data representing the structure needed
+const MOCK_FLEET_DATA = [
+  { id: 'R5338', type: 'Trailer - Reefer', year: '2025', make: 'Stoughton', vin: '1DW1R5329SE...', gps: '', status: 'Active', reg: 'ok', permit: 'ok', maint: null },
+  { id: 'R5322', type: 'Trailer - Reefer', year: '2022', make: 'UTILITY', vin: '1UYVS2538PE...', gps: '', status: 'Active', reg: 'ok', permit: 'ok', maint: 'alert' },
+  { id: 'missing', type: 'Tractor', year: '2009', make: 'Freightliner', vin: '1FUJGLD...', gps: '', status: 'Inactive', reg: 'alert', permit: 'alert', maint: null },
+  { id: 'S123', type: 'Tractor', year: '2022', make: 'Peterbilt', vin: '1XPBDPRX9...', gps: '', status: 'Active', reg: 'ok', permit: 'ok', maint: 'ok' },
 ]
 
-export default function VehicleDetailsPage() {
-  const router = useRouter()
+export default function FleetListPage() {
   const params = useParams()
-  
-  // Extract route parameters for API calls or routing
-  const companyId = params.id
-  const vehicleId = params.vehicleId
+  const router = useRouter()
+  const companyId = params.id as string
 
-  const [activeTab, setActiveTab] = useState('Profile')
-
-  const tabs = [
-    { name: 'Profile', icon: <FileText className="w-4 h-4 mr-2" /> },
-    { name: 'Documents', icon: <ScrollText className="w-4 h-4 mr-2" /> },
-    { name: 'Registration', icon: <FileBadge className="w-4 h-4 mr-2" /> },
-    { name: 'Permits', icon: <FileBadge className="w-4 h-4 mr-2" /> },
-    { name: 'Maintenance', icon: <Wrench className="w-4 h-4 mr-2" /> },
-    { name: 'Settings', icon: <Settings2 className="w-4 h-4 mr-2" /> }
-  ]
+  const renderStatusIcon = (status: string | null) => {
+    if (status === 'ok') return <CheckCircle2 className="w-5 h-5 text-emerald-500 mx-auto" />
+    if (status === 'alert') return <AlertCircle className="w-5 h-5 text-destructive mx-auto" />
+    return <span className="text-muted-foreground/50 mx-auto">-</span>
+  }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-      {/* Header & Back Navigation */}
-      <div className="mb-6 flex items-center space-x-4">
-        <button 
-          onClick={() => router.push(`/companies/${companyId}/vehicles`)}
-          className="p-2 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-100 transition"
-        >
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
+    <div className="p-6 max-w-[1600px] mx-auto bg-background min-h-screen">
+      
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row justify-between md:items-end gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Vehicle Profile: {vehicleId}</h1>
-          <p className="text-sm text-gray-500">Manage compliance, logs, and configurations</p>
+          <div className="flex items-center space-x-2 mb-1">
+            <div className="bg-primary/10 p-1.5 rounded-md">
+              <Truck className="w-5 h-5 text-primary" />
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight">Equipments</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {MOCK_FLEET_DATA.length} items • Sorted by Equipment Number • Updated just now
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-3">
+          <div className="relative w-[250px]">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
+            <Input placeholder="Search equipment..." className="pl-9" />
+          </div>
+          <Button variant="outline" className="shadow-sm">
+            <Filter className="w-4 h-4 mr-2" /> Filter
+          </Button>
+          <Button className="shadow-sm">
+            <Plus className="w-4 h-4 mr-2" /> New Equipment
+          </Button>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="border-b border-gray-200 mb-6 bg-white rounded-t-lg px-2 pt-2">
-        <nav className="-mb-px flex space-x-6 overflow-x-auto">
-          {tabs.map((tab) => (
-            <button
-              key={tab.name}
-              onClick={() => setActiveTab(tab.name)}
-              className={`flex items-center whitespace-nowrap py-4 px-3 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === tab.name
-                  ? 'border-purple-600 text-purple-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.icon}
-              {tab.name}
-            </button>
-          ))}
-        </nav>
+      {/* Data Table */}
+      <div className="border border-border rounded-lg bg-card">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead className="w-12 text-center">
+                <input type="checkbox" className="rounded border-input text-primary focus:ring-ring" />
+              </TableHead>
+              <TableHead>Equipment Number</TableHead>
+              <TableHead>Record Type</TableHead>
+              <TableHead>Equipment Year</TableHead>
+              <TableHead>Equipment Make</TableHead>
+              <TableHead>Equipment VIN</TableHead>
+              <TableHead>GPS Provider</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-center">Registration</TableHead>
+              <TableHead className="text-center">Permits</TableHead>
+              <TableHead className="text-center">Maintenance</TableHead>
+              <TableHead className="w-12"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {MOCK_FLEET_DATA.map((vehicle, index) => (
+              <TableRow 
+                key={index} 
+                className="cursor-pointer group hover:bg-muted/50"
+                onClick={() => router.push(`/companies/${companyId}/vehicles/${vehicle.id}`)}
+              >
+                <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" className="rounded border-input text-primary focus:ring-ring" />
+                </TableCell>
+                <TableCell className="font-medium text-primary hover:underline">
+                  {vehicle.id}
+                </TableCell>
+                <TableCell>{vehicle.type}</TableCell>
+                <TableCell>{vehicle.year}</TableCell>
+                <TableCell>{vehicle.make}</TableCell>
+                <TableCell className="text-muted-foreground">{vehicle.vin}</TableCell>
+                <TableCell className="text-muted-foreground">{vehicle.gps || '-'}</TableCell>
+                <TableCell>
+                  <Badge variant={vehicle.status === 'Active' ? 'default' : 'secondary'} className={vehicle.status === 'Active' ? 'bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 border-none' : ''}>
+                    {vehicle.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-center">{renderStatusIcon(vehicle.reg)}</TableCell>
+                <TableCell className="text-center">{renderStatusIcon(vehicle.permit)}</TableCell>
+                <TableCell className="text-center">{renderStatusIcon(vehicle.maint)}</TableCell>
+                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+                    <MoreHorizontal className="w-4 h-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
-
-      {/* Tab Content Rendering */}
-      <div className="bg-white p-6 shadow-sm rounded-b-lg border border-gray-200">
-        {activeTab === 'Profile' && <ProfileTab />}
-        {activeTab === 'Documents' && <DocumentsTab />}
-        {activeTab === 'Registration' && <RegistrationTab />}
-        {activeTab === 'Permits' && <PermitsTab />}
-        {activeTab === 'Maintenance' && <div className="p-4 text-gray-500">Maintenance module loading...</div>}
-        {activeTab === 'Settings' && <div className="p-4 text-gray-500">Settings module loading...</div>}
-      </div>
-    </div>
-  )
-}
-
-// --- TAB COMPONENTS ---
-
-function ProfileTab() {
-  const [equipmentType, setEquipmentType] = useState('Tractor')
-
-  return (
-    <div className="space-y-6 flex flex-col">
-      <div className="flex justify-end">
-        <button className="flex items-center bg-purple-600 text-white px-4 py-2 rounded-md shadow hover:bg-purple-700 transition">
-          <Camera className="w-4 h-4 mr-2" /> Upload Registration (OCR)
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InputField label="Record ID" disabled />
-        <SelectField label="Record Type" options={EQUIPMENT_TYPES} value={equipmentType} onChange={(e) => setEquipmentType(e.target.value)} />
-        <SelectField label="Status" options={['Active', 'Inactive']} />
-        <InputField label="Equipment Number" />
-        <InputField label="VIN" />
-        <InputField label="Year" type="number" />
-        <InputField label="Make" />
-        <InputField label="Model" />
-        <InputField label="Color" />
-        <SelectField label="Operating Region" options={OPERATING_REGIONS} />
-        <InputField label="Equipment Axle" type="number" />
-        <InputField label="License Plate" />
-      </div>
-
-      <hr className="my-6 border-gray-200" />
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InputField label="Start Date" type="date" />
-        <InputField label="End Date" type="date" />
-        <InputField label="Tare Weight (kgs)" type="number" />
-        <SelectField label="Fuel Type" options={['Diesel', 'Electric', 'Gasoline', 'None']} />
-        <InputField label="Equipment Length" />
-        <InputField label="GPS Provider" />
-        {equipmentType === 'Tractor' && (
-          <InputField label="Transponder No" />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function DocumentsTab() {
-  const [ownership, setOwnership] = useState('Owned')
-
-  return (
-    <div className="space-y-6 flex flex-col">
-      <div className="flex justify-end">
-        <button className="flex items-center bg-purple-600 text-white px-4 py-2 rounded-md shadow hover:bg-purple-700 transition">
-          <Camera className="w-4 h-4 mr-2" /> Upload Document (OCR)
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InputField label="Record ID" disabled />
-        <SelectField label="Owner" options={OWNERSHIP_TYPES} value={ownership} onChange={(e) => setOwnership(e.target.value)} />
-        
-        {(ownership === 'Leased' || ownership === 'Owner Operator') && (
-          <InputField label="Company" />
-        )}
-        
-        <InputField label="Purchase Date" type="date" />
-        <InputField label="Purchase Price" type="number" />
-        
-        {ownership === 'Leased' && (
-          <>
-            <InputField label="Lease Term (months)" type="number" />
-            <InputField label="End Date (Auto-calculated)" type="date" disabled />
-          </>
-        )}
-      </div>
-
-      <hr className="my-6 border-gray-200" />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-        <InputField label="Owner Company" />
-        <button className="bg-gray-100 text-gray-800 border border-gray-300 px-4 py-2 rounded-md shadow-sm hover:bg-gray-200 transition w-max">
-          + Add Owner
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function RegistrationTab() {
-  const [isTrailer, setIsTrailer] = useState(false)
-
-  return (
-    <div className="space-y-6 flex flex-col">
-      <div className="flex justify-end">
-        <button className="flex items-center bg-purple-600 text-white px-4 py-2 rounded-md shadow hover:bg-purple-700 transition">
-          <Camera className="w-4 h-4 mr-2" /> Upload Registration {isTrailer ? '' : '& Cab Card'}
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InputField label="Record ID" disabled />
-        <SelectField label="Registration Type" options={['Base Plate', 'IRP']} />
-        <InputField label="State / Province" />
-        <InputField label="Start Date" type="date" />
-        
-        {isTrailer ? (
-          <InputField label="Expiry Date" value="Continuous" disabled />
-        ) : (
-          <InputField label="Expiry Date" type="date" />
-        )}
-        
-        <InputField label="Plate" />
-      </div>
-    </div>
-  )
-}
-
-function PermitsTab() {
-  return (
-    <div className="space-y-6 flex flex-col">
-      <div className="flex justify-end">
-        <button className="flex items-center bg-purple-600 text-white px-4 py-2 rounded-md shadow hover:bg-purple-700 transition">
-          <Camera className="w-4 h-4 mr-2" /> Upload Permit (OCR)
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InputField label="Record ID" disabled />
-        <InputField label="Permit ID" />
-        <SelectField label="Type" options={PERMIT_TYPES} />
-        <InputField label="State / Province" />
-        <InputField label="Start Date" type="date" />
-        <InputField label="Expiry Date" type="date" />
-      </div>
-      
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-        <textarea className="w-full border border-gray-300 rounded-md p-2 focus:ring-purple-500 focus:border-purple-500" rows={4}></textarea>
-      </div>
-    </div>
-  )
-}
-
-// --- REUSABLE UI HELPERS ---
-
-function InputField({ label, type = 'text', disabled = false, value, onChange }: any) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      <input
-        type={type}
-        disabled={disabled}
-        value={value}
-        onChange={onChange}
-        className={`w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-purple-500 ${disabled ? 'bg-gray-100 cursor-not-allowed text-gray-500' : 'bg-white'}`}
-      />
-    </div>
-  )
-}
-
-function SelectField({ label, options, value, onChange }: any) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      <select 
-        value={value} 
-        onChange={onChange}
-        className="w-full border border-gray-300 rounded-md p-2 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-      >
-        {options.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
     </div>
   )
 }

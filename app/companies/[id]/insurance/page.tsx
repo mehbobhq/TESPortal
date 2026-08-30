@@ -50,14 +50,14 @@ import {
   normalizePhone,
   normalizeEmail,
   normalizeName,
-} from "@/src/lib/identifier-normalization";
+} from "@/lib/identifier-normalization";
 import {
   getDaysRemaining,
   getDeadlineStatus,
   getDeadlineClasses,
 } from "@/src/lib/deadline-engine";
-import { recordAuditEvent } from "@/src/lib/audit-logger";
-import { JURISDICTIONS } from "@/src/lib/jurisdictions";
+import { recordAuditEvent } from "@/lib/audit-logger";
+import { JURISDICTIONS } from "@/lib/jurisdictions";
 
 // Standard string similarity helper for fuzzy entity candidate discovery
 export function levenshteinDistance(a: string, b: string): number {

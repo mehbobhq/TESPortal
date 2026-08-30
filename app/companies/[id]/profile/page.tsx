@@ -429,18 +429,3 @@ export default function CompanyProfilePage() {
     </div>
   )
 }
-"use client"
-
-import React, { useEffect, useState } from "react"
-import {
-  ArrowLeft,
-  Building2,
-  MapPin,
-  CheckCircle2,
-  AlertCircle,
-  FileText,
-  Calendar,
-} from "lucide-react"
-
-import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
-import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays"

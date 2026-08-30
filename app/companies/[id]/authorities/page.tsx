@@ -40,18 +40,18 @@ import {
   getDeadlineStatus,
   DEFAULT_DEADLINE_RULES,
   getDeadlineClasses,
-} from "@/src/lib/deadline-engine"
+} from "@/lib/deadline-engine"
 import {
   JURISDICTIONS,
   resolveCountryForJurisdiction,
   getJurisdictionLabel,
-} from "@/src/lib/jurisdictions"
+} from "@/lib/jurisdictions"
 import {
   normalizeUSDOT,
   normalizeMC,
   normalizeTaxId,
 } from "@/src/lib/identifier-normalization"
-import { recordAuditEvent } from "@/src/lib/audit-logger"
+import { recordAuditEvent } from "@/lib/audit-logger"
 import { ReadOnlyField, RegulatoryIdentifierField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"

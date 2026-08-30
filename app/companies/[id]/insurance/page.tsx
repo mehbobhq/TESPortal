@@ -55,7 +55,7 @@ import {
   getDaysRemaining,
   getDeadlineStatus,
   getDeadlineClasses,
-} from "@/src/lib/deadline-engine";
+} from "@/lib/deadline-engine";
 import { recordAuditEvent } from "@/lib/audit-logger";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 

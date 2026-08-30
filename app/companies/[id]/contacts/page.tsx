@@ -1,3907 +1,2246 @@
-"use client"
+"use client";
 
+import React, { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
-
-import {
-  Archive,
-  ArchiveRestore,
-  ArrowLeft,
-  Camera,
-  Check,
+  Building2,
   CheckCircle2,
-  ChevronRight,
-  Copy,
+  Clock,
+  Eye,
   FileCheck2,
   FileText,
+  Filter,
   History,
-  Maximize2,
+  Info,
   Pencil,
   Plus,
   RotateCcw,
   Search,
+  Shield,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Star,
+  Trash2,
   Upload,
   User,
   UserCheck,
+  UserPlus,
   Users,
   X,
-  XCircle,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react"
+  ChevronRight,
+  Archive,
+  RefreshCw,
+  FolderOpen,
+} from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
+// --- Shared Foundation Components (Phase 1 Approved) ---
+import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField";
+import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays";
+import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker";
+import { CameraCapture } from "@/src/components/CameraCapture";
+import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer";
 
-/* =========================================================
-   TYPES
-========================================================= */
+// --- Types & Interfaces ---
 
-type IdentityStatus =
-  | "unverified"
-  | "documented"
-  | "review_required"
+export type Evidence = {
+  id: string; // "DOC-..."
+  type: "Driver Licence" | "Government ID" | "Other";
+  fileName: string;
+  fileType: string;
+  uploadedAt: string;
+  documentDate?: string;
+  confidence?: number;
+  status: "uploaded" | "review_required" | "verified" | "rejected";
+  source: "camera" | "device";
+  dataUrl?: string;
+};
 
-type OCRStatus =
-  | "idle"
-  | "processing"
-  | "complete"
-  | "failed"
+export type Relationship = {
+  id: string; // "REL-..."
+  companyId: string;
+  companyName: string;
+  role: string;
+  isPrimary?: boolean;
+  status: "active" | "ended";
+  startDate: string;
+  endDate?: string;
+  source: "manual" | "document" | "system";
+};
 
-type OCRFieldKey =
-  | "firstName"
-  | "lastName"
-  | "dob"
-  | "dlNumber"
-  | "dlState"
-  | "dlExpiry"
-  | "dlIssueDate"
-  | "dlClass"
-  | "dlRestrictions"
-
-type OCRField = {
-  key: OCRFieldKey
-  label: string
-  value: string
-  confidence: number
-  required: boolean
-}
-
-type Relationship = {
-  id: string
-  companyId: string
-  companyName: string
-  role: string
-  isPrimary?: boolean
-  status: "active" | "ended"
-  startDate: string
-  endDate?: string
-  source: "manual" | "document" | "system"
-}
-
-type Evidence = {
-  id: string
-  type: "Driver Licence" | "Government ID" | "Other"
-  fileName: string
-  fileType: string
-  uploadedAt: string
-  documentDate?: string
-  confidence?: number
-  status:
-    | "uploaded"
-    | "review_required"
-    | "verified"
-    | "rejected"
-  source: "camera" | "device"
-  dataUrl?: string
-}
-
-type ContactEvent = {
-  id: string
-  type:
-    | "CONTACT_CREATED"
-    | "CONTACT_UPDATED"
-    | "CONTACT_FIELD_UPDATED"
-    | "CONTACT_ARCHIVED"
-    | "CONTACT_RESTORED"
+export type ContactEvent = {
+  id: string; // "EVT-..."
+  timestamp: string;
+  action:
+    | "CREATED"
     | "PRIMARY_CHANGED"
-    | "NOTE_ADDED"
+    | "ROLE_UPDATED"
+    | "STATUS_CHANGED"
     | "DOCUMENT_ATTACHED"
-    | "OCR_REVIEWED"
-  timestamp: string
-  actor: string
-  description: string
-}
+    | "CONTACT_UPDATED"
+    | "RELATIONSHIP_ADDED"
+    | "ARCHIVED"
+    | "RESTORED";
+  summary: string;
+  actor: string;
+};
 
-type Contact = {
-  id: string
-  globalId: string
+export type Contact = {
+  id: string; // "CNT-..."
+  globalId: string; // "USR-..."
+  firstName: string;
+  lastName: string;
+  dob: string;
+  dlNumber: string;
+  dlState: string;
+  dlExpiry: string;
+  dlIssueDate: string;
+  dlClass: string;
+  dlRestrictions: string;
+  email: string;
+  phone: string;
+  role: string;
+  isPrimary: boolean;
+  isArchived: boolean;
+  notes: string;
+  identityStatus: "unverified" | "documented" | "review_required";
+  identityConfidence?: number;
+  relationships: Relationship[];
+  evidence: Evidence[];
+  events: ContactEvent[];
+  createdAt: string;
+  updatedAt: string;
+};
 
-  firstName: string
-  lastName: string
+export type OCRFieldConfidence = {
+  value: string;
+  confidence: number;
+};
 
-  dob: string
+export type OCRReviewDraft = {
+  firstName: OCRFieldConfidence;
+  lastName: OCRFieldConfidence;
+  dob: OCRFieldConfidence;
+  dlNumber: OCRFieldConfidence;
+  dlState: OCRFieldConfidence;
+  dlExpiry: OCRFieldConfidence;
+  dlIssueDate: OCRFieldConfidence;
+  dlClass: OCRFieldConfidence;
+  dlRestrictions: OCRFieldConfidence;
+  email: OCRFieldConfidence;
+  phone: OCRFieldConfidence;
+  role: string;
+  isPrimary: boolean;
+  evidence: Evidence;
+};
 
-  dlNumber: string
-  dlState: string
-  dlExpiry: string
-  dlIssueDate: string
-  dlClass: string
-  dlRestrictions: string
-
-  email: string
-  phone: string
-
-  role: string
-  isPrimary: boolean
-
-  isArchived: boolean
-
-  createdAt: string
-  updatedAt: string
-
-  notes: string
-
-  identityStatus: IdentityStatus
-  identityConfidence?: number
-
-  relationships: Relationship[]
-  evidence: Evidence[]
-  events: ContactEvent[]
-}
-
-type ContactDraft = {
-  firstName: string
-  lastName: string
-  dob: string
-
-  dlNumber: string
-  dlState: string
-  dlExpiry: string
-  dlIssueDate: string
-  dlClass: string
-  dlRestrictions: string
-
-  email: string
-  phone: string
-
-  role: string
-  isPrimary: boolean
-}
-
-type DocumentSource = "camera" | "device"
-
-type OCRSession = {
-  file: File
-  dataUrl: string
-  source: DocumentSource
-  status: OCRStatus
-  fields: OCRField[]
-  draft: ContactDraft
-  mode: "ocr_create" | "manual_attachment"
-}
-
-/* =========================================================
-   CONSTANTS
-========================================================= */
-
-const CONTACT_STORAGE = "tes_contacts_v5"
-
-const OCR_REQUIRED_THRESHOLD = 85
-
-const EMPTY_DRAFT: ContactDraft = {
-  firstName: "",
-  lastName: "",
-  dob: "",
-
-  dlNumber: "",
-  dlState: "",
-  dlExpiry: "",
-  dlIssueDate: "",
-  dlClass: "",
-  dlRestrictions: "",
-
-  email: "",
-  phone: "",
-
-  role: "",
-  isPrimary: false,
-}
-
-/*
-  Prototype OCR result.
-
-  Replace ONLY the extraction function later.
-
-  The rest of this page should remain the same when the real
-  OCR service is connected.
-*/
-const OCR_DEMO_FIELDS: OCRField[] = [
-  {
-    key: "firstName",
-    label: "First Name",
-    value: "Parwinder",
-    confidence: 98,
-    required: true,
-  },
-  {
-    key: "lastName",
-    label: "Last Name",
-    value: "Singh",
-    confidence: 99,
-    required: true,
-  },
-  {
-    key: "dob",
-    label: "Date of Birth",
-    value: "2004-09-02",
-    confidence: 97,
-    required: true,
-  },
-  {
-    key: "dlNumber",
-    label: "Driver Licence #",
-    value: "1017-29721",
-    confidence: 96,
-    required: true,
-  },
-  {
-    key: "dlState",
-    label: "Issuing Province / State",
-    value: "AB",
-    confidence: 99,
-    required: true,
-  },
-  {
-    key: "dlExpiry",
-    label: "Expiry Date",
-    value: "2026-09-02",
-    confidence: 98,
-    required: true,
-  },
-  {
-    key: "dlIssueDate",
-    label: "Issue Date",
-    value: "2026-05-17",
-    confidence: 93,
-    required: false,
-  },
-  {
-    key: "dlClass",
-    label: "Licence Class",
-    value: "",
-    confidence: 0,
-    required: false,
-  },
-  {
-    key: "dlRestrictions",
-    label: "Restrictions",
-    value: "",
-    confidence: 0,
-    required: false,
-  },
-]
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-function makeId(prefix: string) {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return `${prefix}-${crypto.randomUUID()}`
-  }
-
-  return `${prefix}-${Date.now()}-${Math.floor(
-    Math.random() * 10000
-  )}`
-}
-
-function now() {
-  return new Date().toISOString()
-}
-
-
-function threeYearCutoff() {
-  const date = new Date()
-  date.setFullYear(date.getFullYear() - 3)
-  return date
-}
-
-function evidenceReferenceDate(evidence: Evidence) {
-  return evidence.documentDate || evidence.uploadedAt
-}
-
-function evidenceInsideThreeYears(evidence: Evidence) {
-  const date = new Date(evidenceReferenceDate(evidence))
-  if (Number.isNaN(date.getTime())) return true
-  return date >= threeYearCutoff()
-}
-
-function appendEvent(
-  contact: Contact,
-  type: ContactEvent["type"],
-  description: string
-): Contact {
-  return {
-    ...contact,
-    updatedAt: now(),
-    events: [
-      {
-        id: makeId("EVT"),
-        type,
-        timestamp: now(),
-        actor: "Current User",
-        description,
-      },
-      ...(contact.events || []),
-    ],
-  }
-}
-
-function averageConfidence(fields: OCRField[]) {
-  const usable = fields.filter(
-    (field) => field.confidence > 0
-  )
-
-  if (!usable.length) return 0
-
-  return Math.round(
-    usable.reduce(
-      (sum, field) => sum + field.confidence,
-      0
-    ) / usable.length
-  )
-}
-
-function hasOCRConfidenceFailure(fields: OCRField[]) {
-  return fields.some(
-    (field) =>
-      field.required &&
-      (
-        !field.value.trim() ||
-        field.confidence < OCR_REQUIRED_THRESHOLD
-      )
-  )
-}
-
-function getOCRField(
-  fields: OCRField[],
-  key: OCRFieldKey
-) {
-  return (
-    fields.find((field) => field.key === key)
-      ?.value || ""
-  )
-}
-
-function readFileAsDataUrl(
-  file: File
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onload = () =>
-      resolve(String(reader.result || ""))
-
-    reader.onerror = reject
-
-    reader.readAsDataURL(file)
-  })
-}
-
-
-function normalizeEmail(value?: string) {
-  return String(value || "").trim().toLowerCase()
-}
-
-function normalizePhone(value?: string) {
-  return String(value || "").replace(/\D/g, "")
-}
-
-function normalizeLicence(value?: string) {
+// --- Strict Contact Normalizers (Preserved for Duplicate Identity Resolution) ---
+export function normalizeLicence(value?: string | null): string {
   return String(value || "")
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-function normalizeName(value?: string) {
+export function normalizeEmail(value?: string | null): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function normalizePhone(value?: string | null): string {
+  return String(value || "").replace(/\D/g, "");
+}
+
+export function normalizeName(value?: string | null): string {
   return String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "")
+    .replace(/[^a-z0-9]/g, "");
 }
 
-function relationshipForCompany(
-  contact: Contact,
-  companyId: string
-) {
-  return contact.relationships?.find(
-    (relationship) =>
-      relationship.companyId === companyId &&
-      relationship.status === "active"
-  )
+// --- ID Generators ---
+export function generateContactId(): string {
+  return `CNT-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-function roleForCompany(contact: Contact, companyId: string) {
-  return relationshipForCompany(contact, companyId)?.role || contact.role || ""
+export function generateGlobalUserId(): string {
+  return `USR-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-function isPrimaryForCompany(contact: Contact, companyId: string) {
-  const relationship = relationshipForCompany(contact, companyId)
-  if (!relationship) return false
-
-  return relationship.isPrimary === true
+export function generateRelationshipId(): string {
+  return `REL-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-function migrateContact(contact: Contact): Contact {
-  const activeRelationships = (contact.relationships || []).filter(
-    (relationship) => relationship.status === "active"
-  )
-
-  let primaryAssigned = activeRelationships.some(
-    (relationship) => relationship.isPrimary === true
-  )
-
-  const relationships = (contact.relationships || []).map((relationship) => {
-    if (relationship.isPrimary !== undefined) return relationship
-
-    if (
-      !primaryAssigned &&
-      contact.isPrimary &&
-      relationship.status === "active"
-    ) {
-      primaryAssigned = true
-      return { ...relationship, isPrimary: true }
-    }
-
-    return { ...relationship, isPrimary: false }
-  })
-
-  return {
-    ...contact,
-    identityStatus:
-      (contact.identityStatus as string) === "verified"
-        ? "documented"
-        : contact.identityStatus,
-    relationships,
-  }
+export function generateEvidenceId(): string {
+  return `DOC-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-type DuplicateMatch = {
-  contact: Contact
-  reasons: string[]
+export function generateEventId(): string {
+  return `EVT-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-function findDuplicateContact(
-  draft: ContactDraft,
+// --- Jurisdiction Constants ---
+export const CANADIAN_PROVINCES = [
+  "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"
+];
+export const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL",
+  "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT",
+  "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI",
+  "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+];
+export const ALL_JURISDICTIONS = [...CANADIAN_PROVINCES, ...US_STATES];
+
+export const STANDARD_ROLES = [
+  "Primary Contact",
+  "Director",
+  "Safety Manager",
+  "Fleet Manager",
+  "Compliance Officer",
+  "Dispatcher",
+  "Billing / Accounting",
+  "Driver",
+  "Owner / Operator",
+  "General Contact",
+];
+
+// --- 3-Year Visibility Cutoff Helper ---
+export function isWithinThreeYears(dateString?: string): boolean {
+  if (!dateString) return true;
+  const docDate = new Date(dateString);
+  if (isNaN(docDate.getTime())) return true;
+  const threeYearsAgo = new Date();
+  threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+  return docDate >= threeYearsAgo;
+}
+
+// --- Duplicate Resolution Business Rule ---
+export function findDuplicateContact(
+  draft: {
+    firstName?: string;
+    lastName?: string;
+    dob?: string;
+    dlNumber?: string;
+    email?: string;
+    phone?: string;
+  },
   contacts: Contact[],
-  excludeContactId?: string
-): DuplicateMatch | null {
-  const email = normalizeEmail(draft.email)
-  const phone = normalizePhone(draft.phone)
-  const licence = normalizeLicence(draft.dlNumber)
-  const firstName = normalizeName(draft.firstName)
-  const lastName = normalizeName(draft.lastName)
-  const dob = draft.dob.trim()
+  excludeId?: string
+): { match: Contact | null; reason: string | null } {
+  const dl = normalizeLicence(draft.dlNumber);
+  const email = normalizeEmail(draft.email);
+  const phone = normalizePhone(draft.phone);
+  const fullName = normalizeName(`${draft.firstName || ""}${draft.lastName || ""}`);
+  const dob = draft.dob?.trim();
 
-  let strongest: DuplicateMatch | null = null
+  for (const c of contacts) {
+    if (excludeId && c.id === excludeId) continue;
 
-  for (const contact of contacts) {
-    if (contact.id === excludeContactId) continue
-
-    const reasons: string[] = []
-
-    if (licence && normalizeLicence(contact.dlNumber) === licence) {
-      reasons.push("Driver Licence #")
+    // 1. Exact Driver Licence match (Strongest Identity Signal)
+    if (dl && normalizeLicence(c.dlNumber) === dl) {
+      return { match: c, reason: `Matching Driver Licence Number (${draft.dlNumber})` };
     }
 
-    if (email && normalizeEmail(contact.email) === email) {
-      reasons.push("Email")
+    // 2. Exact Email match
+    if (email && normalizeEmail(c.email) === email) {
+      return { match: c, reason: `Matching Email Address (${draft.email})` };
     }
 
-    if (
-      phone.length >= 7 &&
-      normalizePhone(contact.phone) === phone
-    ) {
-      reasons.push("Phone")
+    // 3. Exact Phone match (>= 7 digits)
+    if (phone && phone.length >= 7 && normalizePhone(c.phone) === phone) {
+      return { match: c, reason: `Matching Phone Number (${draft.phone})` };
     }
 
-    if (
-      dob &&
-      contact.dob === dob &&
-      firstName &&
-      lastName &&
-      normalizeName(contact.firstName) === firstName &&
-      normalizeName(contact.lastName) === lastName
-    ) {
-      reasons.push("Name + Date of Birth")
-    }
-
-    if (reasons.length) {
-      const match = { contact, reasons }
-      if (!strongest || reasons.length > strongest.reasons.length) {
-        strongest = match
-      }
+    // 4. Exact Full Name + Date of Birth compound match
+    if (fullName && dob && c.dob && normalizeName(`${c.firstName}${c.lastName}`) === fullName && c.dob === dob) {
+      return { match: c, reason: `Matching Full Name & Date of Birth (${c.firstName} ${c.lastName}, DOB: ${dob})` };
     }
   }
 
-  return strongest
+  return { match: null, reason: null };
 }
 
-/* =========================================================
-   STANDARD TES OCR ICON
-========================================================= */
+// --- Primary Contact Enforcement Business Rule ---
+export function applyPrimaryRule(
+  updatedContact: Contact,
+  companyId: string,
+  allContacts: Contact[],
+  companyName: string
+): Contact[] {
+  const currentRel = updatedContact.relationships.find((r) => r.companyId === companyId);
+  const isNowPrimary = !!currentRel?.isPrimary;
 
-function ScanDocumentIcon({
-  size = 16,
-}: {
-  size?: number
-}) {
-  return (
-    <span
-      className="relative inline-flex shrink-0 items-center justify-center"
-      style={{
-        width: size,
-        height: size,
-      }}
-    >
-      <span className="absolute inset-0">
-        <span className="absolute left-0 top-0 h-[35%] w-[35%] rounded-tl-[2px] border-l-[1.5px] border-t-[1.5px] border-current" />
-        <span className="absolute right-0 top-0 h-[35%] w-[35%] rounded-tr-[2px] border-r-[1.5px] border-t-[1.5px] border-current" />
-        <span className="absolute bottom-0 left-0 h-[35%] w-[35%] rounded-bl-[2px] border-b-[1.5px] border-l-[1.5px] border-current" />
-        <span className="absolute bottom-0 right-0 h-[35%] w-[35%] rounded-br-[2px] border-b-[1.5px] border-r-[1.5px] border-current" />
-      </span>
-
-      <FileText
-        style={{
-          width: size * 0.55,
-          height: size * 0.55,
-          strokeWidth: 1.8,
-        }}
-      />
-    </span>
-  )
-}
-
-/* =========================================================
-   DOCUMENT SOURCE PICKER
-========================================================= */
-
-function DocumentSourcePicker({
-  title,
-  onCamera,
-  onDevice,
-  onCancel,
-}: {
-  title: string
-  onCamera: () => void
-  onDevice: () => void
-  onCancel: () => void
-}) {
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <Card className="w-full max-w-lg shadow-2xl">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ScanDocumentIcon size={18} />
-                {title}
-              </CardTitle>
-
-              <CardDescription className="mt-1">
-                Choose how you want to provide the identity document.
-              </CardDescription>
-            </div>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onCancel}
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-        </CardHeader>
-
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={onCamera}
-            className="group rounded-xl border p-5 text-left transition-all hover:border-primary/40 hover:bg-primary/[0.035]"
-          >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Camera className="size-5" />
-            </div>
-
-            <p className="mt-4 text-sm font-semibold">
-              Take Photo
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Capture the identity document using the device camera.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={onDevice}
-            className="group rounded-xl border p-5 text-left transition-all hover:border-primary/40 hover:bg-primary/[0.035]"
-          >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Upload className="size-5" />
-            </div>
-
-            <p className="mt-4 text-sm font-semibold">
-              Upload from Device
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Choose an existing image or PDF from device storage.
-            </p>
-          </button>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-/* =========================================================
-   DOCUMENT VIEWER
-========================================================= */
-
-type ViewerDocument = {
-  fileName: string
-  fileType: string
-  dataUrl: string
-  source?: DocumentSource
-  fileSize?: number
-}
-
-function DocumentViewer({
-  document,
-  onReplace,
-  onClose,
-}: {
-  document: ViewerDocument
-  onReplace?: () => void
-  onClose?: () => void
-}) {
-  const viewerRef = useRef<HTMLDivElement | null>(null)
-
-  const dragRef = useRef({
-    active: false,
-    x: 0,
-    y: 0,
-  })
-
-  const [zoom, setZoom] = useState(1)
-  const [rotation, setRotation] = useState(0)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-
-  const isPdf = document.fileType === "application/pdf"
-
-  const fitDocument = () => {
-    setZoom(1)
-    setRotation(0)
-    setPan({ x: 0, y: 0 })
+  if (!isNowPrimary) {
+    return allContacts.map((c) => (c.id === updatedContact.id ? updatedContact : c));
   }
 
-  const zoomIn = () => {
-    setZoom((current) => Math.min(current + 0.25, 5))
-  }
-
-  const zoomOut = () => {
-    setZoom((current) => {
-      const next = Math.max(current - 0.25, 0.5)
-      if (next <= 1) setPan({ x: 0, y: 0 })
-      return next
-    })
-  }
-
-  const handlePointerDown = (
-    event: React.PointerEvent<HTMLDivElement>
-  ) => {
-    if (isPdf) return
-
-    dragRef.current = {
-      active: true,
-      x: event.clientX,
-      y: event.clientY,
+  // If this contact is now primary, demote any other contact for this company
+  return allContacts.map((c) => {
+    if (c.id === updatedContact.id) {
+      return updatedContact;
     }
 
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-
-  const handlePointerMove = (
-    event: React.PointerEvent<HTMLDivElement>
-  ) => {
-    if (isPdf || !dragRef.current.active) return
-
-    const deltaX = event.clientX - dragRef.current.x
-    const deltaY = event.clientY - dragRef.current.y
-
-    dragRef.current.x = event.clientX
-    dragRef.current.y = event.clientY
-
-    setPan((current) => ({
-      x: current.x + deltaX,
-      y: current.y + deltaY,
-    }))
-  }
-
-  const handlePointerUp = () => {
-    dragRef.current.active = false
-  }
-
-  const enterFullScreen = async () => {
-    const element = viewerRef.current
-    if (!element) return
-
-    try {
-      if (!window.document.fullscreenElement) {
-        await element.requestFullscreen()
-      } else {
-        await window.document.exitFullscreen()
-      }
-    } catch (error) {
-      console.error("Unable to enter fullscreen:", error)
-    }
-  }
-
-  return (
-    <div
-      ref={viewerRef}
-      className="flex h-full min-h-0 flex-col bg-background fullscreen:bg-background"
-    >
-      <div className="flex min-h-12 items-center justify-between gap-3 border-b bg-background px-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold">Original Document</p>
-          <p className="max-w-[520px] truncate text-[10px] text-muted-foreground">
-            {document.fileName}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          {!isPdf && (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2 text-xs"
-                onClick={fitDocument}
-              >
-                Fit
-              </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={zoomOut}
-              >
-                <ZoomOut className="size-4" />
-              </Button>
-
-              <span className="w-12 text-center text-[10px] font-medium">
-                {Math.round(zoom * 100)}%
-              </span>
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={zoomIn}
-              >
-                <ZoomIn className="size-4" />
-              </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={() =>
-                  setRotation((current) => (current + 90) % 360)
-                }
-              >
-                <RotateCcw className="size-4" />
-              </Button>
-            </>
-          )}
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={enterFullScreen}
-            title="Full screen"
-          >
-            <Maximize2 className="size-4" />
-          </Button>
-
-          {onClose && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              onClick={onClose}
-              title="Close"
-            >
-              <X className="size-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div
-        className={`relative min-h-0 flex-1 overflow-hidden bg-muted/15 ${
-          isPdf ? "" : "cursor-grab active:cursor-grabbing select-none"
-        }`}
-        style={{ touchAction: isPdf ? "auto" : "none" }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-      >
-        {isPdf ? (
-          <embed
-            src={`${document.dataUrl}#view=FitH`}
-            type="application/pdf"
-            className="absolute inset-0 h-full w-full"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center p-4 lg:p-6">
-            <img
-              src={document.dataUrl}
-              alt={document.fileName}
-              draggable={false}
-              className="max-h-full max-w-full select-none object-contain rounded-md bg-background shadow-sm"
-              style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
-                transformOrigin: "center center",
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-t bg-background px-4 py-2">
-        <p className="min-w-0 max-w-[540px] truncate text-[10px] text-muted-foreground">
-          {document.fileName}
-          {document.fileSize !== undefined && (
-            <> · {(document.fileSize / 1024 / 1024).toFixed(2)} MB</>
-          )}
-          {document.source && (
-            <> · {document.source === "camera" ? "Camera" : "Device Upload"}</>
-          )}
-        </p>
-
-        {onReplace && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={onReplace}
-          >
-            <RotateCcw className="mr-1.5 size-3.5" />
-            Replace Document
-          </Button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function EvidencePreviewModal({
-  evidence,
-  onClose,
-}: {
-  evidence: Evidence
-  onClose: () => void
-}) {
-  if (!evidence.dataUrl) return null
-
-  return (
-    <div className="fixed inset-0 z-[170] bg-background">
-      <DocumentViewer
-        document={{
-          fileName: evidence.fileName,
-          fileType: evidence.fileType,
-          dataUrl: evidence.dataUrl,
-          source: evidence.source,
-        }}
-        onClose={onClose}
-      />
-    </div>
-  )
-}
-
-function CameraCapture({
-  onCapture,
-  onClose,
-}: {
-  onCapture: (file: File) => void
-  onClose: () => void
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-
-  const [ready, setReady] = useState(false)
-  const [error, setError] = useState("")
-
-  useEffect(() => {
-    const start = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
-          audio: false,
-        })
-
-        streamRef.current = stream
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          await videoRef.current.play()
-          setReady(true)
-        }
-      } catch {
-        setError(
-          "TES could not access the camera. Check the browser camera permission."
-        )
-      }
-    }
-
-    start()
-
-    return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop())
-    }
-  }, [])
-
-  const capture = () => {
-    const video = videoRef.current
-    const canvas = canvasRef.current
-
-    if (!video || !canvas) return
-
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    const context = canvas.getContext("2d")
-    if (!context) return
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return
-
-        streamRef.current?.getTracks().forEach((track) => track.stop())
-
-        onCapture(
-          new File([blob], `contact-id-${Date.now()}.jpg`, {
-            type: "image/jpeg",
-          })
-        )
-      },
-      "image/jpeg",
-      0.95
-    )
-  }
-
-  return (
-    <div className="fixed inset-0 z-[160] flex flex-col bg-black">
-      <div className="flex min-h-16 items-center justify-between border-b border-white/10 px-5 text-white">
-        <div>
-          <p className="text-sm font-semibold">Capture Identity Document</p>
-          <p className="text-[10px] text-white/60">
-            Keep the complete document inside the frame.
-          </p>
-        </div>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="text-white hover:bg-white/10 hover:text-white"
-          onClick={onClose}
-        >
-          <X className="size-5" />
-        </Button>
-      </div>
-
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden">
-        {error ? (
-          <div className="max-w-md rounded-xl border border-red-900 bg-red-950/50 p-6 text-center text-white">
-            <XCircle className="mx-auto size-8 text-red-400" />
-            <p className="mt-3 text-sm font-semibold">Camera unavailable</p>
-            <p className="mt-2 text-xs text-white/70">{error}</p>
-          </div>
-        ) : (
-          <>
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="max-h-full max-w-full object-contain"
-            />
-            <div className="pointer-events-none absolute inset-[8%] rounded-xl border-2 border-dashed border-white/60" />
-          </>
-        )}
-
-        <canvas ref={canvasRef} className="hidden" />
-      </div>
-
-      <div className="flex min-h-24 items-center justify-center border-t border-white/10">
-        <Button
-          type="button"
-          size="lg"
-          className="rounded-full px-8"
-          disabled={!ready}
-          onClick={capture}
-        >
-          <Camera className="mr-2 size-5" />
-          Capture Photo
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   CONTACT FIELDS
-========================================================= */
-
-function ContactFields({
-  draft,
-  onChange,
-  ocrFields,
-  showConfidence = false,
-}: {
-  draft: ContactDraft
-  onChange: <K extends keyof ContactDraft>(
-    key: K,
-    value: ContactDraft[K]
-  ) => void
-  ocrFields?: OCRField[]
-  showConfidence?: boolean
-}) {
-  const confidence = (
-    key: OCRFieldKey
-  ) =>
-    ocrFields?.find(
-      (field) => field.key === key
-    )
-
-  const confidenceBadge = (
-    key: OCRFieldKey
-  ) => {
-    if (!showConfidence) return null
-
-    const field = confidence(key)
-
-    if (!field || field.confidence <= 0)
-      return null
-
-    const good =
-      field.confidence >= OCR_REQUIRED_THRESHOLD
-
-    return (
-      <Badge
-        variant="outline"
-        className={`text-[9px] ${
-          good
-            ? "border-emerald-300 text-emerald-700"
-            : "border-red-300 text-red-700"
-        }`}
-      >
-        {field.confidence}%
-      </Badge>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* IDENTITY */}
-      <div>
-        <div className="mb-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">
-            Identity
-          </p>
-
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Document-derived identity information.
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>First Name *</Label>
-              {confidenceBadge("firstName")}
-            </div>
-
-            <Input
-              value={draft.firstName}
-              onChange={(event) =>
-                onChange(
-                  "firstName",
-                  event.target.value
-                )
-              }
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Last Name *</Label>
-              {confidenceBadge("lastName")}
-            </div>
-
-            <Input
-              value={draft.lastName}
-              onChange={(event) =>
-                onChange(
-                  "lastName",
-                  event.target.value
-                )
-              }
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Date of Birth</Label>
-              {confidenceBadge("dob")}
-            </div>
-
-            <Input
-              type="date"
-              value={draft.dob}
-              onChange={(event) =>
-                onChange(
-                  "dob",
-                  event.target.value
-                )
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Driver Licence #</Label>
-              {confidenceBadge("dlNumber")}
-            </div>
-
-            <Input
-              value={draft.dlNumber}
-              onChange={(event) =>
-                onChange(
-                  "dlNumber",
-                  event.target.value
-                )
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>
-                Issuing Province / State
-              </Label>
-
-              {confidenceBadge("dlState")}
-            </div>
-
-            <Input
-              value={draft.dlState}
-              onChange={(event) =>
-                onChange(
-                  "dlState",
-                  event.target.value.toUpperCase()
-                )
-              }
-              maxLength={3}
-              placeholder="AB"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Expiry Date</Label>
-              {confidenceBadge("dlExpiry")}
-            </div>
-
-            <Input
-              type="date"
-              value={draft.dlExpiry}
-              onChange={(event) =>
-                onChange(
-                  "dlExpiry",
-                  event.target.value
-                )
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Issue Date</Label>
-              {confidenceBadge("dlIssueDate")}
-            </div>
-
-            <Input
-              type="date"
-              value={draft.dlIssueDate}
-              onChange={(event) =>
-                onChange(
-                  "dlIssueDate",
-                  event.target.value
-                )
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Licence Class</Label>
-              {confidenceBadge("dlClass")}
-            </div>
-
-            <Input
-              value={draft.dlClass}
-              onChange={(event) =>
-                onChange(
-                  "dlClass",
-                  event.target.value
-                )
-              }
-              placeholder="e.g. Class 1"
-            />
-          </div>
-
-          <div className="space-y-2 sm:col-span-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Restrictions</Label>
-              {confidenceBadge(
-                "dlRestrictions"
-              )}
-            </div>
-
-            <Input
-              value={draft.dlRestrictions}
-              onChange={(event) =>
-                onChange(
-                  "dlRestrictions",
-                  event.target.value
-                )
-              }
-              placeholder="None / conditions / endorsements"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* CONTACT + RELATIONSHIP */}
-      <div className="border-t pt-5">
-        <div className="mb-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">
-            Contact & Relationship
-          </p>
-
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Information not normally available from the identity document.
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label>Email *</Label>
-
-            <Input
-              type="email"
-              value={draft.email}
-              onChange={(event) =>
-                onChange(
-                  "email",
-                  event.target.value
-                )
-              }
-              placeholder="contact@example.com"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Phone *</Label>
-
-            <Input
-              type="tel"
-              value={draft.phone}
-              onChange={(event) =>
-                onChange(
-                  "phone",
-                  event.target.value
-                )
-              }
-              placeholder="+1 ..."
-              required
-            />
-          </div>
-
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Role / Relationship *</Label>
-
-            <Select
-              value={draft.role || undefined}
-              onValueChange={(value) =>
-                onChange("role", value)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select relationship" />
-              </SelectTrigger>
-
-            <SelectContent className="z-[200]">
-            <SelectItem value="Owner">
-            Owner / President
-            </SelectItem>
-
-            <SelectItem value="Director">
-            Director
-            </SelectItem>
-
-            <SelectItem value="Safety Manager">
-            Safety Manager
-            </SelectItem>
-
-            <SelectItem value="Operations Manager">
-            Operations Manager
-            </SelectItem>
-
-            <SelectItem value="Fleet Manager">
-            Fleet Manager
-            </SelectItem>
-
-            <SelectItem value="Dispatcher">
-            Dispatcher
-            </SelectItem>
-
-            <SelectItem value="Billing">
-            Billing / Accounting
-            </SelectItem>
-
-            <SelectItem value="Consultant">
-            Third-Party Consultant
-            </SelectItem>
-
-            <SelectItem value="Other">
-            Other
-            </SelectItem>
-            </SelectContent>       
-            </Select>
-          </div>
-
-          <div className="sm:col-span-2">
-            <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border p-4">
-              <div>
-                <p className="text-sm font-medium">
-                  Primary Contact
-                </p>
-
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Primary contact is pinned above all other active contacts for this company.
-                </p>
-              </div>
-
-              <Checkbox
-                checked={draft.isPrimary}
-                onCheckedChange={(checked) =>
-                  onChange(
-                    "isPrimary",
-                    checked === true
-                  )
-                }
-              />
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   OCR CONTACT WORKSPACE
-========================================================= */
-
-function OCRContactWorkspace({
-  session,
-  onClose,
-  onReplace,
-  onSave,
-}: {
-  session: OCRSession
-  onClose: () => void
-  onReplace: () => void
-  onSave: (
-    session: OCRSession
-  ) => void
-}) {
-  const [workingSession, setWorkingSession] =
-    useState(session)
-
-  useEffect(() => {
-    setWorkingSession(session)
-  }, [session])
-
-  const fields = workingSession.fields
-
-  const confidence =
-    averageConfidence(fields)
-
-  const confidenceFailed =
-    hasOCRConfidenceFailure(fields)
-
-  const complete =
-    workingSession.status === "complete"
-
-  const requiredContactFieldsComplete =
-    Boolean(
-      workingSession.draft.firstName.trim() &&
-      workingSession.draft.lastName.trim() &&
-      workingSession.draft.email.trim() &&
-      workingSession.draft.phone.trim() &&
-      workingSession.draft.role.trim()
-    )
-
-  const canSave =
-    complete &&
-    !confidenceFailed &&
-    requiredContactFieldsComplete
-
-  const changeDraft = <
-    K extends keyof ContactDraft
-  >(
-    key: K,
-    value: ContactDraft[K]
-  ) => {
-    setWorkingSession((current) => ({
-      ...current,
-      draft: {
-        ...current.draft,
-        [key]: value,
-      },
-    }))
-  }
-
-  const changeOCRField = (
-    key: OCRFieldKey,
-    value: string
-  ) => {
-    setWorkingSession((current) => {
-      const updatedFields =
-        current.fields.map((field) =>
-          field.key === key
-            ? {
-                ...field,
-                value,
-              }
-            : field
-        )
+    const relIndex = c.relationships.findIndex((r) => r.companyId === companyId);
+    if (relIndex !== -1 && c.relationships[relIndex].isPrimary) {
+      const updatedRelationships = [...c.relationships];
+      updatedRelationships[relIndex] = {
+        ...updatedRelationships[relIndex],
+        isPrimary: false,
+      };
+
+      const demotionEvent: ContactEvent = {
+        id: generateEventId(),
+        timestamp: new Date().toISOString(),
+        action: "PRIMARY_CHANGED",
+        summary: `Primary contact designation transferred to ${updatedContact.firstName} ${updatedContact.lastName} at ${companyName}.`,
+        actor: "System Administrator",
+      };
 
       return {
-        ...current,
-        fields: updatedFields,
-        draft: {
-          ...current.draft,
-          [key]: value,
-        },
-      }
-    })
-  }
-
-  return (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-background">
-      {/* HEADER */}
-      <div className="flex min-h-16 items-center justify-between gap-4 border-b px-5">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <ScanDocumentIcon size={18} />
-          </div>
-
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold">
-                Document Intelligence Review
-              </p>
-
-              <Badge
-                variant="outline"
-                className="gap-1 text-[9px]"
-              >
-                <ShieldCheck className="size-3" />
-                AI Assisted
-              </Badge>
-            </div>
-
-            <p className="mt-0.5 max-w-[600px] truncate text-[10px] text-muted-foreground">
-              {workingSession.file.name}
-            </p>
-          </div>
-        </div>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-        >
-          <X className="size-5" />
-        </Button>
-      </div>
-
-      {/* CONTENT */}
-      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
-        {/* DOCUMENT */}
-        <div className="min-h-0 border-r">
-          <DocumentViewer
-            document={{
-              fileName: workingSession.file.name,
-              fileType: workingSession.file.type,
-              dataUrl: workingSession.dataUrl,
-              source: workingSession.source,
-              fileSize: workingSession.file.size,
-            }}
-            onReplace={onReplace}
-          />
-        </div>
-
-        {/* EXTRACTION / CONTACT CREATION */}
-        <div className="flex min-h-0 flex-col bg-background">
-          <div className="border-b p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold">
-                  Contact Creation
-                </p>
-
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Review OCR data and complete the remaining contact information before saving.
-                </p>
-              </div>
-
-              {complete && (
-                <div className="text-right">
-                  <p
-                    className={`text-xl font-bold ${
-                      confidenceFailed
-                        ? "text-red-600"
-                        : "text-emerald-600"
-                    }`}
-                  >
-                    {confidence}%
-                  </p>
-
-                  <p className="text-[10px] text-muted-foreground">
-                    OCR confidence
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {complete && (
-              <div className="mt-4">
-                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={`h-full ${
-                      confidenceFailed
-                        ? "bg-red-500"
-                        : "bg-emerald-500"
-                    }`}
-                    style={{
-                      width: `${confidence}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-5">
-            {workingSession.status ===
-            "processing" ? (
-              <div className="flex min-h-[500px] flex-col items-center justify-center text-center">
-                <div className="flex size-14 items-center justify-center rounded-full bg-primary/10">
-                  <Sparkles className="size-7 animate-pulse text-primary" />
-                </div>
-
-                <p className="mt-4 text-sm font-medium">
-                  Reading the complete document...
-                </p>
-
-                <p className="mt-1 max-w-[300px] text-xs leading-5 text-muted-foreground">
-                  TES is identifying document fields and calculating confidence before the record can be created.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {confidenceFailed && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 dark:bg-red-950/10">
-                    <div className="flex items-start gap-2">
-                      <XCircle className="mt-0.5 size-4 shrink-0 text-red-600" />
-
-                      <div>
-                        <p className="text-xs font-semibold text-red-800 dark:text-red-300">
-                          OCR confidence below acceptance threshold
-                        </p>
-
-                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                          One or more required identity fields are below {OCR_REQUIRED_THRESHOLD}%. Replace or recapture the document before saving.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {!confidenceFailed && (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:bg-emerald-950/10">
-                    <div className="flex items-start gap-2">
-                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-
-                      <div>
-                        <p className="text-xs font-semibold">
-                          Document passed OCR confidence gate
-                        </p>
-
-                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                          Review the extracted values against the original document and complete the contact fields below.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <ContactFields
-                  draft={
-                    workingSession.draft
-                  }
-                  onChange={changeDraft}
-                  ocrFields={fields}
-                  showConfidence
-                />
-              </div>
-            )}
-          </div>
-
-          {/* SAVE */}
-          <div className="border-t bg-background p-4">
-            <div className="mb-3 flex items-center justify-between gap-4">
-              <div className="text-[10px] text-muted-foreground">
-                Required OCR threshold:{" "}
-                <strong>
-                  {OCR_REQUIRED_THRESHOLD}%
-                </strong>
-              </div>
-
-              {workingSession.draft.isPrimary && (
-                <Badge className="text-[9px]">
-                  Primary Contact
-                </Badge>
-              )}
-            </div>
-
-            <Button
-              type="button"
-              className="w-full"
-              disabled={!canSave}
-              onClick={() =>
-                onSave(workingSession)
-              }
-            >
-              <CheckCircle2 className="mr-2 size-4" />
-              Save Contact
-            </Button>
-
-            {!requiredContactFieldsComplete &&
-              complete && (
-                <p className="mt-2 text-center text-[10px] text-muted-foreground">
-                  First Name, Last Name, Email, Phone and Role / Relationship are required.
-                </p>
-              )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CopyableValue({
-  label,
-  value,
-}: {
-  label: string
-  value?: string
-}) {
-  const [copied, setCopied] = useState(false)
-
-  const copyValue = async () => {
-    if (!value) return
-
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-
-      window.setTimeout(() => {
-        setCopied(false)
-      }, 1200)
-    } catch {
-      // Clipboard access can fail in non-secure development environments.
+        ...c,
+        isPrimary: false,
+        relationships: updatedRelationships,
+        events: [demotionEvent, ...(c.events || [])],
+        updatedAt: new Date().toISOString(),
+      };
     }
-  }
 
-  return (
-    <div>
-      <p className="text-[10px] text-muted-foreground">
-        {label}
-      </p>
-
-      <div className="mt-1 flex items-center gap-1">
-        <span className="min-w-0 flex-1 select-text truncate text-xs font-medium">
-          {value || "Not recorded"}
-        </span>
-
-        {value && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={copyValue}
-            title={`Copy ${label}`}
-          >
-            {copied ? (
-              <Check className="size-3.5 text-emerald-600" />
-            ) : (
-              <Copy className="size-3.5" />
-            )}
-          </Button>
-        )}
-      </div>
-    </div>
-  )
+    return c;
+  });
 }
 
-/* =========================================================
-   PAGE
-========================================================= */
+// --- OCR Demo Extraction Simulator (85% Threshold Invariant) ---
+export const OCR_REQUIRED_THRESHOLD = 85;
+
+export function simulateOCRExtraction(
+  file: File,
+  dataUrl: string,
+  source: "camera" | "device" = "device"
+): OCRReviewDraft {
+  const isHighQuality = file.size > 20000;
+  return {
+    firstName: { value: "Amandeep", confidence: isHighQuality ? 94 : 82 },
+    lastName: { value: "Dhillon", confidence: isHighQuality ? 96 : 88 },
+    dob: { value: "1988-04-12", confidence: isHighQuality ? 92 : 79 },
+    dlNumber: { value: "D4928-19482-94819", confidence: isHighQuality ? 91 : 86 },
+    dlState: { value: "ON", confidence: 98 },
+    dlExpiry: { value: "2028-04-12", confidence: isHighQuality ? 90 : 81 },
+    dlIssueDate: { value: "2023-04-10", confidence: 89 },
+    dlClass: { value: "Class A / AZ", confidence: 95 },
+    dlRestrictions: { value: "Condition 1 / Corrective Lenses", confidence: 87 },
+    email: { value: "", confidence: 100 },
+    phone: { value: "", confidence: 100 },
+    role: "Safety Manager",
+    isPrimary: false,
+    evidence: {
+      id: generateEvidenceId(),
+      type: "Driver Licence",
+      fileName: file.name || (source === "camera" ? "camera-id-capture.jpg" : "id-scan.jpg"),
+      fileType: file.type || "image/jpeg",
+      uploadedAt: new Date().toISOString(),
+      documentDate: "2023-04-10",
+      confidence: isHighQuality ? 93 : 84,
+      status: isHighQuality ? "verified" : "review_required",
+      source,
+      dataUrl,
+    },
+  };
+}
+
+// =========================================================================
+// MAIN CONTACTS PAGE COMPONENT
+// =========================================================================
 
 export default function ContactsPage() {
-  const params = useParams()
-  const router = useRouter()
-  const searchParams = useSearchParams()
+  const params = useParams<{ id: string }>();
+  const companyId = params?.id;
 
-  const companyId = params.id as string
+  const [company, setCompany] = useState<any>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const deviceInputRef =
-    useRef<HTMLInputElement | null>(null)
+  // Filter & Search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [showOlderEvidence, setShowOlderEvidence] = useState(false);
 
-  const [
-    documentSourceMode,
-    setDocumentSourceMode,
-  ] = useState<
-    "ocr_create" | "manual_attachment"
-  >("ocr_create")
+  // Inspector & Modal State
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editFormData, setEditFormData] = useState<Partial<Contact> & { companyRole?: string; isPrimary?: boolean }>({});
+  const [editFormErrors, setEditFormErrors] = useState<Record<string, string>>({});
+  const [editDuplicateWarning, setEditDuplicateWarning] = useState<string | null>(null);
 
-  const [
-    showSourcePicker,
-    setShowSourcePicker,
-  ] = useState(false)
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isOCRWorkspaceOpen, setIsOCRWorkspaceOpen] = useState(false);
+  const [ocrDraft, setOcrDraft] = useState<OCRReviewDraft | null>(null);
+  const [ocrValidationError, setOcrValidationError] = useState<string | null>(null);
 
-  const [company, setCompany] =
-    useState<any>(null)
+  // Document Viewer Modal State
+  const [previewEvidence, setPreviewEvidence] = useState<Evidence | null>(null);
 
-  const [contacts, setContacts] =
-    useState<Contact[]>([])
+  // Manual Form State
+  const [manualForm, setManualForm] = useState({
+    firstName: "",
+    lastName: "",
+    dob: "",
+    dlNumber: "",
+    dlState: "ON",
+    dlExpiry: "",
+    dlIssueDate: "",
+    dlClass: "",
+    dlRestrictions: "",
+    email: "",
+    phone: "",
+    role: "Safety Manager",
+    isPrimary: false,
+    notes: "",
+  });
+  const [manualFormErrors, setManualFormErrors] = useState<Record<string, string>>({});
+  const [manualDuplicateWarning, setManualDuplicateWarning] = useState<string | null>(null);
 
-  const [
-    selectedContactId,
-    setSelectedContactId,
-  ] = useState<string | null>(null)
-
-  const [loading, setLoading] =
-    useState(true)
-
-  const [showManualForm, setShowManualForm] =
-    useState(false)
-
-  const [isEditingContact, setIsEditingContact] =
-    useState(false)
-
-  const [editDraft, setEditDraft] =
-    useState<ContactDraft>(EMPTY_DRAFT)
-
-  const [manualDraft, setManualDraft] =
-    useState<ContactDraft>(EMPTY_DRAFT)
-
-  const [noteDraft, setNoteDraft] =
-    useState("")
-
-  const [search, setSearch] =
-    useState("")
-
-  const [statusFilter, setStatusFilter] =
-    useState<"active" | "archived">(
-      "active"
-    )
-
-  const [ocrSession, setOcrSession] =
-    useState<OCRSession | null>(null)
-
-  const [showCamera, setShowCamera] =
-    useState(false)
-
-  const [previewEvidence, setPreviewEvidence] =
-    useState<Evidence | null>(null)
-
-  const [showOlderEvidence, setShowOlderEvidence] =
-    useState(false)
-
-  const [attachmentTargetContactId, setAttachmentTargetContactId] =
-    useState<string | null>(null)
-
-  /* =======================================================
-     LOAD
-  ======================================================= */
-
+  // 1. Load Data with V5 -> V4 -> V3 fallback
   useEffect(() => {
     try {
-      const companies = JSON.parse(
-        localStorage.getItem(
-          "tes_companies"
-        ) || "[]"
-      )
-
-      const found = companies.find(
-        (item: any) =>
-          item.id === companyId
-      )
-
-      setCompany(found || null)
-
-      /*
-        v5 first.
-
-        Fallback to previous prototype version so existing
-        testing records are not silently lost.
-      */
-      const stored =
-        localStorage.getItem(
-          CONTACT_STORAGE
-        ) ||
-        localStorage.getItem(
-          "tes_contacts_v4"
-        ) ||
-        localStorage.getItem(
-          "tes_contacts_v3"
-        )
-
-      const parsed = stored
-        ? JSON.parse(stored)
-        : []
-
-      setContacts(
-        Array.isArray(parsed)
-          ? parsed.map((contact: Contact) => migrateContact(contact))
-          : []
-      )
-    } catch (error) {
-      console.error(
-        "Unable to load contacts:",
-        error
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [companyId])
-
-  useEffect(() => {
-    if (!loading) {
-      localStorage.setItem(
-        CONTACT_STORAGE,
-        JSON.stringify(contacts)
-      )
-    }
-  }, [contacts, loading])
-
-
-  useEffect(() => {
-    const requestedContactId = searchParams.get("contact")
-    if (!requestedContactId || !contacts.length) return
-
-    const requested = contacts.find(
-      (contact) => contact.id === requestedContactId
-    )
-
-    if (
-      requested &&
-      requested.relationships?.some(
-        (relationship) => relationship.companyId === companyId
-      )
-    ) {
-      setSelectedContactId(requested.id)
-      setNoteDraft(requested.notes || "")
-    }
-  }, [searchParams, contacts, companyId])
-
-  /* =======================================================
-     COMPANY CONTACTS
-  ======================================================= */
-
-  const companyContacts = useMemo(() => {
-    return contacts.filter((contact) =>
-      contact.relationships?.some(
-        (relationship) =>
-          relationship.companyId ===
-          companyId
-      )
-    )
-  }, [contacts, companyId])
-
-  /*
-    PRIMARY PINNING RULE:
-
-    Active Primary Contact
-       ↓
-    Remaining active contacts
-       ↓
-    Archived records only when archived filter selected
-  */
-  const displayedContacts = useMemo(() => {
-    const query =
-      search.trim().toLowerCase()
-
-    return companyContacts
-      .filter((contact) => {
-        if (
-          statusFilter === "active" &&
-          contact.isArchived
-        ) {
-          return false
-        }
-
-        if (
-          statusFilter === "archived" &&
-          !contact.isArchived
-        ) {
-          return false
-        }
-
-        if (!query) return true
-
-        return [
-          contact.firstName,
-          contact.lastName,
-          `${contact.firstName} ${contact.lastName}`,
-          contact.email,
-          contact.phone,
-          contact.role,
-          contact.dlNumber,
-          contact.globalId,
-        ].some((value) =>
-          String(value || "")
-            .toLowerCase()
-            .includes(query)
-        )
-      })
-      .sort((a, b) => {
-        /*
-          Primary always wins.
-        */
-        const aPrimary = isPrimaryForCompany(a, companyId)
-        const bPrimary = isPrimaryForCompany(b, companyId)
-
-        if (aPrimary !== bPrimary) {
-          return aPrimary ? -1 : 1
-        }
-
-        return `${a.firstName} ${a.lastName}`.localeCompare(
-          `${b.firstName} ${b.lastName}`
-        )
-      })
-  }, [
-    companyContacts,
-    search,
-    statusFilter,
-  ])
-
-  const selectedContact =
-    contacts.find(
-      (contact) =>
-        contact.id === selectedContactId
-    ) || null
-
-  const activeCount =
-    companyContacts.filter(
-      (contact) =>
-        !contact.isArchived
-    ).length
-
-  const primaryContact =
-    companyContacts.find(
-      (contact) =>
-        isPrimaryForCompany(contact, companyId) &&
-        !contact.isArchived
-    )
-
-  const verifiedCount =
-    companyContacts.filter(
-      (contact) =>
-        !contact.isArchived &&
-        contact.identityStatus ===
-          "documented"
-    ).length
-
-  const reviewCount =
-    companyContacts.filter(
-      (contact) =>
-        !contact.isArchived &&
-        contact.identityStatus ===
-          "review_required"
-    ).length
-
-  /* =======================================================
-     PRIMARY RULE
-  ======================================================= */
-
-  const applyPrimaryRule = (
-    incoming: Contact,
-    currentContacts: Contact[]
-  ) => {
-    if (!isPrimaryForCompany(incoming, companyId)) {
-      return currentContacts
-    }
-
-    return currentContacts.map((contact) => {
-      if (contact.id === incoming.id) return contact
-
-      const relationship = relationshipForCompany(contact, companyId)
-
-      if (!relationship || relationship.isPrimary !== true) {
-        return contact
+      if (!companyId) {
+        setLoading(false);
+        return;
       }
 
-      const updatedRelationships = contact.relationships.map((item) =>
-        item.id === relationship.id
-          ? { ...item, isPrimary: false }
-          : item
-      )
+      // Load Company
+      const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]");
+      const foundCompany = savedCompanies.find((c: any) => c.id === companyId);
+      setCompany(foundCompany || null);
 
-      return appendEvent(
-        {
-          ...contact,
-          relationships: updatedRelationships,
-        },
-        "PRIMARY_CHANGED",
-        `Primary contact designation transferred to ${incoming.firstName} ${incoming.lastName}.`
-      )
-    })
-  }
+      // Load Contacts (v5 canonical, fallback to v4 / v3)
+      let rawContacts = localStorage.getItem("tes_contacts_v5");
+      if (!rawContacts) {
+        rawContacts = localStorage.getItem("tes_contacts_v4") || localStorage.getItem("tes_contacts_v3");
+      }
+      const loaded: Contact[] = rawContacts ? JSON.parse(rawContacts) : [];
+      setContacts(loaded);
 
-  /* =======================================================
-     EDIT CONTACT
-  ======================================================= */
+      // 2. Handle Deep Link (?contact=CNT-XXXX)
+      if (typeof window !== "undefined") {
+        const urlParams = new URLSearchParams(window.location.search);
+        const deepContactId = urlParams.get("contact");
+        if (deepContactId) {
+          const match = loaded.find(
+            (c) =>
+              c.id === deepContactId &&
+              c.relationships?.some((r) => r.companyId === companyId && r.status !== "ended")
+          );
+          if (match) {
+            setSelectedContactId(match.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error loading contacts:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
 
-  const beginEditContact = (contact: Contact) => {
-    setEditDraft({
+  // Save contacts helper (Writes strictly to tes_contacts_v5)
+  const persistContacts = (updated: Contact[]) => {
+    setContacts(updated);
+    try {
+      localStorage.setItem("tes_contacts_v5", JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to persist contacts to tes_contacts_v5", e);
+    }
+  };
+
+  // Synchronize deep-link search parameter on selection change
+  const handleSelectContact = (id: string | null) => {
+    setSelectedContactId(id);
+    setIsEditing(false);
+    setEditFormErrors({});
+    setEditDuplicateWarning(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set("contact", id);
+      } else {
+        url.searchParams.delete("contact");
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  // Company Contacts Filter
+  const companyContacts = useMemo(() => {
+    if (!companyId) return [];
+    return contacts.filter((c) => {
+      const hasRelationship = c.relationships?.some((r) => r.companyId === companyId);
+      if (!hasRelationship) return false;
+      if (!includeArchived && c.isArchived) return false;
+
+      const rel = c.relationships.find((r) => r.companyId === companyId);
+      const activeRole = rel?.role || c.role;
+
+      if (roleFilter !== "all" && activeRole !== roleFilter) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = `${c.firstName} ${c.lastName}`.toLowerCase().includes(q);
+        const matchEmail = c.email?.toLowerCase().includes(q);
+        const matchPhone = c.phone?.toLowerCase().includes(q);
+        const matchDL = c.dlNumber?.toLowerCase().includes(q);
+        const matchRole = activeRole.toLowerCase().includes(q);
+        if (!matchName && !matchEmail && !matchPhone && !matchDL && !matchRole) return false;
+      }
+
+      return true;
+    });
+  }, [contacts, companyId, includeArchived, roleFilter, searchQuery]);
+
+  // Sorted: Primary Contacts First
+  const sortedCompanyContacts = useMemo(() => {
+    return [...companyContacts].sort((a, b) => {
+      const aRel = a.relationships.find((r) => r.companyId === companyId);
+      const bRel = b.relationships.find((r) => r.companyId === companyId);
+      const aPrimary = aRel?.isPrimary ? 1 : 0;
+      const bPrimary = bRel?.isPrimary ? 1 : 0;
+      if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+      return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+    });
+  }, [companyContacts, companyId]);
+
+  // Selected Contact Entity
+  const selectedContact = useMemo(() => {
+    return contacts.find((c) => c.id === selectedContactId) || null;
+  }, [contacts, selectedContactId]);
+
+  const selectedContactRelationship = useMemo(() => {
+    if (!selectedContact || !companyId) return null;
+    return selectedContact.relationships?.find((r) => r.companyId === companyId) || null;
+  }, [selectedContact, companyId]);
+
+  // Start Editing Handler
+  const handleStartEdit = (contact: Contact) => {
+    const rel = contact.relationships?.find((r) => r.companyId === companyId);
+    setEditFormData({
       firstName: contact.firstName,
       lastName: contact.lastName,
       dob: contact.dob || "",
-
       dlNumber: contact.dlNumber || "",
-      dlState: contact.dlState || "",
+      dlState: contact.dlState || "ON",
       dlExpiry: contact.dlExpiry || "",
       dlIssueDate: contact.dlIssueDate || "",
       dlClass: contact.dlClass || "",
       dlRestrictions: contact.dlRestrictions || "",
-
       email: contact.email || "",
       phone: contact.phone || "",
+      notes: contact.notes || "",
+      companyRole: rel?.role || contact.role || "General Contact",
+      isPrimary: !!rel?.isPrimary,
+    });
+    setEditFormErrors({});
+    setEditDuplicateWarning(null);
+    setIsEditing(true);
+  };
 
-      role: roleForCompany(contact, companyId),
-      isPrimary: isPrimaryForCompany(contact, companyId),
-    })
+  // Cancel Editing Handler
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditFormData({});
+    setEditFormErrors({});
+    setEditDuplicateWarning(null);
+  };
 
-    setIsEditingContact(true)
-  }
+  // Save Edited Contact Handler
+  const handleSaveEdit = () => {
+    if (!selectedContact || !companyId) return;
 
-  const updateEditDraft = <
-    K extends keyof ContactDraft
-  >(
-    key: K,
-    value: ContactDraft[K]
-  ) => {
-    setEditDraft((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }
-
-  const saveEditedContact = () => {
-    if (!selectedContact) return
-
-    if (
-      !editDraft.firstName.trim() ||
-      !editDraft.lastName.trim() ||
-      !editDraft.email.trim() ||
-      !editDraft.phone.trim() ||
-      !editDraft.role
-    ) {
-      return
+    const errors: Record<string, string> = {};
+    if (!editFormData.firstName?.trim()) errors.firstName = "First name is required";
+    if (!editFormData.lastName?.trim()) errors.lastName = "Last name is required";
+    if (!editFormData.phone?.trim() && !editFormData.email?.trim()) {
+      errors.phone = "Provide either phone or email";
     }
 
-    const duplicate = findDuplicateContact(
-      editDraft,
+    if (Object.keys(errors).length > 0) {
+      setEditFormErrors(errors);
+      return;
+    }
+
+    // Check duplicate against other contacts (excluding current contact)
+    const dupResult = findDuplicateContact(
+      {
+        firstName: editFormData.firstName,
+        lastName: editFormData.lastName,
+        dob: editFormData.dob,
+        dlNumber: editFormData.dlNumber,
+        email: editFormData.email,
+        phone: editFormData.phone,
+      },
       contacts,
       selectedContact.id
-    )
+    );
 
-    if (duplicate) {
-      window.alert(
-        `Cannot save this edit. ${duplicate.reasons.join(
-          ", "
-        )} already belongs to ${duplicate.contact.firstName} ${
-          duplicate.contact.lastName
-        } (${duplicate.contact.globalId}). Merge/link the canonical contact instead of duplicating an identifier.`
-      )
-      return
+    if (dupResult.match) {
+      setEditDuplicateWarning(dupResult.reason);
     }
 
-    const fieldLabels: Partial<Record<keyof ContactDraft, string>> = {
-      firstName: "First Name",
-      lastName: "Last Name",
-      dob: "Date of Birth",
-      dlNumber: "Driver Licence #",
-      dlState: "Issuing Province / State",
-      dlExpiry: "Expiry Date",
-      dlIssueDate: "Issue Date",
-      dlClass: "Licence Class",
-      dlRestrictions: "Restrictions",
-      email: "Email",
-      phone: "Phone",
-      role: "Role / Relationship",
-      isPrimary: "Primary Contact",
+    const updatedRelationships = selectedContact.relationships.map((r) => {
+      if (r.companyId === companyId) {
+        return {
+          ...r,
+          role: editFormData.companyRole || r.role,
+          isPrimary: editFormData.isPrimary,
+        };
+      }
+      return r;
+    });
+
+    const updateEvent: ContactEvent = {
+      id: generateEventId(),
+      timestamp: new Date().toISOString(),
+      action: "CONTACT_UPDATED",
+      summary: `Updated identity details and role (${editFormData.companyRole}) at ${company?.name || "Company"}.`,
+      actor: "System Administrator",
+    };
+
+    const updatedContact: Contact = {
+      ...selectedContact,
+      firstName: (editFormData.firstName || "").trim(),
+      lastName: (editFormData.lastName || "").trim(),
+      dob: (editFormData.dob || "").trim(),
+      dlNumber: (editFormData.dlNumber || "").trim(),
+      dlState: (editFormData.dlState || "").trim(),
+      dlExpiry: (editFormData.dlExpiry || "").trim(),
+      dlIssueDate: (editFormData.dlIssueDate || "").trim(),
+      dlClass: (editFormData.dlClass || "").trim(),
+      dlRestrictions: (editFormData.dlRestrictions || "").trim(),
+      email: (editFormData.email || "").trim(),
+      phone: (editFormData.phone || "").trim(),
+      notes: (editFormData.notes || "").trim(),
+      role: editFormData.companyRole || selectedContact.role,
+      isPrimary: !!editFormData.isPrimary,
+      identityStatus: editFormData.dlNumber ? "documented" : selectedContact.identityStatus,
+      relationships: updatedRelationships,
+      events: [updateEvent, ...(selectedContact.events || [])],
+      updatedAt: new Date().toISOString(),
+    };
+
+    const allUpdated = applyPrimaryRule(updatedContact, companyId, contacts, company?.name || "Company");
+    persistContacts(allUpdated);
+    setIsEditing(false);
+  };
+
+  // --- Manual Add Handler ---
+  const handleManualSave = () => {
+    const errors: Record<string, string> = {};
+    if (!manualForm.firstName.trim()) errors.firstName = "First name is required";
+    if (!manualForm.lastName.trim()) errors.lastName = "Last name is required";
+    if (!manualForm.phone.trim() && !manualForm.email.trim()) {
+      errors.phone = "Provide either a phone or email address";
     }
 
-    const changedFields = (
-      Object.keys(fieldLabels) as Array<keyof ContactDraft>
-    ).filter((key) => {
-      if (key === "role") {
-        return roleForCompany(selectedContact, companyId) !== editDraft.role
-      }
-
-      if (key === "isPrimary") {
-        return isPrimaryForCompany(selectedContact, companyId) !== editDraft.isPrimary
-      }
-
-      return selectedContact[key] !== editDraft[key]
-    })
-
-    if (!changedFields.length) {
-      setIsEditingContact(false)
-      return
+    if (Object.keys(errors).length > 0) {
+      setManualFormErrors(errors);
+      return;
     }
 
-    let updatedContacts = contacts.map((contact) => {
-      if (contact.id !== selectedContact.id) {
-        return contact
-      }
-
-      let updated: Contact = {
-        ...contact,
-        firstName: editDraft.firstName.trim(),
-        lastName: editDraft.lastName.trim(),
-        dob: editDraft.dob,
-
-        dlNumber: editDraft.dlNumber.trim(),
-        dlState: editDraft.dlState.trim(),
-        dlExpiry: editDraft.dlExpiry,
-        dlIssueDate: editDraft.dlIssueDate,
-        dlClass: editDraft.dlClass.trim(),
-        dlRestrictions: editDraft.dlRestrictions.trim(),
-
-        email: editDraft.email.trim(),
-        phone: editDraft.phone.trim(),
-
-        role: editDraft.role,
-        isPrimary: editDraft.isPrimary,
-
-        relationships: contact.relationships.map(
-          (relationship) =>
-            relationship.companyId === companyId &&
-            relationship.status === "active"
-              ? {
-                  ...relationship,
-                  role: editDraft.role,
-                  isPrimary: editDraft.isPrimary,
-                }
-              : relationship
-        ),
-      }
-
-      updated = appendEvent(
-        updated,
-        "CONTACT_UPDATED",
-        "Contact information was updated."
-      )
-
-      changedFields.forEach((key) => {
-        const oldValue = String(contact[key] ?? "")
-        const newValue = String(editDraft[key] ?? "")
-
-        updated = appendEvent(
-          updated,
-          "CONTACT_FIELD_UPDATED",
-          `${fieldLabels[key]} changed from "${oldValue || "Not recorded"}" to "${newValue || "Not recorded"}".`
-        )
-      })
-
-      return updated
-    })
-
-    const updatedContact = updatedContacts.find(
-      (contact) => contact.id === selectedContact.id
-    )
-
-    if (updatedContact && isPrimaryForCompany(updatedContact, companyId)) {
-      updatedContacts = applyPrimaryRule(
-        updatedContact,
-        updatedContacts
-      )
-    }
-
-    setContacts(updatedContacts)
-    setIsEditingContact(false)
-  }
-
-  /* =======================================================
-     CREATE CONTACT
-  ======================================================= */
-
-  const createContact = (
-    draft: ContactDraft,
-    options?: {
-      evidence?: Evidence
-      confidence?: number
-      source?: "manual" | "document"
-    }
-  ) => {
-    if (!company) return
-
-    const timestamp = now()
-    const duplicate = findDuplicateContact(draft, contacts)
-
-    /*
-      CANONICAL CONTACT RULE
-
-      A matching DL number, email, phone, or Name + DOB does NOT
-      create another person. TES reuses the canonical Contact ID
-      and adds/updates the company relationship instead.
-    */
-    if (duplicate) {
-      const existing = duplicate.contact
-      const currentRelationship = relationshipForCompany(existing, companyId)
-
-      let updatedExisting: Contact = {
-        ...existing,
-        isArchived: false,
-
-        // Only fill missing canonical fields. Do not silently overwrite
-        // existing identity data during duplicate resolution.
-        firstName: existing.firstName || draft.firstName.trim(),
-        lastName: existing.lastName || draft.lastName.trim(),
-        dob: existing.dob || draft.dob,
-        dlNumber: existing.dlNumber || draft.dlNumber.trim(),
-        dlState: existing.dlState || draft.dlState.trim(),
-        dlExpiry: existing.dlExpiry || draft.dlExpiry,
-        dlIssueDate: existing.dlIssueDate || draft.dlIssueDate,
-        dlClass: existing.dlClass || draft.dlClass.trim(),
-        dlRestrictions:
-          existing.dlRestrictions || draft.dlRestrictions.trim(),
-        email: existing.email || draft.email.trim(),
-        phone: existing.phone || draft.phone.trim(),
-
-        identityStatus: options?.evidence
-          ? "documented"
-          : existing.identityStatus,
-        identityConfidence:
-          options?.confidence !== undefined
-            ? Math.max(existing.identityConfidence || 0, options.confidence)
-            : existing.identityConfidence,
-
-        evidence: options?.evidence
-          ? [
-              options.evidence,
-              ...(existing.evidence || []),
-            ]
-          : existing.evidence || [],
-      }
-
-      if (currentRelationship) {
-        updatedExisting = {
-          ...updatedExisting,
-          relationships: updatedExisting.relationships.map((relationship) =>
-            relationship.id === currentRelationship.id
-              ? {
-                  ...relationship,
-                  role: draft.role || relationship.role,
-                  isPrimary: draft.isPrimary || relationship.isPrimary === true,
-                }
-              : relationship
-          ),
-        }
-
-        updatedExisting = appendEvent(
-          updatedExisting,
-          options?.evidence ? "DOCUMENT_ATTACHED" : "CONTACT_UPDATED",
-          options?.evidence
-            ? `Existing canonical contact matched by ${duplicate.reasons.join(
-                ", "
-              )}. New identity evidence attached; duplicate contact was not created.`
-            : `Existing canonical contact matched by ${duplicate.reasons.join(
-                ", "
-              )}. Duplicate contact was not created.`
-        )
-      } else {
-        const relationship: Relationship = {
-          id: makeId("REL"),
-          companyId,
-          companyName: company.name,
-          role: draft.role,
-          isPrimary: draft.isPrimary,
-          status: "active",
-          startDate: timestamp.slice(0, 10),
-          source: options?.source === "document" ? "document" : "manual",
-        }
-
-        updatedExisting = appendEvent(
-          {
-            ...updatedExisting,
-            relationships: [
-              relationship,
-              ...(updatedExisting.relationships || []),
-            ],
-          },
-          "CONTACT_UPDATED",
-          `Existing canonical contact linked to ${company.name}. Match: ${duplicate.reasons.join(
-            ", "
-          )}.`
-        )
-      }
-
-      let updatedContacts = contacts.map((contact) =>
-        contact.id === existing.id ? updatedExisting : contact
-      )
-
-      if (isPrimaryForCompany(updatedExisting, companyId)) {
-        updatedContacts = applyPrimaryRule(updatedExisting, updatedContacts)
-      }
-
-      setContacts(updatedContacts)
-      setSelectedContactId(existing.id)
-      setNoteDraft(updatedExisting.notes || "")
-
-      window.alert(
-        `Existing contact matched by ${duplicate.reasons.join(
-          ", "
-        )}. TES reused ${existing.globalId} instead of creating a duplicate.`
-      )
-
-      return existing.id
-    }
-
-    const relationship: Relationship = {
-      id: makeId("REL"),
-      companyId,
-      companyName: company.name,
-      role: draft.role,
-      isPrimary: draft.isPrimary,
-      status: "active",
-      startDate: timestamp.slice(0, 10),
-      source: options?.source === "document" ? "document" : "manual",
-    }
-
-    let contact: Contact = {
-      id: makeId("CNT"),
-      globalId: makeId("USR"),
-
-      firstName: draft.firstName.trim(),
-      lastName: draft.lastName.trim(),
-      dob: draft.dob,
-
-      dlNumber: draft.dlNumber.trim(),
-      dlState: draft.dlState.trim(),
-      dlExpiry: draft.dlExpiry,
-      dlIssueDate: draft.dlIssueDate,
-      dlClass: draft.dlClass.trim(),
-      dlRestrictions: draft.dlRestrictions.trim(),
-
-      email: draft.email.trim(),
-      phone: draft.phone.trim(),
-
-      // Compatibility fields. Company-specific role/primary truth lives
-      // on Relationship and is used by this page.
-      role: draft.role,
-      isPrimary: draft.isPrimary,
-
-      isArchived: false,
-
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      notes: "",
-
-      identityStatus: options?.evidence ? "documented" : "unverified",
-      identityConfidence: options?.confidence,
-
-      relationships: [relationship],
-      evidence: options?.evidence ? [options.evidence] : [],
-      events: [],
-    }
-
-    contact = appendEvent(
-      contact,
-      "CONTACT_CREATED",
-      options?.source === "document"
-        ? `Contact created from identity document. OCR confidence ${
-            options.confidence || 0
-          }%.`
-        : "Contact created manually."
-    )
-
-    let updated = [contact, ...contacts]
-    updated = applyPrimaryRule(contact, updated)
-
-    setContacts(updated)
-    setSelectedContactId(contact.id)
-    setNoteDraft("")
-
-    return contact.id
-  }
-
-  /* =======================================================
-     MANUAL ADD
-  ======================================================= */
-
-  const openManualAdd = () => {
-    setIsEditingContact(false)
-
-    setManualDraft({
-      ...EMPTY_DRAFT,
-    })
-
-    setShowManualForm(true)
-  }
-
-  const updateManualDraft = <
-    K extends keyof ContactDraft
-  >(
-    key: K,
-    value: ContactDraft[K]
-  ) => {
-    setManualDraft((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }
-
-  const saveManualContact = (
-    event: React.FormEvent
-  ) => {
-    event.preventDefault()
-
-    if (
-      !manualDraft.firstName.trim() ||
-      !manualDraft.lastName.trim() ||
-      !manualDraft.email.trim() ||
-      !manualDraft.phone.trim() ||
-      !manualDraft.role
-    ) {
-      return
-    }
-
-    createContact(manualDraft, {
-      source: "manual",
-    })
-
-    setShowManualForm(false)
-
-    setManualDraft({
-      ...EMPTY_DRAFT,
-    })
-  }
-
-  /* =======================================================
-     OCR SOURCE
-  ======================================================= */
-
-  const openOCRCreate = () => {
-    setAttachmentTargetContactId(null)
-    setDocumentSourceMode(
-      "ocr_create"
-    )
-
-    setShowSourcePicker(true)
-  }
-
-  const openManualDocument = (targetContactId?: string) => {
-    setAttachmentTargetContactId(targetContactId || null)
-    setDocumentSourceMode("manual_attachment")
-    setShowSourcePicker(true)
-  }
-
-  const chooseCamera = () => {
-    setShowSourcePicker(false)
-    setShowCamera(true)
-  }
-
-  const chooseDevice = () => {
-    setShowSourcePicker(false)
-
-    deviceInputRef.current?.click()
-  }
-
-  /* =======================================================
-     FILE INGESTION
-  ======================================================= */
-
-  const beginDocumentProcessing =
-    async (
-      file: File,
-      source: DocumentSource
-    ) => {
-      const valid =
-        file.type.startsWith(
-          "image/"
-        ) ||
-        file.type ===
-          "application/pdf"
-
-      if (!valid) {
-        window.alert(
-          "Please upload a PDF or image document."
-        )
-
-        return
-      }
-
-      const dataUrl =
-        await readFileAsDataUrl(file)
-
-      const baseDraft =
-        documentSourceMode ===
-        "manual_attachment"
-          ? manualDraft
-          : {
-              ...EMPTY_DRAFT,
-            }
-
-      const session: OCRSession = {
-        file,
-        dataUrl,
-        source,
-        status: "processing",
-        fields: [],
-        draft: baseDraft,
-        mode:
-          documentSourceMode,
-      }
-
-      setOcrSession(session)
-
-      /*
-        ===============================================
-        REAL OCR INTEGRATION POINT
-
-        Replace ONLY this processing section.
-
-        Expected server response:
-        {
-          documentType,
-          quality,
-          fields: [
+    // Check duplicate
+    const dupResult = findDuplicateContact(manualForm, contacts);
+    if (dupResult.match) {
+      // Re-use existing canonical person and append company relationship
+      const existingPerson = dupResult.match;
+      const alreadyHasRelationship = existingPerson.relationships.some((r) => r.companyId === companyId);
+
+      let updatedPerson: Contact;
+      if (alreadyHasRelationship) {
+        // Update existing relationship for this company
+        const updatedRels = existingPerson.relationships.map((r) =>
+          r.companyId === companyId
+            ? { ...r, role: manualForm.role, isPrimary: manualForm.isPrimary, status: "active" as const }
+            : r
+        );
+        updatedPerson = {
+          ...existingPerson,
+          role: manualForm.role,
+          isPrimary: manualForm.isPrimary,
+          relationships: updatedRels,
+          updatedAt: new Date().toISOString(),
+          events: [
             {
-              key,
-              value,
-              confidence
-            }
-          ]
-        }
-
-        Everything after this point should remain reusable.
-        ===============================================
-      */
-
-      window.setTimeout(() => {
-        setOcrSession(
-          (current) => {
-            if (!current) return null
-
-            const fields =
-              OCR_DEMO_FIELDS.map(
-                (field) => ({
-                  ...field,
-                })
-              )
-
-            const extractedDraft: ContactDraft =
-              {
-                ...current.draft,
-
-                firstName:
-                  getOCRField(
-                    fields,
-                    "firstName"
-                  ) ||
-                  current.draft
-                    .firstName,
-
-                lastName:
-                  getOCRField(
-                    fields,
-                    "lastName"
-                  ) ||
-                  current.draft.lastName,
-
-                dob:
-                  getOCRField(
-                    fields,
-                    "dob"
-                  ) ||
-                  current.draft.dob,
-
-                dlNumber:
-                  getOCRField(
-                    fields,
-                    "dlNumber"
-                  ) ||
-                  current.draft
-                    .dlNumber,
-
-                dlState:
-                  getOCRField(
-                    fields,
-                    "dlState"
-                  ) ||
-                  current.draft
-                    .dlState,
-
-                dlExpiry:
-                  getOCRField(
-                    fields,
-                    "dlExpiry"
-                  ) ||
-                  current.draft
-                    .dlExpiry,
-
-                dlIssueDate:
-                  getOCRField(
-                    fields,
-                    "dlIssueDate"
-                  ) ||
-                  current.draft
-                    .dlIssueDate,
-
-                dlClass:
-                  getOCRField(
-                    fields,
-                    "dlClass"
-                  ) ||
-                  current.draft
-                    .dlClass,
-
-                dlRestrictions:
-                  getOCRField(
-                    fields,
-                    "dlRestrictions"
-                  ) ||
-                  current.draft
-                    .dlRestrictions,
-              }
-
-            return {
-              ...current,
-              status: "complete",
-              fields,
-              draft:
-                extractedDraft,
-            }
-          }
-        )
-      }, 1500)
-    }
-
-  const handleDeviceFile = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file =
-      event.target.files?.[0]
-
-    event.target.value = ""
-
-    if (!file) return
-
-    await beginDocumentProcessing(
-      file,
-      "device"
-    )
-  }
-
-  /* =======================================================
-     OCR REPLACE
-  ======================================================= */
-
-  const replaceDocument = () => {
-    if (!ocrSession) return
-
-    setDocumentSourceMode(
-      ocrSession.mode
-    )
-
-    setOcrSession(null)
-
-    setShowSourcePicker(true)
-  }
-
-  /* =======================================================
-     OCR SAVE
-  ======================================================= */
-
-  const saveOCRContact = (
-    session: OCRSession
-  ) => {
-    const confidence = averageConfidence(session.fields)
-
-    if (hasOCRConfidenceFailure(session.fields)) {
-      return
-    }
-
-    const evidence: Evidence = {
-      id: makeId("DOC"),
-      type: "Driver Licence",
-      fileName: session.file.name,
-      fileType: session.file.type,
-      uploadedAt: now(),
-      documentDate: session.draft.dlIssueDate || session.draft.dlExpiry || now().slice(0, 10),
-      confidence,
-      status: "uploaded",
-      source: session.source,
-      dataUrl: session.dataUrl,
-    }
-
-    /*
-      Existing contact evidence attachment must NEVER create
-      another contact. This fixes the previous duplicate path.
-    */
-    if (
-      session.mode === "manual_attachment" &&
-      attachmentTargetContactId
-    ) {
-      setContacts((current) =>
-        current.map((contact) => {
-          if (contact.id !== attachmentTargetContactId) return contact
-
-          return appendEvent(
-            {
-              ...contact,
-              identityStatus: "documented",
-              identityConfidence: Math.max(
-                contact.identityConfidence || 0,
-                confidence
-              ),
-              evidence: [evidence, ...(contact.evidence || [])],
+              id: generateEventId(),
+              timestamp: new Date().toISOString(),
+              action: "ROLE_UPDATED",
+              summary: `Updated role to ${manualForm.role} at ${company?.name || "Company"}.`,
+              actor: "System Administrator",
             },
-            "DOCUMENT_ATTACHED",
-            `Identity document attached. OCR confidence ${confidence}%.`
+            ...(existingPerson.events || []),
+          ],
+        };
+      } else {
+        // Add new relationship to existing person
+        const newRel: Relationship = {
+          id: generateRelationshipId(),
+          companyId: companyId!,
+          companyName: company?.name || "Company",
+          role: manualForm.role,
+          isPrimary: manualForm.isPrimary,
+          status: "active",
+          startDate: new Date().toISOString().split("T")[0],
+          source: "manual",
+        };
+        updatedPerson = {
+          ...existingPerson,
+          relationships: [...existingPerson.relationships, newRel],
+          updatedAt: new Date().toISOString(),
+          events: [
+            {
+              id: generateEventId(),
+              timestamp: new Date().toISOString(),
+              action: "RELATIONSHIP_ADDED",
+              summary: `Associated existing person (${existingPerson.globalId}) with ${company?.name || "Company"} as ${manualForm.role}.`,
+              actor: "System Administrator",
+            },
+            ...(existingPerson.events || []),
+          ],
+        };
+      }
+
+      const allUpdated = applyPrimaryRule(updatedPerson, companyId!, contacts, company?.name || "Company");
+      persistContacts(allUpdated);
+      handleSelectContact(updatedPerson.id);
+      setIsManualModalOpen(false);
+      return;
+    }
+
+    // Create brand new canonical Person
+    const newContactId = generateContactId();
+    const newGlobalUserId = generateGlobalUserId();
+    const newRelationship: Relationship = {
+      id: generateRelationshipId(),
+      companyId: companyId!,
+      companyName: company?.name || "Company",
+      role: manualForm.role,
+      isPrimary: manualForm.isPrimary,
+      status: "active",
+      startDate: new Date().toISOString().split("T")[0],
+      source: "manual",
+    };
+
+    const newContact: Contact = {
+      id: newContactId,
+      globalId: newGlobalUserId,
+      firstName: manualForm.firstName.trim(),
+      lastName: manualForm.lastName.trim(),
+      dob: manualForm.dob.trim(),
+      dlNumber: manualForm.dlNumber.trim(),
+      dlState: manualForm.dlState.trim(),
+      dlExpiry: manualForm.dlExpiry.trim(),
+      dlIssueDate: manualForm.dlIssueDate.trim(),
+      dlClass: manualForm.dlClass.trim(),
+      dlRestrictions: manualForm.dlRestrictions.trim(),
+      email: manualForm.email.trim(),
+      phone: manualForm.phone.trim(),
+      role: manualForm.role,
+      isPrimary: manualForm.isPrimary,
+      isArchived: false,
+      notes: manualForm.notes.trim(),
+      identityStatus: manualForm.dlNumber ? "documented" : "unverified",
+      relationships: [newRelationship],
+      evidence: [],
+      events: [
+        {
+          id: generateEventId(),
+          timestamp: new Date().toISOString(),
+          action: "CREATED",
+          summary: `Created canonical person record (${newGlobalUserId}) and associated with ${company?.name || "Company"}.`,
+          actor: "System Administrator",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const allUpdated = applyPrimaryRule(newContact, companyId!, [...contacts, newContact], company?.name || "Company");
+    persistContacts(allUpdated);
+    handleSelectContact(newContactId);
+    setIsManualModalOpen(false);
+  };
+
+  // --- OCR Ingestion Callbacks ---
+  const handleFileChosen = (file: File, source: "camera" | "device" = "device") => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const draft = simulateOCRExtraction(file, dataUrl, source);
+      setOcrDraft(draft);
+      setOcrValidationError(null);
+      setIsOCRWorkspaceOpen(true);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleOCRConfirmedSave = () => {
+    if (!ocrDraft) return;
+
+    // Hard gate invariant: Exactly six required identity fields must be present and >= 85% confidence
+    const requiredFields: { name: string; value: string; conf: number }[] = [
+      { name: "First Name", value: ocrDraft.firstName.value, conf: ocrDraft.firstName.confidence },
+      { name: "Last Name", value: ocrDraft.lastName.value, conf: ocrDraft.lastName.confidence },
+      { name: "Date of Birth", value: ocrDraft.dob.value, conf: ocrDraft.dob.confidence },
+      { name: "Driver Licence #", value: ocrDraft.dlNumber.value, conf: ocrDraft.dlNumber.confidence },
+      { name: "Jurisdiction", value: ocrDraft.dlState.value, conf: ocrDraft.dlState.confidence },
+      { name: "Expiry Date", value: ocrDraft.dlExpiry.value, conf: ocrDraft.dlExpiry.confidence },
+    ];
+
+    // 1. Check for empty values in required identity fields
+    const emptyFields = requiredFields.filter((f) => !f.value || !f.value.trim());
+    if (emptyFields.length > 0) {
+      setOcrValidationError(
+        `Required Field Missing: Please provide ${emptyFields.map((f) => f.name).join(", ")} before saving.`
+      );
+      return;
+    }
+
+    // 2. Check for confidence below required threshold (85%) in required identity fields
+    const lowConfidenceFields = requiredFields.filter((f) => f.conf < OCR_REQUIRED_THRESHOLD);
+    if (lowConfidenceFields.length > 0) {
+      setOcrValidationError(
+        `Review Required: ${lowConfidenceFields.map((f) => `${f.name} (${f.conf}%)`).join(", ")} below the ${OCR_REQUIRED_THRESHOLD}% threshold. Please review and verify before saving.`
+      );
+      return;
+    }
+
+    // Check duplicate
+    const candidate = {
+      firstName: ocrDraft.firstName.value,
+      lastName: ocrDraft.lastName.value,
+      dob: ocrDraft.dob.value,
+      dlNumber: ocrDraft.dlNumber.value,
+      email: ocrDraft.email.value,
+      phone: ocrDraft.phone.value,
+    };
+    const dupResult = findDuplicateContact(candidate, contacts);
+
+    if (dupResult.match) {
+      // Reuse canonical person
+      const existing = dupResult.match;
+      const hasRel = existing.relationships.some((r) => r.companyId === companyId);
+      const updatedRels = hasRel
+        ? existing.relationships.map((r) =>
+            r.companyId === companyId ? { ...r, role: ocrDraft.role, isPrimary: ocrDraft.isPrimary } : r
           )
-        })
-      )
+        : [
+            ...existing.relationships,
+            {
+              id: generateRelationshipId(),
+              companyId: companyId!,
+              companyName: company?.name || "Company",
+              role: ocrDraft.role,
+              isPrimary: ocrDraft.isPrimary,
+              status: "active" as const,
+              startDate: new Date().toISOString().split("T")[0],
+              source: "document" as const,
+            },
+          ];
 
-      setSelectedContactId(attachmentTargetContactId)
-      setAttachmentTargetContactId(null)
-      setOcrSession(null)
-      return
+      const updatedPerson: Contact = {
+        ...existing,
+        dlNumber: existing.dlNumber || ocrDraft.dlNumber.value,
+        dlState: existing.dlState || ocrDraft.dlState.value,
+        dlExpiry: existing.dlExpiry || ocrDraft.dlExpiry.value,
+        dlIssueDate: existing.dlIssueDate || ocrDraft.dlIssueDate.value,
+        dlClass: existing.dlClass || ocrDraft.dlClass.value,
+        dlRestrictions: existing.dlRestrictions || ocrDraft.dlRestrictions.value,
+        email: existing.email || ocrDraft.email.value,
+        phone: existing.phone || ocrDraft.phone.value,
+        identityStatus: "documented",
+        relationships: updatedRels,
+        evidence: [ocrDraft.evidence, ...(existing.evidence || [])],
+        events: [
+          {
+            id: generateEventId(),
+            timestamp: new Date().toISOString(),
+            action: "DOCUMENT_ATTACHED",
+            summary: `Attached verified ${ocrDraft.evidence.type} document to existing person (${existing.globalId}).`,
+            actor: "System Administrator",
+          },
+          ...(existing.events || []),
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+
+      const allUpdated = applyPrimaryRule(updatedPerson, companyId!, contacts, company?.name || "Company");
+      persistContacts(allUpdated);
+      handleSelectContact(updatedPerson.id);
+      setIsOCRWorkspaceOpen(false);
+      setOcrDraft(null);
+      setOcrValidationError(null);
+      return;
     }
 
-    /*
-      Manual-create + optional document and OCR-first creation both
-      flow through the same canonical duplicate resolver.
-    */
-    createContact(session.draft, {
-      evidence,
-      confidence,
+    // Brand new Person from OCR
+    const newContactId = generateContactId();
+    const newGlobalUserId = generateGlobalUserId();
+    const newRel: Relationship = {
+      id: generateRelationshipId(),
+      companyId: companyId!,
+      companyName: company?.name || "Company",
+      role: ocrDraft.role,
+      isPrimary: ocrDraft.isPrimary,
+      status: "active",
+      startDate: new Date().toISOString().split("T")[0],
       source: "document",
-    })
+    };
 
-    setAttachmentTargetContactId(null)
-    setOcrSession(null)
-    setShowManualForm(false)
-    setManualDraft({ ...EMPTY_DRAFT })
-  }
+    const newContact: Contact = {
+      id: newContactId,
+      globalId: newGlobalUserId,
+      firstName: ocrDraft.firstName.value.trim(),
+      lastName: ocrDraft.lastName.value.trim(),
+      dob: ocrDraft.dob.value.trim(),
+      dlNumber: ocrDraft.dlNumber.value.trim(),
+      dlState: ocrDraft.dlState.value.trim(),
+      dlExpiry: ocrDraft.dlExpiry.value.trim(),
+      dlIssueDate: ocrDraft.dlIssueDate.value.trim(),
+      dlClass: ocrDraft.dlClass.value.trim(),
+      dlRestrictions: ocrDraft.dlRestrictions.value.trim(),
+      email: ocrDraft.email.value.trim(),
+      phone: ocrDraft.phone.value.trim(),
+      role: ocrDraft.role,
+      isPrimary: ocrDraft.isPrimary,
+      isArchived: false,
+      notes: "Extracted via OCR Document Review",
+      identityStatus: "documented",
+      identityConfidence: ocrDraft.evidence.confidence,
+      relationships: [newRel],
+      evidence: [ocrDraft.evidence],
+      events: [
+        {
+          id: generateEventId(),
+          timestamp: new Date().toISOString(),
+          action: "CREATED",
+          summary: `Created canonical person (${newGlobalUserId}) from OCR ID verification and associated with ${company?.name || "Company"}.`,
+          actor: "System Administrator",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
 
-  /* =======================================================
-     ARCHIVE
-  ======================================================= */
+    const allUpdated = applyPrimaryRule(newContact, companyId!, [...contacts, newContact], company?.name || "Company");
+    persistContacts(allUpdated);
+    handleSelectContact(newContactId);
+    setIsOCRWorkspaceOpen(false);
+    setOcrDraft(null);
+    setOcrValidationError(null);
+  };
 
-  const archiveContact = (
-    contact: Contact
-  ) => {
-    const reason =
-      window.prompt(
-        `Archive ${contact.firstName} ${contact.lastName}?\n\nEnter archive reason:`
-      )
+  // --- Toggle Primary Status ---
+  const handleSetPrimary = (contact: Contact) => {
+    if (!companyId) return;
+    const relIndex = contact.relationships.findIndex((r) => r.companyId === companyId);
+    if (relIndex === -1) return;
 
-    if (!reason?.trim()) return
+    const currentlyPrimary = !!contact.relationships[relIndex].isPrimary;
+    const updatedRels = [...contact.relationships];
+    updatedRels[relIndex] = {
+      ...updatedRels[relIndex],
+      isPrimary: !currentlyPrimary,
+    };
 
-    setContacts((current) =>
-      current.map((item) => {
-        if (
-          item.id !== contact.id
-        ) {
-          return item
-        }
+    const event: ContactEvent = {
+      id: generateEventId(),
+      timestamp: new Date().toISOString(),
+      action: "PRIMARY_CHANGED",
+      summary: !currentlyPrimary
+        ? `Designated as Primary Contact for ${company?.name || "Company"}.`
+        : `Removed Primary Contact designation for ${company?.name || "Company"}.`,
+      actor: "System Administrator",
+    };
 
-        return appendEvent(
-          {
-            ...item,
-            isArchived: true,
-            isPrimary: false,
-          },
-          "CONTACT_ARCHIVED",
-          `Contact archived. Reason: ${reason.trim()}`
-        )
-      })
-    )
-  }
+    const updatedContact: Contact = {
+      ...contact,
+      isPrimary: !currentlyPrimary,
+      relationships: updatedRels,
+      events: [event, ...(contact.events || [])],
+      updatedAt: new Date().toISOString(),
+    };
 
-  const restoreContact = (
-    contact: Contact
-  ) => {
-    setContacts((current) =>
-      current.map((item) => {
-        if (
-          item.id !== contact.id
-        ) {
-          return item
-        }
+    const allUpdated = applyPrimaryRule(updatedContact, companyId, contacts, company?.name || "Company");
+    persistContacts(allUpdated);
+  };
 
-        return appendEvent(
-          {
-            ...item,
-            isArchived: false,
-          },
-          "CONTACT_RESTORED",
-          "Contact restored to the operational directory."
-        )
-      })
-    )
-  }
+  // --- Archive / Restore Contact ---
+  const handleToggleArchive = (contact: Contact) => {
+    const isNowArchived = !contact.isArchived;
+    const event: ContactEvent = {
+      id: generateEventId(),
+      timestamp: new Date().toISOString(),
+      action: isNowArchived ? "ARCHIVED" : "RESTORED",
+      summary: isNowArchived ? "Archived contact record." : "Restored contact record to active register.",
+      actor: "System Administrator",
+    };
 
-  /* =======================================================
-     NOTE
-  ======================================================= */
+    const updated: Contact = {
+      ...contact,
+      isArchived: isNowArchived,
+      events: [event, ...(contact.events || [])],
+      updatedAt: new Date().toISOString(),
+    };
 
-  const saveNote = () => {
-    if (
-      !selectedContact ||
-      !noteDraft.trim()
-    ) {
-      return
-    }
+    const allUpdated = contacts.map((c) => (c.id === contact.id ? updated : c));
+    persistContacts(allUpdated);
+  };
 
-    setContacts((current) =>
-      current.map((contact) => {
-        if (
-          contact.id !==
-          selectedContact.id
-        ) {
-          return contact
-        }
-
-        return appendEvent(
-          {
-            ...contact,
-            notes:
-              noteDraft.trim(),
-          },
-          "NOTE_ADDED",
-          "Internal contact note updated."
-        )
-      })
-    )
-  }
-
-  /* =======================================================
-     LOADING
-  ======================================================= */
-
+  // --- Render Loading / Empty States ---
   if (loading) {
     return (
-      <div className="p-10 text-center text-sm text-muted-foreground">
-        Loading contacts...
+      <div className="p-10">
+        <LoadingState message="Loading company contacts..." />
       </div>
-    )
+    );
   }
 
   if (!company) {
     return (
-      <div className="p-10 text-center">
-        <p className="font-semibold">
-          Company Not Found
-        </p>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-6">
+        <EmptyState
+          icon={<Building2 className="size-10 text-muted-foreground/60" />}
+          title="Company Not Found"
+          description="The requested company record could not be found in the directory."
+        />
       </div>
-    )
+    );
   }
 
-  /* =======================================================
-     RENDER
-  ======================================================= */
-
   return (
-    <>
-      <div className="mx-auto flex max-w-[1500px] flex-col gap-6 pb-12">
-        {/* HEADER */}
-        <div className="flex flex-col gap-5">
-          <div className="flex items-start gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                router.push(
-                  `/companies/${company.id}/profile`
-                )
-              }
-            >
-              <ArrowLeft className="size-4" />
-            </Button>
-
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold tracking-tight">
-                  Contacts & Relationships
-                </h1>
-
-                <Badge
-                  variant="outline"
-                  className="font-mono text-[10px]"
-                >
-                  {company.id}
-                </Badge>
-              </div>
-
-              <p className="mt-1 text-sm text-muted-foreground">
-                {company.name} · Personnel identity and relationship records
-              </p>
+    <div className="flex flex-col gap-6 pb-12">
+      {/* 1. TOP HEADER & DIRECTORY STATS BAR */}
+      <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
+              <Users className="size-6" />
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={openOCRCreate}
-                className="text-primary"
-              >
-                <ScanDocumentIcon size={15} />
-
-                <span className="ml-2">
-                  Upload ID for OCR
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight text-foreground">Company Contacts</h1>
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
+                  {company.name}
                 </span>
-              </Button>
-
-              <Button
-                onClick={openManualAdd}
-              >
-                <Plus className="mr-2 size-4" />
-                Add Contact
-              </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Canonical personnel register, identity credentials, multi-company relationships, and compliance evidence.
+              </p>
             </div>
           </div>
 
-          {/* STATUS */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Users className="size-4" />
-                  Active Contacts
-                </div>
-
-                <p className="mt-1 text-2xl font-semibold">
-                  {activeCount}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <UserCheck className="size-4" />
-                  Primary Contact
-                </div>
-
-                <p className="mt-1 truncate text-sm font-semibold">
-                  {primaryContact
-                    ? `${primaryContact.firstName} ${primaryContact.lastName}`
-                    : "Not assigned"}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <ShieldCheck className="size-4" />
-                  Documented ID
-                </div>
-
-                <p className="mt-1 text-2xl font-semibold">
-                  {verifiedCount}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card
-              className={
-                reviewCount > 0
-                  ? "border-amber-300 bg-amber-50/40 dark:bg-amber-950/10"
-                  : ""
-              }
+          {/* Action CTAs */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setManualForm({
+                  firstName: "",
+                  lastName: "",
+                  dob: "",
+                  dlNumber: "",
+                  dlState: "ON",
+                  dlExpiry: "",
+                  dlIssueDate: "",
+                  dlClass: "",
+                  dlRestrictions: "",
+                  email: "",
+                  phone: "",
+                  role: "Safety Manager",
+                  isPrimary: false,
+                  notes: "",
+                });
+                setManualFormErrors({});
+                setManualDuplicateWarning(null);
+                setIsManualModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3.5 py-2 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
             >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Sparkles className="size-4" />
-                  Review Required
-                </div>
-
-                <p className="mt-1 text-2xl font-semibold">
-                  {reviewCount}
-                </p>
-              </CardContent>
-            </Card>
+              <UserPlus className="size-3.5" />
+              Manual Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSourcePickerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
+            >
+              <Sparkles className="size-3.5" />
+              Upload ID for OCR
+            </button>
           </div>
         </div>
 
-        {/* MANUAL FORM */}
-        {showManualForm && (
-          <Card className="border-primary/20">
-            <CardHeader className="border-b bg-primary/[0.025]">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-base">
-                    Add Contact Manually
-                  </CardTitle>
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-border">
+          <div className="rounded-lg bg-muted/40 p-3 border border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Active Personnel</p>
+            <p className="text-lg font-bold text-foreground mt-0.5">
+              {contacts.filter((c) => c.relationships?.some((r) => r.companyId === companyId && r.status === "active") && !c.isArchived).length}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/40 p-3 border border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Primary Contact</p>
+            <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mt-1 truncate">
+              {contacts.find((c) => c.relationships?.some((r) => r.companyId === companyId && r.isPrimary))?.firstName || "None Assigned"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/40 p-3 border border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verified Credentials</p>
+            <p className="text-lg font-bold text-primary mt-0.5">
+              {contacts.filter((c) => c.relationships?.some((r) => r.companyId === companyId) && c.evidence?.length > 0).length}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/40 p-3 border border-border">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Store Schema</p>
+            <p className="text-xs font-mono font-medium text-muted-foreground mt-1">tes_contacts_v5 (Locked)</p>
+          </div>
+        </div>
+      </div>
 
-                  <CardDescription className="mt-1">
-                    Manual and OCR creation use the same contact record structure.
-                  </CardDescription>
-                </div>
+      {/* 2. SEARCH, FILTER & DIRECTORY GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT / MAIN TABLE AREA (7 or 8 columns) */}
+        <div className={`flex flex-col gap-4 ${selectedContact ? "lg:col-span-7" : "lg:col-span-12"}`}>
+          {/* Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border rounded-xl p-3 shadow-2xs">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search by name, role, email, phone, licence..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-hidden"
+              />
+            </div>
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() =>
-                    setShowManualForm(
-                      false
-                    )
-                  }
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-6">
-              <form
-                onSubmit={
-                  saveManualContact
-                }
-                className="space-y-6"
+            <div className="flex items-center gap-2">
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground font-medium focus:border-primary focus:outline-hidden"
               >
-                <ContactFields
-                  draft={manualDraft}
-                  onChange={
-                    updateManualDraft
-                  }
+                <option value="all">All Roles</option>
+                {STANDARD_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none px-2">
+                <input
+                  type="checkbox"
+                  checked={includeArchived}
+                  onChange={(e) => setIncludeArchived(e.target.checked)}
+                  className="rounded border-border text-primary focus:ring-0 size-3.5"
                 />
+                Archived
+              </label>
+            </div>
+          </div>
 
-                {/* OPTIONAL DOCUMENT */}
-                <div className="rounded-xl border bg-muted/20 p-4">
-                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                    <div>
-                      <p className="text-sm font-semibold">
-                        Identity Document
-                      </p>
-
-                      <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-                        Optional for manual entry. If attached, the document uses the exact same OCR, quality and confidence workflow as OCR-first creation.
-                      </p>
-                    </div>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() =>
-                        openManualDocument()
-                      }
-                    >
-                      <ScanDocumentIcon size={14} />
-
-                      <span className="ml-2">
-                        Attach Identity Document
-                      </span>
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 border-t pt-5">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() =>
-                      setShowManualForm(
-                        false
-                      )
-                    }
-                  >
-                    Cancel
-                  </Button>
-
-                  <Button type="submit">
-                    Save Contact
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* MAIN WORKSPACE */}
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-          {/* DIRECTORY */}
-          <Card className="overflow-hidden">
-            <CardHeader className="border-b bg-muted/20">
-              <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-                <div>
-                  <CardTitle className="text-base">
-                    Contact Register
-                  </CardTitle>
-
-                  <CardDescription className="mt-1 text-xs">
-                    Primary Contact is permanently pinned above other active contacts.
-                  </CardDescription>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-
-                    <Input
-                      value={search}
-                      onChange={(event) =>
-                        setSearch(
-                          event.target.value
-                        )
-                      }
-                      placeholder="Search contacts..."
-                      className="w-[220px] pl-9"
-                    />
-                  </div>
-
-                  <Select
-                    value={statusFilter}
-                    onValueChange={(
-                      value:
-                        | "active"
-                        | "archived"
-                    ) =>
-                      setStatusFilter(
-                        value
-                      )
-                    }
-                  >
-                    <SelectTrigger className="w-[130px]">
-                      <SelectValue />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      <SelectItem value="active">
-                        Active
-                      </SelectItem>
-
-                      <SelectItem value="archived">
-                        Archived
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          {/* Contact Table / Card Register */}
+          <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden">
+            {sortedCompanyContacts.length === 0 ? (
+              <div className="p-8 text-center">
+                <EmptyState
+                  icon={<Users className="size-8 text-muted-foreground/60" />}
+                  title="No Contacts Found"
+                  description={
+                    searchQuery
+                      ? "No personnel records match your search filter."
+                      : "No contact records have been associated with this company yet."
+                  }
+                  action={{
+                    label: "Add First Contact",
+                    onClick: () => setIsManualModalOpen(true),
+                    icon: <Plus className="size-3.5" />,
+                  }}
+                />
               </div>
-            </CardHeader>
-
-            <CardContent className="p-0">
-              {displayedContacts.length ===
-              0 ? (
-                <div className="p-14 text-center">
-                  <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-muted">
-                    <Users className="size-6 text-muted-foreground" />
-                  </div>
-
-                  <p className="mt-4 text-sm font-medium">
-                    No contacts in this view
-                  </p>
-
-                  <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-                    Create the contact manually or use OCR to create the contact directly from an identity document.
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y">
-                  {displayedContacts.map(
-                    (contact) => {
-                      const selected =
-                        selectedContactId ===
-                        contact.id
+            ) : (
+              <div className="divide-y divide-border overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/40 text-muted-foreground uppercase text-[10px] tracking-wider font-semibold border-b border-border">
+                    <tr>
+                      <th className="px-4 py-3">Personnel / Canonical ID</th>
+                      <th className="px-4 py-3">Company Role</th>
+                      <th className="px-4 py-3">Communications</th>
+                      <th className="px-4 py-3">Driver Licence</th>
+                      <th className="px-4 py-3">Evidence</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {sortedCompanyContacts.map((contact) => {
+                      const rel = contact.relationships.find((r) => r.companyId === companyId);
+                      const isPrimary = !!rel?.isPrimary;
+                      const isSelected = contact.id === selectedContactId;
 
                       return (
-                        <button
+                        <tr
                           key={contact.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedContactId(
-                              contact.id
-                            )
-
-                            setNoteDraft(
-                              contact.notes ||
-                                ""
-                            )
-
-                            router.replace(
-                              `/companies/${companyId}/contacts?contact=${contact.id}`,
-                              { scroll: false }
-                            )
-                          }}
-                          className={`grid w-full gap-4 border-l-4 p-4 text-left transition-colors md:grid-cols-[minmax(0,1fr)_230px_150px] md:items-center ${
-                            selected
-                              ? "border-l-primary bg-primary/[0.04]"
-                              : "border-l-transparent hover:bg-muted/30"
-                          }`}
+                          onClick={() => handleSelectContact(contact.id)}
+                          className={`cursor-pointer transition-colors ${
+                            isSelected
+                              ? "bg-primary/5 border-l-4 border-l-primary"
+                              : "hover:bg-muted/30"
+                          } ${contact.isArchived ? "opacity-60 bg-muted/20" : ""}`}
                         >
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex size-10 shrink-0 items-center justify-center rounded-full border bg-background">
-                              <User className="size-5 text-muted-foreground" />
-                            </div>
-
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-semibold">
-                                  {
-                                    contact.firstName
-                                  }{" "}
-                                  {
-                                    contact.lastName
-                                  }
-                                </span>
-
-                                {isPrimaryForCompany(contact, companyId) &&
-                                  !contact.isArchived && (
-                                    <Badge className="h-5 px-2 text-[9px]">
-                                      Primary Contact
-                                    </Badge>
+                          {/* Name & Canonical ID */}
+                          <td className="px-4 py-3">
+                            <div className="flex items-start gap-2.5">
+                              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-[11px] mt-0.5">
+                                {contact.firstName?.[0]}
+                                {contact.lastName?.[0]}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-bold text-foreground text-xs truncate">
+                                    {contact.firstName} {contact.lastName}
+                                  </p>
+                                  {isPrimary && (
+                                    <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.2 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
+                                      <Star className="size-2.5 fill-current" /> Primary
+                                    </span>
                                   )}
-
-                                {contact.isArchived && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="h-5 px-2 text-[9px]"
-                                  >
-                                    Archived
-                                  </Badge>
-                                )}
-                              </div>
-
-                              <div className="mt-1 flex flex-wrap items-center gap-2">
-                                <span className="text-xs text-muted-foreground">
-                                  {
-                                    roleForCompany(contact, companyId)
-                                  }
-                                </span>
-
-                                <span className="font-mono text-[10px] text-muted-foreground">
-                                  {
-                                    contact.globalId
-                                  }
-                                </span>
+                                  {contact.isArchived && (
+                                    <span className="rounded bg-muted px-1.5 py-0.2 text-[9px] font-medium text-muted-foreground">
+                                      Archived
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                                  {contact.id} • {contact.globalId}
+                                </p>
                               </div>
                             </div>
-                          </div>
+                          </td>
 
-                          <div className="min-w-0 text-xs">
-                            <p className="truncate">
-                              {
-                                contact.email
-                              }
-                            </p>
+                          {/* Role */}
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                              {rel?.role || contact.role || "General Contact"}
+                            </span>
+                          </td>
 
-                            <p className="mt-1 text-muted-foreground">
-                              {
-                                contact.phone
-                              }
-                            </p>
-                          </div>
+                          {/* Communications */}
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col gap-0.5">
+                              <p className="text-foreground font-medium truncate">{contact.phone || "—"}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">{contact.email || "—"}</p>
+                            </div>
+                          </td>
 
-                          <div className="flex items-center justify-end gap-2">
-                            {contact.identityStatus ===
-                              "documented" && (
-                              <Badge
-                                variant="outline"
-                                className="gap-1 text-[9px]"
-                              >
-                                <CheckCircle2 className="size-3" />
-                                Documented ID
-                              </Badge>
+                          {/* Driver Licence */}
+                          <td className="px-4 py-3">
+                            {contact.dlNumber ? (
+                              <div className="flex flex-col gap-0.5">
+                                <p className="font-mono font-semibold text-foreground text-[11px]">
+                                  {contact.dlNumber}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {contact.dlState} {contact.dlExpiry ? `• Exp: ${contact.dlExpiry}` : ""}
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-[11px]">—</span>
                             )}
+                          </td>
 
-                            <ChevronRight className="size-4 text-muted-foreground/50" />
-                          </div>
-                        </button>
-                      )
-                    }
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                          {/* Evidence Count */}
+                          <td className="px-4 py-3">
+                            {contact.evidence?.length > 0 ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                                <ShieldCheck className="size-3.5" />
+                                {contact.evidence.length} Doc{contact.evidence.length > 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground">No Docs</span>
+                            )}
+                          </td>
 
-          {/* INSPECTOR */}
-          <div className="xl:sticky xl:top-6">
-            {!selectedContact ? (
-              <Card className="border-dashed">
-                <CardContent className="flex min-h-[480px] flex-col items-center justify-center p-10 text-center">
-                  <div className="flex size-14 items-center justify-center rounded-full bg-muted">
-                    <User className="size-7 text-muted-foreground/50" />
-                  </div>
-
-                  <p className="mt-4 text-sm font-medium">
-                    Select a contact
-                  </p>
-
-                  <p className="mt-1 max-w-[280px] text-xs leading-5 text-muted-foreground">
-                    View identity, evidence, relationship details and record history.
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="overflow-hidden">
-                <CardHeader className="border-b bg-primary/[0.035]">
-                  <div className="flex items-start gap-3">
-                    <div className="flex size-11 shrink-0 items-center justify-center rounded-full border bg-background">
-                      <User className="size-5 text-primary" />
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <CardTitle className="text-base">
-                          {
-                            selectedContact.firstName
-                          }{" "}
-                          {
-                            selectedContact.lastName
-                          }
-                        </CardTitle>
-
-                        {isPrimaryForCompany(selectedContact, companyId) &&
-                          !selectedContact.isArchived && (
-                            <Badge className="text-[9px]">
-                              Primary Contact
-                            </Badge>
-                          )}
-                      </div>
-
-                      <CardDescription className="mt-1">
-                        {
-                          roleForCompany(selectedContact, companyId)
-                        }
-                      </CardDescription>
-
-                      <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-                        {
-                          selectedContact.globalId
-                        }
-                      </p>
-                    </div>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      onClick={() =>
-                        beginEditContact(selectedContact)
-                      }
-                    >
-                      <Pencil className="mr-1.5 size-3.5" />
-                      Edit
-                    </Button>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="space-y-5 p-4">
-                  {isEditingContact && (
-                    <div className="border-b bg-primary/[0.025] p-4">
-                      <div className="mb-5 flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-semibold">
-                            Edit Contact
-                          </p>
-
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Changes update the current contact record while preserving a history event.
-                          </p>
-                        </div>
-
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() =>
-                            setIsEditingContact(false)
-                          }
-                        >
-                          <X className="size-4" />
-                        </Button>
-                      </div>
-
-                      <ContactFields
-                        draft={editDraft}
-                        onChange={updateEditDraft}
-                      />
-
-                      <div className="mt-5 flex justify-end gap-2 border-t pt-4">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() =>
-                            setIsEditingContact(false)
-                          }
-                        >
-                          Cancel
-                        </Button>
-
-                        <Button
-                          type="button"
-                          onClick={saveEditedContact}
-                        >
-                          <Check className="mr-2 size-4" />
-                          Save Changes
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  {/* IDENTITY */}
-                  <section>
-                    <div className="flex items-center justify-between">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Identity
-                      </Label>
-
-                      {selectedContact.identityConfidence !==
-                        undefined && (
-                        <span className="text-xs font-semibold">
-                          {
-                            selectedContact.identityConfidence
-                          }
-                          %
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <CopyableValue
-                        label="Date of Birth"
-                        value={selectedContact.dob}
-                      />
-
-                      <CopyableValue
-                        label="Driver Licence #"
-                        value={selectedContact.dlNumber}
-                      />
-
-                      <CopyableValue
-                        label="Issuing Province / State"
-                        value={selectedContact.dlState}
-                      />
-
-                      <CopyableValue
-                        label="Expiry Date"
-                        value={selectedContact.dlExpiry}
-                      />
-
-                      <CopyableValue
-                        label="Issue Date"
-                        value={selectedContact.dlIssueDate}
-                      />
-
-                      <CopyableValue
-                        label="Licence Class"
-                        value={selectedContact.dlClass}
-                      />
-
-                      <div className="col-span-2">
-                        <CopyableValue
-                          label="Restrictions"
-                          value={selectedContact.dlRestrictions}
-                        />
-                      </div>
-                    </div>
-                  </section>
-
-                  {/* CONTACT INFORMATION */}
-                  <section className="border-t pt-4">
-                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                      Contact Information
-                    </Label>
-
-                    <div className="mt-3 grid gap-3">
-                      <CopyableValue
-                        label="Email"
-                        value={selectedContact.email}
-                      />
-
-                      <CopyableValue
-                        label="Phone"
-                        value={selectedContact.phone}
-                      />
-                    </div>
-                  </section>
-
-                  {/* EVIDENCE */}
-                  <section className="border-t pt-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          Identity Evidence
-                        </Label>
-
-                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                          The normal view keeps at least three years of source documents readily available. Older retained evidence remains accessible when needed.
-                        </p>
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 shrink-0 text-[10px]"
-                        onClick={() => {
-                          setManualDraft({
-                            firstName: selectedContact.firstName,
-                            lastName: selectedContact.lastName,
-                            dob: selectedContact.dob,
-                            dlNumber: selectedContact.dlNumber,
-                            dlState: selectedContact.dlState,
-                            dlExpiry: selectedContact.dlExpiry,
-                            dlIssueDate: selectedContact.dlIssueDate,
-                            dlClass: selectedContact.dlClass,
-                            dlRestrictions: selectedContact.dlRestrictions,
-                            email: selectedContact.email,
-                            phone: selectedContact.phone,
-                            role: roleForCompany(selectedContact, companyId),
-                            isPrimary: isPrimaryForCompany(selectedContact, companyId),
-                          })
-
-                          openManualDocument(selectedContact.id)
-                        }}
-                      >
-                        <ScanDocumentIcon size={12} />
-                        <span className="ml-1.5">Add</span>
-                      </Button>
-                    </div>
-
-                    {selectedContact.evidence?.some(
-                      (document) => !evidenceInsideThreeYears(document)
-                    ) && (
-                      <div className="mt-3 flex justify-end">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-[10px]"
-                          onClick={() =>
-                            setShowOlderEvidence((current) => !current)
-                          }
-                        >
-                          <History className="mr-1 size-3" />
-                          {showOlderEvidence
-                            ? "Standard 3-Year View"
-                            : "Show Older Evidence"}
-                        </Button>
-                      </div>
-                    )}
-
-                    <div className="mt-3 space-y-2">
-                      {selectedContact.evidence?.length ? (
-                        [...selectedContact.evidence]
-                          .sort((a, b) =>
-                            evidenceReferenceDate(b).localeCompare(
-                              evidenceReferenceDate(a)
-                            )
-                          )
-                          .filter(
-                            (document) =>
-                              showOlderEvidence ||
-                              evidenceInsideThreeYears(document)
-                          )
-                          .map((document) => (
-                            <button
-                              key={document.id}
-                              type="button"
-                              disabled={!document.dataUrl}
-                              onClick={() =>
-                                document.dataUrl && setPreviewEvidence(document)
-                              }
-                              className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors enabled:hover:border-primary/30 enabled:hover:bg-primary/[0.025] disabled:cursor-default"
+                          {/* Actions */}
+                          <td className="px-4 py-3 text-right">
+                            <div
+                              className="flex items-center justify-end gap-1"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              <FileCheck2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                              <button
+                                type="button"
+                                onClick={() => handleSetPrimary(contact)}
+                                title={isPrimary ? "Remove Primary Status" : "Designate as Primary Contact"}
+                                className={`flex size-7 items-center justify-center rounded-lg border transition-colors ${
+                                  isPrimary
+                                    ? "border-emerald-500/40 bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                    : "border-border hover:bg-muted text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                <Star className={`size-3.5 ${isPrimary ? "fill-current" : ""}`} />
+                              </button>
 
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-medium">
-                                  {document.fileName}
-                                </p>
-
-                                <p className="mt-1 text-[10px] text-muted-foreground">
-                                  {document.type}
-                                  {` · ${evidenceReferenceDate(document).slice(0, 10)}`}
-                                  {document.confidence !== undefined &&
-                                    ` · OCR ${document.confidence}%`}
-                                </p>
-                              </div>
-
-                              <div className="flex shrink-0 items-center gap-2">
-                                <Badge
-                                  variant="outline"
-                                  className="text-[9px]"
-                                >
-                                  {document.status === "uploaded"
-                                    ? "Stored"
-                                    : document.status.replaceAll("_", " ")}
-                                </Badge>
-
-                                {document.dataUrl && (
-                                  <span className="text-[10px] font-medium text-primary">
-                                    Preview
-                                  </span>
-                                )}
-                              </div>
-                            </button>
-                          ))
-                      ) : (
-                        <div className="rounded-lg border border-dashed p-5 text-center">
-                          <FileText className="mx-auto size-5 text-muted-foreground/40" />
-                          <p className="mt-2 text-xs font-medium">
-                            No identity evidence attached
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-
-                  {/* NOTES */}
-                  <section className="border-t pt-4">
-                    <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                      Internal Notes
-                    </Label>
-
-                    <Textarea
-                      value={noteDraft}
-                      onChange={(event) =>
-                        setNoteDraft(
-                          event.target.value
-                        )
-                      }
-                      className="mt-2 min-h-[110px] resize-none"
-                      placeholder="Add operational notes..."
-                    />
-
-                    <Button
-                      className="mt-2 w-full"
-                      size="sm"
-                      disabled={
-                        !noteDraft.trim()
-                      }
-                      onClick={saveNote}
-                    >
-                      Save Note
-                    </Button>
-                  </section>
-
-                  {/* HISTORY */}
-                  <section className="border-t pt-4">
-                    <div className="flex items-center gap-2">
-                      <History className="size-3.5 text-primary" />
-
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Recent History
-                      </Label>
-                    </div>
-
-                    <div className="mt-3 max-h-[220px] space-y-2 overflow-y-auto">
-                      {selectedContact.events
-                        ?.slice(0, 6)
-                        .map((event) => (
-                          <div
-                            key={event.id}
-                            className="rounded-lg border p-3"
-                          >
-                            <p className="text-[10px] font-semibold">
-                              {event.type.replaceAll(
-                                "_",
-                                " "
-                              )}
-                            </p>
-
-                            <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                              {
-                                event.description
-                              }
-                            </p>
-
-                            <p className="mt-2 text-[9px] text-muted-foreground">
-                              {new Date(
-                                event.timestamp
-                              ).toLocaleString()}
-                            </p>
-                          </div>
-                        ))}
-                    </div>
-                  </section>
-
-                  {/* ARCHIVE */}
-                  <div className="border-t pt-4">
-                    {selectedContact.isArchived ? (
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() =>
-                          restoreContact(
-                            selectedContact
-                          )
-                        }
-                      >
-                        <ArchiveRestore className="mr-2 size-4" />
-                        Restore Contact
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() =>
-                          archiveContact(
-                            selectedContact
-                          )
-                        }
-                      >
-                        <Archive className="mr-2 size-4" />
-                        Archive Contact
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectContact(contact.id)}
+                                title="Inspect Contact"
+                                className="flex size-7 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <ChevronRight className="size-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
+
+        {/* RIGHT COLUMN: Contact Inspector / Multi-Company Drawer */}
+        {selectedContact && (
+          <div className="lg:col-span-5 flex flex-col gap-4 sticky top-6">
+            <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+              {/* Header */}
+              <div className="flex items-start justify-between p-4 border-b border-border bg-muted/20">
+                <div className="flex items-start gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
+                    {selectedContact.firstName?.[0]}
+                    {selectedContact.lastName?.[0]}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-foreground">
+                        {selectedContact.firstName} {selectedContact.lastName}
+                      </h2>
+                      {selectedContactRelationship?.isPrimary && (
+                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                          Primary
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                      {selectedContact.id} • {selectedContact.globalId}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {!isEditing ? (
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(selectedContact)}
+                      title="Edit Contact"
+                      className="flex size-7 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleArchive(selectedContact)}
+                    title={selectedContact.isArchived ? "Restore Contact" : "Archive Contact"}
+                    className="flex size-7 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {selectedContact.isArchived ? (
+                      <RefreshCw className="size-3.5" />
+                    ) : (
+                      <Archive className="size-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectContact(null)}
+                    className="flex size-7 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Inspector Body */}
+              <div className="p-4 flex flex-col gap-5 max-h-[calc(100vh-220px)] overflow-y-auto">
+                {isEditing ? (
+                  /* ========================================================================= */
+                  /* EDIT CONTACT FORM VIEW */
+                  /* ========================================================================= */
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-border">
+                      <span className="text-xs font-bold text-foreground">Edit Personnel Details</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">{selectedContact.id}</span>
+                    </div>
+
+                    {editDuplicateWarning && (
+                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-400">
+                        {editDuplicateWarning}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          First Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={editFormData.firstName || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, firstName: e.target.value })}
+                          className={`w-full rounded-lg border px-3 py-1.5 text-xs mt-1 ${
+                            editFormErrors.firstName ? "border-destructive" : "border-border bg-background"
+                          }`}
+                        />
+                        {editFormErrors.firstName && (
+                          <p className="text-[10px] text-destructive mt-0.5">{editFormErrors.firstName}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Last Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={editFormData.lastName || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, lastName: e.target.value })}
+                          className={`w-full rounded-lg border px-3 py-1.5 text-xs mt-1 ${
+                            editFormErrors.lastName ? "border-destructive" : "border-border bg-background"
+                          }`}
+                        />
+                        {editFormErrors.lastName && (
+                          <p className="text-[10px] text-destructive mt-0.5">{editFormErrors.lastName}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Date of Birth
+                        </label>
+                        <input
+                          type="date"
+                          value={editFormData.dob || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, dob: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Driver Licence #
+                        </label>
+                        <input
+                          type="text"
+                          value={editFormData.dlNumber || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, dlNumber: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-mono mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Licence Jurisdiction
+                        </label>
+                        <select
+                          value={editFormData.dlState || "ON"}
+                          onChange={(e) => setEditFormData({ ...editFormData, dlState: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        >
+                          {ALL_JURISDICTIONS.map((j) => (
+                            <option key={j} value={j}>
+                              {j}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Licence Expiry
+                        </label>
+                        <input
+                          type="date"
+                          value={editFormData.dlExpiry || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, dlExpiry: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Licence Class
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Class A / AZ"
+                          value={editFormData.dlClass || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, dlClass: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Restrictions
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Corrective Lenses"
+                          value={editFormData.dlRestrictions || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, dlRestrictions: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Phone Number
+                        </label>
+                        <input
+                          type="tel"
+                          placeholder="+1 (555) 000-0000"
+                          value={editFormData.phone || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                          className={`w-full rounded-lg border px-3 py-1.5 text-xs mt-1 ${
+                            editFormErrors.phone ? "border-destructive" : "border-border bg-background"
+                          }`}
+                        />
+                        {editFormErrors.phone && (
+                          <p className="text-[10px] text-destructive mt-0.5">{editFormErrors.phone}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Email Address
+                        </label>
+                        <input
+                          type="email"
+                          placeholder="person@company.com"
+                          value={editFormData.email || ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Assigned Role at {company.name}
+                        </label>
+                        <select
+                          value={editFormData.companyRole || "Safety Manager"}
+                          onChange={(e) => setEditFormData({ ...editFormData, companyRole: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                        >
+                          {STANDARD_ROLES.map((r) => (
+                            <option key={r} value={r}>
+                              {r}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-2 flex items-center gap-2 pt-1">
+                        <input
+                          type="checkbox"
+                          id="edit-is-primary"
+                          checked={!!editFormData.isPrimary}
+                          onChange={(e) => setEditFormData({ ...editFormData, isPrimary: e.target.checked })}
+                          className="rounded border-border text-primary focus:ring-0 size-4"
+                        />
+                        <label htmlFor="edit-is-primary" className="text-xs font-semibold text-foreground cursor-pointer">
+                          Designate as Primary Contact for {company.name}
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+                      <button
+                        type="button"
+                        onClick={handleCancelEdit}
+                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold hover:bg-muted text-foreground"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveEdit}
+                        className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* 1. Company Assignment & Role */}
+                    <div className="rounded-lg border border-border bg-muted/10 p-3 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Company Assignment
+                        </span>
+                        <span className="text-xs font-semibold text-primary">{company.name}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-border/60">
+                        <span className="text-xs text-muted-foreground">Assigned Role</span>
+                        <span className="text-xs font-bold text-foreground">
+                          {selectedContactRelationship?.role || selectedContact.role}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 2. Identity & Credential ReadOnlyFields */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <ReadOnlyField label="First Name" value={selectedContact.firstName} />
+                      <ReadOnlyField label="Last Name" value={selectedContact.lastName} />
+                      <ReadOnlyField label="Date of Birth" value={selectedContact.dob} mono />
+                      <ReadOnlyField
+                        label="Driver Licence #"
+                        value={selectedContact.dlNumber}
+                        copyable
+                        mono
+                      />
+                      <ReadOnlyField label="Licence Jurisdiction" value={selectedContact.dlState} />
+                      <ReadOnlyField label="Licence Expiry" value={selectedContact.dlExpiry} mono />
+                      <ReadOnlyField label="Licence Class" value={selectedContact.dlClass} />
+                      <ReadOnlyField label="Restrictions" value={selectedContact.dlRestrictions} />
+                      <ReadOnlyField label="Phone Number" value={selectedContact.phone} copyable mono />
+                      <ReadOnlyField label="Email Address" value={selectedContact.email} copyable />
+                    </div>
+
+                    {/* 3. Multi-Company Relationships Register */}
+                    <div className="flex flex-col gap-2 pt-3 border-t border-border">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Associated Companies ({selectedContact.relationships?.length || 1})
+                      </span>
+                      <div className="divide-y divide-border border border-border rounded-lg bg-background overflow-hidden">
+                        {selectedContact.relationships?.map((rel) => (
+                          <div key={rel.id} className="p-2.5 flex items-center justify-between text-xs">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-foreground truncate">{rel.companyName}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                Role: {rel.role} {rel.startDate ? `• Since ${rel.startDate}` : ""}
+                              </p>
+                            </div>
+                            {rel.isPrimary && (
+                              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
+                                Primary
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 4. Evidence Attachments & 3-Year Operational Filter */}
+                    <div className="flex flex-col gap-2 pt-3 border-t border-border">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Attached Evidence ({selectedContact.evidence?.length || 0})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowOlderEvidence(!showOlderEvidence)}
+                          className="text-[10px] text-primary hover:underline font-medium"
+                        >
+                          {showOlderEvidence ? "Hide Older Docs" : "Show All History"}
+                        </button>
+                      </div>
+
+                      {selectedContact.evidence?.length === 0 ? (
+                        <div className="p-3 text-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
+                          No identity evidence attached.
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {selectedContact.evidence
+                            .filter((ev) => showOlderEvidence || isWithinThreeYears(ev.documentDate || ev.uploadedAt))
+                            .map((ev) => (
+                              <div
+                                key={ev.id}
+                                onClick={() => setPreviewEvidence(ev)}
+                                className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer transition-colors"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileCheck2 className="size-4 text-emerald-500 shrink-0" />
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-foreground truncate">{ev.fileName}</p>
+                                    <p className="text-[10px] text-muted-foreground">
+                                      {ev.type} • {ev.documentDate || ev.uploadedAt?.split("T")[0]}
+                                    </p>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                                  {ev.confidence ? `${ev.confidence}%` : "Verified"}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 5. Revision Audit Timeline */}
+                    <div className="flex flex-col gap-2 pt-3 border-t border-border">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Revision Events ({selectedContact.events?.length || 0})
+                      </span>
+                      <div className="flex flex-col gap-2 max-h-[160px] overflow-y-auto">
+                        {selectedContact.events?.map((ev) => (
+                          <div key={ev.id} className="text-xs p-2 rounded bg-muted/20 border border-border/50">
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                              <span className="font-bold text-foreground">{ev.action}</span>
+                              <span>{ev.timestamp ? new Date(ev.timestamp).toLocaleDateString() : ""}</span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{ev.summary}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* SOURCE PICKER */}
-      {showSourcePicker && (
-        <DocumentSourcePicker
-          title={
-            documentSourceMode ===
-            "ocr_create"
-              ? "Upload ID for OCR"
-              : "Attach Identity Document"
-          }
-          onCamera={chooseCamera}
-          onDevice={chooseDevice}
-          onCancel={() =>
-            setShowSourcePicker(false)
-          }
-        />
+      {/* ========================================================================= */}
+      {/* MODAL 1: MANUAL ADD CONTACT */}
+      {/* ========================================================================= */}
+      {isManualModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-5 animate-in fade-in duration-150">
+            <div className="flex items-start justify-between border-b border-border pb-3">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Add Contact Manually</h3>
+                <p className="text-xs text-muted-foreground">
+                  Enter personnel information to register or associate with {company.name}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsManualModalOpen(false)}
+                className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {manualDuplicateWarning && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/40 p-3 text-xs text-amber-800 dark:text-amber-300">
+                <p className="font-bold">Existing Identity Detected:</p>
+                <p className="mt-0.5">{manualDuplicateWarning}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  First Name *
+                </label>
+                <input
+                  type="text"
+                  value={manualForm.firstName}
+                  onChange={(e) => setManualForm({ ...manualForm, firstName: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
+                {manualFormErrors.firstName && (
+                  <p className="text-[10px] text-destructive mt-0.5">{manualFormErrors.firstName}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Last Name *
+                </label>
+                <input
+                  type="text"
+                  value={manualForm.lastName}
+                  onChange={(e) => setManualForm({ ...manualForm, lastName: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
+                {manualFormErrors.lastName && (
+                  <p className="text-[10px] text-destructive mt-0.5">{manualFormErrors.lastName}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Date of Birth (YYYY-MM-DD)
+                </label>
+                <input
+                  type="date"
+                  value={manualForm.dob}
+                  onChange={(e) => setManualForm({ ...manualForm, dob: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Company Role *
+                </label>
+                <select
+                  value={manualForm.role}
+                  onChange={(e) => setManualForm({ ...manualForm, role: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                >
+                  {STANDARD_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Driver Licence Number
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. D1234-56789-01234"
+                  value={manualForm.dlNumber}
+                  onChange={(e) => setManualForm({ ...manualForm, dlNumber: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-mono focus:border-primary focus:outline-hidden mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Licence Jurisdiction
+                </label>
+                <select
+                  value={manualForm.dlState}
+                  onChange={(e) => setManualForm({ ...manualForm, dlState: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                >
+                  {ALL_JURISDICTIONS.map((j) => (
+                    <option key={j} value={j}>
+                      {j}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  placeholder="(XXX) XXX-XXXX"
+                  value={manualForm.phone}
+                  onChange={(e) => setManualForm({ ...manualForm, phone: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
+                {manualFormErrors.phone && (
+                  <p className="text-[10px] text-destructive mt-0.5">{manualFormErrors.phone}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  placeholder="contact@example.com"
+                  value={manualForm.email}
+                  onChange={(e) => setManualForm({ ...manualForm, email: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="manual-primary"
+                checked={manualForm.isPrimary}
+                onChange={(e) => setManualForm({ ...manualForm, isPrimary: e.target.checked })}
+                className="rounded border-border text-primary focus:ring-0 size-4"
+              />
+              <label htmlFor="manual-primary" className="text-xs font-semibold text-foreground cursor-pointer">
+                Designate as Primary Contact for {company.name}
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setIsManualModalOpen(false)}
+                className="rounded-lg border border-border px-4 py-2 text-xs font-semibold hover:bg-muted text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleManualSave}
+                className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+              >
+                Save Contact
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* OCR WORKSPACE */}
-      {ocrSession && (
-        <OCRContactWorkspace
-          session={ocrSession}
-          onClose={() =>
-            setOcrSession(null)
-          }
-          onReplace={
-            replaceDocument
-          }
-          onSave={saveOCRContact}
-        />
-      )}
+      {/* ========================================================================= */}
+      {/* MODAL 2: DOCUMENT SOURCE PICKER (Shared Foundation) */}
+      {/* ========================================================================= */}
+      <DocumentSourcePicker
+        isOpen={isSourcePickerOpen}
+        onClose={() => setIsSourcePickerOpen(false)}
+        onSelectCamera={() => setIsCameraOpen(true)}
+        onSelectFile={(file) => handleFileChosen(file, "device")}
+        title="Ingest Driver Licence / ID Document"
+        subtitle="Capture or upload photo ID for automated OCR extraction and evidence creation."
+      />
 
-      {/* REAL CAMERA CAPTURE */}
-      {showCamera && (
+      {/* ========================================================================= */}
+      {/* MODAL 3: CAMERA CAPTURE (Shared Foundation) */}
+      {/* ========================================================================= */}
+      {isCameraOpen && (
         <CameraCapture
-          onClose={() => setShowCamera(false)}
+          onClose={() => setIsCameraOpen(false)}
           onCapture={(file) => {
-            setShowCamera(false)
-            beginDocumentProcessing(file, "camera")
+            setIsCameraOpen(false);
+            handleFileChosen(file, "camera");
           }}
         />
       )}
 
-      {/* SAVED EVIDENCE PREVIEW */}
-      {previewEvidence && (
-        <EvidencePreviewModal
-          evidence={previewEvidence}
-          onClose={() => setPreviewEvidence(null)}
-        />
+      {/* ========================================================================= */}
+      {/* MODAL 4: OCR REVIEW WORKSPACE (Contacts Invariant Split-Screen) */}
+      {/* ========================================================================= */}
+      {isOCRWorkspaceOpen && ocrDraft && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-5xl h-[85vh] rounded-2xl border border-border bg-card flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-border bg-muted/20">
+              <div>
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Sparkles className="size-4 text-primary" />
+                  OCR Identity Extraction Review
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Verify extracted attributes against the source document. Field confidence below 85% requires review.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOCRWorkspaceOpen(false);
+                  setOcrDraft(null);
+                }}
+                className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {/* Split Screen Viewport */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 flex-1 min-h-0 divide-y lg:divide-y-0 lg:divide-x divide-border">
+              {/* Left Side: Secure Document Viewer */}
+              <div className="h-full min-h-[300px] p-3 bg-muted/10">
+                <SecureDocumentViewer
+                  fileName={ocrDraft.evidence.fileName}
+                  mimeType={ocrDraft.evidence.fileType}
+                  dataUrl={ocrDraft.evidence.dataUrl || ""}
+                  documentTitle="Source Driver Licence Asset"
+                  ocrConfidence={ocrDraft.evidence.confidence}
+                />
+              </div>
+
+              {/* Right Side: Extracted Field Review */}
+              <div className="p-5 flex flex-col gap-4 overflow-y-auto">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex justify-between">
+                      First Name
+                      <span
+                        className={`text-[9px] font-mono font-bold ${
+                          ocrDraft.firstName.confidence >= 85 ? "text-emerald-500" : "text-amber-500"
+                        }`}
+                      >
+                        {ocrDraft.firstName.confidence}%
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ocrDraft.firstName.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          firstName: { ...ocrDraft.firstName, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex justify-between">
+                      Last Name
+                      <span
+                        className={`text-[9px] font-mono font-bold ${
+                          ocrDraft.lastName.confidence >= 85 ? "text-emerald-500" : "text-amber-500"
+                        }`}
+                      >
+                        {ocrDraft.lastName.confidence}%
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ocrDraft.lastName.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          lastName: { ...ocrDraft.lastName, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex justify-between">
+                      Date of Birth
+                      <span
+                        className={`text-[9px] font-mono font-bold ${
+                          ocrDraft.dob.confidence >= 85 ? "text-emerald-500" : "text-amber-500"
+                        }`}
+                      >
+                        {ocrDraft.dob.confidence}%
+                      </span>
+                    </label>
+                    <input
+                      type="date"
+                      value={ocrDraft.dob.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          dob: { ...ocrDraft.dob, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex justify-between">
+                      Driver Licence #
+                      <span
+                        className={`text-[9px] font-mono font-bold ${
+                          ocrDraft.dlNumber.confidence >= 85 ? "text-emerald-500" : "text-amber-500"
+                        }`}
+                      >
+                        {ocrDraft.dlNumber.confidence}%
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ocrDraft.dlNumber.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          dlNumber: { ...ocrDraft.dlNumber, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-mono font-bold mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Jurisdiction
+                    </label>
+                    <select
+                      value={ocrDraft.dlState.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          dlState: { ...ocrDraft.dlState, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    >
+                      {ALL_JURISDICTIONS.map((j) => (
+                        <option key={j} value={j}>
+                          {j}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Expiry Date
+                    </label>
+                    <input
+                      type="date"
+                      value={ocrDraft.dlExpiry.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          dlExpiry: { ...ocrDraft.dlExpiry, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Licence Class
+                    </label>
+                    <input
+                      type="text"
+                      value={ocrDraft.dlClass.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          dlClass: { ...ocrDraft.dlClass, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Assigned Role
+                    </label>
+                    <select
+                      value={ocrDraft.role}
+                      onChange={(e) => setOcrDraft({ ...ocrDraft, role: e.target.value })}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    >
+                      {STANDARD_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      placeholder="+1 (555) 000-0000"
+                      value={ocrDraft.phone.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          phone: { ...ocrDraft.phone, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="person@company.com"
+                      value={ocrDraft.email.value}
+                      onChange={(e) =>
+                        setOcrDraft({
+                          ...ocrDraft,
+                          email: { ...ocrDraft.email, value: e.target.value, confidence: 100 },
+                        })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
+                    />
+                  </div>
+                </div>
+
+                {ocrValidationError && (
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <ShieldAlert className="size-4 shrink-0 mt-0.5" />
+                    <span>{ocrValidationError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-2">
+                  <input
+                    type="checkbox"
+                    id="ocr-primary"
+                    checked={ocrDraft.isPrimary}
+                    onChange={(e) => setOcrDraft({ ...ocrDraft, isPrimary: e.target.checked })}
+                    className="rounded border-border text-primary focus:ring-0 size-4"
+                  />
+                  <label htmlFor="ocr-primary" className="text-xs font-semibold text-foreground cursor-pointer">
+                    Designate as Primary Contact for {company.name}
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between p-4 border-t border-border bg-muted/20">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <ShieldCheck className="size-4 text-emerald-500" />
+                <span>Audited OCR Extraction • Evidence Attachment DOC-XXXX</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOCRWorkspaceOpen(false);
+                    setOcrDraft(null);
+                  }}
+                  className="rounded-lg border border-border px-4 py-2 text-xs font-semibold hover:bg-muted text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOCRConfirmedSave}
+                  className="rounded-lg bg-primary px-5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 shadow-xs"
+                >
+                  Confirm & Save Identity
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* DEVICE INPUT */}
-      <input
-        ref={deviceInputRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
-        className="hidden"
-        onChange={handleDeviceFile}
-      />
-    </>
-  )
+      {/* ========================================================================= */}
+      {/* MODAL 5: EVIDENCE PREVIEW MODAL (Shared Foundation SecureDocumentViewer) */}
+      {/* ========================================================================= */}
+      {previewEvidence && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-4xl h-[80vh] rounded-2xl overflow-hidden shadow-2xl">
+            <SecureDocumentViewer
+              fileName={previewEvidence.fileName}
+              mimeType={previewEvidence.fileType}
+              dataUrl={previewEvidence.dataUrl || ""}
+              documentTitle={previewEvidence.type}
+              documentDate={previewEvidence.documentDate || previewEvidence.uploadedAt?.split("T")[0]}
+              ocrConfidence={previewEvidence.confidence}
+              onClose={() => setPreviewEvidence(null)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

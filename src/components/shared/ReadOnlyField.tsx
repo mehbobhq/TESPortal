@@ -32,19 +32,19 @@ export function ReadOnlyField({
   };
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         {badge}
       </div>
 
-      <div className="flex items-center justify-between gap-2 rounded-lg border border-border/80 bg-muted/30 px-3 py-2">
+      <div className="flex items-center justify-between gap-2 min-h-[1.5rem]">
         <span
-          className={`text-xs font-semibold text-foreground truncate select-text ${
-            mono ? "font-mono tracking-tight" : ""
-          }`}
+          className={`text-sm font-semibold text-foreground break-words select-text ${
+            displayVal === "—" ? "text-muted-foreground/70 font-normal" : ""
+          } ${mono ? "font-mono tracking-tight" : ""}`}
         >
           {displayVal}
         </span>
@@ -53,15 +53,16 @@ export function ReadOnlyField({
           <button
             type="button"
             onClick={handleCopy}
-            className="flex size-6 shrink-0 items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             title="Copy to clipboard"
+            aria-label={`Copy ${label}`}
           >
             {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
           </button>
         )}
       </div>
 
-      {subtext && <p className="text-[10px] text-muted-foreground">{subtext}</p>}
+      {subtext && <p className="text-[10px] text-muted-foreground mt-0.5">{subtext}</p>}
     </div>
   );
 }
@@ -83,6 +84,8 @@ export function RegulatoryIdentifierField({
 }: RegulatoryIdentifierFieldProps) {
   const [copied, setCopied] = useState(false);
 
+  const displayVal = value !== undefined && value !== null && String(value).trim() !== "" ? String(value) : "—";
+
   const handleCopy = () => {
     if (!value) return;
     navigator.clipboard.writeText(value);
@@ -91,22 +94,26 @@ export function RegulatoryIdentifierField({
   };
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         {type && (
-          <span className="rounded bg-primary/10 px-1.5 py-0.2 text-[9px] font-bold text-primary">
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">
             {type}
           </span>
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2 shadow-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-xs font-bold tracking-wider text-foreground uppercase truncate select-text">
-            {value || "—"}
+      <div className="flex items-center justify-between gap-2 min-h-[1.5rem]">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={`font-mono text-sm font-bold tracking-wider text-foreground uppercase select-text break-words ${
+              displayVal === "—" ? "text-muted-foreground/70 font-normal" : ""
+            }`}
+          >
+            {displayVal}
           </span>
           {isValid && value && (
             <ShieldCheck className="size-3.5 text-emerald-500 shrink-0" title="Checksum & syntax verified" />
@@ -118,8 +125,9 @@ export function RegulatoryIdentifierField({
             <button
               type="button"
               onClick={handleCopy}
-              className="flex size-6 items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               title="Copy"
+              aria-label={`Copy ${label}`}
             >
               {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
             </button>
@@ -129,8 +137,9 @@ export function RegulatoryIdentifierField({
             <button
               type="button"
               onClick={onViewMaster}
-              className="flex size-6 items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               title="View in Master Register"
+              aria-label={`View ${label} in Master Register`}
             >
               <ExternalLink className="size-3.5" />
             </button>

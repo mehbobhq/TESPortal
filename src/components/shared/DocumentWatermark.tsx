@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useId } from "react";
-import { formatEasternTimestamp, generateViewRef } from "../../lib/audit-logger";
+import { formatEasternTimestamp, generateViewRef } from "@/lib/audit-logger";
 
 export interface WatermarkContextInfo {
   viewerName?: string;

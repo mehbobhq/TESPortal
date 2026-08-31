@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
   AlertTriangle,
@@ -11,7 +11,6 @@ import {
   ChevronRight,
   FileText,
   Landmark,
-  Loader2,
   Pencil,
   Plus,
   Receipt,
@@ -19,31 +18,17 @@ import {
   Settings2,
   Upload,
   X,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { recordAuditEvent } from "@/src/lib/audit-logger"
+import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
+import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
+import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
+import { UnsavedChangesPrompt } from "@/src/components/shared/UnsavedChangesPrompt"
+import { EmptyState, LoadingState } from "@/src/components/shared/StateDisplays"
 
 /* =========================================================
-   TYPES
+   TYPES — LOCKED STORAGE CONTRACT (DATA_VERSION = 1)
 ========================================================= */
 
 type Company = {
@@ -52,6 +37,12 @@ type Company = {
   regCorpState?: string
   regCorpCountry?: string
   region?: string
+  accIfta?: string
+  accCt?: string
+  accNyhut?: string
+  accKyu?: string
+  accNm?: string
+  accOr?: string
   [key: string]: any
 }
 
@@ -226,7 +217,7 @@ type TaxDefinition = {
   defaultFrequency: FilingFrequency
   accountLabel: string
   accountRequired: boolean
-  companyField?: string
+  companyField?: "accIfta" | "accCt" | "accNyhut" | "accKyu" | "accNm" | "accOr"
   historicalOnly?: boolean
 }
 
@@ -382,14 +373,13 @@ const TAX_DEFINITIONS: TaxDefinition[] = [
 ]
 
 /* =========================================================
-   HELPERS
+   HELPERS & REUSABLE LOGIC
 ========================================================= */
 
 function createId(prefix: string) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}-${crypto.randomUUID()}`
   }
-
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`
 }
 
@@ -401,8 +391,8 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
 
-function getDefinition(code: TaxCode) {
-  return TAX_DEFINITIONS.find((item) => item.code === code)!
+function getDefinition(code: TaxCode): TaxDefinition {
+  return TAX_DEFINITIONS.find((item) => item.code === code) || TAX_DEFINITIONS[0]
 }
 
 function formatFrequency(value: FilingFrequency) {
@@ -425,6 +415,10 @@ function readCompanies(): Company[] {
   }
 }
 
+function writeCompanies(companies: Company[]) {
+  localStorage.setItem("tes_companies", JSON.stringify(companies))
+}
+
 function loadCompanySettings(companyId: string): CompanySettings {
   try {
     const raw = localStorage.getItem(`${SETTINGS_STORAGE_PREFIX}${companyId}`)
@@ -443,26 +437,10 @@ function normalizeAccountNumber(value: string) {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
 }
 
-function getCompanyAccountNumber(company: Company, definition: TaxDefinition) {
+function getCompanyAccountNumber(company: Company, definition: TaxDefinition): string {
   if (!definition.companyField) return ""
   const value = company[definition.companyField]
   return typeof value === "string" || typeof value === "number" ? String(value) : ""
-}
-
-function updateCanonicalCompanyAccount(companyId: string, definition: TaxDefinition, accountNumber: string) {
-  if (!definition.companyField) return
-
-  try {
-    const companies = readCompanies()
-    const nextCompanies = companies.map((item) =>
-      item.id === companyId
-        ? { ...item, [definition.companyField!]: accountNumber.trim() }
-        : item
-    )
-    localStorage.setItem("tes_companies", JSON.stringify(nextCompanies))
-  } catch {
-    // Tax Filing remains the local fallback if the company store cannot be updated.
-  }
 }
 
 function findGlobalAccountConflict(companyId: string, taxCode: TaxCode, accountNumber: string) {
@@ -540,9 +518,7 @@ function isWeekend(date: Date) {
 
 /*
   Central business-day adjustment.
-  Phase 1 handles weekends.
-  Jurisdiction-specific holiday calendars can be plugged into this
-  helper later without rewriting each tax definition.
+  Weekend adjustment (rolling forward Saturday/Sunday to Monday).
 */
 function adjustToNextBusinessDay(date: Date) {
   const adjusted = new Date(date)
@@ -630,138 +606,17 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /* =========================================================
-   DOCUMENT VIEWER
-========================================================= */
-
-function DocumentViewer({
-  document,
-  onClose,
-}: {
-  document: TaxDocument
-  onClose: () => void
-}) {
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const dragRef = useRef({ active: false, x: 0, y: 0 })
-  const isPdf = document.mimeType === "application/pdf"
-
-  return (
-    <div
-      className="fixed inset-0 z-[180] flex items-center justify-center bg-black/45 p-4 sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Document viewer: ${document.fileName}`}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div className="flex h-[min(92vh,900px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
-        <div className="flex min-h-14 items-center justify-between border-b px-4">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">Document Viewer</p>
-            <p className="max-w-[650px] truncate text-[10px] text-muted-foreground">
-              {document.fileName} · {document.documentType}
-            </p>
-          </div>
-          <div className="flex items-center gap-1">
-            {!isPdf && (
-              <>
-                <Button variant="ghost" size="icon" aria-label="Zoom out" onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))}>
-                  <ZoomOut className="size-4" />
-                </Button>
-                <span className="w-12 text-center text-[10px]">{Math.round(zoom * 100)}%</span>
-                <Button variant="ghost" size="icon" aria-label="Zoom in" onClick={() => setZoom((current) => Math.min(5, current + 0.25))}>
-                  <ZoomIn className="size-4" />
-                </Button>
-              </>
-            )}
-            <Button variant="ghost" size="icon" aria-label="Close document viewer" onClick={onClose}>
-              <X className="size-4" />
-            </Button>
-          </div>
-        </div>
-
-        <div className="relative min-h-0 flex-1 overflow-hidden bg-muted/15">
-          {isPdf ? (
-            <div className="flex h-full items-center justify-center p-8 text-center">
-              <div className="max-w-md rounded-xl border bg-background p-6 shadow-sm">
-                <FileText className="mx-auto size-10 text-primary/70" />
-                <p className="mt-4 text-sm font-semibold">PDF document</p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  This document is kept inside the TES evidence viewer. Native browser PDF controls,
-                  download, print, save-as and fullscreen actions are intentionally unavailable.
-                </p>
-                <p className="mt-3 text-[10px] text-muted-foreground">
-                  Connect the portal PDF.js renderer here when PDF.js is installed; the Tax Filing data model does not need to change.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div
-              className="absolute inset-0 flex cursor-grab items-center justify-center overflow-hidden p-5 active:cursor-grabbing"
-              style={{ touchAction: "none" }}
-              onPointerDown={(event) => {
-                dragRef.current = { active: true, x: event.clientX, y: event.clientY }
-                event.currentTarget.setPointerCapture(event.pointerId)
-              }}
-              onPointerMove={(event) => {
-                if (!dragRef.current.active) return
-                const dx = event.clientX - dragRef.current.x
-                const dy = event.clientY - dragRef.current.y
-                dragRef.current.x = event.clientX
-                dragRef.current.y = event.clientY
-                setPan((current) => ({ x: current.x + dx, y: current.y + dy }))
-              }}
-              onPointerUp={() => { dragRef.current.active = false }}
-              onPointerCancel={() => { dragRef.current.active = false }}
-              onWheel={(event) => {
-                if (event.ctrlKey || event.metaKey) {
-                  event.preventDefault()
-                  setZoom((current) => Math.min(5, Math.max(0.5, current + (event.deltaY < 0 ? 0.1 : -0.1))))
-                }
-              }}
-            >
-              <div className="relative max-h-full max-w-full">
-                <img
-                  src={document.dataUrl}
-                  alt={document.fileName}
-                  draggable={false}
-                  className="max-h-[calc(92vh-100px)] max-w-full select-none object-contain shadow-sm"
-                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center" }}
-                />
-                <div aria-hidden="true" className="pointer-events-none absolute inset-0 select-none overflow-hidden opacity-30" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center center" }}>
-                  <div className="grid h-full w-full grid-cols-2 grid-rows-4 gap-8 p-8 text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-foreground/70 sm:text-xs">
-                    {Array.from({ length: 8 }).map((_, index) => (
-                      <span key={index} className="flex rotate-[-24deg] items-center justify-center">TES · CONTROLLED VIEW · {document.fileName}</span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-          Controlled evidence view · Normal access does not expose download, print or fullscreen controls.
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* =========================================================
-   PROFILE FORM
+   FORMS: PROFILE, FREQUENCY, FILING
 ========================================================= */
 
 function TaxProfileForm({
   profile,
   definition,
   onChange,
-  readOnly = false,
 }: {
   profile: TaxProfile
   definition: TaxDefinition
   onChange: (profile: TaxProfile) => void
-  readOnly?: boolean
 }) {
   const patch = (value: Partial<TaxProfile>) => {
     onChange({ ...profile, ...value, updatedAt: isoNow() })
@@ -769,143 +624,146 @@ function TaxProfileForm({
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <div className="space-y-2">
-        <Label>Tax Type</Label>
-        <Input value={definition.name} readOnly className="bg-muted/30" />
-      </div>
-
-      <div className="space-y-2">
-        <Label>Jurisdiction</Label>
-        <Input value={definition.jurisdiction} readOnly className="bg-muted/30" />
-      </div>
-
-      <div className="space-y-2">
-        <Label>
-          Account Number{definition.accountRequired ? " *" : ""}
-        </Label>
-        <Input
-          value={profile.accountNumber || ""}
-          readOnly={readOnly}
-          onChange={(event) => patch({ accountNumber: event.target.value })}
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Tax Program</label>
+        <input
+          type="text"
+          value={definition.name}
+          readOnly
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-muted/30 font-medium text-foreground"
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Account Status *</Label>
-        <Select
-          disabled={readOnly}
-          value={profile.accountStatus}
-          onValueChange={(value) =>
-            patch({ accountStatus: value as TaxProfileStatus })
-          }
-        >
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Active">Active</SelectItem>
-            <SelectItem value="Pending">Pending</SelectItem>
-            <SelectItem value="Suspended">Suspended</SelectItem>
-            <SelectItem value="Inactive">Inactive</SelectItem>
-            <SelectItem value="Closed">Closed</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Jurisdiction</label>
+        <input
+          type="text"
+          value={definition.jurisdiction}
+          readOnly
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-muted/30 text-foreground"
+        />
       </div>
 
-      <div className="space-y-2">
-        <Label>Filing Frequency</Label>
-        <div className="flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm">
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">
+          {definition.accountLabel}{definition.accountRequired ? " *" : ""}
+        </label>
+        <input
+          type="text"
+          value={profile.accountNumber || ""}
+          placeholder="Enter account / permit number"
+          onChange={(event) => patch({ accountNumber: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Account Status *</label>
+        <select
+          value={profile.accountStatus}
+          onChange={(e) => patch({ accountStatus: e.target.value as TaxProfileStatus })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+        >
+          <option value="Active">Active</option>
+          <option value="Pending">Pending</option>
+          <option value="Suspended">Suspended</option>
+          <option value="Inactive">Inactive</option>
+          <option value="Closed">Closed</option>
+        </select>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Current Filing Frequency</label>
+        <div className="flex h-9 items-center rounded-lg border border-border bg-muted/30 px-3 text-xs font-medium text-foreground">
           {formatFrequency(profile.filingFrequency)}
         </div>
         <p className="text-[10px] leading-4 text-muted-foreground">
-          Current frequency in force. Change it through Frequency History so prior filing periods remain unchanged.
+          Filing frequency is effective-dated. To change frequency, add an entry under Frequency History so prior periods remain immutable.
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label>Effective Date</Label>
-        <Input
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Effective Date</label>
+        <input
           type="date"
-          readOnly={readOnly}
           value={profile.effectiveDate || ""}
           onChange={(event) => patch({ effectiveDate: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Closure Date</Label>
-        <Input
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Closure Date</label>
+        <input
           type="date"
-          readOnly={readOnly}
           value={profile.closureDate || ""}
           onChange={(event) => patch({ closureDate: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Verification Source</Label>
-        <Select
-          disabled={readOnly}
-          value={profile.verificationSource || undefined}
-          onValueChange={(value) =>
-            patch({ verificationSource: value as VerificationSource })
-          }
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Verification Source</label>
+        <select
+          value={profile.verificationSource || ""}
+          onChange={(e) => patch({ verificationSource: e.target.value as VerificationSource })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         >
-          <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="Government Portal">Government Portal</SelectItem>
-            <SelectItem value="Official Notice">Official Notice</SelectItem>
-            <SelectItem value="Permit / Registration">Permit / Registration</SelectItem>
-            <SelectItem value="Filed Return">Filed Return</SelectItem>
-            <SelectItem value="Client Instruction">Client Instruction</SelectItem>
-            <SelectItem value="Other">Other</SelectItem>
-          </SelectContent>
-        </Select>
+          <option value="">Select verification source</option>
+          <option value="Government Portal">Government Portal</option>
+          <option value="Official Notice">Official Notice</option>
+          <option value="Permit / Registration">Permit / Registration</option>
+          <option value="Filed Return">Filed Return</option>
+          <option value="Client Instruction">Client Instruction</option>
+          <option value="Other">Other</option>
+        </select>
       </div>
 
-      <div className="space-y-2">
-        <Label>Verification Reference</Label>
-        <Input
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Verification Reference</label>
+        <input
+          type="text"
           value={profile.verificationReference || ""}
-          readOnly={readOnly}
-          onChange={(event) =>
-            patch({ verificationReference: event.target.value })
-          }
+          placeholder="Confirmation / Letter ID"
+          onChange={(event) => patch({ verificationReference: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Last Verified Date</Label>
-        <Input
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Last Verified Date</label>
+        <input
           type="date"
-          readOnly={readOnly}
           value={profile.lastVerifiedDate || ""}
           onChange={(event) => patch({ lastVerifiedDate: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Last Verified By</Label>
-        <Input
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold text-foreground">Last Verified By</label>
+        <input
+          type="text"
           value={profile.lastVerifiedBy || ""}
-          readOnly={readOnly}
+          placeholder="Verifier name / officer"
           onChange={(event) => patch({ lastVerifiedBy: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
 
-      <div className="space-y-2 md:col-span-2">
-        <Label>Notes</Label>
-        <Input
+      <div className="space-y-1.5 md:col-span-2">
+        <label className="text-xs font-semibold text-foreground">Notes</label>
+        <input
+          type="text"
           value={profile.notes || ""}
-          readOnly={readOnly}
+          placeholder="Additional operational or jurisdiction notes"
           onChange={(event) => patch({ notes: event.target.value })}
+          className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
         />
       </div>
     </div>
   )
 }
-
-/* =========================================================
-   FREQUENCY HISTORY FORM
-========================================================= */
 
 function FrequencyAssignmentForm({
   definition,
@@ -940,102 +798,113 @@ function FrequencyAssignmentForm({
   }
 
   return (
-    <div className="rounded-xl border bg-muted/20 p-4">
+    <div className="rounded-xl border border-border bg-muted/20 p-4">
       <div className="mb-4">
-        <p className="text-sm font-semibold">Add Filing Frequency Assignment</p>
+        <p className="text-sm font-semibold text-foreground">Add Filing Frequency Assignment</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Frequency changes are effective-dated. Existing filing periods never change.
+          Frequency changes are effective-dated. Prior reporting periods and historical obligations remain immutable.
         </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Filing Frequency *</Label>
-          <Select
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Filing Frequency *</label>
+          <select
             value={frequency}
-            onValueChange={(value) => setFrequency(value as FilingFrequency)}
+            onChange={(e) => setFrequency(e.target.value as FilingFrequency)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {definition.frequencyOptions.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {formatFrequency(item)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            {definition.frequencyOptions.map((item) => (
+              <option key={item} value={item}>
+                {formatFrequency(item)}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Effective From *</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Effective From *</label>
+          <input
             type="date"
             value={effectiveFrom}
             onChange={(event) => setEffectiveFrom(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Assignment Type</Label>
-          <Select
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Assignment Type</label>
+          <select
             value={assignmentType}
-            onValueChange={(value) => setAssignmentType(value as AssignmentType)}
+            onChange={(e) => setAssignmentType(e.target.value as AssignmentType)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Regulatory Default">Regulatory Default</SelectItem>
-              <SelectItem value="Authority Assigned">Authority Assigned</SelectItem>
-              <SelectItem value="Company Elected">Company Elected</SelectItem>
-              <SelectItem value="Manual Override">Manual Override</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="Regulatory Default">Regulatory Default</option>
+            <option value="Authority Assigned">Authority Assigned</option>
+            <option value="Company Elected">Company Elected</option>
+            <option value="Manual Override">Manual Override</option>
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Verification Source</Label>
-          <Select
-            value={source || undefined}
-            onValueChange={(value) => setSource(value as VerificationSource)}
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Verification Source</label>
+          <select
+            value={source || ""}
+            onChange={(e) => setSource(e.target.value as VerificationSource)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Government Portal">Government Portal</SelectItem>
-              <SelectItem value="Official Notice">Official Notice</SelectItem>
-              <SelectItem value="Permit / Registration">Permit / Registration</SelectItem>
-              <SelectItem value="Filed Return">Filed Return</SelectItem>
-              <SelectItem value="Client Instruction">Client Instruction</SelectItem>
-              <SelectItem value="Other">Other</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="">Select source</option>
+            <option value="Government Portal">Government Portal</option>
+            <option value="Official Notice">Official Notice</option>
+            <option value="Permit / Registration">Permit / Registration</option>
+            <option value="Filed Return">Filed Return</option>
+            <option value="Client Instruction">Client Instruction</option>
+            <option value="Other">Other</option>
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Source Reference</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Source Reference</label>
+          <input
+            type="text"
             value={sourceReference}
+            placeholder="Notice ID / Docket Number"
             onChange={(event) => setSourceReference(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Notes</Label>
-          <Input value={notes} onChange={(event) => setNotes(event.target.value)} />
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Notes</label>
+          <input
+            type="text"
+            value={notes}
+            placeholder="Assignment rationale"
+            onChange={(event) => setNotes(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+          />
         </div>
       </div>
 
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={save}>
-          <Check className="mr-2 size-4" /> Save Frequency
-        </Button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
+        >
+          <Check className="size-3.5" /> Save Frequency
+        </button>
       </div>
     </div>
   )
 }
-
-/* =========================================================
-   FILING RECORD FORM
-========================================================= */
 
 function FilingRecordForm({
   obligation,
@@ -1049,16 +918,16 @@ function FilingRecordForm({
   onCancel: () => void
 }) {
   const [returnType, setReturnType] = useState<ReturnType>(
-    existingSubmission?.returnType || "Not Determined"
+    existingSubmission?.returnType || "Activity Return"
   )
   const [filingMethod, setFilingMethod] = useState<FilingMethod>(
     existingSubmission?.filingMethod || "Online"
   )
-  const [filingDate, setFilingDate] = useState(existingSubmission?.filingDate || "")
+  const [filingDate, setFilingDate] = useState(existingSubmission?.filingDate || todayISO())
   const [amountDue, setAmountDue] = useState(existingSubmission?.amountDue || "")
   const [amountPaid, setAmountPaid] = useState(existingSubmission?.amountPaid || "")
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(
-    existingSubmission?.paymentStatus || "Pending"
+    existingSubmission?.paymentStatus || "Paid"
   )
   const [confirmationNumber, setConfirmationNumber] = useState(
     existingSubmission?.confirmationNumber || ""
@@ -1085,126 +954,145 @@ function FilingRecordForm({
   }
 
   return (
-    <div className="rounded-xl border bg-muted/20 p-4">
+    <div className="rounded-xl border border-border bg-muted/20 p-4">
       <div className="mb-4">
-        <p className="text-sm font-semibold">Filing Record</p>
+        <p className="text-sm font-semibold text-foreground">
+          {existingSubmission ? "Edit Filing Submission" : "Record Filing Submission"}
+        </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {obligation.reportingPeriodLabel} · due {obligation.dueDate}
+          {obligation.reportingPeriodLabel} · Due {obligation.dueDate}
         </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Return Type</Label>
-          <Select
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Return Type *</label>
+          <select
             value={returnType}
-            onValueChange={(value) => setReturnType(value as ReturnType)}
+            onChange={(e) => setReturnType(e.target.value as ReturnType)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Activity Return">Activity Return</SelectItem>
-              <SelectItem value="Zero Return">Zero Return</SelectItem>
-              <SelectItem value="Final Return">Final Return</SelectItem>
-              <SelectItem value="Amended / Corrective Return">Amended / Corrective Return</SelectItem>
-              <SelectItem value="No Return Required">No Return Required</SelectItem>
-              <SelectItem value="Not Determined">Not Determined</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="Activity Return">Activity Return</option>
+            <option value="Zero Return">Zero Return</option>
+            <option value="Final Return">Final Return</option>
+            <option value="Amended / Corrective Return">Amended / Corrective Return</option>
+            <option value="No Return Required">No Return Required</option>
+            <option value="Not Determined">Not Determined</option>
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Filing Method</Label>
-          <Select
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Filing Method</label>
+          <select
             value={filingMethod}
-            onValueChange={(value) => setFilingMethod(value as FilingMethod)}
+            onChange={(e) => setFilingMethod(e.target.value as FilingMethod)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Online">Online</SelectItem>
-              <SelectItem value="Paper">Paper</SelectItem>
-              <SelectItem value="Amended / Corrective Filing">Amended / Corrective Filing</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="Online">Online</option>
+            <option value="Paper">Paper</option>
+            <option value="Amended / Corrective Filing">Amended / Corrective Filing</option>
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Filing Date</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Filing Date</label>
+          <input
             type="date"
             value={filingDate}
             onChange={(event) => setFilingDate(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Confirmation Number</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Confirmation / Reference Number</label>
+          <input
+            type="text"
             value={confirmationNumber}
+            placeholder="e.g. TX-2026-89412"
             onChange={(event) => setConfirmationNumber(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Amount Due</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Amount Due</label>
+          <input
+            type="text"
             value={amountDue}
             onChange={(event) => setAmountDue(event.target.value)}
             placeholder="$0.00"
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Amount Paid</Label>
-          <Input
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Amount Paid</label>
+          <input
+            type="text"
             value={amountPaid}
             onChange={(event) => setAmountPaid(event.target.value)}
             placeholder="$0.00"
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Payment Status</Label>
-          <Select
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Payment Status</label>
+          <select
             value={paymentStatus}
-            onValueChange={(value) => setPaymentStatus(value as PaymentStatus)}
+            onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Not Applicable">Not Applicable</SelectItem>
-              <SelectItem value="Unpaid">Unpaid</SelectItem>
-              <SelectItem value="Partially Paid">Partially Paid</SelectItem>
-              <SelectItem value="Paid">Paid</SelectItem>
-              <SelectItem value="Refund">Refund</SelectItem>
-              <SelectItem value="Pending">Pending</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="Not Applicable">Not Applicable</option>
+            <option value="Unpaid">Unpaid</option>
+            <option value="Partially Paid">Partially Paid</option>
+            <option value="Paid">Paid</option>
+            <option value="Refund">Refund</option>
+            <option value="Pending">Pending</option>
+          </select>
         </div>
 
-        <div className="space-y-2">
-          <Label>Notes</Label>
-          <Input value={notes} onChange={(event) => setNotes(event.target.value)} />
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-foreground">Notes</label>
+          <input
+            type="text"
+            value={notes}
+            placeholder="Filing notes, payment checks, confirmation remarks"
+            onChange={(event) => setNotes(event.target.value)}
+            className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+          />
         </div>
       </div>
 
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={save}>
-          <Check className="mr-2 size-4" /> Save Filing Record
-        </Button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
+        >
+          <Check className="size-3.5" /> Save Filing Record
+        </button>
       </div>
     </div>
   )
 }
 
 /* =========================================================
-   PAGE
+   MAIN COMPONENT: TaxFilingsPage
 ========================================================= */
 
 export default function TaxFilingsPage() {
   const params = useParams()
   const router = useRouter()
   const companyId = params.id as string
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [company, setCompany] = useState<Company | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1227,8 +1115,10 @@ export default function TaxFilingsPage() {
   } | null>(null)
   const [previewDocument, setPreviewDocument] = useState<TaxDocument | null>(null)
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear())
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false)
   const autoGeneratedRef = useRef(false)
 
+  // 1. Initial Data Hydration
   useEffect(() => {
     const found = readCompanies().find((item) => item.id === companyId)
     setCompany(found || null)
@@ -1236,6 +1126,7 @@ export default function TaxFilingsPage() {
     setLoading(false)
   }, [companyId])
 
+  // 2. Initial Active Profile Generation (once per mount)
   useEffect(() => {
     if (loading || !companyId || autoGeneratedRef.current) return
     autoGeneratedRef.current = true
@@ -1243,10 +1134,6 @@ export default function TaxFilingsPage() {
     const activeProfiles = data.profiles.filter((profile) => profile.accountStatus === "Active")
     activeProfiles.forEach((profile) => generateObligations(profile, new Date().getFullYear()))
   }, [loading, companyId, data.profiles])
-
-  useEffect(() => {
-    if (!loading) saveTaxData(companyId, data)
-  }, [companyId, data, loading])
 
   const applicableDefinitions = useMemo(
     () =>
@@ -1275,13 +1162,14 @@ export default function TaxFilingsPage() {
   const submissionsForObligation = (obligationId: string) =>
     data.submissions.filter((item) => item.obligationId === obligationId)
 
+  // Open / Select Tax Profile
   const openProfile = (taxCode: TaxCode) => {
     const definition = getDefinition(taxCode)
     const existing = profileByCode(taxCode)
 
     if (existing) {
-      const canonicalAccount = getCompanyAccountNumber(company || {}, definition)
-      const hydrated = {
+      const canonicalAccount = getCompanyAccountNumber(company || ({} as Company), definition)
+      const hydrated: TaxProfile = {
         ...existing,
         accountNumber: canonicalAccount || existing.accountNumber || undefined,
         frequencyHistory: [...existing.frequencyHistory],
@@ -1290,11 +1178,12 @@ export default function TaxFilingsPage() {
       setProfileDraft(hydrated)
       setSelectedTaxCode(taxCode)
       setIsEditingProfile(false)
+      setShowFrequencyForm(false)
       return
     }
 
     const now = isoNow()
-    const canonicalAccount = getCompanyAccountNumber(company || {}, definition)
+    const canonicalAccount = getCompanyAccountNumber(company || ({} as Company), definition)
     const initialFrequency: FrequencyAssignment = {
       id: createId("FREQ"),
       frequency: definition.defaultFrequency,
@@ -1321,70 +1210,129 @@ export default function TaxFilingsPage() {
     setSelectedProfileId(draft.id)
     setProfileDraft(draft)
     setIsEditingProfile(true)
+    setShowFrequencyForm(false)
   }
 
+  // Controlled Cross-Store Save with Rollback Protection
   const saveProfile = () => {
     if (!profileDraft) return
 
     const definition = getDefinition(profileDraft.taxCode)
+
+    // 1. Validate required fields
     if (definition.accountRequired && !profileDraft.accountNumber?.trim()) {
-      window.alert("Account Number is required.")
+      window.alert(`Account Number is required for ${definition.name}.`)
       return
     }
 
+    // 2. Global Duplicate Collision Check
     const conflict = profileDraft.accountNumber
       ? findGlobalAccountConflict(companyId, profileDraft.taxCode, profileDraft.accountNumber)
       : undefined
     if (conflict) {
-      window.alert(`This Account Number is already associated with another company (${conflict.name}). The record was not saved.`)
+      window.alert(
+        `This Account Number is already registered to another company (${conflict.name}). The tax profile was not saved to protect global identifier integrity.`
+      )
       return
     }
+
+    // 3. Pre-Mutation Snapshots
+    const preTaxDataSnapshot = JSON.parse(JSON.stringify(data)) as TaxData
+    const preCompaniesSnapshot = readCompanies()
+    const preCompanyState = company ? { ...company } : null
+    const isNew = !data.profiles.some((p) => p.id === profileDraft.id)
+    const previousProfile = data.profiles.find((p) => p.id === profileDraft.id)
 
     const profileToSave: TaxProfile = {
       ...profileDraft,
       frequencyHistory:
         profileDraft.frequencyHistory.length > 0
           ? profileDraft.frequencyHistory
-          : [{
-              id: createId("FREQ"),
-              frequency: profileDraft.filingFrequency,
-              effectiveFrom: profileDraft.effectiveDate || todayISO(),
-              assignmentType: "Manual Override",
-              source: "",
-              createdAt: isoNow(),
-            }],
+          : [
+              {
+                id: createId("FREQ"),
+                frequency: profileDraft.filingFrequency,
+                effectiveFrom: profileDraft.effectiveDate || todayISO(),
+                assignmentType: "Manual Override",
+                source: "",
+                createdAt: isoNow(),
+              },
+            ],
       updatedAt: isoNow(),
     }
 
-    updateCanonicalCompanyAccount(companyId, definition, profileToSave.accountNumber || "")
-    setCompany((current) =>
-      current && definition.companyField
-        ? { ...current, [definition.companyField]: profileToSave.accountNumber || "" }
-        : current
-    )
+    const frequencyChanged = previousProfile
+      ? JSON.stringify(previousProfile.frequencyHistory) !== JSON.stringify(profileToSave.frequencyHistory)
+      : false
 
-    const existing = data.profiles.some((profile) => profile.id === profileToSave.id)
+    try {
+      // 4. Update Tax Store
+      const updatedProfiles = isNew
+        ? [profileToSave, ...data.profiles]
+        : data.profiles.map((p) => (p.id === profileToSave.id ? profileToSave : p))
+      const nextTaxData: TaxData = { ...data, profiles: updatedProfiles }
+      saveTaxData(companyId, nextTaxData)
 
-    setData((current) => ({
-      ...current,
-      profiles: existing
-        ? current.profiles.map((profile) =>
-            profile.id === profileDraft.id
-              ? profileToSave
-              : profile
-          )
-        : [profileToSave, ...current.profiles],
-    }))
+      // 5. Synchronize Mapped Company Master Account Field
+      if (definition.companyField) {
+        const nextCompanies = preCompaniesSnapshot.map((item) =>
+          item.id === companyId
+            ? { ...item, [definition.companyField!]: (profileToSave.accountNumber || "").trim() }
+            : item
+        )
+        writeCompanies(nextCompanies)
+      }
 
-    setSelectedProfileId(profileToSave.id)
-    setProfileDraft(profileToSave)
-    setIsEditingProfile(false)
+      // 6. Record Audit Event (Only after both storage operations succeed)
+      recordAuditEvent({
+        companyId,
+        actor: "",
+        role: "",
+        entityType: "TaxFiling",
+        entityId: profileToSave.id,
+        action: isNew ? "CREATE" : "UPDATE",
+        details: `${isNew ? "Created" : "Updated"} tax profile for ${definition.shortName} (${profileToSave.accountStatus}, Account: ${profileToSave.accountNumber || "None"})${frequencyChanged ? " [Filing frequency history updated]" : ""}`,
+        oldValue: previousProfile
+          ? JSON.stringify({
+              taxCode: previousProfile.taxCode,
+              accountNumber: previousProfile.accountNumber,
+              accountStatus: previousProfile.accountStatus,
+              filingFrequency: previousProfile.filingFrequency,
+              frequencyHistory: previousProfile.frequencyHistory,
+            })
+          : undefined,
+        newValue: JSON.stringify({
+          taxCode: profileToSave.taxCode,
+          accountNumber: profileToSave.accountNumber,
+          accountStatus: profileToSave.accountStatus,
+          filingFrequency: profileToSave.filingFrequency,
+          frequencyHistory: profileToSave.frequencyHistory,
+        }),
+      })
 
-    if (profileToSave.accountStatus === "Active") {
-      generateObligations(profileToSave, new Date().getFullYear())
+      // 7. Commit React UI State
+      setData(nextTaxData)
+      if (company && definition.companyField) {
+        setCompany({ ...company, [definition.companyField]: profileToSave.accountNumber || "" })
+      }
+      setSelectedProfileId(profileToSave.id)
+      setProfileDraft(profileToSave)
+      setIsEditingProfile(false)
+
+      if (profileToSave.accountStatus === "Active") {
+        generateObligations(profileToSave, new Date().getFullYear())
+      }
+    } catch (err) {
+      // Rollback on any failure
+      saveTaxData(companyId, preTaxDataSnapshot)
+      writeCompanies(preCompaniesSnapshot)
+      setData(preTaxDataSnapshot)
+      setCompany(preCompanyState)
+      window.alert("Failed to save tax profile due to a storage error. Changes were rolled back.")
     }
   }
 
+  // Add Effective-Dated Frequency Assignment (Draft operation - persisted on saveProfile)
   const addFrequencyAssignment = (assignment: FrequencyAssignment) => {
     if (!profileDraft) return
 
@@ -1393,6 +1341,7 @@ export default function TaxFilingsPage() {
       window.alert("A frequency assignment already exists for this effective date.")
       return
     }
+
     const previous = [...history]
       .filter((item) => item.effectiveFrom < assignment.effectiveFrom)
       .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0]
@@ -1403,16 +1352,18 @@ export default function TaxFilingsPage() {
       previous.effectiveTo = toISODate(dayBefore)
     }
 
-    setProfileDraft({
+    const updatedProfile: TaxProfile = {
       ...profileDraft,
       filingFrequency: assignment.frequency,
       frequencyHistory: [...history, assignment],
       updatedAt: isoNow(),
-    })
+    }
 
+    setProfileDraft(updatedProfile)
     setShowFrequencyForm(false)
   }
 
+  // Obligation Generation (Respects Effective Dating and Avoids Duplicates - Persist First)
   const generateObligations = (profile: TaxProfile, year: number) => {
     if (profile.accountStatus === "Closed" || profile.accountStatus === "Inactive") return
 
@@ -1439,35 +1390,36 @@ export default function TaxFilingsPage() {
       candidates.push({ ...period, frequency, assignmentId: assignment?.id })
     }
 
-    // Generate the year from the effective-dated frequency history.
-    // This prevents a later frequency change from rewriting the period model.
+    // Monthly evaluation across 12 months
     for (let month = 0; month < 12; month++) {
       const monthStart = toISODate(new Date(year, month, 1))
       const frequency = getFrequencyForDate(profile, monthStart)
       if (frequency === "monthly") addPeriod(monthlyPeriod(year, month), frequency)
     }
 
+    // Quarterly evaluation
     ;([1, 2, 3, 4] as const).forEach((quarter) => {
       const quarterStart = toISODate(new Date(year, (quarter - 1) * 3, 1))
       const frequency = getFrequencyForDate(profile, quarterStart)
       if (frequency === "quarterly") addPeriod(quarterlyPeriod(year, quarter), frequency)
     })
 
+    // Annual evaluation
     const annualFrequency = getFrequencyForDate(profile, `${year}-01-01`)
     if (annualFrequency === "annual") addPeriod(annualPeriod(year), annualFrequency)
 
+    const currentTaxData = loadTaxData(companyId)
+    const existingKeys = new Set(
+      currentTaxData.obligations
+        .filter((item) => item.taxProfileId === profile.id)
+        .map((item) => `${item.reportingPeriodStart}|${item.reportingPeriodEnd}`)
+    )
 
-    setData((current) => {
-      const existingKeys = new Set(
-        current.obligations
-          .filter((item) => item.taxProfileId === profile.id)
-          .map((item) => `${item.reportingPeriodStart}|${item.reportingPeriodEnd}`)
-      )
-
-      const now = isoNow()
-      const newItems = candidates
-        .filter((period) => !existingKeys.has(`${period.start}|${period.end}`))
-        .map((period): FilingObligation => ({
+    const now = isoNow()
+    const newItems = candidates
+      .filter((period) => !existingKeys.has(`${period.start}|${period.end}`))
+      .map(
+        (period): FilingObligation => ({
           id: createId("OBL"),
           taxProfileId: profile.id,
           taxCode: profile.taxCode,
@@ -1482,26 +1434,46 @@ export default function TaxFilingsPage() {
           frequencyAssignmentId: period.assignmentId,
           createdAt: now,
           updatedAt: now,
-        }))
+        })
+      )
 
-      if (newItems.length === 0) return current
-      return { ...current, obligations: [...newItems, ...current.obligations] }
-    })
+    if (newItems.length === 0) return
+
+    const nextTaxData: TaxData = {
+      ...currentTaxData,
+      obligations: [...newItems, ...currentTaxData.obligations],
+    }
+
+    try {
+      saveTaxData(companyId, nextTaxData)
+      setData(nextTaxData)
+
+      // Audit only newly created and successfully persisted obligations
+      newItems.forEach((obl) => {
+        recordAuditEvent({
+          companyId,
+          actor: "",
+          role: "",
+          entityType: "TaxFiling",
+          entityId: obl.id,
+          action: "CREATE",
+          details: `Generated filing obligation for ${obl.taxCode.toUpperCase()} (${obl.reportingPeriodLabel}, Due: ${obl.dueDate})`,
+        })
+      })
+    } catch (err) {
+      window.alert("Failed to save generated obligations due to a storage error.")
+    }
   }
 
+  // Create Manual Obligation (Persist First)
   const createManualObligation = (profile: TaxProfile) => {
-    const start = window.prompt("Reporting period start (YYYY-MM-DD)")
+    const start = window.prompt("Reporting period start (YYYY-MM-DD):")
     if (!start) return
-
-    const end = window.prompt("Reporting period end (YYYY-MM-DD)")
+    const end = window.prompt("Reporting period end (YYYY-MM-DD):")
     if (!end) return
-
-    const due = window.prompt("Due date (YYYY-MM-DD)")
+    const due = window.prompt("Due date (YYYY-MM-DD):")
     if (!due) return
-
-    const label =
-      window.prompt("Reporting period label", `${start} – ${end}`) ||
-      `${start} – ${end}`
+    const label = window.prompt("Reporting period label:", `${start} – ${end}`) || `${start} – ${end}`
 
     const now = isoNow()
     const currentAssignment = getCurrentAssignment(profile)
@@ -1523,83 +1495,158 @@ export default function TaxFilingsPage() {
       updatedAt: now,
     }
 
-    setData((current) => ({
-      ...current,
-      obligations: [obligation, ...current.obligations],
-    }))
+    const currentTaxData = loadTaxData(companyId)
+    const nextTaxData: TaxData = {
+      ...currentTaxData,
+      obligations: [obligation, ...currentTaxData.obligations],
+    }
+
+    try {
+      saveTaxData(companyId, nextTaxData)
+      setData(nextTaxData)
+
+      recordAuditEvent({
+        companyId,
+        actor: "",
+        role: "",
+        entityType: "TaxFiling",
+        entityId: obligation.id,
+        action: "CREATE",
+        details: `Manually created tax filing obligation ${obligation.reportingPeriodLabel} for ${profile.taxCode.toUpperCase()}`,
+      })
+    } catch (err) {
+      window.alert("Failed to save manual obligation due to a storage error.")
+    }
   }
 
+  // Save / Update Submission (Persist First)
   const saveSubmission = (submission: FilingSubmission) => {
-    setData((current) => {
-      const exists = current.submissions.some((item) => item.id === submission.id)
+    const currentTaxData = loadTaxData(companyId)
+    const isNew = !currentTaxData.submissions.some((item) => item.id === submission.id)
+    const previousSubmission = currentTaxData.submissions.find((item) => item.id === submission.id)
 
-      const nextSubmissions = exists
-        ? current.submissions.map((item) =>
-            item.id === submission.id ? submission : item
-          )
-        : [submission, ...current.submissions]
+    const nextSubmissions = isNew
+      ? [submission, ...currentTaxData.submissions]
+      : currentTaxData.submissions.map((item) => (item.id === submission.id ? submission : item))
 
-      const nextObligations = current.obligations.map((obligation) => {
-        if (obligation.id !== submission.obligationId) return obligation
+    const nextObligations = currentTaxData.obligations.map((obligation) => {
+      if (obligation.id !== submission.obligationId) return obligation
 
-        let status: FilingStatus = obligation.status
+      let status: FilingStatus = obligation.status
 
-        if (submission.returnType === "No Return Required") {
-          status = "No Return Required"
-        } else if (
-          submission.filingDate &&
-          (submission.paymentStatus === "Paid" ||
-            submission.paymentStatus === "Not Applicable" ||
-            submission.paymentStatus === "Refund")
-        ) {
-          status = "Completed"
-        } else if (submission.filingDate) {
-          status = "Payment Pending"
-        }
-
-        return { ...obligation, status, updatedAt: isoNow() }
-      })
-
-      return {
-        ...current,
-        submissions: nextSubmissions,
-        obligations: nextObligations,
+      if (submission.returnType === "No Return Required") {
+        status = "No Return Required"
+      } else if (
+        submission.filingDate &&
+        (submission.paymentStatus === "Paid" ||
+          submission.paymentStatus === "Not Applicable" ||
+          submission.paymentStatus === "Refund")
+      ) {
+        status = "Completed"
+      } else if (submission.filingDate) {
+        status = "Payment Pending"
       }
+
+      return { ...obligation, status, updatedAt: isoNow() }
     })
 
-    setShowFilingForm(false)
-    setEditingSubmission(undefined)
+    const nextTaxData: TaxData = {
+      ...currentTaxData,
+      submissions: nextSubmissions,
+      obligations: nextObligations,
+    }
+
+    try {
+      saveTaxData(companyId, nextTaxData)
+      setData(nextTaxData)
+
+      recordAuditEvent({
+        companyId,
+        actor: "",
+        role: "",
+        entityType: "TaxFiling",
+        entityId: submission.id,
+        action: isNew ? "CREATE" : "UPDATE",
+        details: `${isNew ? "Recorded" : "Updated"} filing submission for obligation ${submission.obligationId} (${submission.returnType}, ${submission.filingMethod}, Status: ${submission.paymentStatus})`,
+        oldValue: previousSubmission
+          ? JSON.stringify({
+              returnType: previousSubmission.returnType,
+              filingDate: previousSubmission.filingDate,
+              amountDue: previousSubmission.amountDue,
+              amountPaid: previousSubmission.amountPaid,
+              confirmationNumber: previousSubmission.confirmationNumber,
+              paymentStatus: previousSubmission.paymentStatus,
+              filingMethod: previousSubmission.filingMethod,
+            })
+          : undefined,
+        newValue: JSON.stringify({
+          returnType: submission.returnType,
+          filingDate: submission.filingDate,
+          amountDue: submission.amountDue,
+          amountPaid: submission.amountPaid,
+          confirmationNumber: submission.confirmationNumber,
+          paymentStatus: submission.paymentStatus,
+          filingMethod: submission.filingMethod,
+        }),
+      })
+
+      setShowFilingForm(false)
+      setEditingSubmission(undefined)
+    } catch (err) {
+      window.alert("Failed to save filing submission due to a storage error.")
+    }
+  }
+
+  // Handle Document Ingestion (via DocumentSourcePicker - Persist First)
+  const handleSelectFile = async (file: File) => {
+    if (!uploadContext) return
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file)
+      const document: TaxDocument = {
+        id: createId("DOC"),
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        dataUrl,
+        documentType: uploadContext.documentType,
+        taxCode: uploadContext.taxCode,
+        profileId: uploadContext.profileId,
+        obligationId: uploadContext.obligationId,
+        submissionId: uploadContext.submissionId,
+        documentDate: todayISO(),
+        uploadedAt: isoNow(),
+      }
+
+      const currentTaxData = loadTaxData(companyId)
+      const nextTaxData: TaxData = {
+        ...currentTaxData,
+        documents: [document, ...currentTaxData.documents],
+      }
+
+      saveTaxData(companyId, nextTaxData)
+      setData(nextTaxData)
+
+      recordAuditEvent({
+        companyId,
+        actor: "",
+        role: "",
+        entityType: "Evidence",
+        entityId: document.id,
+        evidenceId: document.id,
+        action: "CREATE",
+        details: `Attached tax evidence document "${document.fileName}" (${document.documentType}) for ${document.taxCode || "Tax Filing"}`,
+      })
+
+      setUploadContext(null)
+      setSourcePickerOpen(false)
+    } catch (err) {
+      window.alert("Failed to attach evidence document due to a storage or file reading error.")
+    }
   }
 
   const startUpload = (context: typeof uploadContext) => {
     setUploadContext(context)
-    fileInputRef.current?.click()
-  }
-
-  const handleFile = async (file: File) => {
-    if (!uploadContext) return
-
-    const dataUrl = await readFileAsDataUrl(file)
-    const document: TaxDocument = {
-      id: createId("DOC"),
-      fileName: file.name,
-      mimeType: file.type,
-      dataUrl,
-      documentType: uploadContext.documentType,
-      taxCode: uploadContext.taxCode,
-      profileId: uploadContext.profileId,
-      obligationId: uploadContext.obligationId,
-      submissionId: uploadContext.submissionId,
-      documentDate: todayISO(),
-      uploadedAt: isoNow(),
-    }
-
-    setData((current) => ({
-      ...current,
-      documents: [document, ...current.documents],
-    }))
-
-    setUploadContext(null)
+    setSourcePickerOpen(true)
   }
 
   const displayedObligations = useMemo(
@@ -1608,50 +1655,46 @@ export default function TaxFilingsPage() {
   )
 
   const getDisplayStatus = (obligation: FilingObligation): FilingStatus => {
-    if (
-      obligation.status === "Completed" ||
-      obligation.status === "No Return Required"
-    ) {
+    if (obligation.status === "Completed" || obligation.status === "No Return Required") {
       return obligation.status
     }
-
     return obligation.dueDate < todayISO() ? "Overdue" : obligation.status
   }
 
-  const statusClass = (status: FilingStatus) => {
+  const statusBadge = (status: FilingStatus) => {
     switch (status) {
       case "Completed":
-        return "border-emerald-200 bg-emerald-50 text-emerald-800"
+        return <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Completed</span>
       case "Filed":
       case "Payment Pending":
-        return "border-blue-200 bg-blue-50 text-blue-800"
+        return <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">{status}</span>
       case "Ready to File":
-        return "border-amber-200 bg-amber-50 text-amber-800"
+        return <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">Ready to File</span>
       case "Overdue":
-        return "border-red-500 bg-red-50 text-red-800"
+        return <span className="inline-flex items-center rounded-full border border-red-400 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">Overdue</span>
       case "No Return Required":
-        return "border-slate-200 bg-slate-50 text-slate-700"
+        return <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">No Return Required</span>
       default:
-        return "border-slate-200 bg-background text-slate-700"
+        return <span className="inline-flex items-center rounded-full border border-slate-200 bg-background px-2 py-0.5 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">{status}</span>
     }
   }
 
   if (loading) {
-    return (
-      <div className="flex min-h-[300px] items-center justify-center">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    )
+    return <LoadingState message="Loading tax compliance records..." />
   }
 
   if (!company) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Building2 className="size-10 text-muted-foreground/40" />
-        <h2 className="text-lg font-semibold">Company Not Found</h2>
-        <Button variant="outline" onClick={() => router.push("/companies")}>
-          <ArrowLeft className="mr-2 size-4" /> Companies
-        </Button>
+        <h2 className="text-lg font-semibold text-foreground">Company Not Found</h2>
+        <button
+          type="button"
+          onClick={() => router.push("/companies")}
+          className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+        >
+          <ArrowLeft className="size-4" /> Return to Companies
+        </button>
       </div>
     )
   }
@@ -1659,91 +1702,85 @@ export default function TaxFilingsPage() {
   return (
     <>
       <div className="flex max-w-[1600px] flex-col gap-6 pb-12">
-        {/* HEADER */}
+        {/* HEADER & OPERATIONAL SUMMARY */}
         <div>
           <div className="flex items-start gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
+              type="button"
               onClick={() => router.push(`/companies/${company.id}/profile`)}
+              aria-label="Back to Company Profile"
+              className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             >
               <ArrowLeft className="size-4" />
-            </Button>
+            </button>
 
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight">Tax Filing</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">Tax Filing</h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 {company.name} <span className="font-mono text-xs">({company.id})</span>
               </p>
             </div>
           </div>
 
-          <div className="mt-5 rounded-xl border bg-muted/20 p-4">
-            <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Registered Origin
-                </p>
-                <p className="mt-1 text-sm font-semibold">
-                  {company.regCorpState || "Unknown"}, {company.regCorpCountry || "Unknown"}
-                </p>
-              </div>
-
-              <div className="hidden h-8 w-px bg-border sm:block" />
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Operating Region
-                </p>
-                <p className="mt-1 text-sm font-semibold">{company.region || "Not recorded"}</p>
-              </div>
-
-              <div className="hidden h-8 w-px bg-border lg:block" />
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Applicable Taxes
-                </p>
-                <p className="mt-1 text-sm font-semibold">{appliedDefinitions.length}</p>
-              </div>
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Not Configured
-                </p>
-                <p className="mt-1 text-sm font-semibold">{notConfiguredDefinitions.length}</p>
-              </div>
+          <div className="mt-5 rounded-2xl border border-border bg-card p-5 shadow-xs">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <ReadOnlyField
+                label="Registered Origin"
+                value={`${company.regCorpState || "Unknown"}, ${company.regCorpCountry || "Unknown"}`}
+              />
+              <ReadOnlyField
+                label="Operating Region"
+                value={company.region || "Not recorded"}
+              />
+              <ReadOnlyField
+                label="Applicable Taxes"
+                value={appliedDefinitions.length}
+              />
+              <ReadOnlyField
+                label="Not Configured"
+                value={notConfiguredDefinitions.length}
+                badge={
+                  notConfiguredDefinitions.length > 0 ? (
+                    <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      Action Required
+                    </span>
+                  ) : undefined
+                }
+              />
             </div>
           </div>
         </div>
 
+        {/* INCOMPLETE APPLICABILITY WARNING */}
         {notConfiguredDefinitions.length > 0 && (
-          <Card className="border-amber-200 bg-amber-50/50">
-            <CardContent className="flex items-start gap-3 p-4">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-amber-900">
-                  Tax applicability is incomplete
-                </p>
-                <p className="mt-1 text-xs leading-5 text-amber-900/70">
-                  {notConfiguredDefinitions.length} tax setting
-                  {notConfiguredDefinitions.length === 1 ? "" : "s"} still have no Yes/No decision in Company Settings.
-                </p>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-xs dark:border-amber-900/40 dark:bg-amber-950/20">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                    Tax applicability is incomplete
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-amber-900/70 dark:text-amber-300/70">
+                    {notConfiguredDefinitions.length} tax program
+                    {notConfiguredDefinitions.length === 1 ? "" : "s"} still require a Yes / No determination in Company Settings.
+                  </p>
+                </div>
               </div>
 
-              <Button
-                size="sm"
-                variant="outline"
+              <button
+                type="button"
                 onClick={() => router.push(`/companies/${company.id}/settings`)}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-100/50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/40 dark:text-amber-200 transition-colors"
               >
-                <Settings2 className="mr-2 size-4" /> Company Settings
-              </Button>
-            </CardContent>
-          </Card>
+                <Settings2 className="size-3.5" /> Company Settings
+              </button>
+            </div>
+          </div>
         )}
 
         {/* TABS */}
-        <div className="flex gap-1 rounded-lg border bg-muted/20 p-1">
+        <div className="flex gap-1 rounded-xl border border-border bg-muted/30 p-1">
           {([
             { id: "profiles", label: "Tax Profile", icon: Landmark },
             { id: "calendar", label: "Filing Calendar", icon: CalendarDays },
@@ -1757,9 +1794,9 @@ export default function TaxFilingsPage() {
                 key={item.id}
                 type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm transition-colors ${
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
                   active
-                    ? "bg-background font-medium shadow-sm"
+                    ? "bg-background text-foreground shadow-xs"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -1769,35 +1806,34 @@ export default function TaxFilingsPage() {
           })}
         </div>
 
-        {/* TAX PROFILE */}
+        {/* TAB 1: TAX PROFILE */}
         {activeTab === "profiles" && (
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_430px]">
-            <Card>
-              <CardHeader className="border-b">
-                <CardTitle className="text-base">Applicable Tax Programs</CardTitle>
-                <CardDescription>
-                  Company Settings decides Yes / No. This page stores the persistent tax setup only for applicable taxes.
-                </CardDescription>
-              </CardHeader>
+          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
+            <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+              <div className="border-b border-border/60 p-5">
+                <h3 className="text-base font-bold text-foreground">Applicable Tax Programs</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Applicability is managed in Company Settings. Configure company accounts, filing frequencies, and verification details below.
+                </p>
+              </div>
 
-              <CardContent className="p-0">
+              <div>
                 {appliedDefinitions.length === 0 ? (
-                  <div className="p-10 text-center">
-                    <Landmark className="mx-auto size-9 text-muted-foreground/30" />
-                    <p className="mt-3 text-sm font-medium">No tax programs are currently marked Applies.</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-4"
-                      onClick={() => router.push(`/companies/${company.id}/settings`)}
-                    >
-                      Open Company Settings
-                    </Button>
-                  </div>
+                  <EmptyState
+                    icon={<Landmark className="size-8 text-muted-foreground/50" />}
+                    title="No Applicable Tax Programs"
+                    description="No tax programs are currently marked 'Applies' for this carrier in Company Settings."
+                    action={{
+                      label: "Open Company Settings",
+                      onClick: () => router.push(`/companies/${company.id}/settings`),
+                      icon: <Settings2 className="size-3.5" />,
+                    }}
+                  />
                 ) : (
-                  <div className="divide-y">
+                  <div className="divide-y divide-border/60">
                     {appliedDefinitions.map(({ definition }) => {
                       const profile = profileByCode(definition.code)
+                      const isSelected = selectedTaxCode === definition.code
 
                       return (
                         <button
@@ -1805,28 +1841,24 @@ export default function TaxFilingsPage() {
                           type="button"
                           onClick={() => openProfile(definition.code)}
                           className={`grid w-full gap-4 p-4 text-left transition-colors md:grid-cols-12 ${
-                            selectedTaxCode === definition.code
-                              ? "bg-primary/[0.04]"
-                              : "hover:bg-muted/25"
+                            isSelected ? "bg-primary/[0.04]" : "hover:bg-muted/20"
                           }`}
                         >
-                          <div className="md:col-span-4">
-                            <p className="text-sm font-semibold">{definition.name}</p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                              {definition.jurisdiction}
-                            </p>
+                          <div className="md:col-span-4 min-w-0">
+                            <p className="text-sm font-semibold text-foreground">{definition.name}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{definition.jurisdiction}</p>
                           </div>
 
-                          <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Account</p>
-                            <p className="mt-1 select-text font-mono text-xs">
+                          <div className="md:col-span-3">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Account</p>
+                            <p className="mt-0.5 font-mono text-xs font-semibold select-text text-foreground">
                               {getCompanyAccountNumber(company, definition) || profile?.accountNumber || "Not configured"}
                             </p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Frequency</p>
-                            <p className="mt-1 text-xs font-medium">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Frequency</p>
+                            <p className="mt-0.5 text-xs font-medium text-foreground">
                               {profile
                                 ? formatFrequency(profile.filingFrequency)
                                 : formatFrequency(definition.defaultFrequency)}
@@ -1834,13 +1866,13 @@ export default function TaxFilingsPage() {
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Status</p>
-                            <p className="mt-1 text-xs font-medium">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p>
+                            <p className="mt-0.5 text-xs font-semibold text-foreground">
                               {profile?.accountStatus || "Needs setup"}
                             </p>
                           </div>
 
-                          <div className="flex items-center justify-end md:col-span-2">
+                          <div className="flex items-center justify-end md:col-span-1">
                             <ChevronRight className="size-4 text-muted-foreground" />
                           </div>
                         </button>
@@ -1848,49 +1880,49 @@ export default function TaxFilingsPage() {
                     })}
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
+            {/* DETAIL / EDIT DRAWER */}
             <div className="xl:sticky xl:top-6">
               {!profileDraft || !selectedTaxCode ? (
-                <Card className="border-dashed">
-                  <CardContent className="flex min-h-[540px] flex-col items-center justify-center p-8 text-center">
-                    <Landmark className="size-10 text-muted-foreground/30" />
-                    <p className="mt-4 text-sm font-medium">Select a tax profile</p>
-                    <p className="mt-1 max-w-[280px] text-xs leading-5 text-muted-foreground">
-                      Review the company-specific account, filing frequency, status and verification details.
-                    </p>
-                  </CardContent>
-                </Card>
+                <div className="rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center min-h-[500px] flex flex-col items-center justify-center">
+                  <Landmark className="size-10 text-muted-foreground/30" />
+                  <p className="mt-4 text-sm font-semibold text-foreground">Select a tax program</p>
+                  <p className="mt-1 max-w-[280px] text-xs leading-relaxed text-muted-foreground">
+                    Review registered account numbers, effective-dated frequency history, and attached compliance evidence.
+                  </p>
+                </div>
               ) : (
-                <Card>
-                  <CardHeader className="border-b bg-primary/[0.03]">
+                <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+                  <div className="border-b border-border/60 bg-muted/10 p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <CardTitle className="text-base">
+                        <h3 className="text-base font-bold text-foreground">
                           {getDefinition(selectedTaxCode).shortName}
-                        </CardTitle>
-                        <CardDescription className="mt-1">
+                        </h3>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
                           {getDefinition(selectedTaxCode).description}
-                        </CardDescription>
+                        </p>
                       </div>
 
-                      <Button
-                        variant="ghost"
-                        size="icon"
+                      <button
+                        type="button"
                         onClick={() => {
                           setProfileDraft(null)
                           setSelectedTaxCode(null)
                           setSelectedProfileId(null)
                           setIsEditingProfile(false)
+                          setShowFrequencyForm(false)
                         }}
+                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                       >
                         <X className="size-4" />
-                      </Button>
+                      </button>
                     </div>
-                  </CardHeader>
+                  </div>
 
-                  <CardContent className="space-y-5 pt-5">
+                  <div className="space-y-6 p-5">
                     {isEditingProfile ? (
                       <TaxProfileForm
                         profile={profileDraft}
@@ -1898,52 +1930,96 @@ export default function TaxFilingsPage() {
                         onChange={setProfileDraft}
                       />
                     ) : (
+                      /* VIEW MODE: CLEAN DOCUMENT-STYLE LABEL/VALUE TILES */
                       <div className="space-y-5">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          {[
-                            ["Tax Type", getDefinition(selectedTaxCode).name],
-                            ["Jurisdiction", getDefinition(selectedTaxCode).jurisdiction],
-                            ["Account Number", profileDraft.accountNumber || "Not configured"],
-                            ["Account Status", profileDraft.accountStatus],
-                            ["Filing Frequency", formatFrequency(profileDraft.filingFrequency)],
-                            ["Effective Date", profileDraft.effectiveDate || "—"],
-                            ["Closure Date", profileDraft.closureDate || "—"],
-                          ].map(([label, value]) => (
-                            <div key={label} className="rounded-lg border bg-muted/10 p-3">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-                              <p className={`mt-1 text-sm ${label === "Account Number" ? "select-text font-mono" : "font-medium"}`}>{value}</p>
-                            </div>
-                          ))}
+                        <div className="grid gap-3.5 md:grid-cols-2">
+                          <ReadOnlyField
+                            label="Tax Program"
+                            value={getDefinition(selectedTaxCode).name}
+                          />
+                          <ReadOnlyField
+                            label="Jurisdiction"
+                            value={getDefinition(selectedTaxCode).jurisdiction}
+                          />
+                          <ReadOnlyField
+                            label={getDefinition(selectedTaxCode).accountLabel}
+                            value={profileDraft.accountNumber || "Not configured"}
+                            mono
+                            copyable
+                          />
+                          <ReadOnlyField
+                            label="Account Status"
+                            value={profileDraft.accountStatus}
+                          />
+                          <ReadOnlyField
+                            label="Filing Frequency"
+                            value={formatFrequency(profileDraft.filingFrequency)}
+                            subtext="Current active frequency"
+                          />
+                          <ReadOnlyField
+                            label="Effective Date"
+                            value={profileDraft.effectiveDate}
+                          />
+                          <ReadOnlyField
+                            label="Closure Date"
+                            value={profileDraft.closureDate}
+                          />
                         </div>
-                        <div className="border-t pt-5">
-                          <p className="text-xs font-semibold">Verification</p>
-                          <div className="mt-3 grid gap-4 md:grid-cols-2">
-                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Verification Source</p><p className="mt-1 text-xs font-medium">{profileDraft.verificationSource || "—"}</p></div>
-                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Verification Reference</p><p className="mt-1 select-text text-xs font-medium">{profileDraft.verificationReference || "—"}</p></div>
-                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Last Verified Date</p><p className="mt-1 text-xs font-medium">{profileDraft.lastVerifiedDate || "—"}</p></div>
-                            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Last Verified By</p><p className="mt-1 text-xs font-medium">{profileDraft.lastVerifiedBy || "—"}</p></div>
+
+                        <div className="border-t border-border/60 pt-4">
+                          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                            Verification Details
+                          </p>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <ReadOnlyField
+                              label="Verification Source"
+                              value={profileDraft.verificationSource}
+                            />
+                            <ReadOnlyField
+                              label="Verification Reference"
+                              value={profileDraft.verificationReference}
+                              mono
+                            />
+                            <ReadOnlyField
+                              label="Last Verified Date"
+                              value={profileDraft.lastVerifiedDate}
+                            />
+                            <ReadOnlyField
+                              label="Last Verified By"
+                              value={profileDraft.lastVerifiedBy}
+                            />
                           </div>
-                          {profileDraft.notes && <p className="mt-4 text-xs leading-5 text-muted-foreground">{profileDraft.notes}</p>}
+                          {profileDraft.notes && (
+                            <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
+                              {profileDraft.notes}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
 
-                    <div className="border-t pt-5">
+                    {/* FREQUENCY HISTORY (LOCKED IMMUTABILITY) */}
+                    <div className="border-t border-border/60 pt-5">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs font-semibold">Filing Frequency History</p>
-                          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                            Frequency changes are effective-dated and never rewrite historical filings.
+                          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                            Filing Frequency History
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            Effective-dated frequency assignments. Existing obligations remain immutable.
                           </p>
                         </div>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => { setIsEditingProfile(true); setShowFrequencyForm(true) }}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingProfile(true)
+                            setShowFrequencyForm(true)
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                         >
-                          <Plus className="mr-1.5 size-3.5" /> Add Change
-                        </Button>
+                          <Plus className="size-3.5" /> Add Change
+                        </button>
                       </div>
 
                       {showFrequencyForm && (
@@ -1956,29 +2032,31 @@ export default function TaxFilingsPage() {
                         </div>
                       )}
 
-                      <div className="mt-4 space-y-2">
+                      <div className="mt-3 space-y-2">
                         {profileDraft.frequencyHistory.length === 0 ? (
-                          <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                            No frequency-change history recorded yet.
+                          <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                            No frequency changes recorded yet.
                           </div>
                         ) : (
                           [...profileDraft.frequencyHistory]
                             .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))
                             .map((assignment) => (
-                              <div key={assignment.id} className="rounded-lg border p-3">
+                              <div key={assignment.id} className="rounded-xl border border-border bg-card p-3 shadow-2xs">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
-                                    <p className="text-xs font-semibold">
+                                    <p className="text-xs font-bold text-foreground">
                                       {formatFrequency(assignment.frequency)}
                                     </p>
-                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                    <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">
                                       {assignment.effectiveFrom}
                                       {assignment.effectiveTo
                                         ? ` → ${assignment.effectiveTo}`
                                         : " → Current"}
                                     </p>
                                   </div>
-                                  <Badge variant="outline">{assignment.assignmentType}</Badge>
+                                  <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                                    {assignment.assignmentType}
+                                  </span>
                                 </div>
 
                                 {(assignment.source || assignment.sourceReference) && (
@@ -1993,34 +2071,45 @@ export default function TaxFilingsPage() {
                       </div>
                     </div>
 
-                    <div className="border-t pt-5">
+                    {/* ACTION CONTROLS */}
+                    <div className="border-t border-border/60 pt-5">
                       <div className="flex gap-2">
                         {isEditingProfile ? (
                           <>
-                            <Button className="flex-1" onClick={saveProfile}>
-                              <Check className="mr-2 size-4" /> Save Changes
-                            </Button>
-                            <Button
-                              variant="outline"
+                            <button
+                              type="button"
+                              onClick={saveProfile}
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
+                            >
+                              <Check className="size-4" /> Save Record
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => {
-                                if (data.profiles.some((profile) => profile.id === profileDraft.id)) {
-                                  const stored = data.profiles.find((profile) => profile.id === profileDraft.id)
+                                if (data.profiles.some((p) => p.id === profileDraft.id)) {
+                                  const stored = data.profiles.find((p) => p.id === profileDraft.id)
                                   if (stored) setProfileDraft({ ...stored, frequencyHistory: [...stored.frequencyHistory] })
                                   setIsEditingProfile(false)
+                                  setShowFrequencyForm(false)
                                 }
                               }}
+                              className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                             >
                               Cancel
-                            </Button>
+                            </button>
                           </>
                         ) : (
-                          <Button className="flex-1" onClick={() => setIsEditingProfile(true)}>
-                            <Pencil className="mr-2 size-4" /> Edit
-                          </Button>
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingProfile(true)}
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
+                          >
+                            <Pencil className="size-4" /> Edit Profile
+                          </button>
                         )}
 
-                        <Button
-                          variant="outline"
+                        <button
+                          type="button"
                           onClick={() =>
                             startUpload({
                               documentType: "Registration",
@@ -2028,52 +2117,58 @@ export default function TaxFilingsPage() {
                               profileId: profileDraft.id,
                             })
                           }
+                          className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                         >
-                          <Upload className="mr-2 size-4" /> Evidence
-                        </Button>
+                          <Upload className="size-4" /> Upload Evidence
+                        </button>
                       </div>
 
-                      {data.profiles.some((profile) => profile.id === profileDraft.id) && (
+                      {data.profiles.some((p) => p.id === profileDraft.id) && (
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <Button
-                            variant="outline"
+                          <button
+                            type="button"
                             onClick={() => generateObligations(profileDraft, calendarYear)}
+                            className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                           >
-                            <CalendarDays className="mr-2 size-4" /> Generate {calendarYear}
-                          </Button>
+                            <CalendarDays className="size-3.5" /> Generate {calendarYear}
+                          </button>
 
-                          <Button
-                            variant="outline"
+                          <button
+                            type="button"
                             onClick={() => createManualObligation(profileDraft)}
+                            className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                           >
-                            <Plus className="mr-2 size-4" /> Manual Period
-                          </Button>
+                            <Plus className="size-3.5" /> Manual Period
+                          </button>
                         </div>
                       )}
                     </div>
 
-                    <div className="border-t pt-5">
-                      <p className="text-xs font-semibold">Profile Evidence</p>
+                    {/* ATTACHED EVIDENCE (SHARED VIEWER TRIGGER) */}
+                    <div className="border-t border-border/60 pt-5">
+                      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        Attached Tax Evidence
+                      </p>
                       <div className="mt-3 space-y-2">
-                        {data.documents.filter((document) => document.profileId === profileDraft.id).length === 0 ? (
-                          <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                            No profile evidence uploaded.
+                        {data.documents.filter((doc) => doc.profileId === profileDraft.id).length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                            No registration evidence attached.
                           </div>
                         ) : (
                           data.documents
-                            .filter((document) => document.profileId === profileDraft.id)
-                            .map((document) => (
+                            .filter((doc) => doc.profileId === profileDraft.id)
+                            .map((doc) => (
                               <button
-                                key={document.id}
+                                key={doc.id}
                                 type="button"
-                                onClick={() => setPreviewDocument(document)}
-                                className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/30"
+                                onClick={() => setPreviewDocument(doc)}
+                                className="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/30"
                               >
-                                <FileText className="mt-0.5 size-4 text-primary" />
+                                <FileText className="mt-0.5 size-4 text-primary shrink-0" />
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate text-xs font-medium">{document.fileName}</p>
-                                  <p className="mt-1 text-[10px] text-muted-foreground">
-                                    {document.documentType} · {document.documentDate || document.uploadedAt.slice(0, 10)}
+                                  <p className="truncate text-xs font-semibold text-foreground">{doc.fileName}</p>
+                                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                    {doc.documentType} · {doc.documentDate || doc.uploadedAt.slice(0, 10)}
                                   </p>
                                 </div>
                               </button>
@@ -2081,62 +2176,65 @@ export default function TaxFilingsPage() {
                         )}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               )}
             </div>
           </div>
         )}
 
-        {/* FILING CALENDAR */}
+        {/* TAB 2: FILING CALENDAR */}
         {activeTab === "calendar" && (
           <div className="space-y-6">
-            <Card>
-              <CardHeader className="border-b">
+            <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+              <div className="border-b border-border/60 p-5">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
-                    <CardTitle className="text-base">Filing Calendar</CardTitle>
-                    <CardDescription>
-                      One obligation per reporting period. Frequency and due-date data are snapshotted when the period is created.
-                    </CardDescription>
+                    <h3 className="text-base font-bold text-foreground">Filing Obligations Calendar</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Period obligations with snapshotted filing frequencies and business-day adjusted due dates.
+                    </p>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Input
+                    <input
                       type="number"
-                      className="w-28"
+                      className="w-28 rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       value={calendarYear}
                       onChange={(event) =>
                         setCalendarYear(Number(event.target.value) || new Date().getFullYear())
                       }
                     />
 
-                    <Button
-                      variant="outline"
+                    <button
+                      type="button"
                       onClick={() =>
                         data.profiles
                           .filter((profile) => profile.accountStatus === "Active")
                           .forEach((profile) => generateObligations(profile, calendarYear))
                       }
+                      className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                     >
-                      <RefreshCcw className="mr-2 size-4" /> Generate Active
-                    </Button>
+                      <RefreshCcw className="size-3.5" /> Generate Active
+                    </button>
                   </div>
                 </div>
-              </CardHeader>
+              </div>
 
-              <CardContent className="p-0">
+              <div>
                 {displayedObligations.length === 0 ? (
-                  <div className="p-10 text-center">
-                    <CalendarDays className="mx-auto size-9 text-muted-foreground/30" />
-                    <p className="mt-3 text-sm font-medium">No filing obligations generated yet.</p>
-                  </div>
+                  <EmptyState
+                    icon={<CalendarDays className="size-8 text-muted-foreground/50" />}
+                    title="No Obligations Generated"
+                    description="No filing obligations currently exist for this calendar year. Configure tax profiles and generate active periods."
+                  />
                 ) : (
-                  <div className="divide-y">
+                  <div className="divide-y divide-border/60">
                     {displayedObligations.map((obligation) => {
                       const definition = getDefinition(obligation.taxCode)
                       const status = getDisplayStatus(obligation)
                       const submissionCount = submissionsForObligation(obligation.id).length
+                      const isSelected = selectedObligationId === obligation.id
 
                       return (
                         <button
@@ -2147,37 +2245,39 @@ export default function TaxFilingsPage() {
                             setShowFilingForm(false)
                           }}
                           className={`grid w-full gap-4 p-4 text-left transition-colors md:grid-cols-12 ${
-                            selectedObligationId === obligation.id
-                              ? "bg-primary/[0.04]"
-                              : "hover:bg-muted/25"
+                            isSelected ? "bg-primary/[0.04]" : "hover:bg-muted/20"
                           }`}
                         >
-                          <div className="md:col-span-3">
-                            <p className="text-sm font-semibold">{definition.shortName}</p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">{definition.jurisdiction}</p>
+                          <div className="md:col-span-3 min-w-0">
+                            <p className="text-sm font-semibold text-foreground">{definition.shortName}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{definition.jurisdiction}</p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Period</p>
-                            <p className="mt-1 text-xs font-medium">{obligation.reportingPeriodLabel}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Period</p>
+                            <p className="mt-0.5 text-xs font-semibold text-foreground">{obligation.reportingPeriodLabel}</p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Frequency</p>
-                            <p className="mt-1 text-xs">{formatFrequency(obligation.frequencySnapshot)}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Frequency</p>
+                            <p className="mt-0.5 text-xs text-foreground">{formatFrequency(obligation.frequencySnapshot)}</p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Due Date</p>
-                            <p className="mt-1 text-xs font-medium">{obligation.dueDate}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Due Date</p>
+                            <p className="mt-0.5 text-xs font-semibold text-foreground">{obligation.dueDate}</p>
                           </div>
 
                           <div className="md:col-span-2">
-                            <Badge variant="outline" className={statusClass(status)}>{status}</Badge>
+                            {statusBadge(status)}
                           </div>
 
                           <div className="flex items-center justify-end gap-2 md:col-span-1">
-                            {submissionCount > 0 && <Badge variant="secondary">{submissionCount}</Badge>}
+                            {submissionCount > 0 && (
+                              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                                {submissionCount}
+                              </span>
+                            )}
                             <ChevronRight className="size-4 text-muted-foreground" />
                           </div>
                         </button>
@@ -2185,65 +2285,70 @@ export default function TaxFilingsPage() {
                     })}
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
+            {/* OBLIGATION DETAIL CARD */}
             {selectedObligation && (
-              <Card>
-                <CardHeader className="border-b bg-primary/[0.03]">
+              <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+                <div className="border-b border-border/60 bg-muted/10 p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <CardTitle className="text-base">
+                      <h3 className="text-base font-bold text-foreground">
                         {getDefinition(selectedObligation.taxCode).name}
-                      </CardTitle>
-                      <CardDescription className="mt-1">
-                        {selectedObligation.reportingPeriodLabel}
-                      </CardDescription>
+                      </h3>
+                      <p className="mt-0.5 text-xs font-semibold text-foreground">
+                        {selectedObligation.reportingPeriodLabel} · Due {selectedObligation.dueDate}
+                      </p>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => setSelectedObligationId(null)}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedObligationId(null)}
+                      className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
                       <X className="size-4" />
-                    </Button>
+                    </button>
                   </div>
-                </CardHeader>
+                </div>
 
-                <CardContent className="space-y-5 pt-5">
-                  <div className="grid gap-4 md:grid-cols-4">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Period Start</p>
-                      <p className="mt-1 select-text text-xs font-medium">{selectedObligation.reportingPeriodStart}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Period End</p>
-                      <p className="mt-1 select-text text-xs font-medium">{selectedObligation.reportingPeriodEnd}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Nominal Due</p>
-                      <p className="mt-1 select-text text-xs font-medium">{selectedObligation.nominalDueDate}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Adjusted Due</p>
-                      <p className="mt-1 select-text text-xs font-medium">{selectedObligation.dueDate}</p>
-                    </div>
+                <div className="space-y-6 p-5">
+                  <div className="grid gap-3.5 sm:grid-cols-2 md:grid-cols-4">
+                    <ReadOnlyField
+                      label="Period Start"
+                      value={selectedObligation.reportingPeriodStart}
+                    />
+                    <ReadOnlyField
+                      label="Period End"
+                      value={selectedObligation.reportingPeriodEnd}
+                    />
+                    <ReadOnlyField
+                      label="Nominal Due"
+                      value={selectedObligation.nominalDueDate}
+                    />
+                    <ReadOnlyField
+                      label="Adjusted Due"
+                      value={selectedObligation.dueDate}
+                    />
                   </div>
 
-                  <div className="rounded-lg border bg-muted/20 p-3">
-                    <p className="text-[10px] leading-5 text-muted-foreground">
-                      Frequency snapshot: <span className="font-medium text-foreground">{formatFrequency(selectedObligation.frequencySnapshot)}</span>. Historical periods remain unchanged if the company is later reassigned to another frequency.
-                    </p>
+                  <div className="rounded-xl border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+                    Frequency snapshot: <span className="font-semibold text-foreground">{formatFrequency(selectedObligation.frequencySnapshot)}</span>. Historical reporting requirements remain permanently preserved.
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Button
+                    <button
+                      type="button"
                       onClick={() => {
                         setEditingSubmission(undefined)
                         setShowFilingForm(true)
                       }}
+                      className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
                     >
-                      <Plus className="mr-2 size-4" /> Add Filing
-                    </Button>
+                      <Plus className="size-3.5" /> Record Filing Submission
+                    </button>
 
-                    <Button
-                      variant="outline"
+                    <button
+                      type="button"
                       onClick={() =>
                         startUpload({
                           documentType: "Supporting Document",
@@ -2251,9 +2356,10 @@ export default function TaxFilingsPage() {
                           obligationId: selectedObligation.id,
                         })
                       }
+                      className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                     >
-                      <Upload className="mr-2 size-4" /> Add Supporting Document
-                    </Button>
+                      <Upload className="size-3.5" /> Attach Supporting Document
+                    </button>
                   </div>
 
                   {showFilingForm && (
@@ -2268,59 +2374,64 @@ export default function TaxFilingsPage() {
                     />
                   )}
 
-                  <div className="border-t pt-5">
-                    <p className="text-xs font-semibold">Submission History</p>
-                    <div className="mt-3 space-y-2">
+                  {/* SUBMISSION HISTORY */}
+                  <div className="border-t border-border/60 pt-5">
+                    <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Submission History
+                    </p>
+                    <div className="mt-3 space-y-3">
                       {submissionsForObligation(selectedObligation.id).length === 0 ? (
-                        <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                          No filing submission recorded yet.
+                        <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                          No filing submission recorded for this obligation.
                         </div>
                       ) : (
                         submissionsForObligation(selectedObligation.id).map((submission) => (
-                          <div key={submission.id} className="rounded-lg border p-3">
+                          <div key={submission.id} className="rounded-xl border border-border bg-card p-4 shadow-2xs">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                               <div>
-                                <p className="text-xs font-semibold">{submission.returnType}</p>
-                                <p className="mt-1 text-[10px] text-muted-foreground">
-                                  {submission.filingMethod}{submission.filingDate ? ` · ${submission.filingDate}` : ""}
+                                <p className="text-xs font-bold text-foreground">{submission.returnType}</p>
+                                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                  {submission.filingMethod}{submission.filingDate ? ` · Filed ${submission.filingDate}` : ""}
                                 </p>
                               </div>
 
                               <div className="flex items-center gap-2">
-                                <Badge variant="outline">{submission.paymentStatus}</Badge>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
+                                <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                                  {submission.paymentStatus}
+                                </span>
+                                <button
+                                  type="button"
                                   onClick={() => {
                                     setEditingSubmission(submission)
                                     setShowFilingForm(true)
                                   }}
+                                  className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                                 >
                                   <Pencil className="size-3.5" />
-                                </Button>
+                                </button>
                               </div>
                             </div>
 
                             <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                              <div>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Amount Due</p>
-                                <p className="mt-1 select-text text-xs font-medium">{submission.amountDue || "—"}</p>
-                              </div>
-                              <div>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Amount Paid</p>
-                                <p className="mt-1 select-text text-xs font-medium">{submission.amountPaid || "—"}</p>
-                              </div>
-                              <div>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Confirmation</p>
-                                <p className="mt-1 select-text text-xs font-medium">{submission.confirmationNumber || "—"}</p>
-                              </div>
+                              <ReadOnlyField
+                                label="Amount Due"
+                                value={submission.amountDue}
+                              />
+                              <ReadOnlyField
+                                label="Amount Paid"
+                                value={submission.amountPaid}
+                              />
+                              <ReadOnlyField
+                                label="Confirmation Reference"
+                                value={submission.confirmationNumber}
+                                mono
+                                copyable
+                              />
                             </div>
 
                             <div className="mt-3 flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
+                              <button
+                                type="button"
                                 onClick={() =>
                                   startUpload({
                                     documentType: "Filing Receipt",
@@ -2329,13 +2440,13 @@ export default function TaxFilingsPage() {
                                     submissionId: submission.id,
                                   })
                                 }
+                                className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                               >
-                                <Upload className="mr-2 size-3.5" /> Filing Receipt
-                              </Button>
+                                <Upload className="size-3" /> Filing Receipt
+                              </button>
 
-                              <Button
-                                variant="outline"
-                                size="sm"
+                              <button
+                                type="button"
                                 onClick={() =>
                                   startUpload({
                                     documentType: "Payment Receipt",
@@ -2344,9 +2455,10 @@ export default function TaxFilingsPage() {
                                     submissionId: submission.id,
                                   })
                                 }
+                                className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
                               >
-                                <Upload className="mr-2 size-3.5" /> Payment Receipt
-                              </Button>
+                                <Upload className="size-3" /> Payment Receipt
+                              </button>
                             </div>
                           </div>
                         ))
@@ -2354,28 +2466,31 @@ export default function TaxFilingsPage() {
                     </div>
                   </div>
 
-                  <div className="border-t pt-5">
-                    <p className="text-xs font-semibold">Documents</p>
+                  {/* DOCUMENTS LINKED TO OBLIGATION */}
+                  <div className="border-t border-border/60 pt-5">
+                    <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Attached Period Evidence
+                    </p>
                     <div className="mt-3 space-y-2">
-                      {data.documents.filter((document) => document.obligationId === selectedObligation.id).length === 0 ? (
-                        <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                          No documents attached to this filing period.
+                      {data.documents.filter((doc) => doc.obligationId === selectedObligation.id).length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                          No documents attached to this reporting period.
                         </div>
                       ) : (
                         data.documents
-                          .filter((document) => document.obligationId === selectedObligation.id)
-                          .map((document) => (
+                          .filter((doc) => doc.obligationId === selectedObligation.id)
+                          .map((doc) => (
                             <button
-                              key={document.id}
+                              key={doc.id}
                               type="button"
-                              onClick={() => setPreviewDocument(document)}
-                              className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/30"
+                              onClick={() => setPreviewDocument(doc)}
+                              className="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/30"
                             >
-                              <FileText className="mt-0.5 size-4 text-primary" />
+                              <FileText className="mt-0.5 size-4 text-primary shrink-0" />
                               <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-medium">{document.fileName}</p>
-                                <p className="mt-1 text-[10px] text-muted-foreground">
-                                  {document.documentType} · {document.documentDate || document.uploadedAt.slice(0, 10)}
+                                <p className="truncate text-xs font-semibold text-foreground">{doc.fileName}</p>
+                                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                  {doc.documentType} · {doc.documentDate || doc.uploadedAt.slice(0, 10)}
                                 </p>
                               </div>
                             </button>
@@ -2383,28 +2498,29 @@ export default function TaxFilingsPage() {
                       )}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )}
           </div>
         )}
 
-        {/* FILING RECORDS */}
+        {/* TAB 3: FILING RECORDS */}
         {activeTab === "records" && (
-          <Card>
-            <CardHeader className="border-b">
-              <CardTitle className="text-base">Filing Records</CardTitle>
-              <CardDescription>Historical submission records across all applicable taxes.</CardDescription>
-            </CardHeader>
+          <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+            <div className="border-b border-border/60 p-5">
+              <h3 className="text-base font-bold text-foreground">Historical Filing Submissions</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Master submission register across all applicable tax obligations.</p>
+            </div>
 
-            <CardContent className="p-0">
+            <div>
               {data.submissions.length === 0 ? (
-                <div className="p-10 text-center">
-                  <Receipt className="mx-auto size-9 text-muted-foreground/30" />
-                  <p className="mt-3 text-sm font-medium">No tax filings recorded yet.</p>
-                </div>
+                <EmptyState
+                  icon={<Receipt className="size-8 text-muted-foreground/50" />}
+                  title="No Filing Records"
+                  description="No historical tax submissions have been logged for this carrier yet."
+                />
               ) : (
-                <div className="divide-y">
+                <div className="divide-y divide-border/60">
                   {data.submissions.map((submission) => {
                     const obligation = data.obligations.find(
                       (item) => item.id === submission.obligationId
@@ -2423,30 +2539,32 @@ export default function TaxFilingsPage() {
                           setShowFilingForm(false)
                           setEditingSubmission(undefined)
                         }}
-                        className="grid w-full gap-4 p-4 text-left transition-colors hover:bg-muted/25 md:grid-cols-12"
+                        className="grid w-full gap-4 p-4 text-left transition-colors hover:bg-muted/20 md:grid-cols-12"
                       >
-                        <div className="md:col-span-3">
-                          <p className="text-sm font-semibold">{definition.shortName}</p>
-                          <p className="mt-1 text-[10px] text-muted-foreground">{obligation.reportingPeriodLabel}</p>
+                        <div className="md:col-span-3 min-w-0">
+                          <p className="text-sm font-semibold text-foreground">{definition.shortName}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{obligation.reportingPeriodLabel}</p>
                         </div>
 
                         <div className="md:col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Return Type</p>
-                          <p className="mt-1 text-xs">{submission.returnType}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Return Type</p>
+                          <p className="mt-0.5 text-xs text-foreground font-medium">{submission.returnType}</p>
                         </div>
 
                         <div className="md:col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Filed</p>
-                          <p className="mt-1 text-xs">{submission.filingDate || "—"}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Filed Date</p>
+                          <p className="mt-0.5 text-xs text-foreground">{submission.filingDate || "—"}</p>
                         </div>
 
                         <div className="md:col-span-2">
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Amount Due</p>
-                          <p className="mt-1 select-text text-xs font-medium">{submission.amountDue || "—"}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Amount Due</p>
+                          <p className="mt-0.5 text-xs font-semibold select-text text-foreground">{submission.amountDue || "—"}</p>
                         </div>
 
                         <div className="md:col-span-2">
-                          <Badge variant="outline">{submission.paymentStatus}</Badge>
+                          <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                            {submission.paymentStatus}
+                          </span>
                         </div>
 
                         <div className="flex justify-end md:col-span-1">
@@ -2457,30 +2575,59 @@ export default function TaxFilingsPage() {
                   })}
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
-        className="hidden"
-        onChange={async (event) => {
-          const file = event.target.files?.[0]
-          event.target.value = ""
-          if (!file) return
-          await handleFile(file)
+      {/* SHARED FOUNDATION: DOCUMENT SOURCE PICKER */}
+      <DocumentSourcePicker
+        isOpen={sourcePickerOpen}
+        onClose={() => setSourcePickerOpen(false)}
+        onSelectFile={handleSelectFile}
+        onSelectCamera={() => {
+          setSourcePickerOpen(false)
         }}
+        title={`Attach Tax Evidence (${uploadContext?.documentType || "Document"})`}
+        subtitle="Select document file for secure compliance archive attachment."
+        allowedExtensions={[".pdf", ".jpg", ".jpeg", ".png", ".webp"]}
       />
 
+      {/* SHARED FOUNDATION: SECURE DOCUMENT VIEWER */}
       {previewDocument && (
-        <DocumentViewer
-          document={previewDocument}
+        <SecureDocumentViewer
+          fileName={previewDocument.fileName}
+          mimeType={previewDocument.mimeType}
+          dataUrl={previewDocument.dataUrl}
+          documentTitle={`Tax Evidence: ${previewDocument.fileName}`}
+          documentDate={previewDocument.documentDate || previewDocument.uploadedAt.slice(0, 10)}
+          companyName={company.name}
+          companyId={company.id}
+          auditEventId={previewDocument.id}
           onClose={() => setPreviewDocument(null)}
         />
       )}
+
+      {/* UNSAVED CHANGES GUARD */}
+      <UnsavedChangesPrompt
+        hasChanges={isEditingProfile}
+        onSave={saveProfile}
+        onDiscard={() => {
+          if (profileDraft) {
+            const stored = data.profiles.find((p) => p.id === profileDraft.id)
+            if (stored) {
+              setProfileDraft({ ...stored, frequencyHistory: [...stored.frequencyHistory] })
+            } else {
+              setProfileDraft(null)
+              setSelectedTaxCode(null)
+              setSelectedProfileId(null)
+            }
+          }
+          setIsEditingProfile(false)
+          setShowFrequencyForm(false)
+        }}
+        message="You have unsaved changes in this tax profile configuration."
+      />
     </>
   )
 }

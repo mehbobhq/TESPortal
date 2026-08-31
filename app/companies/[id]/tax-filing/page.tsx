@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react"
 
-import { recordAuditEvent } from "@/src/lib/audit-logger"
+import { recordAuditEvent } from "@/lib/audit-logger"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"

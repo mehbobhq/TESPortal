@@ -501,3 +501,361 @@ export function getDefaultSeedVehicles(company: Company): VehicleRecord[] {
     },
   ];
 }
+
+export interface VehicleOwnershipRecord {
+  id: string;
+  vehicleId: string;
+  relationship: "Company-Owned" | "Leased" | "Owner-Operator" | "Third-Party / Rented";
+  purchaseDate: string;
+  purchasePrice: string;
+  ownershipStartDate: string;
+  ownershipEndDate: string;
+  legalOwners: string[];
+  financingStatus?: "No Financing" | "Financed" | "Paid Off";
+  leasingStatus?: "Yes" | "No";
+  leasingCompanyId?: string;
+  leasingCompanyNameSnapshot?: string;
+  leaseTermMonths?: string;
+  leaseEndDate?: string;
+  evidenceIds: string[];
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VehicleRegistrationRecord {
+  id: string;
+  vehicleId: string;
+  registrationType: string;
+  stateProvince: string;
+  registrationDate: string;
+  expiryDate: string;
+  plate: string;
+  price: string;
+  status: "Draft" | "Active" | "Expired" | "Replaced" | "Cancelled";
+  registrationDocumentEvidenceId?: string;
+  cabCardEvidenceId?: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VehiclePermitRecord {
+  id: string;
+  vehicleId: string;
+  permitType: string;
+  customPermitType: string;
+  permitNumber: string;
+  jurisdiction: string;
+  startDate: string;
+  expiryDate: string;
+  status: "Cancelled" | "Active";
+  evidenceIds: string[];
+  notes: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VehicleInspectionRecord {
+  id: string;
+  vehicleId: string;
+  inspectionType: string;
+  inspectionSource: "Internal" | "Third-Party Shop" | "Roadside Enforcement";
+  inspectionStatus: "Pass" | "Pass with Defects" | "Fail" | "Out of Service";
+  inspectionDate: string;
+  expiryDate: string;
+  nextDueDate: string;
+  inspectorShopName: string;
+  odometer: string;
+  engineHours: string;
+  defectsFound: "Yes" | "No";
+  serviceFacility: string;
+  evidenceIds: string[];
+  notes: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VehicleMaintenanceRecord {
+  id: string;
+  vehicleId: string;
+  maintenanceType: string;
+  maintenanceStatus: "Scheduled" | "In Progress" | "Completed" | "Cancelled";
+  serviceDate: string;
+  odometer: string;
+  engineHours: string;
+  vendor: string;
+  workOrderInvoiceNumber: string;
+  partsCost: string;
+  totalCost: string;
+  nextServiceDueDate: string;
+  evidenceIds: string[];
+  notes: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Legacy fields retained only for read compatibility. */
+  workOrderNumber?: string;
+  invoiceNumber?: string;
+  labourCost?: string;
+  nextServiceDueOdometer?: string;
+}
+
+export interface VehicleStore {
+  version: number;
+  vehicles: VehicleRecord[];
+  ownershipRecords: VehicleOwnershipRecord[];
+  registrationRecords: VehicleRegistrationRecord[];
+  permitRecords: VehiclePermitRecord[];
+  inspectionRecords: VehicleInspectionRecord[];
+  maintenanceRecords: VehicleMaintenanceRecord[];
+  evidence: import("../types/evidence").EvidenceRecord[];
+}
+
+export const vehicleStorageKey = (companyId: string) => `tes_company_vehicles_${companyId}`;
+
+const EMPTY_VEHICLE_STORE = (): VehicleStore => ({
+  version: 2,
+  vehicles: [],
+  ownershipRecords: [],
+  registrationRecords: [],
+  permitRecords: [],
+  inspectionRecords: [],
+  maintenanceRecords: [],
+  evidence: [],
+});
+
+function normalizeLegacyOwnership(record: Record<string, unknown>, vehicleId: string): VehicleOwnershipRecord {
+  const legacyOwner = typeof record.legalOwner === "string" ? record.legalOwner.trim() : "";
+  const owners = Array.isArray(record.legalOwners)
+    ? record.legalOwners.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
+    : legacyOwner
+      ? [legacyOwner]
+      : [];
+
+  const relationship = record.relationship === "Leased" || record.relationship === "Owner-Operator" || record.relationship === "Third-Party / Rented"
+    ? record.relationship
+    : "Company-Owned";
+
+  const financingStatus = record.financingStatus === "Financed" || record.financingStatus === "Paid Off"
+    ? record.financingStatus
+    : record.financingStatus === "No Financing"
+      ? "No Financing"
+      : undefined;
+
+  const leasingStatus = record.leasingStatus === "Yes" || record.leasingStatus === "No" ? record.leasingStatus : undefined;
+  const evidenceIds = Array.isArray(record.evidenceIds)
+    ? record.evidenceIds.filter((value): value is string => typeof value === "string")
+    : Array.isArray(record.documents)
+      ? []
+      : [];
+
+  return {
+    id: typeof record.id === "string" ? record.id : createId("OWN"),
+    vehicleId,
+    relationship,
+    purchaseDate: typeof record.purchaseDate === "string" ? record.purchaseDate : "",
+    purchasePrice: typeof record.purchasePrice === "string" ? record.purchasePrice : "",
+    ownershipStartDate: typeof record.ownershipStartDate === "string" ? record.ownershipStartDate : "",
+    ownershipEndDate: typeof record.ownershipEndDate === "string" ? record.ownershipEndDate : "",
+    legalOwners: owners,
+    financingStatus,
+    leasingStatus,
+    leasingCompanyId: typeof record.leasingCompanyId === "string" ? record.leasingCompanyId : undefined,
+    leasingCompanyNameSnapshot: typeof record.leasingCompanyNameSnapshot === "string"
+      ? record.leasingCompanyNameSnapshot
+      : typeof record.leasingCompany === "string"
+        ? record.leasingCompany
+        : undefined,
+    leaseTermMonths: typeof record.leaseTermMonths === "string" ? record.leaseTermMonths : typeof record.leaseTermMonths === "number" ? String(record.leaseTermMonths) : undefined,
+    leaseEndDate: typeof record.leaseEndDate === "string" ? record.leaseEndDate : undefined,
+    evidenceIds,
+    archived: record.archived === true || record.isArchived === true,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+  };
+}
+
+function normalizeLegacyRegistration(record: Record<string, unknown>, vehicleId: string): VehicleRegistrationRecord {
+  return {
+    id: typeof record.id === "string" ? record.id : typeof record.recordId === "string" ? record.recordId : createId("REG"),
+    vehicleId,
+    registrationType: typeof record.registrationType === "string" ? record.registrationType : "",
+    stateProvince: typeof record.stateProvince === "string" ? record.stateProvince : typeof record.jurisdiction === "string" ? record.jurisdiction : "",
+    registrationDate: typeof record.registrationDate === "string" ? record.registrationDate : typeof record.startDate === "string" ? record.startDate : "",
+    expiryDate: typeof record.expiryDate === "string" ? record.expiryDate : "",
+    plate: typeof record.plate === "string" ? record.plate : typeof record.plateNumber === "string" ? record.plateNumber : "",
+    price: typeof record.price === "string" ? record.price : "",
+    status: record.status === "Draft" || record.status === "Expired" || record.status === "Replaced" || record.status === "Cancelled" ? record.status : "Active",
+    registrationDocumentEvidenceId: typeof record.registrationDocumentEvidenceId === "string" ? record.registrationDocumentEvidenceId : undefined,
+    cabCardEvidenceId: typeof record.cabCardEvidenceId === "string" ? record.cabCardEvidenceId : undefined,
+    archived: record.archived === true || record.isArchived === true,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+  };
+}
+
+function normalizeLegacyPermit(record: Record<string, unknown>, vehicleId: string): VehiclePermitRecord {
+  const evidenceIds = Array.isArray(record.evidenceIds)
+    ? record.evidenceIds.filter((value): value is string => typeof value === "string")
+    : [];
+  return {
+    id: typeof record.id === "string" ? record.id : createId("PMT"),
+    vehicleId,
+    permitType: typeof record.permitType === "string" ? record.permitType : "",
+    customPermitType: typeof record.customPermitType === "string" ? record.customPermitType : "",
+    permitNumber: typeof record.permitNumber === "string" ? record.permitNumber : "",
+    jurisdiction: typeof record.jurisdiction === "string" ? record.jurisdiction : "",
+    startDate: typeof record.startDate === "string" ? record.startDate : "",
+    expiryDate: typeof record.expiryDate === "string" ? record.expiryDate : "",
+    status: record.status === "Cancelled" ? "Cancelled" : "Active",
+    evidenceIds,
+    notes: typeof record.notes === "string" ? record.notes : "",
+    archived: record.archived === true || record.isArchived === true,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+  };
+}
+
+function normalizeLegacyInspection(record: Record<string, unknown>, vehicleId: string): VehicleInspectionRecord {
+  return {
+    id: typeof record.id === "string" ? record.id : createId("INSP"),
+    vehicleId,
+    inspectionType: typeof record.inspectionType === "string" ? record.inspectionType : "",
+    inspectionSource: record.inspectionSource === "Third-Party Shop" || record.inspectionSource === "Roadside Enforcement" ? record.inspectionSource : "Internal",
+    inspectionStatus: record.inspectionStatus === "Pass with Defects" || record.inspectionStatus === "Fail" || record.inspectionStatus === "Out of Service" ? record.inspectionStatus : record.passed === false ? "Fail" : "Pass",
+    inspectionDate: typeof record.inspectionDate === "string" ? record.inspectionDate : "",
+    expiryDate: typeof record.expiryDate === "string" ? record.expiryDate : "",
+    nextDueDate: typeof record.nextDueDate === "string" ? record.nextDueDate : "",
+    inspectorShopName: typeof record.inspectorShopName === "string" ? record.inspectorShopName : typeof record.stationName === "string" ? record.stationName : "",
+    odometer: typeof record.odometer === "string" ? record.odometer : "",
+    engineHours: typeof record.engineHours === "string" ? record.engineHours : "",
+    defectsFound: record.defectsFound === "Yes" || record.defectsFound === "No" ? record.defectsFound : record.outOfServiceDefects === true ? "Yes" : "No",
+    serviceFacility: typeof record.serviceFacility === "string" ? record.serviceFacility : "",
+    evidenceIds: Array.isArray(record.evidenceIds) ? record.evidenceIds.filter((value): value is string => typeof value === "string") : [],
+    notes: typeof record.notes === "string" ? record.notes : "",
+    archived: record.archived === true || record.isArchived === true,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+  };
+}
+
+function normalizeLegacyMaintenance(record: Record<string, unknown>, vehicleId: string): VehicleMaintenanceRecord {
+  const workOrder = typeof record.workOrderNumber === "string" ? record.workOrderNumber : "";
+  const invoice = typeof record.invoiceNumber === "string" ? record.invoiceNumber : "";
+  return {
+    id: typeof record.id === "string" ? record.id : createId("MNT"),
+    vehicleId,
+    maintenanceType: typeof record.maintenanceType === "string" ? record.maintenanceType : "",
+    maintenanceStatus: record.maintenanceStatus === "Scheduled" || record.maintenanceStatus === "In Progress" || record.maintenanceStatus === "Cancelled" ? record.maintenanceStatus : "Completed",
+    serviceDate: typeof record.serviceDate === "string" ? record.serviceDate : "",
+    odometer: typeof record.odometer === "string" ? record.odometer : "",
+    engineHours: typeof record.engineHours === "string" ? record.engineHours : "",
+    vendor: typeof record.vendor === "string" ? record.vendor : "",
+    workOrderInvoiceNumber: typeof record.workOrderInvoiceNumber === "string" ? record.workOrderInvoiceNumber : workOrder || invoice,
+    partsCost: typeof record.partsCost === "string" ? record.partsCost : "",
+    totalCost: typeof record.totalCost === "string" ? record.totalCost : "",
+    nextServiceDueDate: typeof record.nextServiceDueDate === "string" ? record.nextServiceDueDate : "",
+    evidenceIds: Array.isArray(record.evidenceIds) ? record.evidenceIds.filter((value): value is string => typeof value === "string") : [],
+    notes: typeof record.notes === "string" ? record.notes : "",
+    archived: record.archived === true || record.isArchived === true,
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : typeof record.createdAt === "string" ? record.createdAt : isoNow(),
+    workOrderNumber: workOrder || undefined,
+    invoiceNumber: invoice || undefined,
+    labourCost: typeof record.labourCost === "string" ? record.labourCost : undefined,
+    nextServiceDueOdometer: typeof record.nextServiceDueOdometer === "string" ? record.nextServiceDueOdometer : undefined,
+  };
+}
+
+export function loadVehicleStore(companyId: string): VehicleStore {
+  if (typeof window === "undefined" || !companyId) return EMPTY_VEHICLE_STORE();
+  try {
+    const raw = localStorage.getItem(vehicleStorageKey(companyId));
+    if (!raw) return EMPTY_VEHICLE_STORE();
+    const parsed: unknown = JSON.parse(raw);
+
+    if (Array.isArray(parsed)) {
+      const vehicles = parsed.filter((item): item is VehicleRecord => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"));
+      return { ...EMPTY_VEHICLE_STORE(), vehicles };
+    }
+
+    if (!parsed || typeof parsed !== "object") return EMPTY_VEHICLE_STORE();
+    const value = parsed as Record<string, unknown>;
+    const vehicles = Array.isArray(value.vehicles)
+      ? value.vehicles.filter((item): item is VehicleRecord => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"))
+      : [];
+
+    const store = EMPTY_VEHICLE_STORE();
+    store.version = typeof value.version === "number" ? value.version : 1;
+    store.vehicles = vehicles;
+
+    const ownership = Array.isArray(value.ownershipRecords) ? value.ownershipRecords : [];
+    store.ownershipRecords = ownership.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyOwnership(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
+
+    const registrations = Array.isArray(value.registrationRecords) ? value.registrationRecords : [];
+    store.registrationRecords = registrations.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyRegistration(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
+
+    const permits = Array.isArray(value.permitRecords) ? value.permitRecords : [];
+    store.permitRecords = permits.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyPermit(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
+
+    const inspections = Array.isArray(value.inspectionRecords) ? value.inspectionRecords : [];
+    store.inspectionRecords = inspections.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyInspection(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
+
+    const maintenance = Array.isArray(value.maintenanceRecords) ? value.maintenanceRecords : [];
+    store.maintenanceRecords = maintenance.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyMaintenance(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
+
+    store.evidence = Array.isArray(value.evidence)
+      ? value.evidence.filter((item): item is import("../types/evidence").EvidenceRecord => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"))
+      : [];
+
+    // Legacy VehicleRecord embeds registration/permits/inspections directly. Normalize those into historical child collections in memory.
+    for (const vehicle of vehicles) {
+      const vehicleRecord = vehicle as VehicleRecord & Record<string, unknown>;
+      const vehicleId = vehicle.id;
+      if (vehicleRecord.registration && typeof vehicleRecord.registration === "object" && !store.registrationRecords.some((record) => record.vehicleId === vehicleId)) {
+        store.registrationRecords.push(normalizeLegacyRegistration(vehicleRecord.registration as Record<string, unknown>, vehicleId));
+      }
+      if (Array.isArray(vehicleRecord.permits) && !store.permitRecords.some((record) => record.vehicleId === vehicleId)) {
+        store.permitRecords.push(...vehicleRecord.permits.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyPermit(item as Record<string, unknown>, vehicleId)] : []));
+      }
+      if (Array.isArray(vehicleRecord.inspections) && !store.inspectionRecords.some((record) => record.vehicleId === vehicleId)) {
+        store.inspectionRecords.push(...vehicleRecord.inspections.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyInspection(item as Record<string, unknown>, vehicleId)] : []));
+      }
+      if (!store.ownershipRecords.some((record) => record.vehicleId === vehicleId) && (vehicleRecord.ownershipType || vehicleRecord.ownerCompanyName)) {
+        const relationship = vehicleRecord.ownershipType === "Leased" ? "Leased" : vehicleRecord.ownershipType === "Owner Operator" ? "Owner-Operator" : "Company-Owned";
+        store.ownershipRecords.push(normalizeLegacyOwnership({
+          id: createId("OWN"),
+          vehicleId,
+          relationship,
+          legalOwner: vehicleRecord.ownerCompanyName,
+          purchaseDate: vehicleRecord.purchaseDate,
+          purchasePrice: vehicleRecord.purchasePrice,
+          leaseTermMonths: vehicleRecord.leaseTermMonths,
+          leaseEndDate: vehicleRecord.leaseEndDate,
+          documents: [],
+          archived: false,
+          createdAt: vehicle.createdAt,
+        }, vehicleId));
+      }
+    }
+
+    return store;
+  } catch {
+    return EMPTY_VEHICLE_STORE();
+  }
+}
+
+export function saveVehicleStore(companyId: string, store: VehicleStore): void {
+  if (typeof window === "undefined" || !companyId) throw new Error("Vehicle company context is unavailable.");
+  localStorage.setItem(vehicleStorageKey(companyId), JSON.stringify({ ...store, version: Math.max(2, store.version || 0) }));
+}
+
+export function persistVehicleStore(companyId: string, updater: (current: VehicleStore) => VehicleStore): VehicleStore {
+  const current = loadVehicleStore(companyId);
+  const next = updater(current);
+  saveVehicleStore(companyId, next);
+  return next;
+}

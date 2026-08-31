@@ -10,6 +10,12 @@ type ViewerProps = {
   documentTitle?: string;
   documentDate?: string;
   ocrConfidence?: number;
+  companyName?: string;
+  companyId?: string;
+  viewerRole?: string;
+  designation?: string;
+  viewRef?: string;
+  watermarkContext?: SecureDocumentViewerProps["watermarkContext"];
   onClose?: () => void;
   onReplace?: () => void;
 };
@@ -25,6 +31,12 @@ export function DocumentViewer({
   documentTitle = "Compliance Document View",
   documentDate,
   ocrConfidence,
+  companyName,
+  companyId,
+  viewerRole,
+  designation,
+  viewRef,
+  watermarkContext,
   onClose,
   onReplace,
 }: ViewerProps) {
@@ -36,6 +48,12 @@ export function DocumentViewer({
       documentTitle={documentTitle}
       documentDate={documentDate}
       ocrConfidence={ocrConfidence}
+      companyName={companyName}
+      companyId={companyId}
+      viewerRole={viewerRole}
+      designation={designation}
+      viewRef={viewRef}
+      watermarkContext={watermarkContext}
       onClose={onClose}
       onReplace={onReplace}
     />

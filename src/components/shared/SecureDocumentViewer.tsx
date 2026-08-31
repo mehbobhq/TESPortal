@@ -25,20 +25,25 @@ import * as pdfjsLib from "pdfjs-dist";
 import type {
   PDFDocumentProxy,
   PDFPageProxy,
+  PDFDocumentLoadingTask,
   RenderTask,
 } from "pdfjs-dist/types/src/display/api";
 
-import { DocumentWatermark, WatermarkContextInfo } from "./DocumentWatermark";
+import {
+  DocumentWatermark,
+  WatermarkContextInfo,
+} from "./DocumentWatermark";
+
 import {
   recordDocumentViewEvent,
   generateViewRef,
 } from "@/lib/audit-logger";
 
-/*
- * PDF.js worker configuration
+/**
+ * PDF.js worker
  *
- * The worker is resolved from the installed pdfjs-dist package and bundled
- * by the Next.js application rather than relying on a browser/CDN viewer.
+ * Uses the worker bundled from the installed pdfjs-dist package.
+ * No CDN or browser-native PDF viewer is used.
  */
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -70,11 +75,17 @@ export interface SecureDocumentViewerProps {
  *
  * Shared Foundation Component for TES Compliance Portal.
  *
- * PDF rendering is controlled entirely by TES through PDF.js canvas
- * rendering. No iframe, embed, object, browser PDF viewer, browser
- * toolbar, or browser PDF permissions UI is used.
- *
- * Raster-image rendering remains unchanged.
+ * Capabilities:
+ * - Raster images remain rendered through the existing image path.
+ * - PDFs are rendered through TES-controlled PDF.js canvas rendering.
+ * - No iframe/embed/object/browser-native PDF viewer.
+ * - PDF intrinsic page dimensions determine document geometry.
+ * - Multi-page PDF navigation.
+ * - Fit / zoom / pan / rotation.
+ * - Forensic document-bound watermark.
+ * - Ambient viewer watermark.
+ * - Dynamic Eastern Time through existing watermark foundation.
+ * - VIEW_DOCUMENT audit binding and View Ref preservation.
  */
 export function SecureDocumentViewer({
   fileName,
@@ -93,24 +104,65 @@ export function SecureDocumentViewer({
   onClose,
   onReplace,
 }: SecureDocumentViewerProps) {
+  /*
+   * -------------------------------------------------------------
+   * REFS
+   * -------------------------------------------------------------
+   */
+
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const isDraggingRef = useRef(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const initialPanRef = useRef({ x: 0, y: 0 });
+  const dragStartRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+  const initialPanRef = useRef({
+    x: 0,
+    y: 0,
+  });
 
   const auditLoggedRef = useRef(false);
+
+  /*
+   * PDF lifecycle refs.
+   *
+   * PDF.js 6 cleanup is owned by PDFDocumentLoadingTask.destroy().
+   * PDFDocumentProxy does not expose the cleanup method used by
+   * older implementations.
+   */
+  const pdfLoadingTaskRef =
+    useRef<PDFDocumentLoadingTask | null>(null);
+
+  const pdfDocumentRef =
+    useRef<PDFDocumentProxy | null>(null);
+
+  const pdfRenderTaskRef =
+    useRef<RenderTask | null>(null);
+
+  /*
+   * Incremented whenever a PDF load/page render is replaced.
+   * Prevents stale async operations from updating the current viewer.
+   */
   const renderGenerationRef = useRef(0);
-  const renderTaskRef = useRef<RenderTask | null>(null);
-  const pdfDocumentRef = useRef<PDFDocumentProxy | null>(null);
-  const pdfLoadingTaskRef = useRef<ReturnType<typeof pdfjsLib.getDocument> | null>(
-    null,
-  );
+
+  /*
+   * -------------------------------------------------------------
+   * STABLE VIEW REFERENCE
+   * -------------------------------------------------------------
+   */
 
   const [viewRef] = useState<string>(() => {
-    if (propViewRef) return propViewRef;
-    if (watermarkContext?.viewRef) return watermarkContext.viewRef;
+    if (propViewRef) {
+      return propViewRef;
+    }
+
+    if (watermarkContext?.viewRef) {
+      return watermarkContext.viewRef;
+    }
+
     if (watermarkContext?.sessionRef?.startsWith("VW-")) {
       return watermarkContext.sessionRef;
     }
@@ -118,43 +170,75 @@ export function SecureDocumentViewer({
     return generateViewRef();
   });
 
+  /*
+   * -------------------------------------------------------------
+   * VIEWPORT / DOCUMENT GEOMETRY
+   * -------------------------------------------------------------
+   */
+
   const [viewportSize, setViewportSize] = useState({
     width: 800,
     height: 600,
   });
 
   /*
-   * Intrinsic document/page dimensions.
-   *
    * IMPORTANT:
-   * There is intentionally no Letter-size fallback here.
-   * PDF.js supplies the actual dimensions of the selected PDF page.
+   *
+   * There is deliberately no artificial Letter-size default.
+   * PDF dimensions are populated from the actual PDF page.
+   *
+   * Raster image dimensions are populated from naturalWidth /
+   * naturalHeight exactly as before.
    */
   const [docSize, setDocSize] = useState({
     width: 1,
     height: 1,
   });
 
-  const [zoom, setZoom] = useState(1);
-  const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
+  const [zoom, setZoom] = useState(1.0);
 
-  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(
-    null,
-  );
-  const [pdfPage, setPdfPage] = useState<PDFPageProxy | null>(null);
-  const [pdfPageNumber, setPdfPageNumber] = useState(1);
-  const [pdfPageCount, setPdfPageCount] = useState(0);
+  const [rotation, setRotation] =
+    useState<0 | 90 | 180 | 270>(0);
 
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfError, setPdfError] = useState<string | null>(null);
-  const [pdfRenderError, setPdfRenderError] = useState<string | null>(null);
+  const [pan, setPan] = useState({
+    x: 0,
+    y: 0,
+  });
+
+  const [isDragging, setIsDragging] =
+    useState(false);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF STATE
+   * -------------------------------------------------------------
+   */
 
   const isPdf =
     mimeType === "application/pdf" ||
     dataUrl.includes("application/pdf") ||
     fileName.toLowerCase().endsWith(".pdf");
+
+  const [pdfDocument, setPdfDocument] =
+    useState<PDFDocumentProxy | null>(null);
+
+  const [pdfPage, setPdfPage] =
+    useState<PDFPageProxy | null>(null);
+
+  const [pdfPageNumber, setPdfPageNumber] =
+    useState(1);
+
+  const [pdfPageCount, setPdfPageCount] =
+    useState(0);
+
+  const [pdfLoading, setPdfLoading] =
+    useState(false);
+
+  const [pdfError, setPdfError] =
+    useState<string | null>(null);
+
+  const [pdfRenderError, setPdfRenderError] =
+    useState<string | null>(null);
 
   /*
    * -------------------------------------------------------------
@@ -163,24 +247,34 @@ export function SecureDocumentViewer({
    */
 
   useEffect(() => {
-    if (!viewportRef.current) return;
+    if (!viewportRef.current) {
+      return;
+    }
 
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
+    const observer = new ResizeObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const width =
+            entry.contentRect.width;
 
-        if (width > 0 && height > 0) {
-          setViewportSize({
-            width,
-            height,
-          });
+          const height =
+            entry.contentRect.height;
+
+          if (width > 0 && height > 0) {
+            setViewportSize({
+              width,
+              height,
+            });
+          }
         }
-      }
-    });
+      },
+    );
 
     observer.observe(viewportRef.current);
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   /*
@@ -190,7 +284,9 @@ export function SecureDocumentViewer({
    */
 
   useEffect(() => {
-    if (auditLoggedRef.current) return;
+    if (auditLoggedRef.current) {
+      return;
+    }
 
     auditLoggedRef.current = true;
 
@@ -199,10 +295,14 @@ export function SecureDocumentViewer({
         propCompanyId ||
         watermarkContext?.companyId ||
         (typeof window !== "undefined"
-          ? window.location.pathname.match(/\/companies\/([^/]+)/)?.[1]
+          ? window.location.pathname.match(
+              /\/companies\/([^/]+)/,
+            )?.[1]
           : undefined);
 
-      const resolvedActor = (watermarkContext?.viewerName || "").trim();
+      const resolvedActor = (
+        watermarkContext?.viewerName || ""
+      ).trim();
 
       const resolvedRole = (
         propDesignation ||
@@ -222,7 +322,10 @@ export function SecureDocumentViewer({
         entityId: auditEventId || "DOC-VIEW",
       });
     } catch (err) {
-      console.warn("Could not log document view audit event:", err);
+      console.warn(
+        "Could not log document view audit event:",
+        err,
+      );
     }
   }, [
     fileName,
@@ -236,65 +339,108 @@ export function SecureDocumentViewer({
 
   /*
    * -------------------------------------------------------------
-   * PDF LOAD / CLEANUP
+   * PDF LOAD
+   * -------------------------------------------------------------
+   *
+   * PDFDocumentLoadingTask owns the PDF loading lifecycle.
+   *
+   * Cleanup is performed through:
+   *
+   *   loadingTask.destroy()
+   *
+   * NOT:
+   *
+   *   pdfDocument.destroy()
+   *
+   * This is the PDF.js 6 lifecycle correction.
    * -------------------------------------------------------------
    */
 
   useEffect(() => {
-    if (!isPdf) return;
+    if (!isPdf) {
+      return;
+    }
 
     let cancelled = false;
-    const generation = ++renderGenerationRef.current;
 
-    setPdfLoading(true);
-    setPdfError(null);
-    setPdfRenderError(null);
+    const generation =
+      ++renderGenerationRef.current;
+
+    /*
+     * Cancel an existing render first.
+     */
+    const existingRenderTask =
+      pdfRenderTaskRef.current;
+
+    if (existingRenderTask) {
+      try {
+        existingRenderTask.cancel();
+      } catch {
+        // Best-effort cancellation.
+      }
+    }
+
+    pdfRenderTaskRef.current = null;
+
+    /*
+     * Destroy the previous PDF loading task.
+     *
+     * PDF.js 6 uses PDFDocumentLoadingTask.destroy()
+     * for document/worker lifecycle cleanup.
+     */
+    const existingLoadingTask =
+      pdfLoadingTaskRef.current;
+
+    if (existingLoadingTask) {
+      try {
+        void existingLoadingTask.destroy();
+      } catch {
+        // Best-effort cleanup during replacement.
+      }
+    }
+
+    pdfLoadingTaskRef.current = null;
+    pdfDocumentRef.current = null;
+
     setPdfDocument(null);
     setPdfPage(null);
     setPdfPageNumber(1);
     setPdfPageCount(0);
+
+    setPdfLoading(true);
+    setPdfError(null);
+    setPdfRenderError(null);
+
+    setDocSize({
+      width: 1,
+      height: 1,
+    });
+
     setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
     setRotation(0);
-    setDocSize({ width: 1, height: 1 });
 
-    const previousRender = renderTaskRef.current;
-
-    if (previousRender) {
-      try {
-        previousRender.cancel();
-      } catch {}
-    }
-
-    renderTaskRef.current = null;
-
-    const previousDocument = pdfDocumentRef.current;
-
-    if (previousDocument) {
-      void previousDocument.destroy().catch(() => {});
-      pdfDocumentRef.current = null;
-    }
-
-    const previousLoadingTask = pdfLoadingTaskRef.current;
-
-    if (previousLoadingTask) {
-      try {
-        void previousLoadingTask.destroy();
-      } catch {}
-      pdfLoadingTaskRef.current = null;
-    }
-
-    let loadingTask: ReturnType<typeof pdfjsLib.getDocument>;
+    let loadingTask: PDFDocumentLoadingTask;
 
     try {
       loadingTask = pdfjsLib.getDocument({
         url: dataUrl,
       });
 
-      pdfLoadingTaskRef.current = loadingTask;
+      pdfLoadingTaskRef.current =
+        loadingTask;
     } catch (error) {
-      if (!cancelled && generation === renderGenerationRef.current) {
+      if (
+        !cancelled &&
+        generation ===
+          renderGenerationRef.current
+      ) {
         setPdfLoading(false);
+
         setPdfError(
           error instanceof Error
             ? error.message
@@ -309,32 +455,75 @@ export function SecureDocumentViewer({
 
     void loadingTask.promise
       .then(async (document) => {
-        if (cancelled || generation !== renderGenerationRef.current) {
-          await document.destroy().catch(() => {});
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          /*
+           * The loading task itself owns cleanup.
+           */
+          try {
+            await loadingTask.destroy();
+          } catch {
+            // Best-effort stale-task cleanup.
+          }
+
           return;
         }
 
-        pdfDocumentRef.current = document;
+        pdfDocumentRef.current =
+          document;
 
         setPdfDocument(document);
-        setPdfPageCount(document.numPages);
+        setPdfPageCount(
+          document.numPages,
+        );
         setPdfPageNumber(1);
 
-        const firstPage = await document.getPage(1);
+        try {
+          const firstPage =
+            await document.getPage(1);
 
-        if (cancelled || generation !== renderGenerationRef.current) {
-          return;
+          if (
+            cancelled ||
+            generation !==
+              renderGenerationRef.current
+          ) {
+            return;
+          }
+
+          setPdfPage(firstPage);
+          setPdfLoading(false);
+        } catch (error) {
+          if (
+            cancelled ||
+            generation !==
+              renderGenerationRef.current
+          ) {
+            return;
+          }
+
+          setPdfLoading(false);
+
+          setPdfError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load the first PDF page.",
+          );
         }
-
-        setPdfPage(firstPage);
-        setPdfLoading(false);
       })
       .catch((error) => {
-        if (cancelled || generation !== renderGenerationRef.current) {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
           return;
         }
 
         setPdfLoading(false);
+
         setPdfError(
           error instanceof Error
             ? error.message
@@ -345,76 +534,111 @@ export function SecureDocumentViewer({
     return () => {
       cancelled = true;
 
-      if (generation === renderGenerationRef.current) {
-        renderGenerationRef.current += 1;
-      }
+      /*
+       * Invalidate all asynchronous work
+       * associated with this PDF instance.
+       */
+      ++renderGenerationRef.current;
 
-      const renderTask = renderTaskRef.current;
+      /*
+       * Cancel active page rendering.
+       */
+      const renderTask =
+        pdfRenderTaskRef.current;
 
       if (renderTask) {
         try {
           renderTask.cancel();
-        } catch {}
+        } catch {
+          // Best-effort cancellation.
+        }
       }
 
-      renderTaskRef.current = null;
+      pdfRenderTaskRef.current = null;
 
-      const document = pdfDocumentRef.current;
+      /*
+       * PDF.js 6 lifecycle cleanup:
+       *
+       * PDFDocumentProxy does NOT get destroyed directly.
+       * The PDFDocumentLoadingTask owns this lifecycle.
+       */
+      const loadingTask =
+        pdfLoadingTaskRef.current;
 
-      if (document) {
-        void document.destroy().catch(() => {});
-      }
-
-      pdfDocumentRef.current = null;
-
-      const task = pdfLoadingTaskRef.current;
-
-      if (task) {
+      if (loadingTask) {
         try {
-          void task.destroy();
-        } catch {}
+          void loadingTask.destroy();
+        } catch {
+          // Best-effort cleanup during React teardown.
+        }
       }
 
       pdfLoadingTaskRef.current = null;
+      pdfDocumentRef.current = null;
     };
   }, [dataUrl, isPdf]);
 
   /*
    * -------------------------------------------------------------
-   * PDF PAGE SELECTION
+   * PDF PAGE CHANGE
    * -------------------------------------------------------------
    */
 
   useEffect(() => {
-    if (!isPdf || !pdfDocument) return;
+    if (
+      !isPdf ||
+      !pdfDocument
+    ) {
+      return;
+    }
 
     let cancelled = false;
-    const generation = renderGenerationRef.current;
+
+    const generation =
+      renderGenerationRef.current;
 
     setPdfLoading(true);
     setPdfError(null);
     setPdfRenderError(null);
-    setPan({ x: 0, y: 0 });
+
+    /*
+     * Every page change recalculates containment
+     * and starts with zero pan.
+     */
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
+    setZoom(1);
+
+    setRotation(0);
 
     void pdfDocument
       .getPage(pdfPageNumber)
       .then((page) => {
-        if (cancelled || generation !== renderGenerationRef.current) {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
           return;
         }
 
         setPdfPage(page);
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-        setRotation(0);
         setPdfLoading(false);
       })
       .catch((error) => {
-        if (cancelled || generation !== renderGenerationRef.current) {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
           return;
         }
 
         setPdfLoading(false);
+
         setPdfError(
           error instanceof Error
             ? error.message
@@ -425,53 +649,79 @@ export function SecureDocumentViewer({
     return () => {
       cancelled = true;
     };
-  }, [pdfDocument, pdfPageNumber, isPdf]);
+  }, [
+    pdfDocument,
+    pdfPageNumber,
+    isPdf,
+  ]);
 
   /*
    * -------------------------------------------------------------
-   * PDF PAGE INTRINSIC DIMENSIONS
+   * PDF INTRINSIC PAGE DIMENSIONS
    * -------------------------------------------------------------
    */
 
   useEffect(() => {
-    if (!isPdf || !pdfPage) return;
+    if (
+      !isPdf ||
+      !pdfPage
+    ) {
+      return;
+    }
 
-    const viewport = pdfPage.getViewport({
-      scale: 1,
-      rotation: 0,
-    });
+    /*
+     * Scale 1 gives the actual PDF page dimensions.
+     */
+    const pageViewport =
+      pdfPage.getViewport({
+        scale: 1,
+        rotation: 0,
+      });
 
     setDocSize({
-      width: Math.max(1, viewport.width),
-      height: Math.max(1, viewport.height),
+      width: Math.max(
+        1,
+        pageViewport.width,
+      ),
+      height: Math.max(
+        1,
+        pageViewport.height,
+      ),
     });
 
-    setPan({ x: 0, y: 0 });
     setZoom(1);
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
   }, [pdfPage, isPdf]);
 
   /*
    * -------------------------------------------------------------
-   * RASTER IMAGE DIMENSIONS
-   *
-   * Existing image behavior is intentionally preserved.
+   * EXISTING RASTER IMAGE GEOMETRY
    * -------------------------------------------------------------
    */
 
   const handleImageLoad = useCallback(
-    (e: React.SyntheticEvent<HTMLImageElement>) => {
-      if (isPdf) return;
+    (
+      e: React.SyntheticEvent<HTMLImageElement>,
+    ) => {
+      if (isPdf) {
+        return;
+      }
 
-      const img = e.currentTarget;
+      const img =
+        e.currentTarget;
 
-      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      if (
+        img.naturalWidth > 0 &&
+        img.naturalHeight > 0
+      ) {
         setDocSize({
           width: img.naturalWidth,
           height: img.naturalHeight,
         });
-
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
       }
     },
     [isPdf],
@@ -484,10 +734,19 @@ export function SecureDocumentViewer({
    */
 
   const fitScale = useMemo(() => {
-    const rotated90 = rotation === 90 || rotation === 270;
+    const rotated90 =
+      rotation === 90 ||
+      rotation === 270;
 
-    const effectiveWidth = rotated90 ? docSize.height : docSize.width;
-    const effectiveHeight = rotated90 ? docSize.width : docSize.height;
+    const effectiveWidth =
+      rotated90
+        ? docSize.height
+        : docSize.width;
+
+    const effectiveHeight =
+      rotated90
+        ? docSize.width
+        : docSize.height;
 
     if (
       effectiveWidth <= 0 ||
@@ -498,45 +757,93 @@ export function SecureDocumentViewer({
       return 1;
     }
 
+    /*
+     * Existing viewer geometry:
+     * 20px on each side = 40px total.
+     */
     const padding = 40;
 
-    const availableWidth = Math.max(
-      100,
-      viewportSize.width - padding,
-    );
+    const availableWidth =
+      Math.max(
+        100,
+        viewportSize.width -
+          padding,
+      );
 
-    const availableHeight = Math.max(
-      100,
-      viewportSize.height - padding,
-    );
+    const availableHeight =
+      Math.max(
+        100,
+        viewportSize.height -
+          padding,
+      );
+
+    const scaleX =
+      availableWidth /
+      effectiveWidth;
+
+    const scaleY =
+      availableHeight /
+      effectiveHeight;
 
     return Math.min(
-      availableWidth / effectiveWidth,
-      availableHeight / effectiveHeight,
+      scaleX,
+      scaleY,
     );
-  }, [viewportSize, docSize, rotation]);
+  }, [
+    viewportSize,
+    docSize,
+    rotation,
+  ]);
 
   /*
    * -------------------------------------------------------------
    * PAN BOUNDS
+   * -------------------------------------------------------------
    *
-   * Bounds are calculated from the actual rendered page dimensions
-   * after Fit/Zoom/Rotation.
+   * Bounds are based on the actual rotated document dimensions
+   * and current Fit × Zoom scale.
    * -------------------------------------------------------------
    */
 
   const panBounds = useMemo(() => {
-    const rotated90 = rotation === 90 || rotation === 270;
+    const rotated90 =
+      rotation === 90 ||
+      rotation === 270;
 
-    const effectiveWidth = rotated90 ? docSize.height : docSize.width;
-    const effectiveHeight = rotated90 ? docSize.width : docSize.height;
+    const effectiveWidth =
+      rotated90
+        ? docSize.height
+        : docSize.width;
 
-    const renderedWidth = effectiveWidth * fitScale * zoom;
-    const renderedHeight = effectiveHeight * fitScale * zoom;
+    const effectiveHeight =
+      rotated90
+        ? docSize.width
+        : docSize.height;
+
+    const renderedWidth =
+      effectiveWidth *
+      fitScale *
+      zoom;
+
+    const renderedHeight =
+      effectiveHeight *
+      fitScale *
+      zoom;
 
     return {
-      x: Math.max(0, (renderedWidth - viewportSize.width) / 2),
-      y: Math.max(0, (renderedHeight - viewportSize.height) / 2),
+      x: Math.max(
+        0,
+        (renderedWidth -
+          viewportSize.width) /
+          2,
+      ),
+
+      y: Math.max(
+        0,
+        (renderedHeight -
+          viewportSize.height) /
+          2,
+      ),
     };
   }, [
     docSize,
@@ -546,22 +853,49 @@ export function SecureDocumentViewer({
     viewportSize,
   ]);
 
+  /*
+   * -------------------------------------------------------------
+   * PAN CLAMP
+   * -------------------------------------------------------------
+   */
+
   const clampPan = useCallback(
-    (nextPan: { x: number; y: number }) => ({
-      x: Math.min(
-        panBounds.x,
-        Math.max(-panBounds.x, nextPan.x),
-      ),
-      y: Math.min(
-        panBounds.y,
-        Math.max(-panBounds.y, nextPan.y),
-      ),
-    }),
+    (nextPan: {
+      x: number;
+      y: number;
+    }) => {
+      return {
+        x: Math.min(
+          panBounds.x,
+          Math.max(
+            -panBounds.x,
+            nextPan.x,
+          ),
+        ),
+
+        y: Math.min(
+          panBounds.y,
+          Math.max(
+            -panBounds.y,
+            nextPan.y,
+          ),
+        ),
+      };
+    },
     [panBounds],
   );
 
+  /*
+   * Re-clamp whenever:
+   * - viewport changes
+   * - zoom changes
+   * - rotation changes
+   * - page dimensions change
+   */
   useEffect(() => {
-    setPan((current) => clampPan(current));
+    setPan((current) =>
+      clampPan(current),
+    );
   }, [clampPan]);
 
   /*
@@ -571,43 +905,118 @@ export function SecureDocumentViewer({
    */
 
   useEffect(() => {
-    if (!isPdf || !pdfPage || !canvasRef.current) return;
-
-    let cancelled = false;
-    const generation = renderGenerationRef.current;
-
-    const canvas = canvasRef.current;
-    const context = canvas.getContext("2d", {
-      alpha: false,
-    });
-
-    if (!context) {
-      setPdfRenderError("TES could not initialize the PDF canvas.");
+    if (
+      !isPdf ||
+      !pdfPage
+    ) {
       return;
     }
 
+    const canvas =
+      pdfCanvasRef.current;
+
+    /*
+     * The existing viewer canvas is required.
+     * No second canvas is created.
+     */
+    if (!canvas) {
+      setPdfRenderError(
+        "TES could not initialize the PDF canvas.",
+      );
+
+      return;
+    }
+
+    const context =
+      canvas.getContext("2d", {
+        alpha: false,
+      });
+
+    if (!context) {
+      setPdfRenderError(
+        "TES could not initialize the PDF canvas.",
+      );
+
+      return;
+    }
+
+    let cancelled = false;
+
+    const generation =
+      renderGenerationRef.current;
+
+    /*
+     * Cancel any previous render before starting
+     * a new render operation.
+     */
+    const previousRenderTask =
+      pdfRenderTaskRef.current;
+
+    if (previousRenderTask) {
+      try {
+        previousRenderTask.cancel();
+      } catch {
+        // Best-effort cancellation.
+      }
+    }
+
+    pdfRenderTaskRef.current = null;
+
+    setPdfRenderError(null);
+
+    /*
+     * Render at device resolution while keeping the
+     * CSS dimensions equal to the PDF's intrinsic
+     * dimensions.
+     */
     const devicePixelRatio =
       typeof window !== "undefined"
-        ? Math.min(window.devicePixelRatio || 1, 2)
+        ? Math.min(
+            window.devicePixelRatio ||
+              1,
+            2,
+          )
         : 1;
 
-    const baseViewport = pdfPage.getViewport({
-      scale: 1,
-      rotation: 0,
-    });
+    const baseViewport =
+      pdfPage.getViewport({
+        scale: 1,
+        rotation: 0,
+      });
 
-    const renderViewport = pdfPage.getViewport({
-      scale: devicePixelRatio,
-      rotation: 0,
-    });
+    const renderViewport =
+      pdfPage.getViewport({
+        scale: devicePixelRatio,
+        rotation: 0,
+      });
 
-    canvas.width = Math.ceil(renderViewport.width);
-    canvas.height = Math.ceil(renderViewport.height);
+    /*
+     * Actual backing canvas dimensions.
+     */
+    canvas.width = Math.ceil(
+      renderViewport.width,
+    );
 
+    canvas.height = Math.ceil(
+      renderViewport.height,
+    );
+
+    /*
+     * CSS dimensions correspond to actual PDF
+     * page dimensions.
+     */
     canvas.style.width = `${baseViewport.width}px`;
     canvas.style.height = `${baseViewport.height}px`;
 
-    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.setTransform(
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+    );
+
     context.clearRect(
       0,
       0,
@@ -615,60 +1024,73 @@ export function SecureDocumentViewer({
       canvas.height,
     );
 
-    setPdfRenderError(null);
+    /*
+     * PDF.js 6 RenderParameters:
+     *
+     * canvas
+     * canvasContext
+     * viewport
+     *
+     * The canvas is the exact existing canvas
+     * referenced above.
+     */
+    const renderTask =
+      pdfPage.render({
+        canvas,
+        canvasContext: context,
+        viewport: renderViewport,
+      });
 
-    const previousTask = renderTaskRef.current;
-
-    if (previousTask) {
-      try {
-        previousTask.cancel();
-      } catch {}
-    }
-
-    const renderTask = pdfPage.render({
-      canvasContext: context,
-      viewport: renderViewport,
-    });
-
-    renderTaskRef.current = renderTask;
+    pdfRenderTaskRef.current =
+      renderTask;
 
     void renderTask.promise
       .then(() => {
         if (
           cancelled ||
-          generation !== renderGenerationRef.current ||
-          renderTaskRef.current !== renderTask
+          generation !==
+            renderGenerationRef.current ||
+          pdfRenderTaskRef.current !==
+            renderTask
         ) {
           return;
         }
 
-        renderTaskRef.current = null;
+        pdfRenderTaskRef.current =
+          null;
       })
       .catch((error: unknown) => {
         if (
           cancelled ||
-          generation !== renderGenerationRef.current
+          generation !==
+            renderGenerationRef.current
         ) {
           return;
         }
 
         /*
-         * PDF.js throws RenderingCancelledException when an older
-         * render is intentionally cancelled. That is expected and
-         * must not surface as a user-facing error.
+         * Expected when an older render is cancelled.
          */
         if (
           error &&
           typeof error === "object" &&
           "name" in error &&
-          (error as { name?: string }).name ===
+          (
+            error as {
+              name?: string;
+            }
+          ).name ===
             "RenderingCancelledException"
         ) {
           return;
         }
 
-        if (renderTaskRef.current === renderTask) {
-          renderTaskRef.current = null;
+        if (
+          pdfRenderTaskRef.current ===
+          renderTask
+        ) {
+          pdfRenderTaskRef.current =
+            null;
         }
 
         setPdfRenderError(
@@ -683,13 +1105,19 @@ export function SecureDocumentViewer({
 
       try {
         renderTask.cancel();
-      } catch {}
+      } catch {
+        // Best-effort cancellation.
+      }
 
-      if (renderTaskRef.current === renderTask) {
-        renderTaskRef.current = null;
+      if (
+        pdfRenderTaskRef.current ===
+        renderTask
+      ) {
+        pdfRenderTaskRef.current =
+          null;
       }
     };
-  }, [isPdf, pdfPage]);
+  }, [pdfPage, isPdf]);
 
   /*
    * -------------------------------------------------------------
@@ -698,16 +1126,23 @@ export function SecureDocumentViewer({
    */
 
   const handleResetFit = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setZoom(1.0);
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
     setRotation(0);
   };
 
   const handleZoomIn = () => {
     setZoom((current) =>
       Math.min(
-        5,
-        Math.round((current + 0.25) * 100) / 100,
+        5.0,
+        Math.round(
+          (current + 0.25) * 100,
+        ) / 100,
       ),
     );
   };
@@ -716,7 +1151,9 @@ export function SecureDocumentViewer({
     setZoom((current) =>
       Math.max(
         0.25,
-        Math.round((current - 0.25) * 100) / 100,
+        Math.round(
+          (current - 0.25) * 100,
+        ) / 100,
       ),
     );
   };
@@ -726,36 +1163,59 @@ export function SecureDocumentViewer({
       const next =
         (current + 90) % 360;
 
-      return next as 0 | 90 | 180 | 270;
+      return next as
+        | 0
+        | 90
+        | 180
+        | 270;
     });
 
-    setPan({ x: 0, y: 0 });
+    setPan({
+      x: 0,
+      y: 0,
+    });
   };
 
   /*
    * -------------------------------------------------------------
-   * PAGE NAVIGATION
+   * PDF PAGE NAVIGATION
    * -------------------------------------------------------------
    */
 
   const handlePreviousPage = () => {
-    if (!isPdf || pdfPageNumber <= 1) return;
+    if (
+      !isPdf ||
+      pdfPageNumber <= 1 ||
+      pdfLoading
+    ) {
+      return;
+    }
 
-    setPdfPageNumber((current) =>
-      Math.max(1, current - 1),
+    setPdfPageNumber(
+      (current) =>
+        Math.max(
+          1,
+          current - 1,
+        ),
     );
   };
 
   const handleNextPage = () => {
     if (
       !isPdf ||
-      pdfPageNumber >= pdfPageCount
+      pdfPageNumber >=
+        pdfPageCount ||
+      pdfLoading
     ) {
       return;
     }
 
-    setPdfPageNumber((current) =>
-      Math.min(pdfPageCount, current + 1),
+    setPdfPageNumber(
+      (current) =>
+        Math.min(
+          pdfPageCount,
+          current + 1,
+        ),
     );
   };
 
@@ -768,9 +1228,12 @@ export function SecureDocumentViewer({
   const handlePointerDown = (
     e: React.PointerEvent,
   ) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0) {
+      return;
+    }
 
-    isDraggingRef.current = true;
+    isDraggingRef.current =
+      true;
 
     dragStartRef.current = {
       x: e.clientX,
@@ -791,7 +1254,11 @@ export function SecureDocumentViewer({
   const handlePointerMove = (
     e: React.PointerEvent,
   ) => {
-    if (!isDraggingRef.current) return;
+    if (
+      !isDraggingRef.current
+    ) {
+      return;
+    }
 
     const dx =
       e.clientX -
@@ -803,8 +1270,13 @@ export function SecureDocumentViewer({
 
     setPan(
       clampPan({
-        x: initialPanRef.current.x + dx,
-        y: initialPanRef.current.y + dy,
+        x:
+          initialPanRef.current.x +
+          dx,
+
+        y:
+          initialPanRef.current.y +
+          dy,
       }),
     );
   };
@@ -812,16 +1284,24 @@ export function SecureDocumentViewer({
   const handlePointerUp = (
     e: React.PointerEvent,
   ) => {
-    if (!isDraggingRef.current) return;
+    if (
+      !isDraggingRef.current
+    ) {
+      return;
+    }
 
-    isDraggingRef.current = false;
+    isDraggingRef.current =
+      false;
+
     setIsDragging(false);
 
     try {
       e.currentTarget.releasePointerCapture(
         e.pointerId,
       );
-    } catch {}
+    } catch {
+      // Pointer capture may already have been released.
+    }
   };
 
   /*
@@ -833,20 +1313,28 @@ export function SecureDocumentViewer({
   const handleWheel = (
     e: React.WheelEvent,
   ) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
+    if (
+      !e.ctrlKey &&
+      !e.metaKey
+    ) {
+      return;
+    }
 
     e.preventDefault();
 
     const delta =
-      e.deltaY < 0 ? 0.15 : -0.15;
+      e.deltaY < 0
+        ? 0.15
+        : -0.15;
 
     setZoom((current) =>
       Math.min(
-        5,
+        5.0,
         Math.max(
           0.25,
           Math.round(
-            (current + delta) * 100,
+            (current + delta) *
+              100,
           ) / 100,
         ),
       ),
@@ -863,18 +1351,23 @@ export function SecureDocumentViewer({
     useMemo(() => {
       return {
         ...watermarkContext,
+
         companyName:
           propCompanyName ||
           watermarkContext?.companyName,
+
         companyId:
           propCompanyId ||
           watermarkContext?.companyId,
+
         viewerRole:
           propViewerRole ||
           watermarkContext?.viewerRole,
+
         designation:
           propDesignation ||
           watermarkContext?.designation,
+
         viewRef,
       };
     }, [
@@ -889,13 +1382,6 @@ export function SecureDocumentViewer({
   const displayZoomPercentage =
     Math.round(zoom * 100);
 
-  const pdfReady =
-    isPdf &&
-    !!pdfDocument &&
-    !!pdfPage &&
-    !pdfError &&
-    !pdfRenderError;
-
   /*
    * -------------------------------------------------------------
    * RENDER
@@ -904,9 +1390,9 @@ export function SecureDocumentViewer({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-background border border-border rounded-xl shadow-2xl overflow-hidden select-none">
-      {/* --------------------------------------------------------- */}
-      {/* SECURE VIEWER HEADER                                      */}
-      {/* --------------------------------------------------------- */}
+      {/* ------------------------------------------------------- */}
+      {/* SECURE VIEWER HEADER                                    */}
+      {/* ------------------------------------------------------- */}
 
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 shrink-0 z-30">
         <div className="min-w-0 flex items-center gap-2.5">
@@ -936,52 +1422,62 @@ export function SecureDocumentViewer({
           </div>
         </div>
 
-        {/* ------------------------------------------------------- */}
-        {/* TES CONTROLS                                            */}
-        {/* ------------------------------------------------------- */}
+        {/* ----------------------------------------------------- */}
+        {/* ACTION CONTROLS                                       */}
+        {/* ----------------------------------------------------- */}
 
         <div className="flex items-center gap-1.5">
-          {isPdf && pdfPageCount > 0 && (
-            <div className="flex items-center gap-1 rounded border border-border bg-background px-1">
-              <button
-                type="button"
-                className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                onClick={handlePreviousPage}
-                disabled={
-                  pdfPageNumber <= 1 ||
-                  pdfLoading
-                }
-                title="Previous page"
-              >
-                <ChevronLeft className="size-3.5" />
-              </button>
+          {isPdf &&
+            pdfPageCount > 0 && (
+              <div className="flex items-center gap-1 rounded border border-border bg-background px-1">
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={
+                    handlePreviousPage
+                  }
+                  disabled={
+                    pdfPageNumber <=
+                      1 ||
+                    pdfLoading
+                  }
+                  title="Previous page"
+                >
+                  <ChevronLeft className="size-3.5" />
+                </button>
 
-              <span className="min-w-[76px] text-center text-[10px] font-mono font-semibold text-foreground tabular-nums">
-                Page {pdfPageNumber} of{" "}
-                {pdfPageCount}
-              </span>
+                <span className="min-w-[78px] text-center text-[10px] font-mono font-semibold text-foreground tabular-nums">
+                  Page{" "}
+                  {pdfPageNumber}{" "}
+                  of{" "}
+                  {pdfPageCount}
+                </span>
 
-              <button
-                type="button"
-                className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                onClick={handleNextPage}
-                disabled={
-                  pdfPageNumber >=
-                    pdfPageCount ||
-                  pdfLoading
-                }
-                title="Next page"
-              >
-                <ChevronRight className="size-3.5" />
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={
+                    handleNextPage
+                  }
+                  disabled={
+                    pdfPageNumber >=
+                      pdfPageCount ||
+                    pdfLoading
+                  }
+                  title="Next page"
+                >
+                  <ChevronRight className="size-3.5" />
+                </button>
+              </div>
+            )}
 
           <button
             type="button"
             className="flex items-center gap-1 h-7 rounded border border-border px-2.5 text-xs font-semibold hover:bg-muted text-foreground transition-colors active:scale-95"
-            onClick={handleResetFit}
-            title="Fit to window"
+            onClick={
+              handleResetFit
+            }
+            title="Fit to window (Recalculate Scale)"
           >
             <Maximize2 className="size-3" />
             Fit
@@ -990,8 +1486,10 @@ export function SecureDocumentViewer({
           <button
             type="button"
             className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
-            onClick={handleZoomOut}
-            title="Zoom out"
+            onClick={
+              handleZoomOut
+            }
+            title="Zoom out (-25%)"
           >
             <ZoomOut className="size-3.5" />
           </button>
@@ -999,10 +1497,13 @@ export function SecureDocumentViewer({
           <span
             className="w-12 text-center text-[10px] font-mono font-bold text-foreground tabular-nums cursor-pointer hover:underline"
             onClick={() => {
-              setZoom(1);
-              setPan({ x: 0, y: 0 });
+              setZoom(1.0);
+              setPan({
+                x: 0,
+                y: 0,
+              });
             }}
-            title="Reset to Fit"
+            title="Click to reset to 100% Fit"
           >
             {displayZoomPercentage}%
           </span>
@@ -1010,8 +1511,10 @@ export function SecureDocumentViewer({
           <button
             type="button"
             className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
-            onClick={handleZoomIn}
-            title="Zoom in"
+            onClick={
+              handleZoomIn
+            }
+            title="Zoom in (+25%)"
           >
             <ZoomIn className="size-3.5" />
           </button>
@@ -1019,15 +1522,22 @@ export function SecureDocumentViewer({
           <button
             type="button"
             className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
-            onClick={handleRotate}
+            onClick={
+              handleRotate
+            }
             title="Rotate 90° Clockwise"
           >
             <RotateCcw className="size-3.5" />
           </button>
 
-          {ocrConfidence !== undefined && (
+          {ocrConfidence !==
+            undefined && (
             <div className="flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 px-2 py-0.5 text-[10px] text-emerald-800 dark:text-emerald-300 font-bold">
-              OCR: {Math.round(ocrConfidence)}%
+              OCR:{" "}
+              {Math.round(
+                ocrConfidence,
+              )}
+              %
             </div>
           )}
 
@@ -1035,7 +1545,9 @@ export function SecureDocumentViewer({
             <button
               type="button"
               className="flex size-7 items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors ml-1"
-              onClick={onClose}
+              onClick={
+                onClose
+              }
               title="Close secure viewer"
             >
               <X className="size-4" />
@@ -1044,18 +1556,28 @@ export function SecureDocumentViewer({
         </div>
       </div>
 
-      {/* --------------------------------------------------------- */}
-      {/* MAIN SECURE VIEWPORT                                      */}
-      {/* --------------------------------------------------------- */}
+      {/* ------------------------------------------------------- */}
+      {/* MAIN SECURE VIEWPORT                                    */}
+      {/* ------------------------------------------------------- */}
 
       <div
         ref={viewportRef}
         className="relative min-h-[350px] flex-1 overflow-hidden bg-muted/30 select-none flex items-center justify-center"
-        onWheel={handleWheel}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        onWheel={
+          handleWheel
+        }
+        onPointerDown={
+          handlePointerDown
+        }
+        onPointerMove={
+          handlePointerMove
+        }
+        onPointerUp={
+          handlePointerUp
+        }
+        onPointerCancel={
+          handlePointerUp
+        }
         style={{
           cursor: isDragging
             ? "grabbing"
@@ -1063,45 +1585,55 @@ export function SecureDocumentViewer({
                 panBounds.y > 0
               ? "grab"
               : "default",
+
           touchAction: "none",
         }}
       >
-        {/* Layer B: Ambient Viewer Canvas Watermark */}
+        {/* ----------------------------------------------------- */}
+        {/* AMBIENT CANVAS WATERMARK                              */}
+        {/* ----------------------------------------------------- */}
+
         <DocumentWatermark
           {...mergedWatermarkContext}
           variant="canvas"
         />
 
-        {/* ------------------------------------------------------- */}
-        {/* TES DOCUMENT STAGE                                     */}
-        {/* ------------------------------------------------------- */}
+        {/* ----------------------------------------------------- */}
+        {/* CONTROLLED DOCUMENT STAGE                             */}
+        {/* ----------------------------------------------------- */}
 
         <div
-          className="relative flex items-center justify-center shadow-2xl rounded-lg bg-white border border-border overflow-hidden select-none"
+          className="relative flex items-center justify-center shadow-2xl rounded-lg bg-background border border-border overflow-hidden select-none"
           style={{
             width: `${docSize.width}px`,
             height: `${docSize.height}px`,
+
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${fitScale * zoom}) rotate(${rotation}deg)`,
-            transformOrigin: "center center",
+
+            transformOrigin:
+              "center center",
+
             boxShadow:
               "0 20px 45px -10px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.1)",
+
             transition:
               isDragging
                 ? "none"
                 : "transform 75ms ease-out",
           }}
         >
-          {/* ----------------------------------------------------- */}
-          {/* PDF — TES CONTROLLED PDF.JS CANVAS                   */}
-          {/* ----------------------------------------------------- */}
+          {/* --------------------------------------------------- */}
+          {/* PDF.JS CONTROLLED PDF RENDERING                     */}
+          {/* --------------------------------------------------- */}
 
           {isPdf ? (
-            <div className="relative h-full w-full bg-white overflow-hidden flex items-center justify-center">
+            <div className="relative h-full w-full bg-white flex items-center justify-center overflow-hidden">
               {pdfPage && (
                 <canvas
-                  ref={canvasRef}
+                  ref={pdfCanvasRef}
                   aria-label={`${fileName}, page ${pdfPageNumber}`}
                   className="block max-w-none"
+                  draggable={false}
                   style={{
                     width: `${docSize.width}px`,
                     height: `${docSize.height}px`,
@@ -1109,6 +1641,7 @@ export function SecureDocumentViewer({
                 />
               )}
 
+              {/* PDF loading state */}
               {pdfLoading && (
                 <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80">
                   <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-lg">
@@ -1118,6 +1651,7 @@ export function SecureDocumentViewer({
                 </div>
               )}
 
+              {/* PDF parsing/loading failure */}
               {pdfError && (
                 <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
                   <div className="mx-6 max-w-md rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-center">
@@ -1134,6 +1668,7 @@ export function SecureDocumentViewer({
                 </div>
               )}
 
+              {/* Individual page render failure */}
               {!pdfError &&
                 pdfRenderError && (
                   <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
@@ -1150,32 +1685,26 @@ export function SecureDocumentViewer({
                     </div>
                   </div>
                 )}
-
-              {pdfReady && (
-                <div
-                  className="absolute inset-0 pointer-events-none"
-                  aria-hidden="true"
-                />
-              )}
             </div>
           ) : (
-            /* --------------------------------------------------- */
-            /* EXISTING RASTER IMAGE PATH — PRESERVED             */
-            /* --------------------------------------------------- */
+            /* ------------------------------------------------- */
+            /* EXISTING RASTER IMAGE PATH — UNCHANGED            */
+            /* ------------------------------------------------- */
 
             <img
               src={dataUrl}
               alt={fileName}
               draggable={false}
-              onLoad={handleImageLoad}
+              onLoad={
+                handleImageLoad
+              }
               className="h-full w-full object-contain select-none pointer-events-none"
             />
           )}
 
-          {/* ----------------------------------------------------- */}
-          {/* Layer A: FORENSIC DOCUMENT WATERMARK                 */}
-          {/* Anchored to the actual rendered document/page.       */}
-          {/* ----------------------------------------------------- */}
+          {/* --------------------------------------------------- */}
+          {/* FORENSIC DOCUMENT WATERMARK                         */}
+          {/* --------------------------------------------------- */}
 
           <DocumentWatermark
             {...mergedWatermarkContext}
@@ -1184,9 +1713,9 @@ export function SecureDocumentViewer({
         </div>
       </div>
 
-      {/* --------------------------------------------------------- */}
-      {/* BOTTOM SECURE STATUS                                      */}
-      {/* --------------------------------------------------------- */}
+      {/* ------------------------------------------------------- */}
+      {/* BOTTOM SECURE STATUS                                    */}
+      {/* ------------------------------------------------------- */}
 
       <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border bg-card px-4 py-2 shrink-0 z-30">
         <div className="flex items-center gap-2 min-w-0">
@@ -1196,7 +1725,8 @@ export function SecureDocumentViewer({
             {fileName} •{" "}
             {isPdf
               ? `PDF.js Controlled View${
-                  pdfPageCount > 0
+                  pdfPageCount >
+                  0
                     ? ` • Page ${pdfPageNumber}/${pdfPageCount}`
                     : ""
                 }`
@@ -1212,7 +1742,9 @@ export function SecureDocumentViewer({
           <button
             type="button"
             className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-xs active:scale-95"
-            onClick={onReplace}
+            onClick={
+              onReplace
+            }
           >
             <RefreshCcw className="size-3" />
             Replace Document

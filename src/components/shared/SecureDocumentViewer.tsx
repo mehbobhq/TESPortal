@@ -24,7 +24,6 @@ import {
 import * as pdfjsLib from "pdfjs-dist";
 import {
   GlobalWorkerOptions,
-  getDocument,
   type PDFDocumentProxy,
   type PDFPageProxy,
   type PDFDocumentLoadingTask,
@@ -44,14 +43,19 @@ import {
 /**
  * PDF.js worker
  *
- * Uses the worker bundled from the installed pdfjs-dist package.
- * No CDN or browser-native PDF viewer is used.
+ * TES-controlled PDF rendering only.
+ *
+ * The worker is served from the canonical Next.js public directory:
+ *
+ *   public/pdf.worker.mjs
+ *
+ * This avoids:
+ * - browser-native PDF rendering
+ * - iframe/embed/object rendering
+ * - external CDN worker dependencies
  */
 if (typeof window !== "undefined") {
- GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
+  GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 }
 
 export interface SecureDocumentViewerProps {
@@ -116,6 +120,7 @@ export function SecureDocumentViewer({
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const isDraggingRef = useRef(false);
+
   const dragStartRef = useRef({
     x: 0,
     y: 0,
@@ -129,11 +134,11 @@ export function SecureDocumentViewer({
   const auditLoggedRef = useRef(false);
 
   /*
-   * PDF lifecycle refs.
+   * PDF.js lifecycle refs.
    *
-   * PDF.js 6 cleanup is owned by PDFDocumentLoadingTask.destroy().
-   * PDFDocumentProxy does not expose the cleanup method used by
-   * older implementations.
+   * PDFDocumentLoadingTask owns document loading/worker lifecycle.
+   * PDF.js 6 does not expose the old PDFDocumentProxy.destroy()
+   * lifecycle used by older implementations.
    */
   const pdfLoadingTaskRef =
     useRef<PDFDocumentLoadingTask | null>(null);
@@ -146,7 +151,9 @@ export function SecureDocumentViewer({
 
   /*
    * Incremented whenever a PDF load/page render is replaced.
-   * Prevents stale async operations from updating the current viewer.
+   *
+   * This prevents stale asynchronous PDF operations from updating
+   * the currently displayed document/page.
    */
   const renderGenerationRef = useRef(0);
 
@@ -184,9 +191,8 @@ export function SecureDocumentViewer({
   });
 
   /*
-   * IMPORTANT:
+   * No artificial Letter-size PDF stage.
    *
-   * There is deliberately no artificial Letter-size default.
    * PDF dimensions are populated from the actual PDF page.
    *
    * Raster image dimensions are populated from naturalWidth /
@@ -344,17 +350,13 @@ export function SecureDocumentViewer({
    * PDF LOAD
    * -------------------------------------------------------------
    *
-   * PDFDocumentLoadingTask owns the PDF loading lifecycle.
+   * PDFDocumentLoadingTask owns PDF loading and worker lifecycle.
    *
-   * Cleanup is performed through:
+   * Cleanup uses:
    *
    *   loadingTask.destroy()
    *
-   * NOT:
-   *
-   *   pdfDocument.destroy()
-   *
-   * This is the PDF.js 6 lifecycle correction.
+   * PDFDocumentProxy.destroy() is intentionally NOT used.
    * -------------------------------------------------------------
    */
 
@@ -369,7 +371,7 @@ export function SecureDocumentViewer({
       ++renderGenerationRef.current;
 
     /*
-     * Cancel an existing render first.
+     * Cancel an existing page render first.
      */
     const existingRenderTask =
       pdfRenderTaskRef.current;
@@ -385,10 +387,9 @@ export function SecureDocumentViewer({
     pdfRenderTaskRef.current = null;
 
     /*
-     * Destroy the previous PDF loading task.
+     * Destroy the previous loading task.
      *
-     * PDF.js 6 uses PDFDocumentLoadingTask.destroy()
-     * for document/worker lifecycle cleanup.
+     * In PDF.js 6 this owns the document/worker loading lifecycle.
      */
     const existingLoadingTask =
       pdfLoadingTaskRef.current;
@@ -419,6 +420,7 @@ export function SecureDocumentViewer({
     });
 
     setZoom(1);
+
     setPan({
       x: 0,
       y: 0,
@@ -429,8 +431,14 @@ export function SecureDocumentViewer({
     let loadingTask: PDFDocumentLoadingTask;
 
     try {
+      /*
+       * Preserve the supplied PDF data.
+       *
+       * PDF.js receives the existing data URL directly.
+       * No evidence data is modified.
+       */
       loadingTask = pdfjsLib.getDocument({
-        url: ,
+        url: dataUrl,
       });
 
       pdfLoadingTaskRef.current =
@@ -463,7 +471,7 @@ export function SecureDocumentViewer({
             renderGenerationRef.current
         ) {
           /*
-           * The loading task itself owns cleanup.
+           * The loading task owns cleanup.
            */
           try {
             await loadingTask.destroy();
@@ -478,9 +486,11 @@ export function SecureDocumentViewer({
           document;
 
         setPdfDocument(document);
+
         setPdfPageCount(
           document.numPages,
         );
+
         setPdfPageNumber(1);
 
         try {
@@ -537,8 +547,8 @@ export function SecureDocumentViewer({
       cancelled = true;
 
       /*
-       * Invalidate all asynchronous work
-       * associated with this PDF instance.
+       * Invalidate every async operation associated with
+       * this PDF instance.
        */
       ++renderGenerationRef.current;
 
@@ -559,10 +569,10 @@ export function SecureDocumentViewer({
       pdfRenderTaskRef.current = null;
 
       /*
-       * PDF.js 6 lifecycle cleanup:
+       * PDF.js 6 lifecycle cleanup.
        *
-       * PDFDocumentProxy does NOT get destroyed directly.
-       * The PDFDocumentLoadingTask owns this lifecycle.
+       * PDFDocumentProxy is not destroyed directly.
+       * PDFDocumentLoadingTask owns document/worker cleanup.
        */
       const loadingTask =
         pdfLoadingTaskRef.current;
@@ -672,7 +682,7 @@ export function SecureDocumentViewer({
     }
 
     /*
-     * Scale 1 gives the actual PDF page dimensions.
+     * Scale 1 provides the actual PDF page dimensions.
      */
     const pageViewport =
       pdfPage.getViewport({
@@ -801,10 +811,6 @@ export function SecureDocumentViewer({
    * -------------------------------------------------------------
    * PAN BOUNDS
    * -------------------------------------------------------------
-   *
-   * Bounds are based on the actual rotated document dimensions
-   * and current Fit × Zoom scale.
-   * -------------------------------------------------------------
    */
 
   const panBounds = useMemo(() => {
@@ -914,13 +920,14 @@ export function SecureDocumentViewer({
       return;
     }
 
+    /*
+     * Use the existing TES canvas.
+     *
+     * No second canvas is created.
+     */
     const canvas =
       pdfCanvasRef.current;
 
-    /*
-     * The existing viewer canvas is required.
-     * No second canvas is created.
-     */
     if (!canvas) {
       setPdfRenderError(
         "TES could not initialize the PDF canvas.",
@@ -948,8 +955,7 @@ export function SecureDocumentViewer({
       renderGenerationRef.current;
 
     /*
-     * Cancel any previous render before starting
-     * a new render operation.
+     * Cancel any previous render.
      */
     const previousRenderTask =
       pdfRenderTaskRef.current;
@@ -967,9 +973,8 @@ export function SecureDocumentViewer({
     setPdfRenderError(null);
 
     /*
-     * Render at device resolution while keeping the
-     * CSS dimensions equal to the PDF's intrinsic
-     * dimensions.
+     * Render at device resolution while keeping CSS
+     * dimensions equal to actual PDF page dimensions.
      */
     const devicePixelRatio =
       typeof window !== "undefined"
@@ -1027,14 +1032,9 @@ export function SecureDocumentViewer({
     );
 
     /*
-     * PDF.js 6 RenderParameters:
+     * PDF.js 6 RenderParameters.
      *
-     * canvas
-     * canvasContext
-     * viewport
-     *
-     * The canvas is the exact existing canvas
-     * referenced above.
+     * The exact existing canvas and 2D context are supplied.
      */
     const renderTask =
       pdfPage.render({
@@ -1071,7 +1071,7 @@ export function SecureDocumentViewer({
         }
 
         /*
-         * Expected when an older render is cancelled.
+         * Cancellation of an older render is expected.
          */
         if (
           error &&
@@ -1500,6 +1500,7 @@ export function SecureDocumentViewer({
             className="w-12 text-center text-[10px] font-mono font-bold text-foreground tabular-nums cursor-pointer hover:underline"
             onClick={() => {
               setZoom(1.0);
+
               setPan({
                 x: 0,
                 y: 0,

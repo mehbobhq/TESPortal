@@ -22,12 +22,14 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
-import type {
-  PDFDocumentProxy,
-  PDFPageProxy,
-  PDFDocumentLoadingTask,
-  RenderTask,
-} from "pdfjs-dist/types/src/display/api";
+import {
+  GlobalWorkerOptions,
+  getDocument,
+  type PDFDocumentProxy,
+  type PDFPageProxy,
+  type PDFDocumentLoadingTask,
+  type RenderTask,
+} from "pdfjs-dist";
 
 import {
   DocumentWatermark,
@@ -46,7 +48,7 @@ import {
  * No CDN or browser-native PDF viewer is used.
  */
 if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+ GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
     "pdfjs-dist/build/pdf.worker.min.mjs",
     import.meta.url,
   ).toString();
@@ -428,7 +430,7 @@ export function SecureDocumentViewer({
 
     try {
       loadingTask = pdfjsLib.getDocument({
-        url: dataUrl,
+        url: ,
       });
 
       pdfLoadingTaskRef.current =

@@ -15,7 +15,7 @@ import { DocumentWatermark, WatermarkContextInfo } from "./DocumentWatermark";
 import {
   recordDocumentViewEvent,
   generateViewRef,
-} from "../../lib/audit-logger";
+} from "@/lib/audit-logger";
 
 export interface SecureDocumentViewerProps {
   fileName: string;

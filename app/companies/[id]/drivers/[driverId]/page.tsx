@@ -17,7 +17,10 @@ import {
   fullLegalName,
   getCompany,
   loadCompanyDriverStore,
+  captureDriverStoreSnapshot,
   loadDriverMasterStore,
+  restoreDriverStoreSnapshot,
+  syncJurisdictionReviewForAddress,
   updateAddress,
   updateMaster,
   updateRelationship,
@@ -75,6 +78,15 @@ const ES: EmploymentStatus[] = [
   "Terminated",
 ]
 
+const REVIEW_REASONS = [
+  "Recently Relocated",
+  "Licence Change Pending",
+  "Temporary Residence",
+  "Address Requires Correction",
+  "Licence Information Requires Correction",
+  "Other",
+] as const
+
 export default function DriverPage({
   params,
 }: {
@@ -91,6 +103,11 @@ export default function DriverPage({
   const [error, setError] = useState("")
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [addressDraft, setAddressDraft] = useState<Record<string, string>>({})
+  const [jurisdictionReviewDraft, setJurisdictionReviewDraft] = useState({
+    reason: "",
+    explanation: "",
+    expectedResolutionDate: "",
+  })
 
   const hydrate = () => {
     const nextMaster =
@@ -134,6 +151,12 @@ export default function DriverPage({
           country: address.country,
           effective: address.effectiveFrom,
         })
+        const openReview = nextMaster.jurisdictionReviews.find((item) => item.status === "OPEN")
+        setJurisdictionReviewDraft({
+          reason: openReview?.reason || "",
+          explanation: openReview?.explanation || "",
+          expectedResolutionDate: openReview?.expectedResolutionDate || "",
+        })
       }
     }
   }
@@ -172,14 +195,18 @@ export default function DriverPage({
   const save = () => {
     setError("")
 
+    const snapshot = captureDriverStoreSnapshot(companyId)
+    const audits: Array<{ action: "CREATE" | "UPDATE" | "ARCHIVE" | "RESTORE"; details: string }> = []
+
     try {
-      if (
+      const identityChanged =
         draft.first !== master.identity.legalFirstName ||
         draft.middle !== (master.identity.legalMiddleName || "") ||
         draft.last !== master.identity.legalLastName ||
         draft.preferred !== (master.identity.preferredName || "") ||
         draft.dob !== master.identity.dateOfBirth
-      ) {
+
+      if (identityChanged) {
         updateMaster(driverId, {
           legalFirstName: draft.first,
           legalMiddleName: draft.middle || undefined,
@@ -187,19 +214,13 @@ export default function DriverPage({
           preferredName: draft.preferred || undefined,
           dateOfBirth: draft.dob,
         })
-
-        recordAuditEvent({
-          actor: "System Administrator",
-          role: "Compliance Administrator",
-          companyId,
-          entityType: "Driver",
-          entityId: driverId,
+        audits.push({
           action: "UPDATE",
           details: `Updated Driver Master profile ${driverId}.`,
         })
       }
 
-      if (
+      const relationshipChanged =
         draft.recordType !== relationship.recordType ||
         draft.region !== relationship.operatingRegion ||
         draft.role !== relationship.currentRole ||
@@ -207,7 +228,8 @@ export default function DriverPage({
         draft.employment !== relationship.employmentStatus ||
         draft.start !== relationship.startDate ||
         draft.end !== (relationship.endDate || "")
-      ) {
+
+      if (relationshipChanged) {
         updateRelationship(companyId, driverId, {
           recordType: draft.recordType as RecordType,
           operatingRegion: draft.region as OperatingRegion,
@@ -217,20 +239,14 @@ export default function DriverPage({
           startDate: draft.start,
           endDate: draft.end || undefined,
         })
-
-        recordAuditEvent({
-          actor: "System Administrator",
-          role: "Compliance Administrator",
-          companyId,
-          entityType: "Driver",
-          entityId: driverId,
+        audits.push({
           action: "UPDATE",
           details: `Updated company Driver relationship ${relationship.id}.`,
         })
       }
 
-      if (
-        address &&
+      const addressChanged =
+        Boolean(address) &&
         (addressDraft.line1 !== address.addressLine1 ||
           addressDraft.line2 !== (address.addressLine2 || "") ||
           addressDraft.city !== address.city ||
@@ -238,32 +254,93 @@ export default function DriverPage({
           addressDraft.zip !== address.postalZip ||
           addressDraft.country !== address.country ||
           addressDraft.effective !== address.effectiveFrom)
-      ) {
+
+      if (addressChanged) {
+        const licenceJurisdiction = licence?.jurisdiction
+        const reviewsBeforeAddressChange = loadDriverMasterStore().drivers.find(
+          (item) => item.id === driverId,
+        )?.jurisdictionReviews || []
+
+        syncJurisdictionReviewForAddress(
+          driverId,
+          addressDraft.state || "",
+          licenceJurisdiction,
+          {
+            reason: jurisdictionReviewDraft.reason,
+            explanation: jurisdictionReviewDraft.explanation,
+            expectedResolutionDate: jurisdictionReviewDraft.expectedResolutionDate,
+          },
+        )
+
+        const reviewsAfterReviewSync = loadDriverMasterStore().drivers.find(
+          (item) => item.id === driverId,
+        )?.jurisdictionReviews || []
+        if (JSON.stringify(reviewsBeforeAddressChange) !== JSON.stringify(reviewsAfterReviewSync)) {
+          audits.push({
+            action: "UPDATE",
+            details: `Updated Driver jurisdiction review state for ${driverId}.`,
+          })
+        }
+
         updateAddress(driverId, {
-          addressLine1: addressDraft.line1,
+          addressLine1: addressDraft.line1 || "",
           addressLine2: addressDraft.line2 || undefined,
-          city: addressDraft.city,
-          stateProvince: addressDraft.state,
-          postalZip: addressDraft.zip,
-          country: addressDraft.country as any,
-          effectiveFrom: addressDraft.effective,
+          city: addressDraft.city || "",
+          stateProvince: addressDraft.state || "",
+          postalZip: addressDraft.zip || "",
+          country: addressDraft.country as "Canada" | "United States",
+          effectiveFrom: addressDraft.effective || "",
         })
 
+        audits.push({
+          action: "UPDATE",
+          details: `Updated effective-dated Driver address ${driverId}.`,
+        })
+      } else if (address) {
+        // Re-evaluate an existing review when the saved residence/licence jurisdictions are consistent.
+        const reviewsBeforeReviewSync = master.jurisdictionReviews
+        syncJurisdictionReviewForAddress(
+          driverId,
+          address.stateProvince,
+          licence?.jurisdiction,
+          {
+            reason: jurisdictionReviewDraft.reason,
+            explanation: jurisdictionReviewDraft.explanation,
+            expectedResolutionDate: jurisdictionReviewDraft.expectedResolutionDate,
+          },
+        )
+        const reviewsAfterReviewSync = loadDriverMasterStore().drivers.find(
+          (item) => item.id === driverId,
+        )?.jurisdictionReviews || []
+        if (JSON.stringify(reviewsBeforeReviewSync) !== JSON.stringify(reviewsAfterReviewSync)) {
+          audits.push({
+            action: "UPDATE",
+            details: `Updated Driver jurisdiction review state for ${driverId}.`,
+          })
+        }
+      }
+
+      for (const audit of audits) {
         recordAuditEvent({
-          actor: "System Administrator",
-          role: "Compliance Administrator",
+          actor: "",
+          role: "",
           companyId,
           entityType: "Driver",
           entityId: driverId,
-          action: "UPDATE",
-          details: `Added effective-dated Driver address ${driverId}.`,
+          action: audit.action,
+          details: audit.details,
         })
       }
 
       hydrate()
       setEdit(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to save Driver.")
+      try {
+        restoreDriverStoreSnapshot(snapshot)
+      } catch (rollbackError) {
+        console.error("Driver profile rollback failed:", rollbackError)
+      }
+      setError(e instanceof Error ? e.message : "Unable to save Driver. No changes were committed.")
     }
   }
 
@@ -465,7 +542,8 @@ export default function DriverPage({
 
           <Section title="Current Address">
             {edit ? (
-              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                 <F
                   l="Address"
                   v={addressDraft.line1 || ""}
@@ -507,7 +585,48 @@ export default function DriverPage({
                     setAddressDraft({ ...addressDraft, effective: value })
                   }
                 />
-              </div>
+                </div>
+                {addressDraft.state && licence?.jurisdiction && addressDraft.state !== licence.jurisdiction && (
+                <div className="mt-3 rounded-md border border-amber-300/60 bg-amber-50/50 p-3">
+                  <div className="mb-2 text-sm font-medium">Jurisdiction discrepancy review</div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <S
+                      l="Reason *"
+                      v={jurisdictionReviewDraft.reason}
+                      o={[
+                        "Recently Relocated",
+                        "Licence Change Pending",
+                        "Temporary Residence",
+                        "Address Requires Correction",
+                        "Licence Information Requires Correction",
+                        "Other",
+                      ]}
+                      s={(value) =>
+                        setJurisdictionReviewDraft((current) => ({ ...current, reason: value }))
+                      }
+                    />
+                    <F
+                      l="Expected Resolution Date"
+                      t="date"
+                      v={jurisdictionReviewDraft.expectedResolutionDate}
+                      s={(value) =>
+                        setJurisdictionReviewDraft((current) => ({
+                          ...current,
+                          expectedResolutionDate: value,
+                        }))
+                      }
+                    />
+                    <F
+                      l="Explanation *"
+                      v={jurisdictionReviewDraft.explanation}
+                      s={(value) =>
+                        setJurisdictionReviewDraft((current) => ({ ...current, explanation: value }))
+                      }
+                    />
+                  </div>
+                </div>
+                )}
+              </>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <R l="Address" v={address?.addressLine1 || "—"} />

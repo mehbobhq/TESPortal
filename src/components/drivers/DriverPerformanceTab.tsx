@@ -91,7 +91,7 @@ export interface DriverPerformanceTabProps {
   onOpenDocument?: (docId: string) => void;
 }
 
-const EVENT_TYPE_DEFINITIONS = EVENT_TYPE_DEFINITIONS.map((type) => ({ type, label: type, category: "Driver Event", description: type }));
+const EVENT_TYPE_DEFINITIONS = EVENT_TYPES.map((type) => ({ type, label: type, category: "Driver Event", description: type }));
 
 export function DriverPerformanceTab({
   master,

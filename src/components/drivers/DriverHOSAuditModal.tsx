@@ -15,8 +15,8 @@ import {
   DriverPerformanceEvent,
   HOSReview,
   HOSViolationDetails,
-} from "../../types";
-import { HOS_REVIEW_SOURCES, HOS_INITIAL_FINDINGS, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_CARRIER_RESOLUTIONS, HOS_VIOLATION_TYPES } from "../../lib/driver-taxonomy";
+} from "@/types/drivers";
+import { HOS_REVIEW_SOURCES, HOS_INITIAL_FINDINGS, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_CARRIER_RESOLUTIONS, HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
 
 export interface DriverHOSAuditModalProps {
   event: DriverPerformanceEvent;

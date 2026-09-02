@@ -13,8 +13,8 @@ import {
   Calendar,
   Sparkles,
 } from "lucide-react";
-import { DriverMaster, CompanyDriverRelationship, CanonicalCompany } from "../../types";
-import { fullLegalName, currentLicence, currentAddress, calculateAge } from "../../lib/driver-data";
+import { DriverMaster, CompanyDriverRelationship, CanonicalCompany } from "@/types/drivers";
+import { fullLegalName, currentLicence, currentAddress, calculateAge } from "@/lib/driver-data";
 
 export interface DriverHeaderProps {
   master: DriverMaster;

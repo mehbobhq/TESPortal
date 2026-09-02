@@ -10,10 +10,10 @@ import {
   Check,
   X,
 } from "lucide-react";
-import { DriverMaster, CompanyDriverRelationship, CanonicalCompany, RecordType, OperatingRegion, DriverStatus } from "../../types";
+import { DriverMaster, CompanyDriverRelationship, CanonicalCompany, RecordType, OperatingRegion, DriverStatus } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
-import { fullLegalName, currentAddress, calculateAge } from "../../lib/driver-data";
-import { JURISDICTIONS, getJurisdictionLabel } from "../../lib/jurisdictions";
+import { fullLegalName, currentAddress, calculateAge } from "@/lib/driver-data";
+import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverProfileTabProps {
   master: DriverMaster;

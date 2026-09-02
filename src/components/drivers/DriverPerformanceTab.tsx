@@ -55,19 +55,19 @@ import {
   HOSReview,
   CompanyDetermination,
   CompanyActionRecord,
-} from "../../types";
+} from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { EntityLink } from "../shared/EntityLink";
-import { fullLegalName } from "../../lib/driver-data";
+import { fullLegalName } from "@/lib/driver-data";
 import {
   calculateDriverPerformanceSnapshot,
   calculateFleetRankings,
-} from "../../lib/driver-performance-model";
+} from "@/lib/driver-performance-model";
 import { DriverIntelligenceView } from "./DriverIntelligenceView";
-import { JURISDICTIONS } from "../../lib/jurisdictions";
+import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DriverHOSAuditModal } from "./DriverHOSAuditModal";
 import { DriverCompanyActionModal } from "./DriverCompanyActionModal";
-import { EVENT_TYPES, EVENT_SEVERITIES, EVENT_STATUSES, PREVENTABILITY_STATES, COLLISION_TYPES, WEATHER_CONDITIONS, ROAD_CONDITIONS, LIGHT_CONDITIONS, INSPECTION_LEVELS, INSPECTION_RESULTS, REPAIR_STATUSES, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_VIOLATION_TYPES, HOS_SOURCES, HOS_REVIEW_STATUSES } from "../../lib/driver-taxonomy";
+import { EVENT_TYPES, EVENT_SEVERITIES, EVENT_STATUSES, PREVENTABILITY_STATES, COLLISION_TYPES, WEATHER_CONDITIONS, ROAD_CONDITIONS, LIGHT_CONDITIONS, INSPECTION_LEVELS, INSPECTION_RESULTS, REPAIR_STATUSES, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_VIOLATION_TYPES, HOS_SOURCES, HOS_REVIEW_STATUSES } from "@/lib/driver-taxonomy";
 
 export interface DriverPerformanceTabProps {
   master: DriverMaster;

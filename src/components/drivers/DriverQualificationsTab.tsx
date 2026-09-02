@@ -12,11 +12,14 @@ import {
   Award,
   Upload,
 } from "lucide-react";
-import { DriverMaster, LicenceRecord } from "../../types";
+import { DriverMaster, LicenceRecord } from "@/types/drivers";
 import { ReadOnlyField, RegulatoryIdentifierField } from "../shared/ReadOnlyField";
-import { currentLicence, currentAddress } from "../../lib/driver-data";
-import { JURISDICTIONS, getJurisdictionLabel } from "../../lib/jurisdictions";
-import { normalizeLicence, verifyLicenceSyntax } from "../../lib/identifier-normalization";
+import {
+  currentLicence,
+  currentAddress,
+  normalizeLicenceNumber,
+} from "@/lib/driver-data";
+import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverQualificationsTabProps {
   master: DriverMaster;
@@ -55,10 +58,20 @@ export function DriverQualificationsTab({
     address && licence && address.stateProvince.toUpperCase() !== licence.jurisdiction.toUpperCase()
   );
 
-  // Format syntax verification
-  const syntaxCheck = licence
-    ? verifyLicenceSyntax(licence.licenceNumber, licence.jurisdiction)
-    : { validFormat: true };
+// Canonical licence normalization.
+// Jurisdiction-specific syntax verification is intentionally not inferred here.
+// Unexpected formats are review conditions, not automatic invalidation.
+const normalizedLicenceNumber = licence
+  ? normalizeLicenceNumber(
+      licence.licenceNumber ||
+      licence.licenceNumberRaw ||
+      ""
+    )
+  : "";
+
+const syntaxCheck = {
+  validFormat: licence ? Boolean(normalizedLicenceNumber) : true,
+};
 
   const handleSaveNewLicence = (e: React.FormEvent) => {
     e.preventDefault();

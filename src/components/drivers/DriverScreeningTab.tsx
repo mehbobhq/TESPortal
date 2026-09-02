@@ -12,9 +12,9 @@ import {
   Search,
   Eye,
 } from "lucide-react";
-import { DriverMaster, ScreeningRecord, ScreeningCategory } from "../../types";
+import { DriverMaster, ScreeningRecord, ScreeningCategory } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
-import { getDeadlineStatus, getDeadlineClasses, getDaysRemaining } from "../../lib/deadline-engine";
+import { getDeadlineStatus, getDeadlineClasses, getDaysRemaining } from "@/lib/deadline-engine";
 
 export interface DriverScreeningTabProps {
   master: DriverMaster;

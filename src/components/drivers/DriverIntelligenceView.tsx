@@ -28,7 +28,7 @@ import {
   PerformanceCategoryScore,
   FleetRankingResult,
   DriverPerformanceEvent,
-} from "../../types";
+} from "@/types/drivers";
 
 export interface DriverIntelligenceViewProps {
   snapshot: DriverPerformanceSnapshot;

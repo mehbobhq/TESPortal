@@ -24,9 +24,9 @@ import {
   OperatingRegion,
   DriverStatus,
   LicenceRecord,
-} from "../../types";
-import { fullLegalName, currentLicence, currentAddress, calculateAge, findDriverDuplicate } from "../../lib/driver-data";
-import { JURISDICTIONS, getJurisdictionLabel } from "../../lib/jurisdictions";
+} from "@/types/drivers";
+import { fullLegalName, currentLicence, currentAddress, calculateAge, findDriverDuplicate } from "@/lib/driver-data";
+import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverListProps {
   companies: CanonicalCompany[];

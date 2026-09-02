@@ -10,9 +10,9 @@ import {
   Sparkles,
   BookOpen,
 } from "lucide-react";
-import { DriverMaster, TrainingRecord, TrainingType, TrainingStatus } from "../../types";
+import { DriverMaster, TrainingRecord, TrainingType, TrainingStatus } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
-import { getDeadlineStatus, getDeadlineClasses } from "../../lib/deadline-engine";
+import { getDeadlineStatus, getDeadlineClasses } from "@/lib/deadline-engine";
 
 export interface DriverTrainingTabProps {
   master: DriverMaster;

@@ -23,9 +23,9 @@ import {
   DriverTaxDocRecord,
   DriverEvidenceItem,
   CanonicalCompany,
-} from "../../types";
+} from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
-import { updateDriverApplicationDetermination, updateHiringPackageItem } from "../../lib/driver-data";
+import { updateDriverApplicationDetermination, updateHiringPackageItem } from "@/lib/driver-data";
 
 export interface DriverDocumentsTabProps {
   master: DriverMaster;

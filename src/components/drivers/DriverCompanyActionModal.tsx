@@ -14,7 +14,7 @@ import {
 import {
   CompanyActionRecord,
   DriverPerformanceEvent,
-} from "../../types";
+} from "@/types/drivers";
 
 export interface DriverCompanyActionModalProps {
   companyId: string;

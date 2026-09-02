@@ -167,16 +167,16 @@ const allDriversCohort = companyStore.relationships
       return null
     }
 
-    return {
-      master: driver,
-      relationship: record,
-      events: companyStore.performanceEvents.filter(
-        (event) => event.driverMasterId === driver.id
-      ),
-      trainings: companyStore.trainings.filter(
-        (training) => training.driverMasterId === driver.id
-      ),
-    }
+return {
+  master: driver,
+  relationship: record,
+  events: companyStore.events.filter(
+    (event) => event.driverMasterId === driver.id
+  ),
+  trainings: companyStore.trainingRecords.filter(
+    (training) => training.driverMasterId === driver.id
+  ),
+}
   })
   .filter(
     (

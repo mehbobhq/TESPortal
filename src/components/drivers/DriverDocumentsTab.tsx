@@ -388,22 +388,22 @@ export function DriverDocumentsTab({
           </button>
         </div>
 
-        <div className="p-5 grid sm:grid-cols-3 gap-3 text-xs">
-          <div className="rounded-xl border border-border p-3 space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">TD1 Federal (Canada)</span>
-            <p className="font-bold text-foreground">Completed & Archived</p>
-            <p className="text-[10px] text-muted-foreground">Effective Tax Year: 2024</p>
-          </div>
-          <div className="rounded-xl border border-border p-3 space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">TD1-ON (Ontario Withholding)</span>
-            <p className="font-bold text-foreground">Completed & Archived</p>
-            <p className="text-[10px] text-muted-foreground">Claim Code 1 Applied</p>
-          </div>
-          <div className="rounded-xl border border-border p-3 space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">W-8BEN / Cross-Border W-4</span>
-            <p className="font-bold text-foreground">Exempt Status Verified</p>
-            <p className="text-[10px] text-muted-foreground">Cross-Border Driver Protocol</p>
-          </div>
+        <div className="p-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+          {taxDocs.length === 0 ? (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-xl border border-dashed border-border p-6 text-center text-muted-foreground">
+              No tax / onboarding records established for this Driver.
+            </div>
+          ) : (
+            taxDocs.map((doc) => (
+              <div key={doc.id} className="rounded-xl border border-border p-3 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{doc.formType}</span>
+                <p className="font-bold text-foreground">{doc.status}</p>
+                <p className="text-[10px] text-muted-foreground">Tax Year: {doc.taxYear || "Not Established"}</p>
+                <p className="text-[10px] text-muted-foreground">Jurisdiction: {doc.jurisdiction || "Not Established"}</p>
+                <p className="text-[10px] text-muted-foreground">Effective: {doc.effectiveDate || "Not Established"}</p>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

@@ -232,13 +232,14 @@ export function DriverScreeningTab({
                 <th className="px-5 py-3">Result Summary</th>
                 <th className="px-5 py-3">Authority / Provider</th>
                 <th className="px-5 py-3">Expiry Date</th>
+                <th className="px-5 py-3">Evidence</th>
                 <th className="px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredScreenings.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-xs text-muted-foreground">
+                  <td colSpan={8} className="p-8 text-center text-xs text-muted-foreground">
                     No screening records match the selected category filter.
                   </td>
                 </tr>
@@ -277,6 +278,25 @@ export function DriverScreeningTab({
                           </span>
                         ) : (
                           <span className="text-muted-foreground font-mono text-[11px]">N/A (Permanent)</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        {item.evidenceIds.length > 0 && onOpenEvidence ? (
+                          <div className="flex flex-wrap gap-1">
+                            {item.evidenceIds.map((evidenceId) => (
+                              <button
+                                key={evidenceId}
+                                type="button"
+                                onClick={() => onOpenEvidence(evidenceId)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2 py-1 text-[10px] font-semibold text-primary hover:bg-muted"
+                              >
+                                <Eye className="size-3" />
+                                View
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">Not linked</span>
                         )}
                       </td>
                       <td className="px-5 py-3 text-right">

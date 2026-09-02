@@ -1828,6 +1828,32 @@ export function DriverPerformanceTab({
                 </div>
               )}
 
+              {/* Canonical Evidence / Document Links */}
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Evidence & Documents
+                </span>
+                {selectedEvent.evidenceIds.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedEvent.evidenceIds.map((evidenceId) => (
+                      <button
+                        key={evidenceId}
+                        type="button"
+                        onClick={() => onOpenDocument?.(evidenceId)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-muted"
+                      >
+                        <FileText className="size-3.5" />
+                        Open {evidenceId}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground">
+                    No evidence is linked to this performance event.
+                  </div>
+                )}
+              </div>
+
               {/* Linked Records */}
               {selectedEvent.linkedRecords && selectedEvent.linkedRecords.length > 0 && (
                 <div className="space-y-2">

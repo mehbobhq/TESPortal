@@ -27,7 +27,7 @@ import {
   FleetRankingResult,
   FleetRankingEntry,
   OperatingRegion,
-} from "../types";
+} from "@/types/drivers";
 
 export const DRIVER_PERFORMANCE_MODEL_VERSION = "1.0-draft";
 export const DRIVER_PERFORMANCE_MODEL_STATUS = "DRAFT / CONFIGURABLE";

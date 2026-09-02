@@ -167,16 +167,16 @@ const allDriversCohort = companyStore.relationships
       return null
     }
 
-return {
-  master: driver,
-  relationship: record,
-  events: companyStore.events.filter(
-    (event) => event.driverMasterId === driver.id
-  ),
-  trainings: companyStore.trainingRecords.filter(
-    (training) => training.driverMasterId === driver.id
-  ),
-}
+    return {
+      master: driver,
+      relationship: record,
+      events: companyStore.events.filter(
+        (event) => event.driverMasterId === driver.id
+      ),
+      trainings: companyStore.trainingRecords.filter(
+        (training) => training.driverMasterId === driver.id
+      ),
+    }
   })
   .filter(
     (
@@ -184,8 +184,8 @@ return {
     ): record is {
       master: DriverMaster
       relationship: typeof relationship
-events: typeof companyStore.events
-trainings: typeof companyStore.trainingRecords
+      events: typeof companyStore.events
+      trainings: typeof companyStore.trainingRecords
     } => record !== null
   )
 

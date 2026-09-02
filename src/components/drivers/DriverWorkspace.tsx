@@ -15,7 +15,7 @@ import {
   HOSReview,
   CompanyActionRecord,
   CompanyDetermination,
-} from "../../types";
+} from "@/types/drivers";
 import { DriverHeader } from "./DriverHeader";
 import { DriverProfileTab } from "./DriverProfileTab";
 import { DriverQualificationsTab } from "./DriverQualificationsTab";
@@ -45,7 +45,7 @@ import {
   addHOSReview,
   addCompanyAction,
   addCompanyDetermination,
-} from "../../lib/driver-data";
+} from "@/lib/driver-data";
 
 export interface DriverWorkspaceProps {
   master: DriverMaster;

@@ -156,26 +156,38 @@ export default function DriverPage({ params }: DriverPageProps) {
     (record) => record.driverMasterId === master.id
   )
 
-  const allDriversCohort = companyStore.relationships
-    .filter((record) => !record.archive.isArchived)
-    .map((record) => {
-      const driver = masterStore.drivers.find(
-        (candidate) => candidate.id === record.driverMasterId
-      )
-
-      return {
-        master: driver,
-        relationship: record,
-      }
-    })
-    .filter(
-      (
-        record
-      ): record is {
-        master: DriverMaster
-        relationship: typeof relationship
-      } => Boolean(record.master)
+const allDriversCohort = companyStore.relationships
+  .filter((record) => !record.archive.isArchived)
+  .map((record) => {
+    const driver = masterStore.drivers.find(
+      (candidate) => candidate.id === record.driverMasterId
     )
+
+    if (!driver) {
+      return null
+    }
+
+    return {
+      master: driver,
+      relationship: record,
+      events: companyStore.performanceEvents.filter(
+        (event) => event.driverMasterId === driver.id
+      ),
+      trainings: companyStore.trainings.filter(
+        (training) => training.driverMasterId === driver.id
+      ),
+    }
+  })
+  .filter(
+    (
+      record
+    ): record is {
+      master: DriverMaster
+      relationship: typeof relationship
+      events: typeof companyStore.performanceEvents
+      trainings: typeof companyStore.trainings
+    } => record !== null
+  )
 
   return (
     <DriverWorkspace

@@ -184,8 +184,8 @@ return {
     ): record is {
       master: DriverMaster
       relationship: typeof relationship
-      events: typeof companyStore.performanceEvents
-      trainings: typeof companyStore.trainings
+events: typeof companyStore.events
+trainings: typeof companyStore.trainingRecords
     } => record !== null
   )
 

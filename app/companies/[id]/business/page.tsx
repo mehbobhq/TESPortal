@@ -35,7 +35,7 @@ import {
   normalizeEIN,
   validateEINFormat,
   normalizeTaxId,
-} from "@/src/lib/identifier-normalization";
+} from "@/lib/identifier-normalization";
 import { recordAuditEvent } from "@/lib/audit-logger";
 
 // --- Business Domain Types ---

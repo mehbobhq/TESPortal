@@ -22,15 +22,18 @@ const empty=():DriverInput=>({legalFirstName:"",legalMiddleName:"",legalLastName
 const tone=(s:DriverStatus)=>s==="Active"?"ok":s==="On Leave"?"warn":s==="Suspended"||s==="Terminated"?"danger":"neutral"
 
 export default function DriversPage({params}:{params:Promise<{id:string}>}){
- const {id:companyId}=use(params),router=useRouter(),company=getCompany(companyId)
+ const {id:companyId}=use(params),router=useRouter()
+ const [company,setCompany]=useState<ReturnType<typeof getCompany>>(null)
+ const [hydrated,setHydrated]=useState(false)
  const [rows,setRows]=useState<Array<{master:DriverMaster;relationship:CompanyDriverRelationship}>>([]),[q,setQ]=useState(""),[status,setStatus]=useState("All"),[region,setRegion]=useState("All"),[type,setType]=useState("All"),[open,setOpen]=useState(false),[form,setForm]=useState(empty()),[error,setError]=useState(""),[saving,setSaving]=useState(false),[licenceFile,setLicenceFile]=useState<File|null>(null),[match,setMatch]=useState<ReturnType<typeof findDriverIdentityMatch>|null>(null),[reuse,setReuse]=useState(false)
  const hydrate=()=>{const masters=loadDriverMasterStore().drivers,rels=loadCompanyDriverStore(companyId).relationships.filter(r=>!r.archive.isArchived);setRows(rels.map(r=>{const m=masters.find(x=>x.id===r.driverMasterId);return m?{master:m,relationship:r}:null}).filter(Boolean) as Array<{master:DriverMaster;relationship:CompanyDriverRelationship}>)}
- useEffect(()=>hydrate(),[companyId])
+ useEffect(()=>{setCompany(getCompany(companyId));hydrate();setHydrated(true)},[companyId])
  const filtered=useMemo(()=>rows.filter(({master,relationship})=>{const l=currentLicence(master)?.licenceNumberRaw||"",hay=`${fullLegalName(master)} ${master.id} ${displayCompanyDriverRecordId(companyId,relationship)} ${l}`.toLowerCase();return hay.includes(q.toLowerCase())&&(status==="All"||relationship.driverStatus===status)&&(region==="All"||relationship.operatingRegion===region)&&(type==="All"||relationship.recordType===type)}),[rows,q,status,region,type,companyId])
  const update=(k:keyof DriverInput,v:any)=>{const next={...form,[k]:v};if(k==="country"){next.stateProvince=""}if(k==="licenceCountry"){next.licenceJurisdiction=""}setForm(next);setMatch(null)}
  const jurisdictions=(country:Country)=>JURISDICTIONS.filter((j:any)=>String(j.country||j.countryName||"").toLowerCase().includes(country==="Canada"?"canada":"united")||String(j.countryCode||"").toUpperCase()===(country==="Canada"?"CA":"US"))
  const checkMatch=()=>{const m=findDriverIdentityMatch(form);setMatch(m);return m}
  const submit=()=>{setError("");setSaving(true);try{const m=checkMatch();if((m.kind==="EXACT_LICENCE"||m.kind==="STRONG"||m.kind==="POSSIBLE")&&!reuse)throw new Error(`Possible existing Driver Master ${m.master?.id}. Review the match below. Select “Use existing Driver Master” only after confirming identity.`);const result=createDriver(companyId,form,reuse&&m.master?{reuseDriverMasterId:m.master.id}:undefined);recordAuditEvent({companyId,entityType:"Driver",entityId:result.master.id,action:"CREATE",details:`Created company Driver record ${displayCompanyDriverRecordId(companyId,result.relationship)}.`});setOpen(false);setForm(empty());setLicenceFile(null);setMatch(null);setReuse(false);hydrate();router.push(`/companies/${companyId}/drivers/${result.master.id}`)}catch(e){setError(e instanceof Error?e.message:"Unable to save Driver.")}finally{setSaving(false)}}
+ if(!hydrated)return <Card><CardContent className="p-8">Loading Driver records...</CardContent></Card>
  if(!company)return <Card><CardContent className="p-8">Company not found.</CardContent></Card>
  return <div className="space-y-6">
   <PageHeader title="Drivers" description={`${company.name} · Driver compliance records`} actions={<div className="flex gap-2"><Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button><Button onClick={()=>setOpen(true)}><Plus className="mr-2 size-4"/>Add Driver</Button></div>}/>

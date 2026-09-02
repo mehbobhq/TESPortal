@@ -50,7 +50,7 @@ import {
   normalizeUSDOT,
   normalizeMC,
   normalizeTaxId,
-} from "@/src/lib/identifier-normalization"
+} from "@/lib/identifier-normalization"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { ReadOnlyField, RegulatoryIdentifierField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"

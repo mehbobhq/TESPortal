@@ -16,6 +16,7 @@ import {
   HOSReview,
   HOSViolationDetails,
 } from "../../types";
+import { HOS_REVIEW_SOURCES, HOS_INITIAL_FINDINGS, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_CARRIER_RESOLUTIONS, HOS_VIOLATION_TYPES } from "../../lib/driver-taxonomy";
 
 export interface DriverHOSAuditModalProps {
   event: DriverPerformanceEvent;
@@ -35,7 +36,7 @@ export function DriverHOSAuditModal({
   const [auditorName, setAuditorName] = useState("");
   const [auditorRole, setAuditorRole] = useState("");
   const [sourceOfFinding, setSourceOfFinding] = useState<HOSReview["sourceOfFinding"] | "">(
-    hos?.source ? (hos.source as HOSReview["sourceOfFinding"]) : ""
+    hos?.source === "ELD Live Telematics" ? "ELD Telematics Analysis" : hos?.source === "Roadside Inspection" ? "Roadside Inspection Audit" : hos?.source === "Internal Audit" ? "Internal Periodic Audit" : ""
   );
   const [initialReviewFinding, setInitialReviewFinding] = useState<HOSReview["initialReviewFinding"] | "">(
     hos?.reviewStatus === "Confirmed"
@@ -48,6 +49,9 @@ export function DriverHOSAuditModal({
   );
   const [ruleJurisdiction, setRuleJurisdiction] = useState(
     hos?.ruleJurisdiction || ""
+  );
+  const [ruleProfileId, setRuleProfileId] = useState(
+    hos?.ruleProfileId || ""
   );
   const [dutyRuleViolated, setDutyRuleViolated] = useState(
     hos?.violationType || ""
@@ -108,6 +112,9 @@ export function DriverHOSAuditModal({
       companyId: event.companyId,
       driverMasterId: event.driverMasterId,
       performanceEventId: event.id,
+      violationType: event.hosDetails?.violationType,
+      legacyViolationType: event.hosDetails?.legacyViolationType,
+      violationMappingState: "CANONICAL",
       logDate: event.hosDetails?.logDate || event.eventDate || new Date().toISOString().slice(0, 10),
       reviewStatus: derivedStatus,
       reviewDate: new Date().toISOString().slice(0, 10),
@@ -116,6 +123,7 @@ export function DriverHOSAuditModal({
       sourceOfFinding: sourceOfFinding as HOSReview["sourceOfFinding"],
       initialReviewFinding: initialReviewFinding as HOSReview["initialReviewFinding"],
       ruleJurisdiction: ruleJurisdiction || undefined,
+      ruleProfileId: ruleProfileId || undefined,
       dutyRuleViolated: dutyRuleViolated || undefined,
       minutesExceeded: isNaN(Number(minExceededNum)) ? undefined : minExceededNum,
       evidenceSummary: evidenceSummary.trim(),
@@ -215,11 +223,7 @@ export function DriverHOSAuditModal({
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
               >
                 <option value="">-- Select Source --</option>
-                <option value="ELD Telematics Analysis">ELD Telematics Analysis</option>
-                <option value="Roadside Inspection Report">Roadside Inspection Report</option>
-                <option value="Safety Audit">Safety Audit</option>
-                <option value="Driver Manual Log Review">Driver Manual Log Review</option>
-                <option value="Carrier Self-Audit">Carrier Self-Audit</option>
+                {HOS_REVIEW_SOURCES.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </div>
 
@@ -234,12 +238,7 @@ export function DriverHOSAuditModal({
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 font-bold mt-1"
               >
                 <option value="">-- Select Audit Finding --</option>
-                <option value="Potential Violation">Potential Violation (Under Review)</option>
-                <option value="Confirmed Violation">Confirmed Statutory Violation</option>
-                <option value="False Positive">False Positive (Sensor / Telematics Error)</option>
-                <option value="Exempt Operation">Exempt Operation (160km / Ag / Adverse)</option>
-                <option value="Unassigned Driving Attributed">Unassigned Driving Attributed</option>
-                <option value="Data Diagnostic / Technical Anomaly">Data Diagnostic / Technical Anomaly</option>
+                {HOS_INITIAL_FINDINGS.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </div>
 
@@ -254,11 +253,24 @@ export function DriverHOSAuditModal({
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
               >
                 <option value="">-- Select Jurisdiction (Optional) --</option>
-                <option value="Canada (Federal 70h/7d)">Canada (Federal 70h/7d Cycle 1)</option>
-                <option value="Canada (Federal 120h/14d)">Canada (Federal 120h/14d Cycle 2)</option>
-                <option value="US (FMCSA 70h/8d)">US (FMCSA 70h/8d Property)</option>
-                <option value="US (FMCSA 60h/7d)">US (FMCSA 60h/7d Property)</option>
-                <option value="Intrastate / Provincial Specific">Intrastate / Provincial Specific</option>
+                {HOS_RULE_JURISDICTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+
+            {/* Rule Profile */}
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Applicable HOS Rule Profile
+              </label>
+              <select
+                value={ruleProfileId}
+                onChange={(e) => setRuleProfileId(e.target.value)}
+                className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
+              >
+                <option value="">-- Select Rule Profile (Optional) --</option>
+                {HOS_RULE_PROFILES.filter((profile) => !ruleJurisdiction || profile.value.startsWith(ruleJurisdiction + "_") || profile.value === ruleJurisdiction).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
 
@@ -267,13 +279,14 @@ export function DriverHOSAuditModal({
               <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Duty Rule or Limitation Evaluated
               </label>
-              <input
-                type="text"
+              <select
                 value={dutyRuleViolated}
                 onChange={(e) => setDutyRuleViolated(e.target.value)}
-                placeholder="e.g. 14-Hour Shift Window, 11-Hour Drive Limit"
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
-              />
+              >
+                <option value="">-- Select Condition (Optional) --</option>
+                {HOS_VIOLATION_TYPES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
             </div>
 
             {/* Minutes Exceeded */}
@@ -302,12 +315,7 @@ export function DriverHOSAuditModal({
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 font-bold mt-1"
               >
                 <option value="">-- Select Carrier Action --</option>
-                <option value="Under Investigation">Under Investigation</option>
-                <option value="Coaching Assigned">Coaching Assigned</option>
-                <option value="Log Corrected / Annotated">Log Corrected / Annotated</option>
-                <option value="Disciplinary Warning Issued">Disciplinary Warning Issued</option>
-                <option value="No Action Required (Exonerated)">No Action Required (Exonerated)</option>
-                <option value="Re-training Mandated">Re-training Mandated</option>
+                {HOS_CARRIER_RESOLUTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </div>
 

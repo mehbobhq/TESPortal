@@ -75,19 +75,27 @@ export type LicenceVerificationState =
 
 export interface LicenceRecord extends EffectiveRecord {
   licenceNumber: string; // Normalized for comparison
+  licenceNumberNormalized?: string;
   licenceNumberRaw?: string; // Exact documentary value
   jurisdiction: string; // e.g. "ON", "AB", "IL", "TX"
   country: "Canada" | "United States";
+  documentType?: string;
   class?: string; // e.g. "Class A / AZ", "Class 1", "CDL-A"
   endorsements?: string[]; // e.g. ["Air Brake (Z)", "Hazmat (H)", "Tanker (N)", "Doubles/Triples (T)", "Other / Unlisted"]
   endorsementNotes?: string;
   restrictions?: string[]; // e.g. ["Corrective Lenses (01)", "Automatic Transmission Only (E)", "Other / Unlisted"]
   restrictionNotes?: string;
   airBrakeQualified?: boolean;
+  /** Legacy compatibility alias; canonical boolean is airBrakeQualified. */
+  airBrake?: string;
   issueDate?: string;
   expiryDate?: string;
   verificationState?: LicenceVerificationState;
   evidenceIds?: string[];
+  sourceEvidenceId?: string;
+  sourceValue?: string;
+  reviewedValue?: string;
+  reviewReason?: string;
   notes?: string;
 }
 
@@ -139,6 +147,8 @@ export interface IdentitySourceReview {
 // --- DRIVER MASTER (Global Permanent Human Identity in TES) ---
 export interface DriverMaster {
   id: string; // Canonical: DRV-000001
+  /** Stable canonical Driver Master identifier. During compatibility migration this equals the legacy `id`. */
+  driverMasterId: string;
   createdAt: string;
   updatedAt: string;
   identity: {
@@ -171,7 +181,8 @@ export interface DriverMaster {
 // --- COMPANY DRIVER RELATIONSHIP (Company Scoped) ---
 export interface CompanyDriverRelationship {
   id: string; // Contextual Record ID, e.g. PW-DRV-000101
-  companyDriverRecordId?: string; // Canonical alias for relationship ID
+  /** Stable company-contextual identifier; legacy records are migrated to the existing relationship `id`. */
+  companyDriverRecordId: string; // Canonical alias for relationship ID
   companyId: string;
   driverMasterId: string;
   recordType: RecordType;
@@ -260,6 +271,7 @@ export interface ApplicationClaimedCitation {
 export interface DriverApplicationRecord {
   id: string; // e.g. APP-000102
   companyId: string;
+  companyDriverRelationshipId?: string;
   driverMasterId: string;
   applicationType: "Full Driver Employment" | "Owner-Operator Lease" | "Temporary / Seasonal";
   status: DriverApplicationStatus;
@@ -335,6 +347,7 @@ export interface HiringPackageItem {
 export interface HiringPackageRecord {
   id: string; // e.g. HPK-000084
   companyId: string;
+  companyDriverRelationshipId?: string;
   driverMasterId: string;
   packageVersion: string;
   issuedDate: string;
@@ -364,11 +377,18 @@ export interface DriverTaxDocRecord {
 
 // --- SCREENING & MEDICAL (Category-Specific First-Class Records) ---
 export type ScreeningCategory =
+  | "Employment History"
   | "Driver Abstract / MVR Review"
+  | "Collision History"
   | "Previous Employer Verification"
   | "FMCSA Clearinghouse Query"
+  | "Annual Clearinghouse Query"
   | "Pre-Employment Screening Program (PSP)"
+  | "Annual Roadside Test"
   | "Criminal Background Check"
+  | "Credit History"
+  | "Education History"
+  | "Periodic Review"
   | "Road Test Evaluation"
   | "Medical Card / DOT Physical"
   | "Pre-Employment Drug Test"
@@ -426,15 +446,25 @@ export interface RoadTestEvaluationDetails {
   authorizationRecorded?: boolean;
 }
 
+export type MedicalQualificationStatus =
+  | "QUALIFIED_2_YEARS"
+  | "QUALIFIED_1_YEAR"
+  | "QUALIFIED_3_6_MONTHS_TEMPORARY"
+  | "DISQUALIFIED"
+  | "PENDING_VARIANCE";
+export type ScreeningVerificationState = "UNVERIFIED" | "DOCUMENT_VERIFIED" | "NATIONAL_REGISTRY_CONFIRMED";
+
 export interface MedicalPhysicalDetails {
   examinationDate?: string;
   certificateIssueDate?: string;
   expiryDate?: string;
   examinerName?: string;
   nationalRegistryNumber?: string;
-  medicalQualificationStatus?: "Qualified (2 Years)" | "Qualified (1 Year)" | "Qualified (3-6 Months Temporary)" | "Disqualified" | "Pending Variance" | string;
+  medicalQualificationStatus?: MedicalQualificationStatus;
+  legacyMedicalQualificationStatus?: string;
   varianceRestrictions?: string[];
-  verificationState?: "Unverified" | "Document Verified" | "National Registry Confirmed" | string;
+  verificationState?: ScreeningVerificationState;
+  legacyVerificationState?: string;
 }
 
 export interface DrugAlcoholTestDetails {
@@ -474,56 +504,151 @@ export interface ScreeningRecord {
   updatedAt: string;
 }
 
-// --- TRAINING (Structured Historical Ledger) ---
-export type TrainingStatus =
+// --- TRAINING (Canonical Course / Requirement / Record model) ---
+export type TrainingApplicability = "Applicable" | "Not Applicable" | "Pending Determination";
+
+export type TrainingRequirementState =
   | "Required"
-  | "Assigned"
-  | "Scheduled"
-  | "In Progress"
-  | "Completed"
-  | "Expired"
-  | "Waived"
-  | "Exempted"
-  | "Cancelled"
-  | "Not Applicable";
+  | "Not Required"
+  | "Pending Determination";
 
-export type TrainingType =
-  | "Initial Onboarding"
-  | "Annual Refresher"
-  | "Post-Incident Corrective"
-  | "Regulatory Mandated"
-  | "Regulatory Mandate"
-  | "Certification"
-  | "Orientation"
-  | "Safety Seminar"
-  | "Company Policy"
-  | "Corrective Action Re-training"
-  | "Specialized Cargo"
-  | "Winter / Grade Operations"
-  | string;
+export type TrainingAssignmentState = "Assigned" | "Not Assigned" | "Not Applicable";
+export type TrainingProgressState = "Not Started" | "Scheduled" | "In Progress" | "Completed" | "Cancelled" | "Waived" | "Exempted";
+export type TrainingCurrencyState = "Current" | "Expired" | "No Expiry" | "Not Established" | "Not Applicable";
+export type TrainingVerificationState = "Unverified" | "Pending" | "Verified" | "Failed" | "Unable to Verify";
 
-export interface TrainingRecord {
-  id: string; // e.g. TRN-000047
+/** Derived/display lifecycle retained for compatibility; independent semantic dimensions are authoritative. */
+export type TrainingStatus =
+  | "Required" | "Assigned" | "Scheduled" | "In Progress" | "Completed" | "Expired"
+  | "Waived" | "Exempted" | "Cancelled" | "Not Applicable";
+
+export type CanonicalTrainingType =
+  | "INITIAL_ONBOARDING"
+  | "ANNUAL_REFRESHER"
+  | "POST_INCIDENT_CORRECTIVE"
+  | "REGULATORY_MANDATED"
+  | "CERTIFICATION"
+  | "ORIENTATION"
+  | "SAFETY_SEMINAR"
+  | "COMPANY_POLICY"
+  | "CORRECTIVE_ACTION_RETRAINING"
+  | "SPECIALIZED_CARGO"
+  | "WINTER_GRADE_OPERATIONS"
+  | "INITIAL"
+  | "REFRESHER"
+  | "EXTERNAL_HISTORICAL"
+  | "REMEDIAL"
+  | "RETURN_TO_WORK"
+  | "REQUALIFICATION"
+  | "OTHER";
+
+export type TrainingMappingState = "CANONICAL" | "REVIEW_REQUIRED" | "UNMAPPED";
+export type TrainingType = CanonicalTrainingType;
+
+export interface TrainingCourseDefinition {
+  courseId: string;
+  courseCode: string;
+  categoryId: string;
+  title: string;
+  description?: string;
+  jurisdictionApplicability?: string[];
+  operatingRegionApplicability?: OperatingRegion[];
+  vehicleEquipmentApplicability?: string[];
+  cargoApplicability?: string[];
+  defaultValidityPeriodMonths?: number;
+  regulatorySemantics?: string;
+  companyDefined?: boolean;
+  version: string;
+  state: "ACTIVE" | "HISTORICAL";
+}
+
+export interface TrainingRequirement {
+  requirementId: string;
   companyId: string;
   driverMasterId: string;
+  companyDriverRelationshipId?: string;
+  courseId: string;
+  applicability: TrainingApplicability;
+  requiredState: TrainingRequirementState;
+  assignmentState: TrainingAssignmentState;
+  progressState?: TrainingProgressState;
+  currencyState?: TrainingCurrencyState;
+  verificationState?: TrainingVerificationState;
+  requirementSource: "Regulatory" | "Company Policy" | "Operating Context" | "Company Defined" | "Other";
+  requirementReason?: string;
+  /** Legacy alias retained for hydration; assignmentState is canonical. */
+  assignedState?: TrainingAssignmentState;
+  assignedDate?: string;
+  dueDate?: string;
+  /** Derived/display state only; never the source of truth for the dimensions above. */
+  currentRequirementState?: TrainingRequirementState;
+  notApplicableReason?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  operatingContext?: {
+    operatingRegion?: OperatingRegion;
+    jurisdictions?: string[];
+    equipmentTypes?: string[];
+    cargoTypes?: string[];
+  };
+  provenance: ProvenanceMetadata;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TrainingRecord {
+  id: string;
+  companyId: string;
+  driverMasterId: string;
+  companyDriverRelationshipId?: string;
+  courseId?: string;
+  courseVersion?: string;
   courseTitle: string;
+  /** Original legacy title is retained when a deterministic canonical mapping was not possible. */
+  legacyCourseTitle?: string;
+  courseMappingState?: TrainingMappingState;
   trainingType: TrainingType;
-  provider: string; // e.g. "Internal Safety Team", "Pro-Tread", "JJ Keller"
+  legacyTrainingType?: string;
+  trainingTypeMappingState?: TrainingMappingState;
+  provider: string;
   assignedDate?: string;
   startDate?: string;
   completionDate?: string;
   expiryDate?: string;
   status: TrainingStatus;
-  scoreOrResult?: string; // e.g. "100%", "Pass"
-  certificateNumber?: string; // Optional - source-derived only, NEVER fabricated
+  applicability?: TrainingApplicability;
+  requirementState?: TrainingRequirementState;
+  assignmentState?: TrainingAssignmentState;
+  progressState?: TrainingProgressState;
+  currencyState?: TrainingCurrencyState;
+  verificationState?: TrainingVerificationState;
+  scoreOrResult?: string;
+  certificateNumber?: string;
   waiveReason?: string;
   waivedBy?: string;
   waivedDate?: string;
   evidenceIds: string[];
+  remedialOrRoutine?: "Remedial" | "Routine" | "Unknown";
+  previousTrainingRecordId?: string;
+  relatedEventIds?: string[];
+  relatedHosRecordIds?: string[];
+  relatedCitationIds?: string[];
+  relatedCompanyActionIds?: string[];
+  provenance?: ProvenanceMetadata;
   notes?: string;
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
+  // Legacy aliases retained for hydration only.
+  recordId?: string;
+  recordStatus?: "Assigned" | "Scheduled" | "In Progress" | "Completed" | "Cancelled" | "Exempted";
+  assessmentResult?: "Passed" | "Failed" | "Incomplete" | "Pending" | "Not Required";
+  dueDate?: string;
+  issueDate?: string;
+  nextDueDate?: string;
+  deliveryMethod?: string;
+  duration?: string;
 }
 
 // --- PERFORMANCE & EVENTS SUBSYSTEM ---
@@ -544,7 +669,16 @@ export type EventType =
   | "Disciplinary Action"
   | "Corrective Action Plan"
   | "Injury"
-  | "Security Incident";
+  | "Security Incident"
+  | "Warning"
+  | "Violation"
+  | "Citation-linked Event"
+  | "Equipment-related Event"
+  | "Safety Observation"
+  | "Customer Compliment"
+  | "Telematics / Camera Observation"
+  | "Security Event"
+  | "Emergency Event";
 
 export type EventSeverity = "Low" | "Moderate" | "High" | "Critical";
 
@@ -556,7 +690,7 @@ export type EventStatus =
   | "Closed";
 
 export interface LinkedRecordRef {
-  entityType: "Vehicle" | "Trailer" | "Citation" | "Inspection" | "Repair" | "Training" | "Screening" | "Document" | "Event" | "Unlinked Operational Reference";
+  entityType: "Vehicle" | "Trailer" | "Trip" | "Load" | "Customer" | "Customer Site" | "Citation" | "Inspection" | "Repair" | "Training" | "Screening" | "Document" | "Event" | "HOS" | "Maintenance" | "Company Action" | "Evidence" | "Unlinked Operational Reference";
   id: string;
   label: string;
   secondaryText?: string;
@@ -594,7 +728,20 @@ export interface RootCauseFactor {
 export interface PerformanceEventRecord {
   id: string; // e.g. EVT-PW-000419
   companyId: string;
-  driverMasterId: string;
+  driverMasterId?: string;
+  companyDriverRelationshipId?: string;
+  vehicleId?: string;
+  trailerId?: string;
+  tripId?: string;
+  loadId?: string;
+  customerId?: string;
+  customerSiteId?: string;
+  citationIds?: string[];
+  inspectionId?: string;
+  hosRecordIds?: string[];
+  trainingRecordIds?: string[];
+  maintenanceRecordIds?: string[];
+  companyActionIds?: string[];
   eventType: EventType;
   eventDate: string;
   eventTime?: string;
@@ -656,8 +803,11 @@ export interface PerformanceEventRecord {
 
   // HOS details (Structured)
   hosDetails?: {
-    ruleJurisdiction: "Canada (Federal 70h/7d)" | "US (FMCSA 70h/8d)" | "Texas Intrastate" | "California Intrastate";
-    violationType: "11-Hour Driving Limit" | "14-Hour On-Duty Window" | "10-Hour Off-Duty Break" | "30-Minute Rest Break" | "70-Hour / 8-Day Cycle" | "False Log / Tampering" | "Form & Manner" | "Other";
+    ruleJurisdiction: "CA_FEDERAL" | "US_FMCSA" | "US_TEXAS_INTRASTATE" | "US_CALIFORNIA_INTRASTATE" | "Canada (Federal 70h/7d)" | "US (FMCSA 70h/8d)" | "Texas Intrastate" | "California Intrastate";
+    ruleProfileId?: string;
+    violationType: HOSViolationType;
+    semanticConditionClass?: string;
+    legacyViolationType?: string;
     logDate: string;
     source: "ELD Live Telematics" | "Roadside Inspection" | "Internal Audit";
     hoursExceeded?: number;
@@ -742,6 +892,27 @@ export interface PerformanceEventRecord {
   linkedRecords: LinkedRecordRef[];
   evidenceIds: string[];
   chronology: EventChronologyItem[];
+  provenance?: ProvenanceMetadata;
+  companyDeterminationId?: string;
+  companyActionId?: string;
+  outcome?: {
+    state: "Open" | "Resolved" | "Closed" | "Unknown";
+    description?: string;
+    recordedAt?: string;
+    recordedBy?: string;
+  };
+  dispute?: {
+    state: "None" | "Open" | "Resolved";
+    reason?: string;
+    raisedAt?: string;
+    resolvedAt?: string;
+    resolvedBy?: string;
+  };
+  closure?: {
+    closedAt?: string;
+    closedBy?: string;
+    reason?: string;
+  };
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -762,10 +933,50 @@ export type DisciplinaryActionDetails = NonNullable<PerformanceEventRecord["disc
 export type CorrectiveActionPlanDetails = NonNullable<PerformanceEventRecord["capDetails"]>;
 export type CommendationDetails = NonNullable<PerformanceEventRecord["commendationDetails"]>;
 
+// --- CANONICAL SEMANTIC STATE / PROVENANCE ---
+export type SemanticState =
+  | "Known"
+  | "Unknown"
+  | "Not Provided"
+  | "Not Reviewed"
+  | "Unable to Determine"
+  | "Not Applicable"
+  | "Pending Verification"
+  | "Disputed";
+
+export type VerificationState = "Unverified" | "Pending" | "Verified" | "Failed" | "Unable to Verify";
+
+export interface ProvenanceMetadata {
+  sourceType: "SOURCE_FACT" | "COMPANY_DETERMINATION" | "SYSTEM_DERIVED" | "TES_DERIVED_METRIC" | "LEGACY_MIGRATION";
+  source?: string;
+  sourceRecordId?: string;
+  capturedAt?: string;
+  capturedBy?: string;
+  migratedFrom?: string;
+}
+
+export type DriverEvidenceLinkedRecordType =
+  | "Driver Application"
+  | "Hiring Package"
+  | "Tax Document"
+  | "Policy Acknowledgement"
+  | "Licence"
+  | "Qualification"
+  | "Screening"
+  | "Medical"
+  | "Drug Alcohol Record"
+  | "Training"
+  | "HOS"
+  | "Event"
+  | "Citation"
+  | "Company Action";
+
 // --- HOS CORE DOMAIN STRUCTURE (Phase 23 & 24) ---
 export interface HOSDutyEvent {
   id: string;
+  companyId?: string;
   driverMasterId: string;
+  sourceRecordId?: string;
   vehicleId?: string;
   dutyStatus: "Off-Duty" | "Sleeper Berth" | "Driving" | "On-Duty (Not Driving)";
   startTime: string;
@@ -780,7 +991,9 @@ export interface HOSDutyEvent {
 
 export interface HOSRuleProfile {
   id: string;
+  version?: string;
   name: string;
+  source?: string;
   country: "Canada" | "United States";
   jurisdiction: string;
   cycleRules: string; // e.g. "70h / 7d", "70h / 8d", "60h / 7d"
@@ -788,12 +1001,41 @@ export interface HOSRuleProfile {
   onDutyWindowHours: number;
   offDutyConsecutiveHours: number;
   restBreakRule?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
 }
+
+export type HOSViolationType =
+  | "11_HOUR_DRIVING_LIMIT"
+  | "14_HOUR_ON_DUTY_WINDOW"
+  | "10_HOUR_OFF_DUTY_BREAK"
+  | "30_MINUTE_REST_BREAK"
+  | "70_HOUR_8_DAY_CYCLE"
+  | "FALSE_LOG_TAMPERING"
+  | "FORM_AND_MANNER"
+  | "MISSING_LOG"
+  | "UNCERTIFIED_LOG"
+  | "SLEEPER_BERTH_SPLIT_REST"
+  | "PERSONAL_CONVEYANCE"
+  | "YARD_MOVE"
+  | "UNASSIGNED_DRIVING"
+  | "ELD_DIAGNOSTIC"
+  | "ELD_MALFUNCTION"
+  | "ELD_DATA_SYNC_ISSUE"
+  | "OTHER"
+  | "UNABLE_TO_CLASSIFY_REVIEW_REQUIRED";
 
 export interface HOSPotentialViolation {
   id: string;
+  companyId?: string;
   driverMasterId: string;
-  violationType: string;
+  sourceRecordId?: string;
+  dutyEventIds?: string[];
+  calculationVersion?: string;
+  calculatedAt?: string;
+  violationType: HOSViolationType;
+  legacyViolationType?: string;
+  violationMappingState?: TrainingMappingState;
   detectedAt: string;
   logDate: string;
   ruleProfileId: string;
@@ -801,25 +1043,33 @@ export interface HOSPotentialViolation {
   reviewedBy?: string;
   reviewDate?: string;
   reviewNotes?: string;
+  sourceType?: "SOURCE_FACT" | "SYSTEM_DERIVED";
 }
 
 export interface HOSReview {
   id: string;
+  sourceRecordId?: string;
+  companyDriverRelationshipId?: string;
   companyId?: string;
   driverMasterId: string;
   violationId?: string;
-  violationType?: string;
+  violationType?: HOSViolationType;
+  legacyViolationType?: string;
+  violationMappingState?: TrainingMappingState;
   performanceEventId?: string;
   logDate: string;
   reviewStatus: "Potential" | "Under Review" | "Confirmed" | "Not a Violation" | "Unable to Determine" | "Disputed" | "Resolved";
   finding?: string;
-  initialReviewFinding?: "Potential Violation" | "Confirmed Violation" | "False Positive" | "Exemption Applies" | "Data Diagnostic" | "Other" | string;
+  initialReviewFinding?: "Potential Violation" | "Confirmed Violation" | "False Positive" | "Exemption Applies" | "Data Diagnostic" | "Other";
+  legacyInitialReviewFinding?: string;
   sourceOfFinding?: "ELD Telematics Analysis" | "Roadside Inspection Audit" | "Driver Dispute" | "Internal Periodic Audit" | "Safety Committee";
   ruleJurisdiction?: string;
+  ruleProfileId?: string;
   dutyRuleViolated?: string;
   minutesExceeded?: number | string;
   evidenceSummary?: string;
-  carrierResolution?: "Pending Driver Clarification" | "Under Investigation" | "Violation Confirmed — Coaching Required" | "Violation Confirmed — Formal Action" | "Resolved — Exemption Verified" | "Resolved — Diagnostic Log Adjusted" | "Disputed with Regulatory Body" | string;
+  carrierResolution?: "Pending Driver Clarification" | "Under Investigation" | "Violation Confirmed — Coaching Required" | "Violation Confirmed — Formal Action" | "Resolved — Exemption Verified" | "Resolved — Diagnostic Log Adjusted" | "Disputed with Regulatory Body";
+  legacyCarrierResolution?: string;
   correctiveActionReferral?: string;
   isFinalized?: boolean;
   finalizedAt?: string;
@@ -828,6 +1078,8 @@ export interface HOSReview {
   reviewedBy?: string;
   reviewDate?: string;
   notes?: string;
+  companyDeterminationId?: string;
+  companyActionId?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -838,11 +1090,15 @@ export interface CompanyDetermination {
   companyId: string;
   driverMasterId: string;
   companyDriverRecordId?: string;
-  relatedRecordType?: "PerformanceEvent" | "Collision" | "Inspection" | "HOSViolation" | "CustomerComplaint" | "Citation" | "Investigation" | string;
+  relatedRecordType?: "PerformanceEvent" | "Collision" | "Inspection" | "HOSViolation" | "CustomerComplaint" | "Citation" | "Investigation";
+  legacyRelatedRecordType?: string;
   relatedRecordId?: string;
-  determinationType?: "Collision Preventability" | "Complaint Substantiation" | "Investigation Finding" | "Root Cause Analysis" | "Corrective Action Outcome" | string;
-  determinationValue?: "Preventable" | "Non-Preventable" | "Substantiated" | "Not Substantiated" | "Unable to Determine" | string;
-  preventabilityFinding?: "Preventable" | "Non-Preventable" | "Undetermined" | string;
+  determinationType?: "COLLISION_PREVENTABILITY" | "COMPLAINT_SUBSTANTIATION" | "INVESTIGATION_FINDING" | "ROOT_CAUSE_ANALYSIS" | "CORRECTIVE_ACTION_OUTCOME";
+  legacyDeterminationType?: string;
+  determinationValue?: "PREVENTABLE" | "NON_PREVENTABLE" | "SUBSTANTIATED" | "NOT_SUBSTANTIATED" | "UNABLE_TO_DETERMINE";
+  legacyDeterminationValue?: string;
+  preventabilityFinding?: "Preventable" | "Non-Preventable" | "Undetermined";
+  legacyPreventabilityFinding?: string;
   rationale?: string;
   safetyCommitteeReview?: boolean;
   determinedBy: string;
@@ -860,7 +1116,8 @@ export interface CompanyActionRecord {
   companyId: string;
   driverMasterId: string;
   companyDriverRecordId?: string;
-  actionType: "Coaching" | "Coaching Session" | "Training Assignment" | "Verbal Warning" | "Written Warning" | "Final Warning" | "Suspension" | "Policy Review" | "Monitoring / Telematics Watch" | "Dispatch Change" | "Equipment Inspection / Repair" | "Corrective Action Plan" | "Disciplinary Action" | "Safety Warning" | "Retraining Mandate" | "Performance Improvement Plan" | "Other" | string;
+  actionType: "COACHING" | "TRAINING_ASSIGNMENT" | "VERBAL_WARNING" | "WRITTEN_WARNING" | "FINAL_WARNING" | "SUSPENSION" | "POLICY_REVIEW" | "MONITORING_TELEMATICS" | "DISPATCH_CHANGE" | "EQUIPMENT_INSPECTION_REPAIR" | "CORRECTIVE_ACTION_PLAN" | "DISCIPLINARY_ACTION" | "SAFETY_WARNING" | "RETRAINING_MANDATE" | "PERFORMANCE_IMPROVEMENT_PLAN" | "OTHER";
+  legacyActionType?: string;
   title?: string;
   issueDate?: string;
   decidedBy: string;
@@ -877,7 +1134,8 @@ export interface CompanyActionRecord {
   facilitatorRole?: string;
   targetCompletionDate?: string;
   actualCompletionDate?: string;
-  formalSignOffStatus?: "Draft" | "Pending Driver Signature" | "Signed / Executed" | "Refused to Sign" | "Waived" | string;
+  formalSignOffStatus?: "Draft" | "Pending Driver Signature" | "Signed / Executed" | "Refused to Sign" | "Waived";
+  legacyFormalSignOffStatus?: string;
   actionItems?: string[];
   linkedEventIds?: string[];
   linkedRecordId?: string;
@@ -996,6 +1254,9 @@ export interface ELDEditRequest {
   requestedAt: string;
   driverApprovalStatus: "Pending" | "Approved" | "Rejected";
   driverResponseDate?: string;
+  previousEditId?: string;
+  editSequence?: number;
+  source?: "ELD" | "Carrier" | "Driver" | "Other";
 }
 
 export interface UnassignedDrivingSegment {
@@ -1029,45 +1290,172 @@ export interface ELDDiagnosticRecord {
 
 // --- DRIVER EVIDENCE / ATTACHMENTS ---
 export interface DriverEvidenceItem {
-  id: string; // e.g. DOC-000291
+  id: string;
   companyId: string;
   driverMasterId: string;
+  linkedRecordType?: DriverEvidenceLinkedRecordType;
+  linkedRecordId?: string;
+  recordId?: string;
+  category?: string;
+  mimeType?: string;
   fileName: string;
   fileType: string;
-  documentType: string; // "Driver Licence", "Medical Certificate", "MVR Abstract", "Police Report", "Inspection Report", "Training Certificate", "Application Document"
+  documentType: string;
   uploadedAt: string;
   documentDate?: string;
-  source: "camera" | "upload" | "manual";
+  source: "camera" | "upload" | "manual" | "Upload" | "Camera" | "Generated" | "External";
   dataUrl?: string;
-  verificationState?: "unverified" | "verified" | "pending_review" | "superseded";
+  verificationState?: "unverified" | "verified" | "pending_review" | "superseded" | "Not Reviewed" | "Under Review" | "Source Matched" | "Difference Present" | "Externally Verified";
   ocrConfidence?: number;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  ocrProvider?: string;
+  evidenceVersion?: number;
+  supersedesEvidenceId?: string;
+  isArchived?: boolean;
+}
+
+// --- CANONICAL HOS CONTRACTS ---
+export interface HOSRawRecord {
+  id: string;
+  companyId: string;
+  driverMasterId: string;
+  source: "ELD" | "Roadside Inspection" | "Driver Submission" | "Internal Audit" | "Other";
+  sourceRecordId?: string;
+  capturedAt: string;
+  payloadReference?: string;
+  notes?: string;
+}
+
+export interface TelematicsObservation {
+  id: string;
+  companyId: string;
+  driverMasterId?: string;
+  vehicleId?: string;
+  observedAt: string;
+  observationType: string;
+  source: string;
+  sourceRecordId?: string;
+  payloadSummary?: string;
+  authoritativeLegalHOS: false;
+}
+
+// --- CANONICAL EVENT / CITATION RELATIONSHIPS ---
+export type CanonicalEventCategory =
+  | "Collision / Incident"
+  | "Roadside Inspection"
+  | "Violation"
+  | "Warning"
+  | "Citation-linked Event"
+  | "HOS-related Event"
+  | "Equipment-related Event"
+  | "Safety Observation"
+  | "Customer Complaint"
+  | "Customer Compliment"
+  | "Commendation"
+  | "Telematics / Camera Observation"
+  | "Security Event"
+  | "Emergency Event";
+
+export interface CitationRecord {
+  id: string;
+  companyId: string;
+  citationType: string;
+  reportNumber: string;
+  issuingAgency: string;
+  jurisdictionCode: string;
+  jurisdictionLabel: string;
+  country: string;
+  eventDate: string;
+  courtDueDate?: string;
+  resolvedDate?: string;
+  inspectionLevel: string;
+  officerName?: string;
+  officerBadge?: string;
+  location?: string;
+  driverName?: string;
+  driverDl?: string;
+  driverMasterId?: string;
+  companyDriverRelationshipId?: string;
+  driverLinkReviewState?: "NOT_REVIEWED" | "LINKED" | "REVIEW_REQUIRED";
+  driverLinkReviewReason?: string;
+  vehicleId?: string;
+  tripId?: string;
+  inspectionId?: string;
+  eventId?: string;
+  unitNumber?: string;
+  vin?: string;
+  plate?: string;
+  outOfService: boolean;
+  violations: Array<{ id: string; code: string; description: string; outOfService: boolean; basicCategory: string; points?: number; }>;
+  fineAmount?: string;
+  paidAmount?: string;
+  adjudicationStatus: string;
+  notes?: string;
+  evidenceIds: string[];
+  source: "OCR" | "Manual" | "Imported";
+  sourceRecord?: string;
+  createdAt: string;
+  updatedAt: string;
+  isArchived?: boolean;
+}
+
+export interface CitationStore {
+  version: 2;
+  companyId: string;
+  citations: CitationRecord[];
+  evidence: Array<{ id: string; recordId?: string; fileName: string; mimeType: string; dataUrl: string; documentDate: string; uploadedAt: string; source: "camera" | "device" | "upload" | "manual"; ocrConfidence?: number; }>;
+}
+
+export interface CompanyEventLink {
+  id: string;
+  companyId: string;
+  eventId: string;
+  driverMasterId?: string;
+  companyDriverRelationshipId?: string;
+  source: "CANONICAL_EVENT" | "LEGACY_DRIVER_EVENT_LINK";
+  legacyRecordId?: string;
 }
 
 // --- STORE ENVELOPE FOR COMPANY-SCOPED DRIVER DATA ---
 export interface CompanyDriverStore {
-  version: 1;
+  version: 2;
   companyId: string;
   relationships: CompanyDriverRelationship[];
-  applications?: DriverApplicationRecord[];
-  hiringPackages?: HiringPackageRecord[];
-  taxDocs?: DriverTaxDocRecord[];
-  screenings?: ScreeningRecord[];
-  trainingRecords?: TrainingRecord[];
+  applications: DriverApplicationRecord[];
+  hiringPackages: HiringPackageRecord[];
+  taxDocs: DriverTaxDocRecord[];
+  screenings: ScreeningRecord[];
+  trainingRecords: TrainingRecord[];
+  trainingRequirements: TrainingRequirement[];
+  events: PerformanceEventRecord[];
+  evidence: DriverEvidenceItem[];
+  hosRawRecords: HOSRawRecord[];
+  telematicsObservations?: TelematicsObservation[];
+  hosDutyEvents: HOSDutyEvent[];
+  hosRuleProfiles: HOSRuleProfile[];
+  hosPotentialViolations: HOSPotentialViolation[];
+  hosReviews: HOSReview[];
+  eldEditRequests: ELDEditRequest[];
+  unassignedDriving: UnassignedDrivingSegment[];
+  eldDiagnostics: ELDDiagnosticRecord[];
+  companyDeterminations: CompanyDetermination[];
+  companyActions: CompanyActionRecord[];
+  // Legacy collections retained read-only for compatibility until their consumers migrate.
+  taxForms?: unknown[];
+  customPolicies?: unknown[];
+  qualifications?: unknown[];
+  experience?: unknown[];
+  medicalRecords?: unknown[];
+  drugAlcoholRecords?: unknown[];
+  hosSummaries?: unknown[];
+  hosViolations?: unknown[];
+  eventLinks?: unknown[];
   performanceEvents?: PerformanceEventRecord[];
-  evidence?: DriverEvidenceItem[];
-  hosDutyEvents?: HOSDutyEvent[];
-  hosRuleProfiles?: HOSRuleProfile[];
-  hosPotentialViolations?: HOSPotentialViolation[];
-  hosReviews?: HOSReview[];
-  eldEditRequests?: ELDEditRequest[];
-  unassignedDriving?: UnassignedDrivingSegment[];
-  eldDiagnostics?: ELDDiagnosticRecord[];
-  companyDeterminations?: CompanyDetermination[];
-  companyActions?: CompanyActionRecord[];
 }
 
 export interface DriverMasterStore {
-  version: 1;
+  version: 2;
   drivers: DriverMaster[];
 }
 

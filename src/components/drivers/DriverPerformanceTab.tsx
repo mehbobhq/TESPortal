@@ -64,8 +64,10 @@ import {
   calculateFleetRankings,
 } from "../../lib/driver-performance-model";
 import { DriverIntelligenceView } from "./DriverIntelligenceView";
+import { JURISDICTIONS } from "../../lib/jurisdictions";
 import { DriverHOSAuditModal } from "./DriverHOSAuditModal";
 import { DriverCompanyActionModal } from "./DriverCompanyActionModal";
+import { EVENT_TYPES, EVENT_SEVERITIES, EVENT_STATUSES, PREVENTABILITY_STATES, COLLISION_TYPES, WEATHER_CONDITIONS, ROAD_CONDITIONS, LIGHT_CONDITIONS, INSPECTION_LEVELS, INSPECTION_RESULTS, REPAIR_STATUSES, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_VIOLATION_TYPES, HOS_SOURCES, HOS_REVIEW_STATUSES } from "../../lib/driver-taxonomy";
 
 export interface DriverPerformanceTabProps {
   master: DriverMaster;
@@ -89,24 +91,7 @@ export interface DriverPerformanceTabProps {
   onOpenDocument?: (docId: string) => void;
 }
 
-const EVENT_TYPES: { type: PerformanceEventType; label: string; category: string; description: string }[] = [
-  { type: "Collision", label: "Collision", category: "Incident", description: "Motor vehicle crash, contact, or collision event" },
-  { type: "Roadside Inspection", label: "Roadside Inspection", category: "Enforcement", description: "DOT / MTO commercial vehicle roadside inspection report" },
-  { type: "HOS Violation", label: "HOS Violation", category: "Compliance", description: "Hours of Service duty limit or logbook non-compliance" },
-  { type: "Traffic Citation", label: "Traffic Citation", category: "Enforcement", description: "Moving violation, speed, lane, or statutory ticket" },
-  { type: "Customer Complaint", label: "Customer Complaint", category: "Service", description: "Customer, receiver, or public concern regarding conduct or delivery" },
-  { type: "Customer Commendation", label: "Customer Commendation", category: "Recognition", description: "Written commendation or positive customer recognition" },
-  { type: "Positive Safety Observation", label: "Positive Safety Observation", category: "Recognition", description: "Observed defensive driving, clean audit, or milestone" },
-  { type: "Near Miss", label: "Near Miss", category: "Incident", description: "Unplanned event that did not result in injury or damage" },
-  { type: "Out-of-Service Order", label: "Out-of-Service Order", category: "Enforcement", description: "Driver or vehicle statutory out-of-service condition" },
-  { type: "Cargo Damage", label: "Cargo Damage", category: "Cargo", description: "Physical freight loss, shifting, or temperature damage" },
-  { type: "Spill or Release", label: "Spill or Release", category: "Environmental", description: "Dangerous goods or fluid release into environment" },
-  { type: "Injury", label: "Injury", category: "Occupational", description: "Driver occupational slip, trip, or work-related injury" },
-  { type: "Security Incident", label: "Security Incident", category: "Security", description: "Cargo tampering, unauthorized access, or theft attempt" },
-];
-
-const SEVERITIES: PerformanceSeverity[] = ["Low", "Moderate", "High", "Critical"];
-const STATUSES: EventStatus[] = ["Open", "Under Review", "Awaiting Information", "Follow-up Required", "Closed"];
+const EVENT_TYPE_DEFINITIONS = EVENT_TYPE_DEFINITIONS.map((type) => ({ type, label: type, category: "Driver Event", description: type }));
 
 export function DriverPerformanceTab({
   master,
@@ -169,14 +154,14 @@ export function DriverPerformanceTab({
 
   // Form State initialized truthfully (NO hardcoded fictional values)
   const [commonForm, setCommonForm] = useState({
-    eventDate: new Date().toISOString().slice(0, 10),
+    eventDate: "",
     eventTime: "",
     reportedDate: new Date().toISOString().slice(0, 10),
     location: "",
     city: "",
     stateProvince: "",
-    country: "Canada" as "Canada" | "United States",
-    severity: "Low" as PerformanceSeverity,
+    country: "" as "Canada" | "United States" | "",
+    severity: "" as PerformanceSeverity | "",
     status: "Open" as EventStatus,
     summary: "",
     description: "",
@@ -254,6 +239,7 @@ export function DriverPerformanceTab({
 
   const [hosForm, setHosForm] = useState<{
     ruleJurisdiction: HOSViolationDetails["ruleJurisdiction"] | "";
+    ruleProfileId: string;
     violationType: HOSViolationDetails["violationType"] | "";
     logDate: string;
     source: HOSViolationDetails["source"] | "";
@@ -263,6 +249,7 @@ export function DriverPerformanceTab({
     reviewNotes: string;
   }>({
     ruleJurisdiction: "",
+    ruleProfileId: "",
     violationType: "",
     logDate: "",
     source: "",
@@ -329,10 +316,10 @@ export function DriverPerformanceTab({
     source: string;
     notes: string;
   }>({
-    preventability: "Preventable",
+    preventability: "Undetermined",
     determinedBy: "",
-    determinationDate: new Date().toISOString().slice(0, 10),
-    source: "Safety Committee Review",
+    determinationDate: "",
+    source: "",
     notes: "",
   });
 
@@ -477,14 +464,14 @@ export function DriverPerformanceTab({
     setWizardStep(1);
     setSelectedWizardType("Collision");
     setCommonForm({
-      eventDate: new Date().toISOString().slice(0, 10),
+      eventDate: "",
       eventTime: "",
       reportedDate: new Date().toISOString().slice(0, 10),
       location: "",
       city: "",
       stateProvince: "",
-      country: "Canada",
-      severity: "Low",
+      country: "",
+      severity: "",
       status: "Open",
       summary: "",
       description: "",
@@ -527,6 +514,7 @@ export function DriverPerformanceTab({
     });
     setHosForm({
       ruleJurisdiction: "",
+      ruleProfileId: "",
       violationType: "",
       logDate: "",
       source: "",
@@ -581,7 +569,7 @@ export function DriverPerformanceTab({
       }
       if (
         selectedWizardType === "HOS Violation" &&
-        (!hosForm.ruleJurisdiction || !hosForm.violationType || !hosForm.logDate || !hosForm.source)
+        (!hosForm.ruleJurisdiction || !hosForm.ruleProfileId || !hosForm.violationType || !hosForm.logDate || !hosForm.source)
       ) {
         alert("Please select Rule Jurisdiction, Violation Category, Log Date, and Detection Source before proceeding.");
         return;
@@ -612,7 +600,7 @@ export function DriverPerformanceTab({
       selectedWizardType === "HOS Violation" &&
       (!hosForm.ruleJurisdiction || !hosForm.violationType || !hosForm.logDate || !hosForm.source)
     ) {
-      alert("Please select Rule Jurisdiction, Violation Category, Log Date, and Detection Source.");
+      alert("Please select Rule Jurisdiction, Rule Profile, Violation Category, Log Date, and Detection Source.");
       return;
     }
     if (selectedWizardType === "Customer Complaint" && !complaintForm.customerName.trim()) {
@@ -666,7 +654,7 @@ export function DriverPerformanceTab({
       city: commonForm.city || undefined,
       stateProvince: commonForm.stateProvince || undefined,
       country: commonForm.country || undefined,
-      severity: commonForm.severity,
+      severity: commonForm.severity as PerformanceSeverity,
       status: commonForm.status,
       summary: commonForm.summary.trim(),
       description: commonForm.description.trim() || commonForm.summary.trim(),
@@ -716,7 +704,9 @@ export function DriverPerformanceTab({
     } else if (selectedWizardType === "HOS Violation") {
       payload.hosDetails = {
         ruleJurisdiction: hosForm.ruleJurisdiction as HOSViolationDetails["ruleJurisdiction"],
+        ruleProfileId: hosForm.ruleProfileId || undefined,
         violationType: hosForm.violationType as HOSViolationDetails["violationType"],
+        semanticConditionClass: HOS_VIOLATION_TYPES.find((v) => v.value === hosForm.violationType)?.semanticClass,
         logDate: hosForm.logDate,
         source: hosForm.source as HOSViolationDetails["source"],
         hoursExceeded: hosForm.hoursExceeded ? parseFloat(hosForm.hoursExceeded) : undefined,
@@ -1150,7 +1140,7 @@ export function DriverPerformanceTab({
                 className="rounded-xl border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
               >
                 <option value="all">All Event Types</option>
-                {EVENT_TYPES.map((t) => (
+                {EVENT_TYPE_DEFINITIONS.map((t) => (
                   <option key={t.type} value={t.type}>
                     {t.label}
                   </option>
@@ -1265,7 +1255,7 @@ export function DriverPerformanceTab({
                             </span>
                           )}
                           {evt.eventType === "HOS Violation" && (
-                            <span>{evt.hosDetails?.violationType || "Duty Violation"}</span>
+                            <span>{HOS_VIOLATION_TYPES.find(x => x.value === evt.hosDetails?.violationType)?.label || evt.hosDetails?.legacyViolationType || "Duty Violation"}</span>
                           )}
                           {evt.eventType === "Customer Complaint" && (
                             <span>
@@ -1484,7 +1474,7 @@ export function DriverPerformanceTab({
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-bold text-primary">{evt.id}</span>
-                          <span className="text-xs font-bold text-foreground">{evt.hosDetails?.violationType || evt.summary}</span>
+                          <span className="text-xs font-bold text-foreground">{HOS_VIOLATION_TYPES.find(x => x.value === evt.hosDetails?.violationType)?.label || evt.hosDetails?.legacyViolationType || evt.summary}</span>
                           <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                             evt.hosDetails?.reviewStatus === "Confirmed"
                               ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
@@ -1905,10 +1895,10 @@ export function DriverPerformanceTab({
                     type="button"
                     onClick={() => {
                       setDeterminationData({
-                        preventability: selectedEvent.collisionDetails?.preventability === "Preventable" ? "Preventable" : "Non-Preventable",
+                        preventability: selectedEvent.collisionDetails?.preventability || "Undetermined",
                         determinedBy: selectedEvent.collisionDetails?.preventabilityDeterminedBy || "",
-                        determinationDate: selectedEvent.collisionDetails?.preventabilityDeterminationDate || new Date().toISOString().slice(0, 10),
-                        source: selectedEvent.collisionDetails?.preventabilitySource || "Safety Committee Review",
+                        determinationDate: selectedEvent.collisionDetails?.preventabilityDeterminationDate || "",
+                        source: selectedEvent.collisionDetails?.preventabilitySource || "",
                         notes: selectedEvent.collisionDetails?.preventabilityNotes || "",
                       });
                       setIsDeterminationModalOpen(true);
@@ -2000,7 +1990,7 @@ export function DriverPerformanceTab({
                     Choose the regulatory or operational event category:
                   </span>
                   <div className="grid gap-2.5 sm:grid-cols-2">
-                    {EVENT_TYPES.map((t) => (
+                    {EVENT_TYPE_DEFINITIONS.map((t) => (
                       <button
                         key={t.type}
                         type="button"
@@ -2064,7 +2054,8 @@ export function DriverPerformanceTab({
                         onChange={(e) => setCommonForm({ ...commonForm, severity: e.target.value as PerformanceSeverity })}
                         className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                       >
-                        {SEVERITIES.map((s) => (
+                        <option value="">-- Select Severity --</option>
+                        {EVENT_SEVERITIES.map((s) => (
                           <option key={s} value={s}>
                             {s}
                           </option>
@@ -2079,7 +2070,7 @@ export function DriverPerformanceTab({
                         onChange={(e) => setCommonForm({ ...commonForm, status: e.target.value as EventStatus })}
                         className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                       >
-                        {STATUSES.map((st) => (
+                        {EVENT_STATUSES.map((st) => (
                           <option key={st} value={st}>
                             {st}
                           </option>
@@ -2112,20 +2103,12 @@ export function DriverPerformanceTab({
                     <div>
                       <label className="text-xs font-bold text-foreground">Province / State & Country</label>
                       <div className="flex gap-2 mt-1">
-                        <input
-                          type="text"
-                          placeholder="e.g. ON"
-                          value={commonForm.stateProvince}
-                          onChange={(e) => setCommonForm({ ...commonForm, stateProvince: e.target.value })}
-                          className="w-1/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                        <select
-                          value={commonForm.country}
-                          onChange={(e) => setCommonForm({ ...commonForm, country: e.target.value as "Canada" | "United States" })}
-                          className="w-2/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="Canada">Canada</option>
-                          <option value="United States">United States</option>
+                        <select value={commonForm.stateProvince} onChange={(e) => setCommonForm({ ...commonForm, stateProvince: e.target.value })} className="w-1/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
+                          <option value="">-- State / Province --</option>
+                          {JURISDICTIONS.filter(j => !commonForm.country || j.country === commonForm.country).map(j => <option key={j.code} value={j.code}>{j.code}</option>)}
+                        </select>
+                        <select value={commonForm.country} onChange={(e) => setCommonForm({ ...commonForm, country: e.target.value as "Canada" | "United States" | "", stateProvince: "" })} className="w-2/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
+                          <option value="">-- Country --</option><option value="Canada">Canada</option><option value="United States">United States</option>
                         </select>
                       </div>
                     </div>
@@ -2169,7 +2152,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select collision type...</option>
-                          {["Backing", "Rear-End", "Sideswipe", "Intersection", "Lane Change", "Fixed Object", "Rollover", "Jackknife", "Animal", "Other"].map((ct) => (
+                          {COLLISION_TYPES.map((ct) => (
                             <option key={ct} value={ct}>
                               {ct}
                             </option>
@@ -2185,7 +2168,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select weather condition...</option>
-                          {["Clear", "Rain", "Snow", "Fog", "Ice / Freezing Rain", "High Wind", "Other"].map((w) => (
+                          {WEATHER_CONDITIONS.map((w) => (
                             <option key={w} value={w}>
                               {w}
                             </option>
@@ -2201,7 +2184,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select road surface condition...</option>
-                          {["Dry", "Wet", "Snow Covered", "Icy", "Gravel", "Construction", "Other"].map((r) => (
+                          {ROAD_CONDITIONS.map((r) => (
                             <option key={r} value={r}>
                               {r}
                             </option>
@@ -2217,7 +2200,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select lighting condition...</option>
-                          {["Daylight", "Dawn / Dusk", "Dark — Lighted", "Dark — Unlighted"].map((l) => (
+                          {LIGHT_CONDITIONS.map((l) => (
                             <option key={l} value={l}>
                               {l}
                             </option>
@@ -2291,7 +2274,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select inspection level...</option>
-                          {["Level I - Full Inspection", "Level II - Walk-Around", "Level III - Driver-Only", "Level IV - Special", "Level V - Vehicle-Only"].map((lvl) => (
+                          {INSPECTION_LEVELS.map((lvl) => (
                             <option key={lvl} value={lvl}>
                               {lvl}
                             </option>
@@ -2307,7 +2290,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select inspection result...</option>
-                          {["Passed", "Violation(s) Found", "Out of Service"].map((res) => (
+                          {INSPECTION_RESULTS.map((res) => (
                             <option key={res} value={res}>
                               {res}
                             </option>
@@ -2345,9 +2328,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select repair status...</option>
-                          <option value="Not Required">Not Required</option>
-                          <option value="Repair Pending">Repair Pending</option>
-                          <option value="Completed">Completed</option>
+                          {REPAIR_STATUSES.map(value => <option key={value} value={value}>{value}</option>)}
                         </select>
                       </div>
 
@@ -2385,10 +2366,21 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select rule jurisdiction...</option>
-                          <option value="Canada (Federal 70h/7d)">Canada (Federal 70h/7d)</option>
-                          <option value="US (FMCSA 70h/8d)">US (FMCSA 70h/8d)</option>
-                          <option value="Texas Intrastate">Texas Intrastate</option>
-                          <option value="California Intrastate">California Intrastate</option>
+                          {HOS_RULE_JURISDICTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-bold text-foreground">Rule Profile *</label>
+                        <select
+                          value={hosForm.ruleProfileId}
+                          onChange={(e) => setHosForm({ ...hosForm, ruleProfileId: e.target.value })}
+                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+                        >
+                          <option value="">Select rule profile...</option>
+                          {HOS_RULE_PROFILES.filter((profile) => !hosForm.ruleJurisdiction || profile.value.startsWith(hosForm.ruleJurisdiction + "_") || profile.value === hosForm.ruleJurisdiction).map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
                         </select>
                       </div>
 
@@ -2400,9 +2392,9 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select violation category...</option>
-                          {["11-Hour Driving Limit", "14-Hour On-Duty Window", "10-Hour Off-Duty Break", "30-Minute Rest Break", "70-Hour / 8-Day Cycle", "False Log / Tampering", "Form & Manner", "Other"].map((v) => (
-                            <option key={v} value={v}>
-                              {v}
+                          {HOS_VIOLATION_TYPES.map((v) => (
+                            <option key={v.value} value={v.value}>
+                              {v.label}
                             </option>
                           ))}
                         </select>
@@ -2419,6 +2411,14 @@ export function DriverPerformanceTab({
                       </div>
 
                       <div>
+                        <label className="text-xs font-bold text-foreground">Detection / Review Status</label>
+                        <select value={hosForm.reviewStatus} onChange={(e) => setHosForm({ ...hosForm, reviewStatus: e.target.value as NonNullable<HOSViolationDetails["reviewStatus"]> })} className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
+                          <option value="">-- Not Established --</option>
+                          {HOS_REVIEW_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
                         <label className="text-xs font-bold text-foreground">Detection Source *</label>
                         <select
                           value={hosForm.source}
@@ -2426,9 +2426,7 @@ export function DriverPerformanceTab({
                           className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
                         >
                           <option value="">Select detection source...</option>
-                          <option value="ELD Live Telematics">ELD Live Telematics</option>
-                          <option value="Roadside Inspection">Roadside Inspection</option>
-                          <option value="Internal Audit">Internal Audit</option>
+                          {HOS_SOURCES.map((value) => <option key={value} value={value}>{value}</option>)}
                         </select>
                       </div>
                     </div>

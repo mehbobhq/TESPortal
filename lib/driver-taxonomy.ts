@@ -431,3 +431,157 @@ export const TRAINING_COURSE_CATALOG: TrainingCourseDefinition[] = [
     defaultValidityPeriodMonths: 12,
   },
 ]
+
+// Canonical Driver semantic input registries. UI components must consume these
+// definitions instead of maintaining local option arrays for known classifications.
+export const DRIVER_RECORD_TYPES = ["Employee", "Owner-Operator", "Contractor", "Temporary Driver"] as const
+export const DRIVER_STATUSES = ["Active", "On Leave", "Suspended", "Inactive", "Terminated"] as const
+export const DRIVER_OPERATING_REGIONS = ["Canada", "United States", "Cross-Border"] as const
+export const DRIVER_COUNTRIES = ["Canada", "United States"] as const
+export const DRIVER_APPLICATION_DETERMINATIONS = ["Approved", "Rejected", "Withdrawn"] as const
+export const DRIVER_APPLICATION_TYPES = ["Full Driver Employment", "Owner-Operator Lease", "Temporary / Seasonal"] as const
+export const DRIVER_TAX_FORM_TYPES = ["TD1 Federal", "TD1 Provincial", "W-4 Federal", "State Withholding", "W-9 / 1099"] as const
+export const DRIVER_TAX_STATUSES = ["Completed", "Pending", "Superseded"] as const
+
+export const LICENCE_VERIFICATION_STATES = [
+  "Unverified", "Document Uploaded", "OCR Extracted", "Barcode Extracted", "Human Reviewed",
+  "Document Verified", "MVR Confirmed", "Authoritative Verified", "Discrepancy Pending",
+] as const
+export const LICENCE_CLASSES = ["Class A / AZ", "Class 1", "CDL-A", "Other / Unlisted"] as const
+export const LICENCE_ENDORSEMENTS = [
+  "Air Brake (Z)", "Hazmat (H)", "Tanker (N)", "Doubles/Triples (T)", "Other / Unlisted",
+] as const
+export const LICENCE_RESTRICTIONS = [
+  "Corrective Lenses (01)", "Automatic Transmission Only (E)", "Other / Unlisted",
+] as const
+
+export const TRAINING_TYPES = [
+  { value: "INITIAL", label: "Initial" },
+  { value: "ORIENTATION", label: "Orientation" },
+  { value: "REFRESHER", label: "Refresher" },
+  { value: "ANNUAL_REFRESHER", label: "Annual" },
+  { value: "REMEDIAL", label: "Remedial" },
+  { value: "POST_INCIDENT_CORRECTIVE", label: "Post-Incident" },
+  { value: "RETURN_TO_WORK", label: "Return-to-Work" },
+  { value: "REQUALIFICATION", label: "Requalification" },
+  { value: "OTHER", label: "Other" },
+] as const
+export const TRAINING_DELIVERY_METHODS = [
+  "In-Person", "Virtual Instructor-Led", "Online/E-Learning", "Practical Demonstration",
+  "On-the-Job", "Third-Party Provider", "Self-Study", "Other",
+] as const
+export const TRAINING_ASSESSMENT_RESULTS = [
+  "Passed", "Failed", "Incomplete", "Not Required", "Pending Evaluation",
+] as const
+export const TRAINING_REQUIREMENT_SOURCES = ["Regulatory", "Company Policy", "Operating Context", "Company Defined", "Other"] as const
+export const TRAINING_APPLICABILITY_STATES = ["Applicable", "Not Applicable", "Pending Determination"] as const
+export const TRAINING_REQUIREMENT_STATES = ["Required", "Not Required", "Pending Determination"] as const
+export const TRAINING_ASSIGNMENT_STATES = ["Assigned", "Not Assigned", "Not Applicable"] as const
+export const TRAINING_PROGRESS_STATES = ["Not Started", "Scheduled", "In Progress", "Completed", "Cancelled", "Waived", "Exempted"] as const
+export const TRAINING_CURRENCY_STATES = ["Current", "Expired", "No Expiry", "Not Established", "Not Applicable"] as const
+export const TRAINING_VERIFICATION_STATES = ["Unverified", "Pending", "Verified", "Failed", "Unable to Verify"] as const
+
+export const SCREENING_CATEGORIES = [
+  "Employment History", "Driver Abstract / MVR Review", "Collision History", "Previous Employer Verification",
+  "FMCSA Clearinghouse Query", "Annual Clearinghouse Query", "Pre-Employment Screening Program (PSP)",
+  "Annual Roadside Test", "Criminal Background Check", "Credit History", "Education History", "Periodic Review",
+  "Road Test Evaluation", "Medical Card / DOT Physical", "Pre-Employment Drug Test", "Pre-Employment Alcohol Test",
+  "Random Drug / Alcohol Test", "Post-Accident Drug / Alcohol Test", "Reasonable Suspicion Test",
+  "Return-to-Duty Test", "Follow-up Testing",
+] as const
+export const SCREENING_STATUSES = ["Passed", "Qualified", "In Review", "Pending Results", "Failed / Disqualified", "Incomplete", "Archived"] as const
+export const ROAD_TEST_RESULTS = ["Passed", "Failed", "Retest Required"] as const
+export const ROAD_TEST_TYPES = ["Pre-Trip & Road Test", "Manoeuvring & Backing", "Coupling / Uncoupling", "Full Evaluation"] as const
+export const MEDICAL_QUALIFICATION_STATUSES = ["QUALIFIED_2_YEARS", "QUALIFIED_1_YEAR", "QUALIFIED_3_6_MONTHS_TEMPORARY", "DISQUALIFIED", "PENDING_VARIANCE"] as const
+export const SUBSTANCE_TEST_TYPES = ["Pre-Employment", "Follow-up", "Post-Accident", "Random", "Reasonable Suspicion/Cause", "Return to Duty"] as const
+export const SUBSTANCE_TEST_RESULTS = ["Negative", "Positive", "Refusal to Test", "Cancelled / Invalid", "Pending Verification"] as const
+
+export const EVENT_TYPES = [
+  "Collision", "Near Miss", "Roadside Inspection", "Out-of-Service Order", "HOS Violation", "Traffic Citation",
+  "Cargo Damage", "Cargo Theft", "Spill or Release", "Customer Complaint", "Customer Commendation",
+  "Positive Safety Observation", "Coaching Session", "Disciplinary Action", "Corrective Action Plan", "Injury",
+  "Security Incident", "Warning", "Violation", "Citation-linked Event", "Equipment-related Event",
+  "Safety Observation", "Customer Compliment", "Telematics / Camera Observation", "Security Event", "Emergency Event",
+] as const
+export const EVENT_SEVERITIES = ["Low", "Moderate", "High", "Critical"] as const
+export const EVENT_STATUSES = ["Open", "Under Review", "Awaiting Information", "Follow-up Required", "Closed"] as const
+export const PREVENTABILITY_STATES = ["Undetermined", "Preventable", "Non-Preventable"] as const
+export const COLLISION_TYPES = ["Rear-End", "Sideswipe", "Backing", "Intersection", "Lane Change", "Rollover", "Jackknife", "Fixed Object", "Animal", "Pedestrian", "Other"] as const
+export const WEATHER_CONDITIONS = ["Clear", "Rain", "Snow", "Fog", "Ice / Freezing Rain", "High Wind", "Other", "Unknown"] as const
+export const ROAD_CONDITIONS = ["Dry", "Wet", "Snow Covered", "Icy", "Gravel", "Construction", "Other", "Unknown"] as const
+export const LIGHT_CONDITIONS = ["Daylight", "Dawn / Dusk", "Dark — Lighted", "Dark — Unlighted", "Unknown"] as const
+export const INSPECTION_LEVELS = ["Level I - Full Inspection", "Level II - Walk-Around", "Level III - Driver-Only", "Level IV - Special", "Level V - Vehicle-Only", "Level VI - Radioactive"] as const
+export const INSPECTION_RESULTS = ["Passed", "Violation(s) Found", "Out of Service"] as const
+export const REPAIR_STATUSES = ["Not Required", "Repair Pending", "Completed"] as const
+export const INSPECTION_VIOLATION_CATEGORIES = ["Brakes", "Tires / Wheels", "Lighting", "Hours of Service", "Driver Qualification", "Cargo Securement", "Hazmat", "Other"] as const
+export const ROOT_CAUSE_FACTORS = ["Driver Action", "Training / Knowledge Gap", "Dispatch / Planning", "Scheduling / Time Pressure", "Customer / Facility Delay", "Vehicle / Equipment", "ELD / Technology", "Weather", "Road / Traffic", "Load / Cargo", "Company Procedure", "Communication", "Third Party", "Unknown", "Multiple Factors", "Other"] as const
+export const HOS_CONDITION_CLASSES = [
+  { value: "DRIVING_LIMIT", label: "Driving Limit" },
+  { value: "ON_DUTY_WORK_SHIFT_LIMIT", label: "On-Duty / Work-Shift Limit" },
+  { value: "CYCLE_LIMIT", label: "Cycle Limit" },
+  { value: "REQUIRED_OFF_DUTY_REST", label: "Required Off-Duty / Rest" },
+  { value: "BREAK_REQUIREMENT", label: "Break Requirement" },
+  { value: "SLEEPER_BERTH_SPLIT_REST", label: "Sleeper Berth / Split Rest" },
+  { value: "MISSING_LOG", label: "Missing Log" },
+  { value: "UNCERTIFIED_LOG", label: "Uncertified Log" },
+  { value: "FORM_AND_MANNER", label: "Form and Manner" },
+  { value: "FALSE_LOG_FALSIFICATION_TAMPERING", label: "False Log / Falsification / Tampering" },
+  { value: "PERSONAL_CONVEYANCE", label: "Personal Conveyance" },
+  { value: "YARD_MOVE", label: "Yard Move" },
+  { value: "UNASSIGNED_DRIVING", label: "Unassigned Driving" },
+  { value: "ELD_DIAGNOSTIC", label: "ELD Diagnostic" },
+  { value: "ELD_MALFUNCTION", label: "ELD Malfunction" },
+  { value: "ELD_DATA_SYNC_ISSUE", label: "ELD Data / Synchronization Issue" },
+  { value: "OTHER", label: "Other" },
+  { value: "UNABLE_TO_CLASSIFY_REVIEW_REQUIRED", label: "Unable to Classify / Review Required" },
+] as const
+
+export type HOSConditionClass = typeof HOS_CONDITION_CLASSES[number]["value"]
+
+// Stable historical IDs are intentionally retained. semanticClass provides the
+// jurisdiction-neutral meaning without destroying legacy identifiers.
+export const HOS_VIOLATION_TYPES = [
+  { value: "11_HOUR_DRIVING_LIMIT", label: "11-Hour Driving Limit", semanticClass: "DRIVING_LIMIT" },
+  { value: "14_HOUR_ON_DUTY_WINDOW", label: "14-Hour On-Duty Window", semanticClass: "ON_DUTY_WORK_SHIFT_LIMIT" },
+  { value: "10_HOUR_OFF_DUTY_BREAK", label: "10-Hour Off-Duty Break", semanticClass: "REQUIRED_OFF_DUTY_REST" },
+  { value: "30_MINUTE_REST_BREAK", label: "30-Minute Rest Break", semanticClass: "BREAK_REQUIREMENT" },
+  { value: "70_HOUR_8_DAY_CYCLE", label: "70-Hour / 8-Day Cycle", semanticClass: "CYCLE_LIMIT" },
+  { value: "FALSE_LOG_TAMPERING", label: "False Log / Tampering", semanticClass: "FALSE_LOG_FALSIFICATION_TAMPERING" },
+  { value: "FORM_AND_MANNER", label: "Form & Manner", semanticClass: "FORM_AND_MANNER" },
+  { value: "MISSING_LOG", label: "Missing Log", semanticClass: "MISSING_LOG" },
+  { value: "UNCERTIFIED_LOG", label: "Uncertified Log", semanticClass: "UNCERTIFIED_LOG" },
+  { value: "SLEEPER_BERTH_SPLIT_REST", label: "Sleeper Berth / Split Rest", semanticClass: "SLEEPER_BERTH_SPLIT_REST" },
+  { value: "PERSONAL_CONVEYANCE", label: "Personal Conveyance", semanticClass: "PERSONAL_CONVEYANCE" },
+  { value: "YARD_MOVE", label: "Yard Move", semanticClass: "YARD_MOVE" },
+  { value: "UNASSIGNED_DRIVING", label: "Unassigned Driving", semanticClass: "UNASSIGNED_DRIVING" },
+  { value: "ELD_DIAGNOSTIC", label: "ELD Diagnostic", semanticClass: "ELD_DIAGNOSTIC" },
+  { value: "ELD_MALFUNCTION", label: "ELD Malfunction", semanticClass: "ELD_MALFUNCTION" },
+  { value: "ELD_DATA_SYNC_ISSUE", label: "ELD Data / Synchronization Issue", semanticClass: "ELD_DATA_SYNC_ISSUE" },
+  { value: "OTHER", label: "Other", semanticClass: "OTHER" },
+  { value: "UNABLE_TO_CLASSIFY_REVIEW_REQUIRED", label: "Unable to Classify / Review Required", semanticClass: "UNABLE_TO_CLASSIFY_REVIEW_REQUIRED" },
+] as const
+export const HOS_REVIEW_STATUSES = ["Potential", "Under Review", "Confirmed", "Not a Violation", "Unable to Determine", "Disputed", "Resolved"] as const
+
+// Canonical regime identifiers. Legacy display strings remain accepted by the
+// type contract for backward compatibility, but all new UI selections persist IDs.
+export const HOS_RULE_JURISDICTIONS = [
+  { value: "CA_FEDERAL", label: "Canada Federal" },
+  { value: "US_FMCSA", label: "US FMCSA" },
+  { value: "US_TEXAS_INTRASTATE", label: "Texas Intrastate" },
+  { value: "US_CALIFORNIA_INTRASTATE", label: "California Intrastate" },
+] as const
+
+export const HOS_RULE_PROFILES = [
+  { value: "CA_FEDERAL_70H_7D", label: "Canada Federal 70h / 7d" },
+  { value: "US_FMCSA_70H_8D", label: "US FMCSA 70h / 8d" },
+  { value: "US_TEXAS_INTRASTATE", label: "Texas Intrastate" },
+  { value: "US_CALIFORNIA_INTRASTATE", label: "California Intrastate" },
+] as const
+export const HOS_SOURCES = ["ELD Live Telematics", "Roadside Inspection", "Internal Audit"] as const
+export const HOS_REVIEW_SOURCES = ["ELD Telematics Analysis", "Roadside Inspection Audit", "Driver Dispute", "Internal Periodic Audit", "Safety Committee"] as const
+export const HOS_INITIAL_FINDINGS = ["Potential Violation", "Confirmed Violation", "False Positive", "Exemption Applies", "Data Diagnostic", "Other"] as const
+export const HOS_CARRIER_RESOLUTIONS = ["Pending Driver Clarification", "Under Investigation", "Violation Confirmed — Coaching Required", "Violation Confirmed — Formal Action", "Resolved — Exemption Verified", "Resolved — Diagnostic Log Adjusted", "Disputed with Regulatory Body"] as const
+export const COMPANY_DETERMINATION_TYPES = ["COLLISION_PREVENTABILITY", "COMPLAINT_SUBSTANTIATION", "INVESTIGATION_FINDING", "ROOT_CAUSE_ANALYSIS", "CORRECTIVE_ACTION_OUTCOME"] as const
+export const COMPANY_DETERMINATION_VALUES = ["PREVENTABLE", "NON_PREVENTABLE", "SUBSTANTIATED", "NOT_SUBSTANTIATED", "UNABLE_TO_DETERMINE"] as const
+export const COMPANY_ACTION_TYPES = ["COACHING", "TRAINING_ASSIGNMENT", "VERBAL_WARNING", "WRITTEN_WARNING", "FINAL_WARNING", "SUSPENSION", "POLICY_REVIEW", "MONITORING_TELEMATICS", "DISPATCH_CHANGE", "EQUIPMENT_INSPECTION_REPAIR", "CORRECTIVE_ACTION_PLAN", "DISCIPLINARY_ACTION", "SAFETY_WARNING", "RETRAINING_MANDATE", "PERFORMANCE_IMPROVEMENT_PLAN", "OTHER"] as const
+export const COMPANY_ACTION_STATUSES = ["Draft", "Active", "Completed", "Rescinded", "In Progress"] as const

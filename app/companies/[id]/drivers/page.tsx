@@ -38,7 +38,28 @@ export default function DriversPage({params}:{params:Promise<{id:string}>}){
  if(!company)return <Card><CardContent className="p-8">Company not found.</CardContent></Card>
  return <div className="space-y-6">
   <PageHeader title="Drivers" description={`${company.name} · Driver compliance records`} actions={<div className="flex gap-2"><Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button><Button onClick={()=>setOpen(true)}><Plus className="mr-2 size-4"/>Add Driver</Button></div>}/>
-  <div className="grid gap-4 md:grid-cols-4"><StatCard title="Driver Records" value={rows.length}/><StatCard title="Active" value={rows.filter(x=>x.relationship.driverStatus==="Active").length}/><StatCard title="Cross-Border" value={rows.filter(x=>x.relationship.operatingRegion==="Cross-Border").length}/><StatCard title="Needs Identity Review" value={rows.filter(x=>x.master.identityResolution?.status==="REVIEW").length}/></div>
+  <div className="grid gap-4 md:grid-cols-4">
+  <StatCard
+    label="Driver Records"
+    value={String(rows.length)}
+    icon={Users}
+  />
+  <StatCard
+    label="Active"
+    value={String(rows.filter(x => x.relationship.driverStatus === "Active").length)}
+    icon={Users}
+  />
+  <StatCard
+    label="Cross-Border"
+    value={String(rows.filter(x => x.relationship.operatingRegion === "Cross-Border").length)}
+    icon={Users}
+  />
+  <StatCard
+    label="Needs Identity Review"
+    value={String(rows.filter(x => x.master.identityResolution?.status === "REVIEW").length)}
+    icon={Users}
+  />
+</div>
   <Card><CardHeader><CardTitle>Driver Register</CardTitle></CardHeader><CardContent><div className="mb-4 grid gap-3 md:grid-cols-4"><div className="relative"><Search className="absolute left-3 top-3 size-4 text-muted-foreground"/><Input className="pl-9" placeholder="Search name, Master ID, Record ID, licence" value={q} onChange={e=>setQ(e.target.value)}/></div><Select value={status} onChange={setStatus} options={["All",...STATUSES]}/><Select value={region} onChange={setRegion} options={["All",...REGIONS]}/><Select value={type} onChange={setType} options={["All",...RECORD_TYPES]}/></div>
   <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead className="bg-muted/50 text-left"><tr><Th>Driver</Th><Th>Company Record ID</Th><Th>Master ID</Th><Th>Record Type</Th><Th>Operating Region</Th><Th>Licence</Th><Th>Status</Th></tr></thead><tbody>{filtered.map(({master,relationship})=><tr key={relationship.id} className="cursor-pointer border-t hover:bg-muted/40" onClick={()=>router.push(`/companies/${companyId}/drivers/${master.id}`)}><Td><div className="font-semibold">{fullLegalName(master)}</div><div className="text-xs text-muted-foreground">Age {calculateAge(master.identity.dateOfBirth)??"—"}</div></Td><Td>{displayCompanyDriverRecordId(companyId,relationship)}</Td><Td className="font-mono text-xs">{master.id}</Td><Td>{relationship.recordType}</Td><Td>{relationship.operatingRegion}</Td><Td>{currentLicence(master)?`${currentLicence(master)!.jurisdiction} · ${currentLicence(master)!.class||"Class —"}`:"—"}</Td><Td><StatusBadge tone={tone(relationship.driverStatus)}>{relationship.driverStatus}</StatusBadge></Td></tr>)}{!filtered.length&&<tr><td colSpan={7} className="p-10 text-center text-muted-foreground">No Driver records match the current filters.</td></tr>}</tbody></table></div></CardContent></Card>
   {open&&<div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/55 p-4 md:p-8"><div className="w-full max-w-5xl rounded-xl bg-background shadow-2xl"><div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-semibold">Add Driver</h2><p className="text-sm text-muted-foreground">Driver Licence first · identity review before creation</p></div><Button variant="ghost" size="icon" onClick={()=>setOpen(false)}><X className="size-4"/></Button></div><div className="space-y-6 p-5">

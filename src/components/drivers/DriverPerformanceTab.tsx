@@ -1166,7 +1166,7 @@ export function DriverPerformanceTab({
                 className="rounded-xl border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
               >
                 <option value="all">All Severities</option>
-                {SEVERITIES.map((sev) => (
+                {EVENT_SEVERITIES.map((sev) => (
                   <option key={sev} value={sev}>
                     {sev}
                   </option>

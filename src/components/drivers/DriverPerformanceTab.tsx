@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   AlertTriangle,
   FileText,
@@ -38,19 +38,6 @@ import {
   DriverMaster,
   CompanyDriverRelationship,
   DriverPerformanceEvent,
-  PerformanceEventType,
-  PerformanceSeverity,
-  EventStatus,
-  PreventabilityAssessment,
-  CollisionDetails,
-  RoadsideInspectionDetails,
-  CitationDetails,
-  HOSViolationDetails,
-  CustomerComplaintDetails,
-  CommendationDetails,
-  LinkedRecordRef,
-  InspectionViolationItem,
-  RootCauseFactor,
   TrainingRecord,
   HOSReview,
   CompanyDetermination,
@@ -58,16 +45,17 @@ import {
 } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { EntityLink } from "../shared/EntityLink";
-import { fullLegalName } from "@/lib/driver-data";
 import {
   calculateDriverPerformanceSnapshot,
   calculateFleetRankings,
 } from "@/lib/driver-performance-model";
 import { DriverIntelligenceView } from "./DriverIntelligenceView";
-import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DriverHOSAuditModal } from "./DriverHOSAuditModal";
 import { DriverCompanyActionModal } from "./DriverCompanyActionModal";
-import { EVENT_TYPES, EVENT_SEVERITIES, EVENT_STATUSES, PREVENTABILITY_STATES, COLLISION_TYPES, WEATHER_CONDITIONS, ROAD_CONDITIONS, LIGHT_CONDITIONS, INSPECTION_LEVELS, INSPECTION_RESULTS, REPAIR_STATUSES, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_VIOLATION_TYPES, HOS_SOURCES, HOS_REVIEW_STATUSES } from "@/lib/driver-taxonomy";
+import { DriverPerformanceEventWorkflow } from "./DriverPerformanceEventWorkflow";
+import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
+import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_VERIFICATION_STATES, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
+import { HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
 
 export interface DriverPerformanceTabProps {
   master: DriverMaster;
@@ -87,11 +75,20 @@ export interface DriverPerformanceTabProps {
   onUpdateEvent: (eventId: string, patch: Partial<DriverPerformanceEvent>) => void;
   onAddHOSReview?: (review: Omit<HOSReview, "id" | "createdAt" | "updatedAt">) => void;
   onAddCompanyAction?: (action: Omit<CompanyActionRecord, "id" | "createdAt" | "updatedAt" | "isArchived">) => void;
-  onAddCompanyDetermination?: (det: Omit<CompanyDetermination, "id" | "createdAt" | "updatedAt" | "isArchived">) => void;
+  onAddCompanyDetermination?: (det: Omit<CompanyDetermination, "id" | "createdAt" | "updatedAt" | "isArchived">) => CompanyDetermination | void;
   onOpenDocument?: (docId: string) => void;
+  evidence?: import("@/types/drivers").DriverEvidenceItem[];
+  onArchiveEvent?: (eventId: string) => void;
+  onClearEvidenceCreatedId?: () => void;
 }
 
-const EVENT_TYPE_DEFINITIONS = EVENT_TYPES.map((type) => ({ type, label: type, category: "Driver Event", description: type }));
+const EVENT_TYPE_DEFINITIONS = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.map((definition) => ({ type: definition.value, label: definition.label, category: definition.group, description: definition.description, ownership: PERFORMANCE_CATEGORY_OWNERSHIP[definition.value] }));
+const displayFact = (event: DriverPerformanceEvent, dataPointId: string, value: unknown) => {
+  const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[event.eventType];
+  const field = definition?.fields.find((item) => item.dataPointId === dataPointId);
+  if (field?.options && typeof value === "string") return field.options.find((option) => option.value === value)?.label || value;
+  return value === true ? "Yes" : value === false ? "No" : String(value ?? "");
+};
 
 export function DriverPerformanceTab({
   master,
@@ -108,15 +105,37 @@ export function DriverPerformanceTab({
   onAddCompanyAction,
   onAddCompanyDetermination,
   onOpenDocument,
+  evidence = [],
+  onArchiveEvent,
+  onClearEvidenceCreatedId,
 }: DriverPerformanceTabProps) {
   // Sub-views
-  const [subView, setSubView] = useState<"overview" | "intelligence" | "register" | "followup" | "hos" | "actions" | "chronology">("overview");
+  type PerformanceSubview = "overview" | "intelligence" | "register" | "followup" | "hos" | "actions" | "chronology";
+  const validSubviews: PerformanceSubview[] = ["overview", "intelligence", "register", "followup", "hos", "actions", "chronology"];
+  const getSubviewFromUrl = (): PerformanceSubview => {
+    const value = getQueryParam("performanceView");
+    return value && validSubviews.includes(value as PerformanceSubview) ? value as PerformanceSubview : "overview";
+  };
+  const [subView, setSubViewState] = useState<PerformanceSubview>(getSubviewFromUrl);
+  const setSubView = (view: PerformanceSubview) => {
+    setSubViewState(view);
+    pushHistoryQueryParams({ performanceView: view === "overview" ? null : view });
+  };
+  useEffect(() => {
+    const onPopState = () => setSubViewState(getSubviewFromUrl());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   // Filters for Event Register
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [verificationFilter, setVerificationFilter] = useState<string>("all");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
+  const [registerPage, setRegisterPage] = useState(1);
+  const registerPageSize = 20;
 
   // Selected event for detail view drawer/modal
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -127,7 +146,6 @@ export function DriverPerformanceTab({
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDeterminationModalOpen, setIsDeterminationModalOpen] = useState(false);
-  const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [isHOSAuditModalOpen, setIsHOSAuditModalOpen] = useState(false);
   const [auditingHOSEvent, setAuditingHOSEvent] = useState<DriverPerformanceEvent | null>(null);
   const [isCompanyActionModalOpen, setIsCompanyActionModalOpen] = useState(false);
@@ -148,180 +166,14 @@ export function DriverPerformanceTab({
     return calculateFleetRankings(allDriversCohort || [], master.id, metricsWindow);
   }, [allDriversCohort, metricsWindow, master.id]);
 
-  // Progressive Disclosure Wizard State (Steps 1 to 6)
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4 | 5 | 6>(1);
-  const [selectedWizardType, setSelectedWizardType] = useState<PerformanceEventType>("Collision");
-
-  // Form State initialized truthfully (NO hardcoded fictional values)
-  const [commonForm, setCommonForm] = useState({
-    eventDate: "",
-    eventTime: "",
-    reportedDate: new Date().toISOString().slice(0, 10),
-    location: "",
-    city: "",
-    stateProvince: "",
-    country: "" as "Canada" | "United States" | "",
-    severity: "" as PerformanceSeverity | "",
-    status: "Open" as EventStatus,
-    summary: "",
-    description: "",
-    followUpActionRequired: false,
-    followUpDueDate: "",
-    followUpActionSummary: "",
-  });
-
-  // Type-specific form fields
-  const [collisionForm, setCollisionForm] = useState<{
-    collisionType: CollisionDetails["collisionType"] | "";
-    driverMovement: string;
-    weather: CollisionDetails["weather"] | "";
-    roadCondition: CollisionDetails["roadCondition"] | "";
-    lightCondition: CollisionDetails["lightCondition"] | "";
-    towRequired: boolean;
-    policeAttended: boolean;
-    policeReportNumber: string;
-    injuriesCount: number;
-    fatalitiesCount: number;
-    dotReportable: boolean;
-    preventability: PreventabilityAssessment;
-    preventabilityDeterminedBy: string;
-    preventabilityDeterminationDate: string;
-    preventabilitySource: string;
-    preventabilityNotes: string;
-    estimatedCost: string;
-    driverStatement: string;
-  }>({
-    collisionType: "",
-    driverMovement: "",
-    weather: "",
-    roadCondition: "",
-    lightCondition: "",
-    towRequired: false,
-    policeAttended: false,
-    policeReportNumber: "",
-    injuriesCount: 0,
-    fatalitiesCount: 0,
-    dotReportable: false,
-    preventability: "Undetermined",
-    preventabilityDeterminedBy: "",
-    preventabilityDeterminationDate: "",
-    preventabilitySource: "",
-    preventabilityNotes: "",
-    estimatedCost: "",
-    driverStatement: "",
-  });
-
-  const [inspectionForm, setInspectionForm] = useState<{
-    inspectionLevel: RoadsideInspectionDetails["inspectionLevel"] | "";
-    reportNumber: string;
-    agency: string;
-    result: RoadsideInspectionDetails["result"] | "";
-    driverViolationsCount: number;
-    vehicleViolationsCount: number;
-    hosViolationsCount: number;
-    driverOOS: boolean;
-    vehicleOOS: boolean;
-    hazmatInspected: boolean;
-    repairStatus: "Not Required" | "Repair Pending" | "Completed" | "";
-  }>({
-    inspectionLevel: "",
-    reportNumber: "",
-    agency: "",
-    result: "",
-    driverViolationsCount: 0,
-    vehicleViolationsCount: 0,
-    hosViolationsCount: 0,
-    driverOOS: false,
-    vehicleOOS: false,
-    hazmatInspected: false,
-    repairStatus: "",
-  });
-
-  const [hosForm, setHosForm] = useState<{
-    ruleJurisdiction: HOSViolationDetails["ruleJurisdiction"] | "";
-    ruleProfileId: string;
-    violationType: HOSViolationDetails["violationType"] | "";
-    logDate: string;
-    source: HOSViolationDetails["source"] | "";
-    hoursExceeded: string;
-    eldProvider: string;
-    reviewStatus: NonNullable<HOSViolationDetails["reviewStatus"]> | "";
-    reviewNotes: string;
-  }>({
-    ruleJurisdiction: "",
-    ruleProfileId: "",
-    violationType: "",
-    logDate: "",
-    source: "",
-    hoursExceeded: "",
-    eldProvider: "",
-    reviewStatus: "",
-    reviewNotes: "",
-  });
-
-  const [citationForm, setCitationForm] = useState<{
-    citationNumber: string;
-    violationCode: string;
-    fineAmount: string;
-    pointsAssessed: string;
-    courtJurisdiction: string;
-    courtDate: string;
-    disposition: CitationDetails["disposition"] | "";
-  }>({
-    citationNumber: "",
-    violationCode: "",
-    fineAmount: "",
-    pointsAssessed: "",
-    courtJurisdiction: "",
-    courtDate: "",
-    disposition: "Pending",
-  });
-
-  const [complaintForm, setComplaintForm] = useState<{
-    customerName: string;
-    loadNumber: string;
-    category: CustomerComplaintDetails["category"];
-    substantiationStatus: CustomerComplaintDetails["substantiationStatus"];
-    reviewNotes: string;
-  }>({
-    customerName: "",
-    loadNumber: "",
-    category: "Driving Conduct",
-    substantiationStatus: "Unreviewed",
-    reviewNotes: "",
-  });
-
-  const [commendationForm, setCommendationForm] = useState<{
-    category: CommendationDetails["category"];
-    customerName: string;
-    recognizedBy: string;
-    description: string;
-  }>({
-    category: "Customer Commendation",
-    customerName: "",
-    recognizedBy: "",
-    description: "",
-  });
-
-  // Cross-module linked records draft
-  const [linkedVehicleNumber, setLinkedVehicleNumber] = useState("");
-  const [linkedTrailerNumber, setLinkedTrailerNumber] = useState("");
-  const [linkedTrainingRef, setLinkedTrainingRef] = useState("");
-
-  // Determination Modal State
+  // Determination modal state remains separate from source/event facts.
   const [determinationData, setDeterminationData] = useState<{
     preventability: "Preventable" | "Non-Preventable" | "Undetermined";
     determinedBy: string;
     determinationDate: string;
     source: string;
     notes: string;
-  }>({
-    preventability: "Undetermined",
-    determinedBy: "",
-    determinationDate: "",
-    source: "",
-    notes: "",
-  });
+  }>({ preventability: "Undetermined", determinedBy: "", determinationDate: "", source: "", notes: "" });
 
   // Filter Active Events
   const activeEvents = useMemo(() => {
@@ -331,6 +183,11 @@ export function DriverPerformanceTab({
   const selectedEvent = useMemo(() => {
     return activeEvents.find((e) => e.id === selectedEventId) || null;
   }, [activeEvents, selectedEventId]);
+
+  const selectedCompanyDetermination = useMemo(() => {
+    if (!selectedEvent) return null;
+    return companyDeterminations.find((determination) => determination.relatedRecordId === selectedEvent.id && determination.determinationType === "COLLISION_PREVENTABILITY") || null;
+  }, [companyDeterminations, selectedEvent]);
 
   // Performance Indicators calculations (Deterministic & Traceable, NO fake scores!)
   const filteredByWindow = useMemo(() => {
@@ -444,8 +301,10 @@ export function DriverPerformanceTab({
     return activeEvents
       .filter((e) => {
         if (typeFilter !== "all" && e.eventType !== typeFilter) return false;
-        if (statusFilter !== "all" && e.status !== statusFilter) return false;
-        if (severityFilter !== "all" && e.severity !== severityFilter) return false;
+        if (sourceFilter !== "all" && (e.provenance?.source || "") !== sourceFilter) return false;
+        if (verificationFilter !== "all" && (e.verificationState || "Unverified") !== verificationFilter) return false;
+        if (dateFromFilter && e.eventDate < dateFromFilter) return false;
+        if (dateToFilter && e.eventDate > dateToFilter) return false;
         if (searchTerm.trim()) {
           const q = searchTerm.toLowerCase();
           const matchesSummary = e.summary.toLowerCase().includes(q);
@@ -457,332 +316,51 @@ export function DriverPerformanceTab({
         return true;
       })
       .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime());
-  }, [activeEvents, typeFilter, statusFilter, severityFilter, searchTerm]);
+  }, [activeEvents, typeFilter, sourceFilter, verificationFilter, dateFromFilter, dateToFilter, searchTerm]);
 
-  // Handlers for Creation
-  const handleOpenAddWizard = () => {
-    setWizardStep(1);
-    setSelectedWizardType("Collision");
-    setCommonForm({
-      eventDate: "",
-      eventTime: "",
-      reportedDate: new Date().toISOString().slice(0, 10),
-      location: "",
-      city: "",
-      stateProvince: "",
-      country: "",
-      severity: "",
-      status: "Open",
-      summary: "",
-      description: "",
-      followUpActionRequired: false,
-      followUpDueDate: "",
-      followUpActionSummary: "",
-    });
-    setCollisionForm({
-      collisionType: "",
-      driverMovement: "",
-      weather: "",
-      roadCondition: "",
-      lightCondition: "",
-      towRequired: false,
-      policeAttended: false,
-      policeReportNumber: "",
-      injuriesCount: 0,
-      fatalitiesCount: 0,
-      dotReportable: false,
-      preventability: "Undetermined",
-      preventabilityDeterminedBy: "",
-      preventabilityDeterminationDate: "",
-      preventabilitySource: "",
-      preventabilityNotes: "",
-      estimatedCost: "",
-      driverStatement: "",
-    });
-    setInspectionForm({
-      inspectionLevel: "",
-      reportNumber: "",
-      agency: "",
-      result: "",
-      driverViolationsCount: 0,
-      vehicleViolationsCount: 0,
-      hosViolationsCount: 0,
-      driverOOS: false,
-      vehicleOOS: false,
-      hazmatInspected: false,
-      repairStatus: "",
-    });
-    setHosForm({
-      ruleJurisdiction: "",
-      ruleProfileId: "",
-      violationType: "",
-      logDate: "",
-      source: "",
-      hoursExceeded: "",
-      eldProvider: "",
-      reviewStatus: "",
-      reviewNotes: "",
-    });
-    setCitationForm({
-      citationNumber: "",
-      violationCode: "",
-      fineAmount: "",
-      pointsAssessed: "",
-      courtJurisdiction: "",
-      courtDate: "",
-      disposition: "Pending",
-    });
-    setComplaintForm({
-      customerName: "",
-      loadNumber: "",
-      category: "Driving Conduct",
-      substantiationStatus: "Unreviewed",
-      reviewNotes: "",
-    });
-    setCommendationForm({
-      category: "Customer Commendation",
-      customerName: "",
-      recognizedBy: "",
-      description: "",
-    });
-    setLinkedVehicleNumber("");
-    setLinkedTrailerNumber("");
-    setLinkedTrainingRef("");
-    setIsAddModalOpen(true);
-  };
+  const registerTotalPages = Math.max(1, Math.ceil(registerEvents.length / registerPageSize));
+  const paginatedRegisterEvents = registerEvents.slice((registerPage - 1) * registerPageSize, registerPage * registerPageSize);
 
-  const handleNextStep = () => {
-    if (wizardStep === 2) {
-      if (!commonForm.eventDate || !commonForm.summary.trim()) {
-        alert("Please provide the event date and one-line summary before proceeding.");
-        return;
-      }
-    }
-    if (wizardStep === 3) {
-      if (selectedWizardType === "Collision" && !collisionForm.collisionType) {
-        alert("Please select a Collision Type before proceeding.");
-        return;
-      }
-      if (selectedWizardType === "Roadside Inspection" && (!inspectionForm.inspectionLevel || !inspectionForm.result)) {
-        alert("Please select the Inspection Level and Inspection Result before proceeding.");
-        return;
-      }
-      if (
-        selectedWizardType === "HOS Violation" &&
-        (!hosForm.ruleJurisdiction || !hosForm.ruleProfileId || !hosForm.violationType || !hosForm.logDate || !hosForm.source)
-      ) {
-        alert("Please select Rule Jurisdiction, Violation Category, Log Date, and Detection Source before proceeding.");
-        return;
-      }
-      if (selectedWizardType === "Customer Complaint" && !complaintForm.customerName.trim()) {
-        alert("Please provide the Customer / Shipper Name before proceeding.");
-        return;
-      }
-    }
-    setWizardStep((prev) => (prev < 6 ? ((prev + 1) as any) : prev));
-  };
+  useEffect(() => {
+    setRegisterPage((page) => Math.min(page, registerTotalPages));
+  }, [registerTotalPages]);
 
-  const handleSaveWizard = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!commonForm.summary.trim() || !commonForm.eventDate) {
-      alert("Please provide an event date and summary.");
-      return;
-    }
-    if (selectedWizardType === "Collision" && !collisionForm.collisionType) {
-      alert("Please select a Collision Type.");
-      return;
-    }
-    if (selectedWizardType === "Roadside Inspection" && (!inspectionForm.inspectionLevel || !inspectionForm.result)) {
-      alert("Please select Inspection Level and Inspection Result.");
-      return;
-    }
-    if (
-      selectedWizardType === "HOS Violation" &&
-      (!hosForm.ruleJurisdiction || !hosForm.violationType || !hosForm.logDate || !hosForm.source)
-    ) {
-      alert("Please select Rule Jurisdiction, Rule Profile, Violation Category, Log Date, and Detection Source.");
-      return;
-    }
-    if (selectedWizardType === "Customer Complaint" && !complaintForm.customerName.trim()) {
-      alert("Please provide the Customer Name.");
-      return;
-    }
-
-    // Build linked records (preserve explicit unlinked operational references without manufactured entity IDs)
-    const linked: LinkedRecordRef[] = [];
-    if (linkedVehicleNumber.trim()) {
-      linked.push({
-        entityType: "Unlinked Operational Reference",
-        id: "",
-        label: `Unit: ${linkedVehicleNumber.trim()}`,
-        secondaryText: "Unlinked Operational Reference (Manual Unit #)",
-      });
-    }
-    if (linkedTrailerNumber.trim()) {
-      linked.push({
-        entityType: "Unlinked Operational Reference",
-        id: "",
-        label: `Trailer: ${linkedTrailerNumber.trim()}`,
-        secondaryText: "Unlinked Operational Reference (Manual Trailer #)",
-      });
-    }
-    if (linkedTrainingRef.trim()) {
-      linked.push({
-        entityType: "Training",
-        id: linkedTrainingRef.trim(),
-        label: `Training Ref: ${linkedTrainingRef.trim()}`,
-      });
-    }
-
-    // Chronology item
-    const initialChronology = [
-      {
-        id: `CHRON-${Date.now().toString(36)}`,
-        timestamp: new Date().toISOString(),
-        action: "EVENT_LOGGED",
-        actor: null,
-        details: `Initial ${selectedWizardType} compliance record created.`,
-      },
-    ];
-
-    const payload: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived"> = {
-      eventType: selectedWizardType,
-      eventDate: commonForm.eventDate,
-      eventTime: commonForm.eventTime || undefined,
-      reportedDate: commonForm.reportedDate,
-      location: commonForm.location || undefined,
-      city: commonForm.city || undefined,
-      stateProvince: commonForm.stateProvince || undefined,
-      country: commonForm.country || undefined,
-      severity: commonForm.severity as PerformanceSeverity,
-      status: commonForm.status,
-      summary: commonForm.summary.trim(),
-      description: commonForm.description.trim() || commonForm.summary.trim(),
-      followUpActionRequired: commonForm.followUpActionRequired,
-      followUpDueDate: commonForm.followUpDueDate || undefined,
-      followUpActionSummary: commonForm.followUpActionSummary || undefined,
-      linkedRecords: linked,
-      evidenceIds: [],
-      chronology: initialChronology,
-    };
-
-    if (selectedWizardType === "Collision") {
-      payload.collisionDetails = {
-        collisionType: collisionForm.collisionType as CollisionDetails["collisionType"],
-        driverMovement: collisionForm.driverMovement || undefined,
-        weather: (collisionForm.weather || undefined) as CollisionDetails["weather"] | undefined,
-        roadCondition: (collisionForm.roadCondition || undefined) as CollisionDetails["roadCondition"] | undefined,
-        lightCondition: (collisionForm.lightCondition || undefined) as CollisionDetails["lightCondition"] | undefined,
-        towRequired: collisionForm.towRequired,
-        policeAttended: collisionForm.policeAttended,
-        policeReportNumber: collisionForm.policeReportNumber.trim() || undefined,
-        injuriesCount: collisionForm.injuriesCount,
-        fatalitiesCount: collisionForm.fatalitiesCount,
-        dotReportable: collisionForm.dotReportable,
-        preventability: collisionForm.preventability,
-        preventabilityDeterminedBy: collisionForm.preventabilityDeterminedBy.trim() || undefined,
-        preventabilityDeterminationDate: collisionForm.preventabilityDeterminationDate || undefined,
-        preventabilitySource: collisionForm.preventabilitySource.trim() || undefined,
-        preventabilityNotes: collisionForm.preventabilityNotes.trim() || undefined,
-        estimatedCost: collisionForm.estimatedCost.trim() || undefined,
-        driverStatement: collisionForm.driverStatement.trim() || undefined,
-      };
-    } else if (selectedWizardType === "Roadside Inspection") {
-      payload.inspectionDetails = {
-        inspectionLevel: inspectionForm.inspectionLevel as RoadsideInspectionDetails["inspectionLevel"],
-        reportNumber: inspectionForm.reportNumber.trim() || undefined,
-        agency: inspectionForm.agency.trim() || undefined,
-        result: inspectionForm.result as RoadsideInspectionDetails["result"],
-        driverViolationsCount: inspectionForm.driverViolationsCount,
-        vehicleViolationsCount: inspectionForm.vehicleViolationsCount,
-        hosViolationsCount: inspectionForm.hosViolationsCount,
-        driverOOS: inspectionForm.driverOOS,
-        vehicleOOS: inspectionForm.vehicleOOS,
-        hazmatInspected: inspectionForm.hazmatInspected,
-        repairStatus: (inspectionForm.repairStatus || undefined) as RoadsideInspectionDetails["repairStatus"] | undefined,
-      };
-    } else if (selectedWizardType === "HOS Violation") {
-      payload.hosDetails = {
-        ruleJurisdiction: hosForm.ruleJurisdiction as HOSViolationDetails["ruleJurisdiction"],
-        ruleProfileId: hosForm.ruleProfileId || undefined,
-        violationType: hosForm.violationType as HOSViolationDetails["violationType"],
-        semanticConditionClass: HOS_VIOLATION_TYPES.find((v) => v.value === hosForm.violationType)?.semanticClass,
-        logDate: hosForm.logDate,
-        source: hosForm.source as HOSViolationDetails["source"],
-        hoursExceeded: hosForm.hoursExceeded ? parseFloat(hosForm.hoursExceeded) : undefined,
-        eldProvider: hosForm.eldProvider.trim() || undefined,
-        reviewStatus: (hosForm.reviewStatus || undefined) as HOSViolationDetails["reviewStatus"] | undefined,
-        reviewNotes: hosForm.reviewNotes.trim() || undefined,
-      };
-    } else if (selectedWizardType === "Traffic Citation") {
-      payload.citationDetails = {
-        citationNumber: citationForm.citationNumber.trim() || undefined,
-        violationCode: citationForm.violationCode.trim() || undefined,
-        fineAmount: citationForm.fineAmount.trim() || undefined,
-        pointsAssessed: citationForm.pointsAssessed ? parseInt(citationForm.pointsAssessed, 10) : undefined,
-        courtJurisdiction: citationForm.courtJurisdiction.trim() || undefined,
-        courtDate: citationForm.courtDate || undefined,
-        disposition: citationForm.disposition || undefined,
-      };
-    } else if (selectedWizardType === "Customer Complaint") {
-      payload.complaintDetails = {
-        customerName: complaintForm.customerName.trim(),
-        loadNumber: complaintForm.loadNumber.trim() || undefined,
-        category: complaintForm.category,
-        substantiationStatus: complaintForm.substantiationStatus,
-        reviewNotes: complaintForm.reviewNotes.trim() || undefined,
-      };
-    } else if (selectedWizardType === "Customer Commendation" || selectedWizardType === "Positive Safety Observation") {
-      payload.commendationDetails = {
-        category: commendationForm.category,
-        customerName: commendationForm.customerName.trim() || undefined,
-        recognizedBy: commendationForm.recognizedBy.trim() || undefined,
-        description: commendationForm.description.trim() || undefined,
-      };
-    }
-
-    onAddEvent(payload);
-    setIsAddModalOpen(false);
-  };
+  // Event creation is delegated to the schema-driven workflow component.
+  const handleOpenAddWizard = () => setIsAddModalOpen(true);
 
   const handleRecordDetermination = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEvent || selectedEvent.eventType !== "Collision" || !selectedEvent.collisionDetails) {
-      alert("Cannot record preventability determination: This event does not have an underlying collision details record.");
+    if (!selectedEvent || selectedEvent.eventType !== "Collision" || !onAddCompanyDetermination) {
+      alert("A Collision event and the canonical Company Determination handler are required.");
       return;
     }
-
-    if (!determinationData.determinedBy.trim()) {
-      alert("Please provide the name or title of the person/committee who made the determination.");
+    if (!determinationData.determinedBy.trim() || !determinationData.determinationDate) {
+      alert("Please provide the determination actor and date.");
       return;
     }
-
-    const updatedChronology = [
-      ...(selectedEvent.chronology || []),
-      {
-        id: `CHRON-${Date.now().toString(36)}`,
-        timestamp: new Date().toISOString(),
-        action: "PREVENTABILITY_DETERMINED",
-        actor: determinationData.determinedBy,
-        details: `Human Determination recorded as "${determinationData.preventability}". Source: ${determinationData.source}. ${determinationData.notes}`,
-      },
-    ];
-
-    const updatedCollisionDetails: CollisionDetails = {
-      ...selectedEvent.collisionDetails,
-      preventability: determinationData.preventability,
-      preventabilityDeterminedBy: determinationData.determinedBy,
-      preventabilityDeterminationDate: determinationData.determinationDate,
-      preventabilitySource: determinationData.source,
-      preventabilityNotes: determinationData.notes,
-    };
-
-    onUpdateEvent(selectedEvent.id, {
-      collisionDetails: updatedCollisionDetails,
-      chronology: updatedChronology,
-      updatedAt: new Date().toISOString(),
+    const determination = onAddCompanyDetermination({
+      companyId: relationship.companyId,
+      driverMasterId: master.driverMasterId,
+      companyDriverRecordId: relationship.companyDriverRecordId || relationship.id,
+      relatedRecordType: "Collision",
+      relatedRecordId: selectedEvent.id,
+      determinationType: "COLLISION_PREVENTABILITY",
+      determinationValue: determinationData.preventability === "Preventable" ? "PREVENTABLE" : determinationData.preventability === "Non-Preventable" ? "NON_PREVENTABLE" : "UNABLE_TO_DETERMINE",
+      preventabilityFinding: determinationData.preventability,
+      rationale: determinationData.notes || undefined,
+      determinedBy: determinationData.determinedBy.trim(),
+      determinationDate: determinationData.determinationDate,
+      source: determinationData.source.trim() || undefined,
+      notes: determinationData.notes.trim() || undefined,
+      evidenceIds: selectedEvent.evidenceIds,
     });
-
+    onUpdateEvent(selectedEvent.id, {
+      companyDeterminationId: determination?.id,
+      chronology: [
+        ...(selectedEvent.chronology || []),
+        { id: `CHRON-${Date.now().toString(36)}`, timestamp: new Date().toISOString(), action: "DETERMINATION_LINKED", actor: determinationData.determinedBy.trim(), details: "Company preventability determination recorded as a separate canonical Company Determination; source collision facts were not overwritten." },
+      ],
+    });
     setIsDeterminationModalOpen(false);
   };
 
@@ -805,7 +383,6 @@ export function DriverPerformanceTab({
       chronology: updatedChronology,
       updatedAt: new Date().toISOString(),
     });
-    setIsCloseModalOpen(false);
   };
 
   return (
@@ -1120,172 +697,16 @@ export function DriverPerformanceTab({
       {/* SUBVIEW 2: EVENT REGISTER */}
       {subView === "register" && (
         <div className="space-y-4">
-          {/* Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4 shadow-xs">
-            <div className="relative min-w-[240px] flex-1">
-              <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search event ID, summary, location, description..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full rounded-xl border border-border bg-background py-1.5 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-xs">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="relative lg:col-span-2"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><input value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setRegisterPage(1); }} placeholder="Search event ID, summary, location..." className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-xs outline-none focus:border-primary" /></div>
+              <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"><option value="all">All Categories</option>{EVENT_TYPE_DEFINITIONS.filter((item) => item.ownership !== "COMPANY_ACTION").map((item) => <option key={item.type} value={item.type}>{item.label}{item.ownership === "LEGACY_READ_ONLY" || item.ownership === "ALIAS" ? " — Legacy" : ""}</option>)}</select>
+              <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"><option value="all">All Sources</option>{["Driver Report", "Company Staff", "Roadside Inspection", "ELD / Telematics", "Camera", "Customer", "Citation", "Maintenance", "Training", "Other"].map((item) => <option key={item}>{item}</option>)}</select>
+              <select value={verificationFilter} onChange={(e) => { setVerificationFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"><option value="all">All Verification</option>{[...PERFORMANCE_VERIFICATION_STATES].map((item) => <option key={item}>{item}</option>)}</select>
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-              >
-                <option value="all">All Event Types</option>
-                {EVENT_TYPE_DEFINITIONS.map((t) => (
-                  <option key={t.type} value={t.type}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-              >
-                <option value="all">All Statuses</option>
-                {EVENT_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={severityFilter}
-                onChange={(e) => setSeverityFilter(e.target.value)}
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
-              >
-                <option value="all">All Severities</option>
-                {EVENT_SEVERITIES.map((sev) => (
-                  <option key={sev} value={sev}>
-                    {sev}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><input type="date" value={dateFromFilter} onChange={(e) => { setDateFromFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="From date" /><input type="date" value={dateToFilter} onChange={(e) => { setDateToFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="To date" /><div className="lg:col-span-2 flex items-center justify-end text-[11px] text-muted-foreground">{registerEvents.length} matching record{registerEvents.length === 1 ? "" : "s"}</div></div>
           </div>
-
-          {/* Table of Events */}
-          <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                  <tr>
-                    <th className="px-4 py-3">Event ID & Date</th>
-                    <th className="px-4 py-3">Event Type</th>
-                    <th className="px-4 py-3">Summary & Location</th>
-                    <th className="px-4 py-3">Severity</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Key Details</th>
-                    <th className="px-4 py-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {registerEvents.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
-                        No performance events found matching the selected filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    registerEvents.map((evt) => (
-                      <tr
-                        key={evt.id}
-                        onClick={() => setSelectedEventId(evt.id)}
-                        className="cursor-pointer hover:bg-muted/30 transition-colors"
-                      >
-                        <td className="px-4 py-3">
-                          <span className="font-mono font-bold text-primary block">{evt.id}</span>
-                          <span className="text-[11px] text-muted-foreground">{evt.eventDate}</span>
-                        </td>
-                        <td className="px-4 py-3 font-semibold text-foreground">{evt.eventType}</td>
-                        <td className="px-4 py-3 max-w-xs">
-                          <p className="font-medium text-foreground line-clamp-1">{evt.summary}</p>
-                          <p className="text-[11px] text-muted-foreground truncate">{evt.location || "Location not specified"}</p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                              evt.severity === "Critical"
-                                ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                                : evt.severity === "High"
-                                ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
-                                : evt.severity === "Moderate"
-                                ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                                : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-                            }`}
-                          >
-                            {evt.severity}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                              evt.status === "Closed"
-                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                : evt.status === "Follow-up Required"
-                                ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
-                                : "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                            }`}
-                          >
-                            {evt.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-[11px] text-muted-foreground">
-                          {evt.eventType === "Collision" && (
-                            <span>
-                              {evt.collisionDetails?.preventability || "Undetermined"} •{" "}
-                              {evt.collisionDetails?.collisionType || "Collision"}
-                            </span>
-                          )}
-                          {evt.eventType === "Roadside Inspection" && (
-                            <span>
-                              {evt.inspectionDetails?.result || "Inspected"} • Driver OOS:{" "}
-                              {evt.inspectionDetails?.driverOOS ? "YES" : "No"}
-                            </span>
-                          )}
-                          {evt.eventType === "HOS Violation" && (
-                            <span>{HOS_VIOLATION_TYPES.find(x => x.value === evt.hosDetails?.violationType)?.label || evt.hosDetails?.legacyViolationType || "Duty Violation"}</span>
-                          )}
-                          {evt.eventType === "Customer Complaint" && (
-                            <span>
-                              {evt.complaintDetails?.customerName || "Customer"} ({evt.complaintDetails?.substantiationStatus})
-                            </span>
-                          )}
-                          {evt.eventType === "Coaching Session" && (
-                            <span>Topic: {evt.coachingDetails?.topic || "Safety"}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedEventId(evt.id);
-                            }}
-                            className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1"
-                          >
-                            <span>Inspect</span>
-                            <ChevronRight className="size-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs"><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Event</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Occurrence / Context</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Verification</th><th className="px-4 py-3">Evidence / Links</th><th className="px-4 py-3 text-right">View</th></tr></thead><tbody className="divide-y divide-border">{paginatedRegisterEvents.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No performance events found matching the selected filters.</td></tr> : paginatedRegisterEvents.map((evt) => { const def = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[evt.eventType]; return <tr key={evt.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setSelectedEventId(evt.id)}><td className="px-4 py-3"><span className="block font-mono font-bold text-primary">{evt.id}</span><span className="text-[10px] text-muted-foreground">{evt.eventDate}{evt.eventTime ? ` · ${evt.eventTime}` : ""}</span></td><td className="px-4 py-3"><span className="font-semibold text-foreground">{def?.label || evt.eventType}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{def?.group || "Driver Event"}</span></td><td className="max-w-sm px-4 py-3"><p className="line-clamp-1 font-medium text-foreground">{evt.summary}</p><p className="truncate text-[10px] text-muted-foreground">{[evt.location, evt.city, evt.stateProvince].filter(Boolean).join(", ") || "Context not recorded"}</p></td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.provenance?.source || "Not recorded"}</td><td className="px-4 py-3 text-[11px] font-semibold text-foreground">{evt.verificationState || "Unverified"}</td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.evidenceIds.length} evidence · {evt.linkedRecords?.length || 0} links</td><td className="px-4 py-3 text-right"><button type="button" onClick={(e) => { e.stopPropagation(); setSelectedEventId(evt.id); }} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-bold text-foreground hover:bg-muted">View</button></td></tr>; })}</tbody></table></div><div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3"><span className="text-[10px] text-muted-foreground">Page {registerPage} of {registerTotalPages}</span><div className="flex gap-2"><button type="button" disabled={registerPage === 1} onClick={() => setRegisterPage((page) => page - 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Previous</button><button type="button" disabled={registerPage >= registerTotalPages} onClick={() => setRegisterPage((page) => page + 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Next</button></div></div></div>
         </div>
       )}
 
@@ -1702,7 +1123,7 @@ export function DriverPerformanceTab({
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs font-bold text-primary">{selectedEvent.id}</span>
                   <span className="text-sm font-bold text-foreground">{selectedEvent.eventType}</span>
-                  <span
+                  {selectedEvent.severity !== "Not Applicable" && <span
                     className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                       selectedEvent.severity === "Critical"
                         ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
@@ -1712,8 +1133,8 @@ export function DriverPerformanceTab({
                     }`}
                   >
                     {selectedEvent.severity}
-                  </span>
-                  <span
+                  </span> }
+                  {selectedEvent.status !== "Not Applicable" && <span
                     className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                       selectedEvent.status === "Closed"
                         ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
@@ -1721,7 +1142,7 @@ export function DriverPerformanceTab({
                     }`}
                   >
                     {selectedEvent.status}
-                  </span>
+                  </span> }
                 </div>
                 <p className="text-xs text-muted-foreground">{selectedEvent.summary}</p>
               </div>
@@ -1762,7 +1183,7 @@ export function DriverPerformanceTab({
                       Structured Collision Details
                     </h4>
                     <span className="font-bold text-xs text-primary">
-                      Preventability: {selectedEvent.collisionDetails.preventability}
+                      {selectedCompanyDetermination ? `Company Determination: ${selectedCompanyDetermination.preventabilityFinding || selectedCompanyDetermination.determinationValue || "Recorded"}` : "Company Determination: Not Recorded"}
                     </span>
                   </div>
 
@@ -1778,24 +1199,14 @@ export function DriverPerformanceTab({
                     <ReadOnlyField label="Estimated Cost" value={selectedEvent.collisionDetails.estimatedCost || "Not recorded"} />
                   </div>
 
-                  {/* Preventability Details Box */}
                   <div className="rounded-lg bg-card border border-border p-3 space-y-1.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-foreground">Human Preventability Determination:</span>
-                      {selectedEvent.collisionDetails.preventabilityDeterminationDate && (
-                        <span className="text-[10px] font-mono text-muted-foreground">
-                          Determined: {selectedEvent.collisionDetails.preventabilityDeterminationDate}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-muted-foreground">
-                      Determined By: {selectedEvent.collisionDetails.preventabilityDeterminedBy || "Pending Review"} • Source: {selectedEvent.collisionDetails.preventabilitySource || "Internal Review"}
-                    </p>
-                    {selectedEvent.collisionDetails.preventabilityNotes && (
-                      <p className="text-xs text-foreground bg-muted/30 p-2 rounded">
-                        Notes: {selectedEvent.collisionDetails.preventabilityNotes}
-                      </p>
-                    )}
+                    <div className="font-bold text-foreground">Company Determination</div>
+                    {selectedCompanyDetermination ? (
+                      <>
+                        <p className="text-muted-foreground">{selectedCompanyDetermination.preventabilityFinding || selectedCompanyDetermination.determinationValue || "Recorded"} · {selectedCompanyDetermination.determinedBy} · {selectedCompanyDetermination.determinationDate}</p>
+                        {selectedCompanyDetermination.rationale && <p className="rounded bg-muted/30 p-2 text-foreground">{selectedCompanyDetermination.rationale}</p>}
+                      </>
+                    ) : <p className="text-muted-foreground">No Company Determination is recorded. Collision source facts remain unchanged.</p>}
                   </div>
                 </div>
               )}
@@ -1814,6 +1225,22 @@ export function DriverPerformanceTab({
                     <ReadOnlyField label="Inspection Result" value={selectedEvent.inspectionDetails.result} />
                     <ReadOnlyField label="Driver Violations" value={String(selectedEvent.inspectionDetails.driverViolationsCount)} />
                     <ReadOnlyField label="Driver Out of Service" value={selectedEvent.inspectionDetails.driverOOS ? "YES (OOS)" : "No"} />
+                  </div>
+                </div>
+              )}
+
+              {(selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
+                <div className="space-y-3">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Category-Specific Structured Facts</span>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-border p-4 bg-background">
+                    {selectedEvent.structuredEventFacts?.map((fact) => {
+                      const field = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((item) => item.dataPointId === fact.dataPointId);
+                      const measurement = fact.unit ? `${displayFact(selectedEvent, fact.dataPointId, fact.value)} ${fact.unit}` : displayFact(selectedEvent, fact.dataPointId, fact.value);
+                      return <ReadOnlyField key={fact.dataPointId} label={field?.label || fact.dataPointId} value={measurement} />;
+                    })}
+                    {!selectedEvent.structuredEventFacts?.length && Object.entries(selectedEvent.structuredFacts || {}).map(([key, value]) => value !== null && value !== undefined && value !== "" && value !== false ? (
+                      <ReadOnlyField key={key} label={`${key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())} (Legacy)`} value={value === true ? "Yes" : String(value)} />
+                    ) : null)}
                   </div>
                 </div>
               )}
@@ -1912,7 +1339,12 @@ export function DriverPerformanceTab({
               </div>
 
               <div className="flex items-center gap-2">
-                {selectedEvent.status !== "Closed" && (
+                {onArchiveEvent && (
+                  <button type="button" onClick={() => { onArchiveEvent(selectedEvent.id); setSelectedEventId(null); }} className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/10">
+                    Archive Event
+                  </button>
+                )}
+                {selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
                   <button
                     type="button"
                     onClick={handleCloseEvent}
@@ -1935,686 +1367,14 @@ export function DriverPerformanceTab({
         </div>
       )}
 
-      {/* PROGRESSIVE DISCLOSURE EVENT CREATION WIZARD (Phase 33) */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs overflow-y-auto">
-          <div className="relative w-full max-w-3xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden my-8">
-            {/* Wizard Header */}
-            <div className="bg-muted/40 px-6 py-4 border-b border-border flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Record Commercial Performance Event</h3>
-                <p className="text-xs text-muted-foreground">
-                  Step {wizardStep} of 6:{" "}
-                  {wizardStep === 1 && "Select Event Classification"}
-                  {wizardStep === 2 && "Core Facts & Chronology Spine"}
-                  {wizardStep === 3 && `Type-Specific Details (${selectedWizardType})`}
-                  {wizardStep === 4 && "Link Related TES Records"}
-                  {wizardStep === 5 && "Evidence & Documents"}
-                  {wizardStep === 6 && "Review & Commit"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAddModalOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            {/* Wizard Step Content */}
-            <form onSubmit={handleSaveWizard} className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
-              {/* STEP 1: Select Event Type */}
-              {wizardStep === 1 && (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 flex items-center justify-between gap-3 text-xs">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-foreground block">Looking to record Coaching, Disciplinary Action, or a CAP?</span>
-                      <span className="text-muted-foreground block text-[11px]">
-                        Carrier corrective actions, counseling sessions, warnings, and remediation plans are recorded directly under Carrier Company Actions.
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAddModalOpen(false);
-                        setIsCompanyActionModalOpen(true);
-                      }}
-                      className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
-                    >
-                      Record Company Action
-                    </button>
-                  </div>
-
-                  <span className="text-xs font-bold text-foreground block">
-                    Choose the regulatory or operational event category:
-                  </span>
-                  <div className="grid gap-2.5 sm:grid-cols-2">
-                    {EVENT_TYPE_DEFINITIONS.map((t) => (
-                      <button
-                        key={t.type}
-                        type="button"
-                        onClick={() => setSelectedWizardType(t.type)}
-                        className={`flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all ${
-                          selectedWizardType === t.type
-                            ? "border-primary bg-primary/5 shadow-2xs"
-                            : "border-border bg-background hover:bg-muted/40"
-                        }`}
-                      >
-                        <div
-                          className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${
-                            selectedWizardType === t.type
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          <FileText className="size-4" />
-                        </div>
-                        <div className="space-y-0.5">
-                          <span className="text-xs font-bold text-foreground block">{t.label}</span>
-                          <span className="text-[11px] text-muted-foreground leading-snug block">
-                            {t.description}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 2: Core Facts Spine */}
-              {wizardStep === 2 && (
-                <div className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Event Date *</label>
-                      <input
-                        type="date"
-                        required
-                        value={commonForm.eventDate}
-                        onChange={(e) => setCommonForm({ ...commonForm, eventDate: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Event Time (24h)</label>
-                      <input
-                        type="time"
-                        value={commonForm.eventTime}
-                        onChange={(e) => setCommonForm({ ...commonForm, eventTime: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Severity Level *</label>
-                      <select
-                        value={commonForm.severity}
-                        onChange={(e) => setCommonForm({ ...commonForm, severity: e.target.value as PerformanceSeverity })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      >
-                        <option value="">-- Select Severity --</option>
-                        {EVENT_SEVERITIES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Initial Status *</label>
-                      <select
-                        value={commonForm.status}
-                        onChange={(e) => setCommonForm({ ...commonForm, status: e.target.value as EventStatus })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      >
-                        {EVENT_STATUSES.map((st) => (
-                          <option key={st} value={st}>
-                            {st}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="text-xs font-bold text-foreground">Location Description / Highway / Milepost</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Hwy 401 Eastbound near Exit 328"
-                        value={commonForm.location}
-                        onChange={(e) => setCommonForm({ ...commonForm, location: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">City / Municipality</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Milton"
-                        value={commonForm.city}
-                        onChange={(e) => setCommonForm({ ...commonForm, city: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Province / State & Country</label>
-                      <div className="flex gap-2 mt-1">
-                        <select value={commonForm.stateProvince} onChange={(e) => setCommonForm({ ...commonForm, stateProvince: e.target.value })} className="w-1/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
-                          <option value="">-- State / Province --</option>
-                          {JURISDICTIONS.filter(j => !commonForm.country || j.country === commonForm.country).map(j => <option key={j.code} value={j.code}>{j.code}</option>)}
-                        </select>
-                        <select value={commonForm.country} onChange={(e) => setCommonForm({ ...commonForm, country: e.target.value as "Canada" | "United States" | "", stateProvince: "" })} className="w-2/3 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
-                          <option value="">-- Country --</option><option value="Canada">Canada</option><option value="United States">United States</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="text-xs font-bold text-foreground">One-Line Executive Summary *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. Backing contact with warehouse dock frame"
-                        value={commonForm.summary}
-                        onChange={(e) => setCommonForm({ ...commonForm, summary: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="text-xs font-bold text-foreground">Detailed Description / Statement</label>
-                      <textarea
-                        rows={3}
-                        placeholder="Provide detailed narrative facts as reported..."
-                        value={commonForm.description}
-                        onChange={(e) => setCommonForm({ ...commonForm, description: e.target.value })}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 3: Type-Specific Details */}
-              {wizardStep === 3 && (
-                <div className="space-y-4">
-                  {selectedWizardType === "Collision" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Collision Type *</label>
-                        <select
-                          value={collisionForm.collisionType}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, collisionType: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select collision type...</option>
-                          {COLLISION_TYPES.map((ct) => (
-                            <option key={ct} value={ct}>
-                              {ct}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Weather Condition</label>
-                        <select
-                          value={collisionForm.weather}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, weather: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select weather condition...</option>
-                          {WEATHER_CONDITIONS.map((w) => (
-                            <option key={w} value={w}>
-                              {w}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Road Surface</label>
-                        <select
-                          value={collisionForm.roadCondition}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, roadCondition: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select road surface condition...</option>
-                          {ROAD_CONDITIONS.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Lighting</label>
-                        <select
-                          value={collisionForm.lightCondition}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, lightCondition: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select lighting condition...</option>
-                          {LIGHT_CONDITIONS.map((l) => (
-                            <option key={l} value={l}>
-                              {l}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex items-center gap-4 sm:col-span-2 pt-2">
-                        <label className="flex items-center gap-2 text-xs text-foreground">
-                          <input
-                            type="checkbox"
-                            checked={collisionForm.towRequired}
-                            onChange={(e) => setCollisionForm({ ...collisionForm, towRequired: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          <span>Vehicle Towed from Scene</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 text-xs text-foreground">
-                          <input
-                            type="checkbox"
-                            checked={collisionForm.policeAttended}
-                            onChange={(e) => setCollisionForm({ ...collisionForm, policeAttended: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          <span>Police Attended Scene</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 text-xs text-foreground">
-                          <input
-                            type="checkbox"
-                            checked={collisionForm.dotReportable}
-                            onChange={(e) => setCollisionForm({ ...collisionForm, dotReportable: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          <span>DOT / FMCSA Reportable</span>
-                        </label>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Police Report # (if issued)</label>
-                        <input
-                          type="text"
-                          placeholder="Optional police report number"
-                          value={collisionForm.policeReportNumber}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, policeReportNumber: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Estimated Damage ($)</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. $1,200.00"
-                          value={collisionForm.estimatedCost}
-                          onChange={(e) => setCollisionForm({ ...collisionForm, estimatedCost: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedWizardType === "Roadside Inspection" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Inspection Level *</label>
-                        <select
-                          value={inspectionForm.inspectionLevel}
-                          onChange={(e) => setInspectionForm({ ...inspectionForm, inspectionLevel: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select inspection level...</option>
-                          {INSPECTION_LEVELS.map((lvl) => (
-                            <option key={lvl} value={lvl}>
-                              {lvl}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Inspection Result *</label>
-                        <select
-                          value={inspectionForm.result}
-                          onChange={(e) => setInspectionForm({ ...inspectionForm, result: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select inspection result...</option>
-                          {INSPECTION_RESULTS.map((res) => (
-                            <option key={res} value={res}>
-                              {res}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Enforcement Agency</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Ontario Ministry of Transportation (MTO)"
-                          value={inspectionForm.agency}
-                          onChange={(e) => setInspectionForm({ ...inspectionForm, agency: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Inspection Report #</label>
-                        <input
-                          type="text"
-                          placeholder="Report / Citation reference"
-                          value={inspectionForm.reportNumber}
-                          onChange={(e) => setInspectionForm({ ...inspectionForm, reportNumber: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Vehicle Repair Status</label>
-                        <select
-                          value={inspectionForm.repairStatus}
-                          onChange={(e) => setInspectionForm({ ...inspectionForm, repairStatus: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select repair status...</option>
-                          {REPAIR_STATUSES.map(value => <option key={value} value={value}>{value}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="flex items-center gap-4 sm:col-span-2 pt-2">
-                        <label className="flex items-center gap-2 text-xs text-foreground">
-                          <input
-                            type="checkbox"
-                            checked={inspectionForm.driverOOS}
-                            onChange={(e) => setInspectionForm({ ...inspectionForm, driverOOS: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          <span className="font-bold text-rose-600">Driver Placed Out of Service (OOS)</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 text-xs text-foreground">
-                          <input
-                            type="checkbox"
-                            checked={inspectionForm.vehicleOOS}
-                            onChange={(e) => setInspectionForm({ ...inspectionForm, vehicleOOS: e.target.checked })}
-                            className="rounded border-border"
-                          />
-                          <span>Vehicle Placed Out of Service</span>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedWizardType === "HOS Violation" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Rule Jurisdiction *</label>
-                        <select
-                          value={hosForm.ruleJurisdiction}
-                          onChange={(e) => setHosForm({ ...hosForm, ruleJurisdiction: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select rule jurisdiction...</option>
-                          {HOS_RULE_JURISDICTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Rule Profile *</label>
-                        <select
-                          value={hosForm.ruleProfileId}
-                          onChange={(e) => setHosForm({ ...hosForm, ruleProfileId: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select rule profile...</option>
-                          {HOS_RULE_PROFILES.filter((profile) => !hosForm.ruleJurisdiction || profile.value.startsWith(hosForm.ruleJurisdiction + "_") || profile.value === hosForm.ruleJurisdiction).map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Violation Category *</label>
-                        <select
-                          value={hosForm.violationType}
-                          onChange={(e) => setHosForm({ ...hosForm, violationType: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select violation category...</option>
-                          {HOS_VIOLATION_TYPES.map((v) => (
-                            <option key={v.value} value={v.value}>
-                              {v.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Log Date *</label>
-                        <input
-                          type="date"
-                          value={hosForm.logDate}
-                          onChange={(e) => setHosForm({ ...hosForm, logDate: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Detection / Review Status</label>
-                        <select value={hosForm.reviewStatus} onChange={(e) => setHosForm({ ...hosForm, reviewStatus: e.target.value as NonNullable<HOSViolationDetails["reviewStatus"]> })} className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none">
-                          <option value="">-- Not Established --</option>
-                          {HOS_REVIEW_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Detection Source *</label>
-                        <select
-                          value={hosForm.source}
-                          onChange={(e) => setHosForm({ ...hosForm, source: e.target.value as any })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        >
-                          <option value="">Select detection source...</option>
-                          {HOS_SOURCES.map((value) => <option key={value} value={value}>{value}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedWizardType === "Customer Complaint" && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Customer / Shipper Name *</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. Metro Distribution Center"
-                          value={complaintForm.customerName}
-                          onChange={(e) => setComplaintForm({ ...complaintForm, customerName: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-foreground">Load / BOL Reference</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. LD-88192"
-                          value={complaintForm.loadNumber}
-                          onChange={(e) => setComplaintForm({ ...complaintForm, loadNumber: e.target.value })}
-                          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* STEP 4: Cross-Module Links */}
-              {wizardStep === 4 && (
-                <div className="space-y-4">
-                  <span className="text-xs font-bold text-foreground block">
-                    Associate with other operational entities in TES:
-                  </span>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Power Unit / Tractor #</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 101"
-                        value={linkedVehicleNumber}
-                        onChange={(e) => setLinkedVehicleNumber(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-foreground">Trailer Unit #</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 902"
-                        value={linkedTrailerNumber}
-                        onChange={(e) => setLinkedTrailerNumber(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="text-xs font-bold text-foreground">Linked Training Record ID</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. TRN-000047"
-                        value={linkedTrainingRef}
-                        onChange={(e) => setLinkedTrainingRef(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 5: Evidence & Follow-up Setting */}
-              {wizardStep === 5 && (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-border p-4 bg-muted/20 space-y-3">
-                    <label className="flex items-center gap-2 text-xs font-bold text-foreground">
-                      <input
-                        type="checkbox"
-                        checked={commonForm.followUpActionRequired}
-                        onChange={(e) => setCommonForm({ ...commonForm, followUpActionRequired: e.target.checked })}
-                        className="rounded border-border"
-                      />
-                      <span>Flag this event for active compliance follow-up</span>
-                    </label>
-
-                    {commonForm.followUpActionRequired && (
-                      <div className="space-y-3 pt-2">
-                        <div>
-                          <label className="text-xs font-bold text-foreground">Follow-up Target Due Date</label>
-                          <input
-                            type="date"
-                            value={commonForm.followUpDueDate}
-                            onChange={(e) => setCommonForm({ ...commonForm, followUpDueDate: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-xs font-bold text-foreground">Follow-up Action Summary</label>
-                          <textarea
-                            rows={2}
-                            placeholder="Specify required follow-up deliverables or investigation tasks..."
-                            value={commonForm.followUpActionSummary}
-                            onChange={(e) => setCommonForm({ ...commonForm, followUpActionSummary: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 6: Review & Commit */}
-              {wizardStep === 6 && (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-                    <div className="flex items-center justify-between border-b border-border pb-2">
-                      <span className="text-xs font-bold text-foreground">Event Summary Review</span>
-                      <span className="text-xs font-bold text-primary">{selectedWizardType}</span>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2 text-xs">
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Event Date:</span>
-                        <span className="font-bold text-foreground">{commonForm.eventDate}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Severity:</span>
-                        <span className="font-bold text-foreground">{commonForm.severity}</span>
-                      </div>
-                      <div className="sm:col-span-2">
-                        <span className="text-muted-foreground block text-[11px]">Summary:</span>
-                        <span className="font-bold text-foreground">{commonForm.summary}</span>
-                      </div>
-                      {commonForm.location && (
-                        <div className="sm:col-span-2">
-                          <span className="text-muted-foreground block text-[11px]">Location:</span>
-                          <span className="text-foreground">{commonForm.location}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Wizard Footer Navigation */}
-              <div className="bg-muted/40 -mx-6 -mb-6 px-6 py-4 border-t border-border flex items-center justify-between">
-                {wizardStep > 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep((prev) => (prev - 1) as any)}
-                    className="rounded-xl border border-border bg-background px-4 py-2 text-xs font-bold text-foreground hover:bg-muted"
-                  >
-                    Back
-                  </button>
-                ) : (
-                  <div />
-                )}
-
-                {wizardStep < 6 ? (
-                  <button
-                    type="button"
-                    onClick={handleNextStep}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90"
-                  >
-                    <span>Next Step</span>
-                    <ArrowRight className="size-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90"
-                  >
-                    <CheckCircle2 className="size-4" />
-                    <span>Commit Performance Event</span>
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-        </div>
+        <DriverPerformanceEventWorkflow
+          relationship={relationship}
+          trainings={trainings}
+          evidence={evidence}
+          onClose={() => { onClearEvidenceCreatedId?.(); setIsAddModalOpen(false); }}
+          onSave={onAddEvent}
+        />
       )}
 
       {/* HUMAN DETERMINATION RECORDING MODAL */}

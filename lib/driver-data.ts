@@ -1,6 +1,7 @@
 import { normalizeName } from "@/lib/identifier-normalization"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
+import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE } from "@/lib/driver-performance-schema"
 
 import type {
   AddressRecord,
@@ -799,11 +800,49 @@ export function waiveTrainingRecord(companyId: string, id: string, reason: strin
   return updated
 }
 
-export function addPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
+export function addDriverEvidence(companyId: string, driverMasterId: string, input: { fileName: string; mimeType?: string; dataUrl: string; documentType?: string }) {
   const store = loadCompanyDriverStore(companyId)
   const now = new Date().toISOString()
+  const evidence: DriverEvidenceItem = {
+    id: uid("EVD"),
+    companyId,
+    driverMasterId,
+    fileName: input.fileName,
+    fileType: input.mimeType || "application/octet-stream",
+    mimeType: input.mimeType,
+    documentType: input.documentType || "Performance Event Evidence",
+    uploadedAt: now,
+    source: "upload",
+    dataUrl: input.dataUrl,
+    verificationState: "unverified",
+    evidenceVersion: 1,
+    isArchived: false,
+  }
+  saveCompanyDriverStore({ ...store, evidence: [...store.evidence, evidence] })
+  auditDriverMutation(companyId, evidence.id, "CREATE", "Created canonical Driver evidence record for later relational linking.")
+  return evidence
+}
+
+export function addPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
+  const store = loadCompanyDriverStore(companyId)
+  const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[data.eventType]
+  if (!definition) throw new Error(`Unsupported Performance Event category: ${data.eventType}`)
+  if (data.structuredEventFacts) {
+    const allowed = new Map(definition.fields.map((field) => [field.dataPointId, field]))
+    for (const fact of data.structuredEventFacts) {
+      const field = allowed.get(fact.dataPointId)
+      if (!field) throw new Error(`Data Point ${fact.dataPointId} is not allowed for ${data.eventType}.`)
+      if (field.kind === "select" && typeof fact.value === "string" && field.options && !field.options.some((option) => option.value === fact.value)) {
+        throw new Error(`Invalid controlled value for ${fact.dataPointId}.`)
+      }
+      if (field.unitOptions?.length && (!fact.unit || !field.unitOptions.includes(fact.unit))) {
+        throw new Error(`Explicit unit required for ${fact.dataPointId}.`)
+      }
+    }
+  }
+  const now = new Date().toISOString()
   const relationshipId = activeRelationship(store, driverMasterId)?.id
-  const record: DriverPerformanceEvent = { ...data, id: uid("EVT"), companyId, driverMasterId, companyDriverRelationshipId: relationshipId, linkedRecords: data.linkedRecords || [], evidenceIds: data.evidenceIds || [], chronology: data.chronology || [], provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" }, isArchived: false, createdAt: now, updatedAt: now }
+  const record: DriverPerformanceEvent = { ...data, id: uid("EVT"), companyId, driverMasterId, companyDriverRelationshipId: relationshipId, schemaVersion: data.schemaVersion || "1.1", linkedRecords: data.linkedRecords || [], evidenceIds: data.evidenceIds || [], chronology: data.chronology || [], provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" }, isArchived: false, createdAt: now, updatedAt: now }
   saveCompanyDriverStore({ ...store, events: [...store.events, record] })
   auditDriverMutation(companyId, record.id, "CREATE", "Created canonical company-owned Driver event record.")
   return record
@@ -811,10 +850,45 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
 
 export function updatePerformanceEvent(companyId: string, eventId: string, patch: Partial<DriverPerformanceEvent>) {
   const store = loadCompanyDriverStore(companyId)
-  const updated = store.events.map((event) => event.id === eventId ? { ...event, ...patch, id: event.id, companyId: event.companyId, driverMasterId: event.driverMasterId, updatedAt: new Date().toISOString() } : event)
+  const current = store.events.find((event) => event.id === eventId)
+  if (!current) throw new Error("Performance event not found.")
+
+  // Company determinations are separate records. Never allow a generic event
+  // update to write a preventability determination back into collision facts.
+  if (patch.collisionDetails?.preventability !== undefined && patch.collisionDetails.preventability !== current.collisionDetails?.preventability) {
+    throw new Error("Collision preventability must be recorded through CompanyDetermination, not as a source-event fact.")
+  }
+
+  const now = new Date().toISOString()
+  const chronology = [
+    ...(current.chronology || []),
+    { id: `CHRON-${Date.now().toString(36)}`, timestamp: now, action: "EVENT_UPDATED", actor: null, details: "Canonical performance event updated; source-event facts remain distinct from Company Determination and Company Action records." },
+  ]
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, ...patch, id: event.id, companyId: event.companyId, driverMasterId: event.driverMasterId, chronology, updatedAt: now } : event)
   saveCompanyDriverStore({ ...store, events: updated })
-  auditDriverMutation(companyId, eventId, "UPDATE", "Updated canonical company-owned Driver event record.")
+  auditDriverMutation(companyId, eventId, "UPDATE", "Updated canonical company-owned Driver event record with chronology preservation.")
   return updated.find((event) => event.id === eventId)
+}
+
+export function archivePerformanceEvent(companyId: string, eventId: string) {
+  const store = loadCompanyDriverStore(companyId)
+  const current = store.events.find((event) => event.id === eventId)
+  if (!current) throw new Error("Performance event not found.")
+  if (current.isArchived) return current
+
+  const now = new Date().toISOString()
+  const archived = store.events.map((event) => event.id === eventId ? {
+    ...event,
+    isArchived: true,
+    updatedAt: now,
+    chronology: [
+      ...(event.chronology || []),
+      { id: `CHRON-${Date.now().toString(36)}`, timestamp: now, action: "EVENT_ARCHIVED", actor: null, details: "Performance event archived. Historical record retained; no deletion performed." },
+    ],
+  } : event)
+  saveCompanyDriverStore({ ...store, events: archived })
+  auditDriverMutation(companyId, eventId, "ARCHIVE", "Archived canonical company-owned Driver event record; historical data retained.")
+  return archived.find((event) => event.id === eventId)
 }
 
 export function addHOSReview(companyId: string, data: Omit<HOSReview, "id" | "createdAt" | "updatedAt">) {

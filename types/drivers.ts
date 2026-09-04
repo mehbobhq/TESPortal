@@ -678,16 +678,36 @@ export type EventType =
   | "Customer Compliment"
   | "Telematics / Camera Observation"
   | "Security Event"
-  | "Emergency Event";
+  | "Emergency Event"
+  | "Speeding"
+  | "Harsh Braking"
+  | "Harsh Acceleration"
+  | "Harsh Cornering"
+  | "Following Distance"
+  | "Fatigue Indicator"
+  | "Device / Data Integrity"
+  | "Trip Completion / Service Performance"
+  | "Lane Departure"
+  | "Seatbelt"
+  | "Distracted Driving"
+  | "Idle Time"
+  | "Route Deviation"
+  | "Backing"
+  | "Stop Sign / Red Light"
+  | "Railroad Crossing"
+  | "Customer-Site Behavior"
+  | "PPE / Safety Protocol"
+  | "Equipment Failure / Critical Defect";
 
-export type EventSeverity = "Low" | "Moderate" | "High" | "Critical";
+export type EventSeverity = "Low" | "Moderate" | "High" | "Critical" | "Not Applicable";
 
 export type EventStatus =
   | "Open"
   | "Under Review"
   | "Awaiting Information"
   | "Follow-up Required"
-  | "Closed";
+  | "Closed"
+  | "Not Applicable";
 
 export interface LinkedRecordRef {
   entityType: "Vehicle" | "Trailer" | "Trip" | "Load" | "Customer" | "Customer Site" | "Citation" | "Inspection" | "Repair" | "Training" | "Screening" | "Document" | "Event" | "HOS" | "Maintenance" | "Company Action" | "Evidence" | "Unlinked Operational Reference";
@@ -725,6 +745,24 @@ export interface RootCauseFactor {
   determinationDate?: string;
 }
 
+export type StructuredEventFactValue = string | number | boolean | null;
+
+export interface StructuredEventFact {
+  dataPointId: string;
+  value: StructuredEventFactValue;
+  valueType: "string" | "number" | "boolean" | "date" | "time" | "duration" | "measurement";
+  unit?: string;
+  normalizedValue?: number;
+  normalizedUnit?: string;
+  source?: string;
+}
+
+export interface OperationalReference {
+  referenceType: string;
+  referenceValue: string;
+  source?: string;
+}
+
 export interface PerformanceEventRecord {
   id: string; // e.g. EVT-PW-000419
   companyId: string;
@@ -755,6 +793,17 @@ export interface PerformanceEventRecord {
   summary: string;
   description: string;
 
+  /**
+   * Schema-driven category facts. Keys are defined by the canonical
+   * Driver Performance category registry; values are intentionally limited
+   * to serializable semantic primitives rather than `any`.
+   */
+  /** @deprecated Compatibility projection only. Canonical semantics live in structuredEventFacts. */
+  structuredFacts?: Record<string, string | number | boolean | null>;
+  structuredEventFacts?: StructuredEventFact[];
+  schemaVersion?: string;
+  operationalReferences?: OperationalReference[];
+
   // Follow-up Tracking
   followUpActionRequired?: boolean;
   followUpDueDate?: string;
@@ -772,8 +821,10 @@ export interface PerformanceEventRecord {
     policeReportNumber?: string; // User-provided only, never fabricated
     injuriesCount: number;
     fatalitiesCount: number;
-    dotReportable: boolean;
-    preventability: "Undetermined" | "Preventable" | "Non-Preventable";
+    /** @deprecated Legacy projection; reportability is canonical in structuredEventFacts. */
+    dotReportable?: boolean;
+    /** @deprecated Company Determination only; never treat as source-event fact. */
+    preventability?: "Undetermined" | "Preventable" | "Non-Preventable";
     preventabilityDeterminedBy?: string;
     preventabilityDeterminationDate?: string;
     preventabilitySource?: string;
@@ -893,6 +944,8 @@ export interface PerformanceEventRecord {
   evidenceIds: string[];
   chronology: EventChronologyItem[];
   provenance?: ProvenanceMetadata;
+  /** Verification is distinct from dispute and from company determination. */
+  verificationState?: "Unverified" | "Partially Verified" | "Verified" | "Unable to Verify";
   companyDeterminationId?: string;
   companyActionId?: string;
   outcome?: {
@@ -952,6 +1005,11 @@ export interface ProvenanceMetadata {
   sourceRecordId?: string;
   capturedAt?: string;
   capturedBy?: string;
+  sourceTimestamp?: string;
+  ingestionTimestamp?: string;
+  sourceConfidence?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  dataQuality?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  rawPayloadReference?: string;
   migratedFrom?: string;
 }
 
@@ -1355,7 +1413,26 @@ export type CanonicalEventCategory =
   | "Commendation"
   | "Telematics / Camera Observation"
   | "Security Event"
-  | "Emergency Event";
+  | "Emergency Event"
+  | "Speeding"
+  | "Harsh Braking"
+  | "Harsh Acceleration"
+  | "Harsh Cornering"
+  | "Following Distance"
+  | "Fatigue Indicator"
+  | "Device / Data Integrity"
+  | "Trip Completion / Service Performance"
+  | "Lane Departure"
+  | "Seatbelt"
+  | "Distracted Driving"
+  | "Idle Time"
+  | "Route Deviation"
+  | "Backing"
+  | "Stop Sign / Red Light"
+  | "Railroad Crossing"
+  | "Customer-Site Behavior"
+  | "PPE / Safety Protocol"
+  | "Equipment Failure / Critical Defect";
 
 export interface CitationRecord {
   id: string;

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   DriverMaster,
   CompanyDriverRelationship,
@@ -17,6 +17,7 @@ import {
   CompanyDetermination,
 } from "@/types/drivers";
 import { DriverHeader } from "./DriverHeader";
+import { getQueryParam } from "@/lib/deep-linking";
 import { DriverProfileTab } from "./DriverProfileTab";
 import { DriverQualificationsTab } from "./DriverQualificationsTab";
 import { DriverDocumentsTab } from "./DriverDocumentsTab";
@@ -41,7 +42,9 @@ import {
   addTrainingRequirement,
   waiveTrainingRecord,
   addPerformanceEvent,
+  addDriverEvidence,
   updatePerformanceEvent,
+  archivePerformanceEvent,
   addHOSReview,
   addCompanyAction,
   addCompanyDetermination,
@@ -91,7 +94,16 @@ export function DriverWorkspace({
   onBack,
   onRefresh,
 }: DriverWorkspaceProps) {
-  const [activeTab, setActiveTab] = useState<string>("profile");
+  const [activeTab, setActiveTab] = useState<string>(() => getQueryParam("performanceView") ? "performance" : "profile");
+
+  useEffect(() => {
+    const syncPerformanceRoute = () => {
+      if (getQueryParam("performanceView")) setActiveTab("performance");
+    };
+    syncPerformanceRoute();
+    window.addEventListener("popstate", syncPerformanceRoute);
+    return () => window.removeEventListener("popstate", syncPerformanceRoute);
+  }, []);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Modals
@@ -111,6 +123,8 @@ export function DriverWorkspace({
   const [taxStatus, setTaxStatus] = useState<DriverTaxDocRecord["status"]>("Pending");
   const [creationError, setCreationError] = useState<string | null>(null);
   const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
+  const [eventEvidenceMode, setEventEvidenceMode] = useState(false);
+  const [eventEvidenceCreatedId, setEventEvidenceCreatedId] = useState<string | null>(null);
   const [ocrReviewData, setOcrReviewData] = useState<{
     docName: string;
     dataUrl: string;
@@ -280,11 +294,17 @@ export function DriverWorkspace({
   // Handlers for Performance Tab
   const handleAddEvent = (data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => {
     addPerformanceEvent(company.id, master.id, data);
+    setEventEvidenceCreatedId(null);
     onRefresh();
   };
 
   const handleUpdateEvent = (eventId: string, patch: Partial<DriverPerformanceEvent>) => {
     updatePerformanceEvent(company.id, eventId, patch);
+    onRefresh();
+  };
+
+  const handleArchiveEvent = (eventId: string) => {
+    archivePerformanceEvent(company.id, eventId);
     onRefresh();
   };
 
@@ -299,12 +319,31 @@ export function DriverWorkspace({
   };
 
   const handleAddCompanyDetermination = (determination: Omit<CompanyDetermination, "id" | "createdAt" | "updatedAt" | "isArchived">) => {
-    addCompanyDetermination(company.id, determination);
+    const created = addCompanyDetermination(company.id, determination);
     onRefresh();
+    return created;
+  };
+
+  const handleRequestEventEvidenceUpload = () => {
+    setEventEvidenceCreatedId(null);
+    setEventEvidenceMode(true);
+    setIsSourcePickerOpen(true);
   };
 
   // OCR Processing
   const handleSelectFile = (file: File) => {
+    if (eventEvidenceMode) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const created = addDriverEvidence(company.id, master.id, { fileName: file.name, mimeType: file.type, dataUrl: String(reader.result || ""), documentType: "Performance Event Evidence" });
+        setEventEvidenceCreatedId(created.id);
+        setEventEvidenceMode(false);
+        setIsSourcePickerOpen(false);
+        onRefresh();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
     setIsSourcePickerOpen(false);
     const reader = new FileReader();
     reader.onload = () => {
@@ -319,6 +358,7 @@ export function DriverWorkspace({
   const handleSelectCamera = () => {
     // Camera capture is intentionally not simulated in Phase 1. The shared picker can be
     // wired to a real capture source in the UI phase; no placeholder evidence is created.
+    setEventEvidenceMode(false);
     setIsSourcePickerOpen(false);
   };
 
@@ -452,6 +492,11 @@ export function DriverWorkspace({
             onAddCompanyAction={handleAddCompanyAction}
             onAddCompanyDetermination={handleAddCompanyDetermination}
             onOpenDocument={handleOpenEvidenceById}
+            evidence={evidence}
+            onRequestEvidenceUpload={handleRequestEventEvidenceUpload}
+            evidenceCreatedId={eventEvidenceCreatedId}
+            onArchiveEvent={handleArchiveEvent}
+            onClearEvidenceCreatedId={() => setEventEvidenceCreatedId(null)}
           />
         )}
       </div>
@@ -565,8 +610,8 @@ export function DriverWorkspace({
           onClose={() => setIsSourcePickerOpen(false)}
           onSelectFile={handleSelectFile}
           onSelectCamera={handleSelectCamera}
-          title="Ingest Driver Document or Licence"
-          subtitle="Scan or upload a commercial driver licence, medical certificate, or inspection document."
+          title={eventEvidenceMode ? "Attach Performance Event Evidence" : "Ingest Driver Document or Licence"}
+          subtitle={eventEvidenceMode ? "Upload source evidence to the canonical Driver evidence collection; it can then be linked to the performance event." : "Scan or upload a commercial driver licence, medical certificate, or inspection document."}
         />
       )}
 

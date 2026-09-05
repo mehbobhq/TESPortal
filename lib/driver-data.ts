@@ -1,12 +1,14 @@
 import { normalizeName } from "@/lib/identifier-normalization"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
-import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE } from "@/lib/driver-performance-schema"
+import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION } from "@/lib/driver-performance-schema"
+import { loadVehicleStore } from "@/lib/vehicle-data"
 
 import type {
   AddressRecord,
   CompanyActionRecord,
   CompanyDetermination,
+  CanonicalEntityLink,
   CompanyDriverRelationship,
   CompanyDriverStore,
   DriverApplicationRecord,
@@ -15,6 +17,11 @@ import type {
   DriverMaster,
   DriverMasterStore,
   DriverPerformanceEvent,
+  StructuredEventFact,
+  PerformanceFactReconciliation,
+  PerformanceRelationshipResolution,
+  PerformanceSourceIngestionItem,
+  EventStatus,
   DriverTaxDocRecord,
   EffectiveRecord,
   HOSReview,
@@ -40,6 +47,8 @@ export type {
   DriverMaster,
   DriverMasterStore,
   DriverPerformanceEvent,
+  StructuredEventFact,
+  EventStatus,
   DriverTaxDocRecord,
   EffectiveRecord,
   HOSReview,
@@ -376,6 +385,7 @@ function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCours
     eldDiagnostics: [],
     companyDeterminations: [],
     companyActions: [],
+    performanceIngestionItems: [],
   }
   if (Array.isArray(raw)) return { ...base, relationships: raw.map((r) => normalizeRelationship(r, companyId)) }
   if (!raw || typeof raw !== "object") return base
@@ -411,6 +421,7 @@ function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCours
     eldDiagnostics: Array.isArray(raw.eldDiagnostics) ? raw.eldDiagnostics : [],
     companyDeterminations: Array.isArray(raw.companyDeterminations) ? raw.companyDeterminations.map((r: any) => migrateCompanyDetermination(r, companyId)) : [],
     companyActions: Array.isArray(raw.companyActions) ? raw.companyActions.map((r: any) => migrateCompanyAction(r, companyId)) : [],
+    performanceIngestionItems: Array.isArray(raw.performanceIngestionItems) ? raw.performanceIngestionItems : [],
   }
 }
 
@@ -468,6 +479,8 @@ export const saveCompanyDriverStore = (store: CompanyDriverStore) => {
     companyDeterminations,
     companyActions,
     events,
+    performanceRelationshipResolutions: store.performanceRelationshipResolutions || [],
+    performanceIngestionItems: store.performanceIngestionItems || [],
   })
 }
 
@@ -823,10 +836,47 @@ export function addDriverEvidence(companyId: string, driverMasterId: string, inp
   return evidence
 }
 
+export function createPendingPerformanceIngestion(companyId: string, driverMasterId: string | undefined, evidence: DriverEvidenceItem) {
+  const store = loadCompanyDriverStore(companyId);
+  const now = new Date().toISOString();
+  const item: PerformanceSourceIngestionItem = {
+    id: `PIN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    companyId,
+    driverMasterId,
+    evidenceId: evidence.id,
+    receivedAt: now,
+    sourceFileName: evidence.fileName,
+    sourceMimeType: evidence.mimeType || evidence.fileType,
+    sourceType: evidence.documentType || evidence.mimeType || evidence.fileType,
+    origin: "DOCUMENT_UPLOAD",
+    state: "AWAITING_EXTRACTION",
+    processingReviewState: "PENDING",
+  };
+  saveCompanyDriverStore({ ...store, performanceIngestionItems: [...(store.performanceIngestionItems || []), item] });
+  auditDriverMutation(companyId, item.id, "CREATE", "Created Performance source ingestion item awaiting machine extraction; no Performance category or structured facts were fabricated.");
+  return item;
+}
+
 export function addPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
   const store = loadCompanyDriverStore(companyId)
   const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[data.eventType]
   if (!definition) throw new Error(`Unsupported Performance Event category: ${data.eventType}`)
+  if (PERFORMANCE_CATEGORY_OWNERSHIP[data.eventType] !== "RECORDABLE_EVENT") {
+    throw new Error(`Performance Event category ${data.eventType} is owned by ${PERFORMANCE_CATEGORY_OWNERSHIP[data.eventType]} and cannot be created as a new Performance Event.`)
+  }
+  if (data.structuredFacts && data.structuredEventFacts?.length) {
+    throw new Error("New Performance Events may not write both structuredFacts and structuredEventFacts.")
+  }
+  if (data.linkedRecords?.length) {
+    throw new Error("New Performance Events must use canonicalLinks, evidenceIds, or operationalReferences; legacy linkedRecords cannot be written by the new creation path.")
+  }
+  for (const link of data.canonicalLinks || []) {
+    if (link.source !== "CANONICAL_STORE") throw new Error("Canonical entity links must declare CANONICAL_STORE provenance.")
+    if (link.entityType === "Vehicle" && !(() => { try { return loadVehicleStore(companyId).vehicles.some((vehicle) => vehicle.id === link.recordId) } catch { return false } })()) throw new Error(`Vehicle ${link.recordId} does not resolve in the canonical Vehicle store.`)
+    if (link.entityType === "Training" && !store.trainingRecords.some((training) => training.id === link.recordId)) throw new Error(`Training ${link.recordId} does not resolve in the canonical Training store.`)
+    if (link.entityType === "Maintenance" && !loadVehicleStore(companyId).maintenanceRecords.some((record) => record.id === link.recordId && !record.archived)) throw new Error(`Maintenance ${link.recordId} does not resolve in the canonical Vehicle maintenance store.`)
+    if (!["Vehicle", "Training", "Maintenance"].includes(link.entityType)) throw new Error(`Canonical ${link.entityType} links must be created through their owning module, not Performance Event creation.`)
+  }
   if (data.structuredEventFacts) {
     const allowed = new Map(definition.fields.map((field) => [field.dataPointId, field]))
     for (const fact of data.structuredEventFacts) {
@@ -842,32 +892,223 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   }
   const now = new Date().toISOString()
   const relationshipId = activeRelationship(store, driverMasterId)?.id
-  const record: DriverPerformanceEvent = { ...data, id: uid("EVT"), companyId, driverMasterId, companyDriverRelationshipId: relationshipId, schemaVersion: data.schemaVersion || "1.1", linkedRecords: data.linkedRecords || [], evidenceIds: data.evidenceIds || [], chronology: data.chronology || [], provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" }, isArchived: false, createdAt: now, updatedAt: now }
+  const record: DriverPerformanceEvent = { ...data, id: uid("EVT"), companyId, driverMasterId, companyDriverRelationshipId: relationshipId, schemaVersion: data.schemaVersion || PERFORMANCE_EVENT_SCHEMA_VERSION, linkedRecords: data.linkedRecords || [], evidenceIds: data.evidenceIds || [], chronology: data.chronology || [], provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" }, isArchived: false, createdAt: now, updatedAt: now }
   saveCompanyDriverStore({ ...store, events: [...store.events, record] })
   auditDriverMutation(companyId, record.id, "CREATE", "Created canonical company-owned Driver event record.")
   return record
 }
 
-export function updatePerformanceEvent(companyId: string, eventId: string, patch: Partial<DriverPerformanceEvent>) {
-  const store = loadCompanyDriverStore(companyId)
-  const current = store.events.find((event) => event.id === eventId)
-  if (!current) throw new Error("Performance event not found.")
+export function addManualPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
+  const provenance = {
+    ...(data.provenance || { sourceType: "SOURCE_FACT" as const, source: "Manual Driver Performance Entry" }),
+    sourceType: "SOURCE_FACT" as const,
+    ingestionOrigin: "MANUAL_ENTRY",
+  };
+  return addPerformanceEvent(companyId, driverMasterId, { ...data, provenance, ingestion: {
+    origin: "MANUAL_ENTRY",
+    sourceType: provenance.source || "Manual Driver Performance Entry",
+    sourceRecordId: provenance.sourceRecordId,
+    sourceEvidenceIds: data.evidenceIds || [],
+    receivedAt: provenance.ingestionTimestamp || new Date().toISOString(),
+    processedAt: new Date().toISOString(),
+  } });
+}
 
-  // Company determinations are separate records. Never allow a generic event
-  // update to write a preventability determination back into collision facts.
-  if (patch.collisionDetails?.preventability !== undefined && patch.collisionDetails.preventability !== current.collisionDetails?.preventability) {
-    throw new Error("Collision preventability must be recorded through CompanyDetermination, not as a source-event fact.")
+export function reconcilePerformanceEventFacts(companyId: string, eventId: string, reconciliation: Record<string, PerformanceFactReconciliation>, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const invalid = Object.values(reconciliation).some((item) => !["CLEAN", "CONFLICT", "REVIEW_REQUIRED", "RESOLVED"].includes(item.state));
+  if (invalid) throw new Error("Invalid Performance fact reconciliation state.");
+  const now = new Date().toISOString();
+  const updated = store.events.map((event) => event.id === eventId ? {
+    ...event,
+    factReconciliation: reconciliation,
+    updatedAt: now,
+    chronology: appendEventChronology(event, "FACT_RECONCILIATION_UPDATED", `Updated reconciliation for ${Object.keys(reconciliation).length} Data Point(s).`, actor),
+  } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Updated Performance fact reconciliation for ${Object.keys(reconciliation).length} Data Point(s).`);
+  return updated.find((event) => event.id === eventId);
+}
+
+export function persistPerformanceRelationshipResolutions(companyId: string, eventId: string, resolutions: PerformanceRelationshipResolution[]) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const existing = (store.performanceRelationshipResolutions || []).filter((item) => item.eventId !== eventId);
+  const eventLinks = [...(current.canonicalLinks || [])];
+  for (const resolution of resolutions) {
+    if (resolution.eventId !== eventId) throw new Error("Relationship resolution event ID mismatch.");
+    if (resolution.state === "AUTO_RESOLVED" || resolution.state === "CONFIRMED") {
+      if (!resolution.resolvedRecordId) throw new Error(`Resolved relationship ${resolution.relationshipKey} requires a canonical record ID.`);
+      const link = { entityType: resolution.targetEntityType as CanonicalEntityLink["entityType"], recordId: resolution.resolvedRecordId, label: resolution.resolvedRecordId, source: "CANONICAL_STORE" as const };
+      if (!eventLinks.some((item) => item.entityType === link.entityType && item.recordId === link.recordId)) eventLinks.push(link);
+    }
   }
+  const now = new Date().toISOString();
+  const updatedEvents = store.events.map((event) => event.id === eventId ? { ...event, canonicalLinks: eventLinks, relationshipResolutions: resolutions, updatedAt: now, chronology: appendEventChronology(event, "RELATIONSHIPS_REEVALUATED", `Evaluated ${resolutions.length} Performance relationship(s).`, null) } : event);
+  saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...existing, ...resolutions] });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Performance relationships reevaluated: ${resolutions.map((item) => `${item.relationshipKey}=${item.state}`).join(", ")}.`);
+  return updatedEvents.find((event) => event.id === eventId);
+}
 
-  const now = new Date().toISOString()
-  const chronology = [
-    ...(current.chronology || []),
-    { id: `CHRON-${Date.now().toString(36)}`, timestamp: now, action: "EVENT_UPDATED", actor: null, details: "Canonical performance event updated; source-event facts remain distinct from Company Determination and Company Action records." },
-  ]
-  const updated = store.events.map((event) => event.id === eventId ? { ...event, ...patch, id: event.id, companyId: event.companyId, driverMasterId: event.driverMasterId, chronology, updatedAt: now } : event)
-  saveCompanyDriverStore({ ...store, events: updated })
-  auditDriverMutation(companyId, eventId, "UPDATE", "Updated canonical company-owned Driver event record with chronology preservation.")
-  return updated.find((event) => event.id === eventId)
+export type PerformanceEventFactCorrection = {
+  dataPointId: string;
+  previousValue: StructuredEventFact["value"] | undefined;
+  newValue: StructuredEventFact["value"];
+  reason: string;
+  actor?: string | null;
+  provenance?: string;
+};
+
+export type PerformanceEventWorkflowUpdate = {
+  status?: EventStatus;
+  followUpActionRequired?: boolean;
+  followUpDueDate?: string;
+  followUpActionSummary?: string;
+  verificationState?: DriverPerformanceEvent["verificationState"];
+  dispute?: DriverPerformanceEvent["dispute"];
+};
+
+const appendEventChronology = (event: DriverPerformanceEvent, action: string, details: string, actor: string | null = null): DriverPerformanceEvent["chronology"] => [
+  ...(event.chronology || []),
+  { id: `CHRON-${Date.now().toString(36)}`, timestamp: new Date().toISOString(), action, actor, details },
+];
+
+export function correctPerformanceEventFacts(companyId: string, eventId: string, corrections: PerformanceEventFactCorrection[]) {
+  if (!corrections.length) throw new Error("At least one factual correction is required.");
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const facts = [...(current.structuredEventFacts || [])];
+  const now = new Date().toISOString();
+  for (const correction of corrections) {
+    if (!correction.reason.trim()) throw new Error(`Correction reason is required for ${correction.dataPointId}.`);
+    const index = facts.findIndex((fact) => fact.dataPointId === correction.dataPointId);
+    const previous = index >= 0 ? facts[index].value : undefined;
+    if (correction.previousValue !== previous) throw new Error(`Previous value mismatch for ${correction.dataPointId}; reload the event before correcting it.`);
+    if (index >= 0) facts[index] = { ...facts[index], value: correction.newValue };
+    else facts.push({ dataPointId: correction.dataPointId, value: correction.newValue, valueType: typeof correction.newValue === "number" ? "number" : typeof correction.newValue === "boolean" ? "boolean" : "string", source: correction.provenance });
+    if (current.factReconciliation?.[correction.dataPointId]) {
+      current.factReconciliation = {
+        ...current.factReconciliation,
+        [correction.dataPointId]: {
+          ...current.factReconciliation[correction.dataPointId],
+          state: "RESOLVED",
+          resolutionMethod: "HUMAN_CORRECTION",
+          resolvedBy: correction.actor || undefined,
+          resolvedAt: now,
+          resolutionReason: correction.reason,
+        },
+      };
+    }
+    current.chronology = appendEventChronology(current, "FACT_CORRECTED", `Data Point ${correction.dataPointId} corrected. Previous value: ${JSON.stringify(previous)}; new value: ${JSON.stringify(correction.newValue)}. Reason: ${correction.reason}.`, correction.actor || null);
+    auditDriverMutation(companyId, eventId, "UPDATE", `Factual correction ${correction.dataPointId}; previous=${JSON.stringify(previous)}; new=${JSON.stringify(correction.newValue)}; reason=${correction.reason}; actor=${correction.actor || "system"}.`);
+  }
+  const updated = store.events.map((event) => event.id === eventId ? { ...current, structuredEventFacts: facts, updatedAt: now } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  return updated.find((event) => event.id === eventId);
+}
+
+export function updatePerformanceEventWorkflow(companyId: string, eventId: string, update: PerformanceEventWorkflowUpdate, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const now = new Date().toISOString();
+  const changed = Object.keys(update).filter((key) => (update as Record<string, unknown>)[key] !== undefined);
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, ...update, structuredEventFacts: event.structuredEventFacts, updatedAt: now, chronology: appendEventChronology(event, "EVENT_WORKFLOW_UPDATED", `Workflow/lifecycle fields updated: ${changed.join(", ")}.`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Updated Performance Event workflow state only: ${changed.join(", ")}.`);
+  return updated.find((event) => event.id === eventId);
+}
+
+export function linkPerformanceEventEvidence(companyId: string, eventId: string, evidenceIds: string[], actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const validEvidence = new Set(store.evidence.filter((item) => !item.isArchived).map((item) => item.id));
+  if (evidenceIds.some((id) => !validEvidence.has(id))) throw new Error("Every evidence ID must resolve to a current canonical Driver evidence record.");
+  const now = new Date().toISOString();
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, evidenceIds: [...new Set(evidenceIds)], updatedAt: now, chronology: appendEventChronology(event, "EVIDENCE_LINKED", `Linked ${evidenceIds.length} canonical evidence record(s).`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Linked ${evidenceIds.length} canonical evidence record(s).`);
+  return updated.find((event) => event.id === eventId);
+}
+
+export function linkPerformanceEventDetermination(companyId: string, eventId: string, determinationId: string, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  if (!store.companyDeterminations.some((item) => item.id === determinationId && item.driverMasterId === current.driverMasterId)) throw new Error("Company Determination does not resolve to this Driver.");
+  const now = new Date().toISOString();
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, companyDeterminationId: determinationId, updatedAt: now, chronology: appendEventChronology(event, "DETERMINATION_LINKED", `Company Determination ${determinationId} linked; source facts were not changed.`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Linked Company Determination ${determinationId}; no source fact mutation.`);
+  return updated.find((event) => event.id === eventId);
+}
+
+export function linkPerformanceEventRecord(companyId: string, eventId: string, link: CanonicalEntityLink, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  const links = [...(current.canonicalLinks || []).filter((item) => !(item.entityType === link.entityType && item.recordId === link.recordId)), link];
+  const now = new Date().toISOString();
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, canonicalLinks: links, updatedAt: now, chronology: appendEventChronology(event, "CANONICAL_RECORD_LINKED", `${link.entityType} ${link.recordId} linked from canonical store.`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Linked canonical ${link.entityType} record ${link.recordId}.`);
+  return updated.find((event) => event.id === eventId);
+}
+
+function canonicalRelationshipExists(companyId: string, event: DriverPerformanceEvent, entityType: string, recordId: string) {
+  const store = loadCompanyDriverStore(companyId);
+  if (entityType === "Vehicle") {
+    try { return loadVehicleStore(companyId).vehicles.some((item) => item.id === recordId); } catch { return false; }
+  }
+  if (entityType === "Maintenance") {
+    try { return loadVehicleStore(companyId).maintenanceRecords.some((item) => item.id === recordId && !item.archived); } catch { return false; }
+  }
+  if (entityType === "Training") return store.trainingRecords.some((item) => item.id === recordId && item.driverMasterId === event.driverMasterId && !item.isArchived);
+  if (entityType === "Training Requirement") return store.trainingRequirements.some((item) => item.requirementId === recordId && item.driverMasterId === event.driverMasterId && !item.isArchived);
+  if (entityType === "HOS") return store.hosRawRecords.some((item) => item.id === recordId) || store.hosDutyEvents.some((item) => item.id === recordId) || store.hosPotentialViolations.some((item) => item.id === recordId) || store.hosReviews.some((item) => item.id === recordId);
+  if (entityType === "Citation") {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = window.localStorage.getItem(`tes_company_citations_${companyId}`);
+      const parsed = raw ? JSON.parse(raw) as { citations?: Array<{ id: string }> } : {};
+      return Boolean(parsed.citations?.some((item) => item.id === recordId));
+    } catch { return false; }
+  }
+  return false;
+}
+
+export function confirmPerformanceRelationshipResolution(companyId: string, eventId: string, relationshipKey: string, targetEntityType: string, targetRecordId: string, reason: string, actor: string | null = null) {
+  if (!reason.trim()) throw new Error("A relationship confirmation reason is required.");
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  if (!canonicalRelationshipExists(companyId, current, targetEntityType, targetRecordId)) throw new Error(`Canonical ${targetEntityType} record ${targetRecordId} does not resolve in its owning store.`);
+  const existing = (store.performanceRelationshipResolutions || []).filter((item) => !(item.eventId === eventId && item.relationshipKey === relationshipKey));
+  const resolution: PerformanceRelationshipResolution = {
+    id: `PRR-${eventId}-${relationshipKey}`,
+    eventId,
+    relationshipKey,
+    targetEntityType,
+    resolvedRecordId: targetRecordId,
+    state: "CONFIRMED",
+    candidateIds: [targetRecordId],
+    deterministicMatchingReason: "Human exception review confirmed the selected canonical relationship.",
+    evaluatedAt: new Date().toISOString(),
+    resolutionReason: reason.trim(),
+    resolvedAt: new Date().toISOString(),
+    resolvedBy: actor || undefined,
+  };
+  const links = [...(current.canonicalLinks || []).filter((item) => !(item.entityType === targetEntityType && item.recordId !== targetRecordId)), { entityType: targetEntityType as CanonicalEntityLink["entityType"], recordId: targetRecordId, label: targetRecordId, source: "CANONICAL_STORE" as const }];
+  const now = new Date().toISOString();
+  const updatedEvents = store.events.map((event) => event.id === eventId ? { ...event, canonicalLinks: links, relationshipResolutions: [...(event.relationshipResolutions || []).filter((item) => item.relationshipKey !== relationshipKey), resolution], updatedAt: now, chronology: appendEventChronology(event, "RELATIONSHIP_CONFIRMED", `${relationshipKey} confirmed to ${targetEntityType} ${targetRecordId}. Reason: ${reason.trim()}.`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...existing, resolution] });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Confirmed Performance relationship ${relationshipKey} to ${targetEntityType} ${targetRecordId}.`);
+  return updatedEvents.find((event) => event.id === eventId);
 }
 
 export function archivePerformanceEvent(companyId: string, eventId: string) {

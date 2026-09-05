@@ -72,11 +72,16 @@ export interface DriverPerformanceTabProps {
     trainings: TrainingRecord[];
   }[];
   onAddEvent: (eventData: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => void;
-  onUpdateEvent: (eventId: string, patch: Partial<DriverPerformanceEvent>) => void;
+  onUpdateEventWorkflow: (eventId: string, update: { status?: DriverPerformanceEvent["status"]; followUpActionRequired?: boolean; followUpDueDate?: string; followUpActionSummary?: string; verificationState?: DriverPerformanceEvent["verificationState"]; dispute?: DriverPerformanceEvent["dispute"] }) => void;
   onAddHOSReview?: (review: Omit<HOSReview, "id" | "createdAt" | "updatedAt">) => void;
   onAddCompanyAction?: (action: Omit<CompanyActionRecord, "id" | "createdAt" | "updatedAt" | "isArchived">) => void;
   onAddCompanyDetermination?: (det: Omit<CompanyDetermination, "id" | "createdAt" | "updatedAt" | "isArchived">) => CompanyDetermination | void;
+  onLinkCompanyDetermination?: (eventId: string, determinationId: string) => void;
   onOpenDocument?: (docId: string) => void;
+  onRequestEvidenceUpload?: () => void;
+  onRequestPerformanceSourceUpload?: () => void;
+  pendingPerformanceSources?: import("@/types/drivers").PerformanceSourceIngestionItem[];
+  evidenceCreatedId?: string | null;
   evidence?: import("@/types/drivers").DriverEvidenceItem[];
   onArchiveEvent?: (eventId: string) => void;
   onClearEvidenceCreatedId?: () => void;
@@ -100,11 +105,16 @@ export function DriverPerformanceTab({
   companyDeterminations = [],
   allDriversCohort = [],
   onAddEvent,
-  onUpdateEvent,
+  onUpdateEventWorkflow,
   onAddHOSReview,
   onAddCompanyAction,
   onAddCompanyDetermination,
+  onLinkCompanyDetermination,
   onOpenDocument,
+  onRequestEvidenceUpload,
+  onRequestPerformanceSourceUpload,
+  pendingPerformanceSources = [],
+  evidenceCreatedId,
   evidence = [],
   onArchiveEvent,
   onClearEvidenceCreatedId,
@@ -326,7 +336,8 @@ export function DriverPerformanceTab({
   }, [registerTotalPages]);
 
   // Event creation is delegated to the schema-driven workflow component.
-  const handleOpenAddWizard = () => setIsAddModalOpen(true);
+  const [initialEntryMode, setInitialEntryMode] = useState<"DOCUMENT" | "MANUAL">("DOCUMENT");
+  const handleOpenAddWizard = (mode: "DOCUMENT" | "MANUAL") => { setInitialEntryMode(mode); setIsAddModalOpen(true); };
 
   const handleRecordDetermination = (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,35 +365,13 @@ export function DriverPerformanceTab({
       notes: determinationData.notes.trim() || undefined,
       evidenceIds: selectedEvent.evidenceIds,
     });
-    onUpdateEvent(selectedEvent.id, {
-      companyDeterminationId: determination?.id,
-      chronology: [
-        ...(selectedEvent.chronology || []),
-        { id: `CHRON-${Date.now().toString(36)}`, timestamp: new Date().toISOString(), action: "DETERMINATION_LINKED", actor: determinationData.determinedBy.trim(), details: "Company preventability determination recorded as a separate canonical Company Determination; source collision facts were not overwritten." },
-      ],
-    });
+    if (determination?.id) onLinkCompanyDetermination?.(selectedEvent.id, determination.id);
     setIsDeterminationModalOpen(false);
   };
 
   const handleCloseEvent = () => {
     if (!selectedEvent) return;
-    const updatedChronology = [
-      ...(selectedEvent.chronology || []),
-      {
-        id: `CHRON-${Date.now().toString(36)}`,
-        timestamp: new Date().toISOString(),
-        action: "EVENT_CLOSED",
-        actor: null,
-        details: "Event marked as Closed. All remediation and documentation finalized.",
-      },
-    ];
-
-    onUpdateEvent(selectedEvent.id, {
-      status: "Closed",
-      followUpActionRequired: false,
-      chronology: updatedChronology,
-      updatedAt: new Date().toISOString(),
-    });
+    onUpdateEventWorkflow(selectedEvent.id, { status: "Closed", followUpActionRequired: false });
   };
 
   return (
@@ -508,14 +497,37 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
-            onClick={handleOpenAddWizard}
+            onClick={() => onRequestPerformanceSourceUpload?.()}
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
           >
             <Plus className="size-3.5" />
-            <span>Record Performance Event</span>
+            <span>Upload / Ingest Source</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleOpenAddWizard("MANUAL")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-bold text-foreground shadow-2xs hover:bg-muted transition-colors"
+          >
+            <span>Enter Manually</span>
           </button>
         </div>
       </div>
+
+      {pendingPerformanceSources.filter((item) => item.state === "AWAITING_EXTRACTION").length > 0 && (
+        <div className="rounded-xl border border-border bg-muted/20 px-4 py-3">
+          <div className="text-xs font-bold text-foreground">Source received — awaiting machine extraction</div>
+          <div className="mt-1 text-[11px] text-muted-foreground">The uploaded source is preserved as canonical Driver evidence. No Performance category, facts, confidence, or event were created.</div>
+          <div className="mt-2 space-y-1">
+            {pendingPerformanceSources.filter((item) => item.state === "AWAITING_EXTRACTION").map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-3 text-[10px]">
+                <span className="truncate text-foreground">{item.sourceFileName}</span>
+                <span className="shrink-0 font-bold uppercase tracking-wider text-muted-foreground">AWAITING_EXTRACTION</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* SUBVIEW 1: OVERVIEW */}
       {subView === "overview" && (
@@ -706,7 +718,7 @@ export function DriverPerformanceTab({
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><input type="date" value={dateFromFilter} onChange={(e) => { setDateFromFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="From date" /><input type="date" value={dateToFilter} onChange={(e) => { setDateToFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="To date" /><div className="lg:col-span-2 flex items-center justify-end text-[11px] text-muted-foreground">{registerEvents.length} matching record{registerEvents.length === 1 ? "" : "s"}</div></div>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs"><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Event</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Occurrence / Context</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Verification</th><th className="px-4 py-3">Evidence / Links</th><th className="px-4 py-3 text-right">View</th></tr></thead><tbody className="divide-y divide-border">{paginatedRegisterEvents.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No performance events found matching the selected filters.</td></tr> : paginatedRegisterEvents.map((evt) => { const def = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[evt.eventType]; return <tr key={evt.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setSelectedEventId(evt.id)}><td className="px-4 py-3"><span className="block font-mono font-bold text-primary">{evt.id}</span><span className="text-[10px] text-muted-foreground">{evt.eventDate}{evt.eventTime ? ` · ${evt.eventTime}` : ""}</span></td><td className="px-4 py-3"><span className="font-semibold text-foreground">{def?.label || evt.eventType}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{def?.group || "Driver Event"}</span></td><td className="max-w-sm px-4 py-3"><p className="line-clamp-1 font-medium text-foreground">{evt.summary}</p><p className="truncate text-[10px] text-muted-foreground">{[evt.location, evt.city, evt.stateProvince].filter(Boolean).join(", ") || "Context not recorded"}</p></td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.provenance?.source || "Not recorded"}</td><td className="px-4 py-3 text-[11px] font-semibold text-foreground">{evt.verificationState || "Unverified"}</td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.evidenceIds.length} evidence · {evt.linkedRecords?.length || 0} links</td><td className="px-4 py-3 text-right"><button type="button" onClick={(e) => { e.stopPropagation(); setSelectedEventId(evt.id); }} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-bold text-foreground hover:bg-muted">View</button></td></tr>; })}</tbody></table></div><div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3"><span className="text-[10px] text-muted-foreground">Page {registerPage} of {registerTotalPages}</span><div className="flex gap-2"><button type="button" disabled={registerPage === 1} onClick={() => setRegisterPage((page) => page - 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Previous</button><button type="button" disabled={registerPage >= registerTotalPages} onClick={() => setRegisterPage((page) => page + 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Next</button></div></div></div>
+          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs"><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Event</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Occurrence / Context</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Verification</th><th className="px-4 py-3">Evidence / Links</th><th className="px-4 py-3 text-right">View</th></tr></thead><tbody className="divide-y divide-border">{paginatedRegisterEvents.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No performance events found matching the selected filters.</td></tr> : paginatedRegisterEvents.map((evt) => { const def = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[evt.eventType]; return <tr key={evt.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setSelectedEventId(evt.id)}><td className="px-4 py-3"><span className="block font-mono font-bold text-primary">{evt.id}</span><span className="text-[10px] text-muted-foreground">{evt.eventDate}{evt.eventTime ? ` · ${evt.eventTime}` : ""}</span></td><td className="px-4 py-3"><span className="font-semibold text-foreground">{def?.label || evt.eventType}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{def?.group || "Driver Event"}</span></td><td className="max-w-sm px-4 py-3"><p className="line-clamp-1 font-medium text-foreground">{evt.summary}</p><p className="truncate text-[10px] text-muted-foreground">{[evt.location, evt.city, evt.stateProvince].filter(Boolean).join(", ") || "Context not recorded"}</p></td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.provenance?.source || "Not recorded"}</td><td className="px-4 py-3 text-[11px] font-semibold text-foreground">{evt.verificationState || "Unverified"}</td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.evidenceIds.length} evidence · {(evt.canonicalLinks?.length || 0) + (evt.operationalReferences?.length || 0)} related</td><td className="px-4 py-3 text-right"><button type="button" onClick={(e) => { e.stopPropagation(); setSelectedEventId(evt.id); }} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-bold text-foreground hover:bg-muted">View</button></td></tr>; })}</tbody></table></div><div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3"><span className="text-[10px] text-muted-foreground">Page {registerPage} of {registerTotalPages}</span><div className="flex gap-2"><button type="button" disabled={registerPage === 1} onClick={() => setRegisterPage((page) => page - 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Previous</button><button type="button" disabled={registerPage >= registerTotalPages} onClick={() => setRegisterPage((page) => page + 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Next</button></div></div></div>
         </div>
       )}
 
@@ -1271,24 +1283,35 @@ export function DriverPerformanceTab({
                 )}
               </div>
 
-              {/* Linked Records */}
-              {selectedEvent.linkedRecords && selectedEvent.linkedRecords.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                    Linked Commercial Fleet Records
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedEvent.linkedRecords.map((lk) => (
-                      <div
-                        key={lk.id}
-                        className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/20 px-3 py-1.5 text-xs font-medium text-foreground"
-                      >
-                        <span className="font-bold text-primary">[{lk.entityType}]</span>
-                        <span>{lk.label}</span>
-                        {lk.secondaryText && <span className="text-muted-foreground text-[10px]">({lk.secondaryText})</span>}
+              {/* Canonical Relationships, Resolution State, and Operational References */}
+              {((selectedEvent.canonicalLinks?.length || 0) > 0 || (selectedEvent.relationshipResolutions?.length || 0) > 0 || (selectedEvent.operationalReferences?.length || 0) > 0 || (selectedEvent.linkedRecords?.length || 0) > 0) && (
+                <div className="space-y-3">
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Related Records & References</span>
+                  {(selectedEvent.relationshipResolutions?.length || 0) > 0 && (
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Relationship Resolution State</div>
+                      <div className="space-y-2">
+                        {selectedEvent.relationshipResolutions!.map((resolution) => <div key={resolution.id} className="rounded-xl border border-border bg-background px-3 py-2"><div className="flex items-center justify-between gap-3"><span className="text-xs font-semibold text-foreground">{resolution.relationshipKey}</span><span className="rounded-md bg-muted px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{resolution.state}</span></div><p className="mt-1 text-[10px] leading-4 text-muted-foreground">{resolution.deterministicMatchingReason || "No automatic relationship decision was made."}</p>{resolution.candidateIds.length > 0 ? <p className="mt-1 text-[10px] font-mono text-muted-foreground">Candidates: {resolution.candidateIds.join(", ")}</p> : null}</div>)}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  )}
+                  {(selectedEvent.canonicalLinks?.length || 0) > 0 && (
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Canonical TES Relationships</div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedEvent.canonicalLinks!.map((lk) => <div key={`${lk.entityType}-${lk.recordId}`} className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/20 px-3 py-1.5 text-xs font-medium text-foreground"><span className="font-bold text-primary">[{lk.entityType}]</span><span>{lk.label || lk.recordId}</span></div>)}
+                      </div>
+                    </div>
+                  )}
+                  {(selectedEvent.operationalReferences?.length || 0) > 0 && (
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Operational References — not canonical TES relationships</div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedEvent.operationalReferences!.map((ref, index) => <div key={`${ref.referenceType}-${ref.referenceValue}-${index}`} className="inline-flex items-center gap-2 rounded-xl border border-dashed border-border bg-background px-3 py-1.5 text-xs text-foreground"><span className="font-bold text-muted-foreground">[{ref.referenceType}]</span><span>{ref.label || ref.referenceValue}</span></div>)}
+                      </div>
+                    </div>
+                  )}
+                  {(!selectedEvent.canonicalLinks?.length && !selectedEvent.operationalReferences?.length && selectedEvent.linkedRecords?.length) ? <div className="text-xs text-muted-foreground">Historical linked-record references are shown for compatibility.</div> : null}
                 </div>
               )}
 
@@ -1372,6 +1395,10 @@ export function DriverPerformanceTab({
           relationship={relationship}
           trainings={trainings}
           evidence={evidence}
+          onRequestEvidenceUpload={onRequestEvidenceUpload}
+          evidenceCreatedId={evidenceCreatedId}
+          onClearEvidenceCreatedId={onClearEvidenceCreatedId}
+          initialEntryMode={initialEntryMode}
           onClose={() => { onClearEvidenceCreatedId?.(); setIsAddModalOpen(false); }}
           onSave={onAddEvent}
         />

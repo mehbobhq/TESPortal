@@ -15,6 +15,7 @@ import {
   HOSReview,
   CompanyActionRecord,
   CompanyDetermination,
+  PerformanceSourceIngestionItem,
 } from "@/types/drivers";
 import { DriverHeader } from "./DriverHeader";
 import { getQueryParam } from "@/lib/deep-linking";
@@ -24,6 +25,8 @@ import { DriverDocumentsTab } from "./DriverDocumentsTab";
 import { DriverScreeningTab } from "./DriverScreeningTab";
 import { DriverTrainingTab } from "./DriverTrainingTab";
 import { DriverPerformanceTab } from "./DriverPerformanceTab";
+import { receivePerformanceSourceForMachineProcessing } from "@/lib/driver-performance-ingestion";
+import { loadCompanyDriverStore } from "@/lib/driver-data";
 import { SecureDocumentViewer } from "../shared/SecureDocumentViewer";
 import { DocumentSourcePicker } from "../shared/DocumentSourcePicker";
 import { OCRReview } from "../shared/OCRReview";
@@ -41,14 +44,16 @@ import {
   addTrainingRecord,
   addTrainingRequirement,
   waiveTrainingRecord,
-  addPerformanceEvent,
+  addManualPerformanceEvent,
   addDriverEvidence,
-  updatePerformanceEvent,
+  updatePerformanceEventWorkflow,
+  linkPerformanceEventDetermination,
   archivePerformanceEvent,
   addHOSReview,
   addCompanyAction,
   addCompanyDetermination,
 } from "@/lib/driver-data";
+import { reevaluatePerformanceRelationshipsAfterSourceMutation } from "@/lib/driver-performance-relationship-resolution";
 
 export interface DriverWorkspaceProps {
   master: DriverMaster;
@@ -124,6 +129,12 @@ export function DriverWorkspace({
   const [creationError, setCreationError] = useState<string | null>(null);
   const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
   const [eventEvidenceMode, setEventEvidenceMode] = useState(false);
+  const [performanceSourceMode, setPerformanceSourceMode] = useState(false);
+  const [pendingPerformanceSources, setPendingPerformanceSources] = useState<PerformanceSourceIngestionItem[]>([]);
+
+  useEffect(() => {
+    setPendingPerformanceSources(loadCompanyDriverStore(company.id).performanceIngestionItems?.filter((item) => item.driverMasterId === master.id) || []);
+  }, [company.id, master.id, events.length, evidence.length]);
   const [eventEvidenceCreatedId, setEventEvidenceCreatedId] = useState<string | null>(null);
   const [ocrReviewData, setOcrReviewData] = useState<{
     docName: string;
@@ -293,18 +304,24 @@ export function DriverWorkspace({
 
   // Handlers for Performance Tab
   const handleAddEvent = (data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => {
-    addPerformanceEvent(company.id, master.id, data);
+    const created = addManualPerformanceEvent(company.id, master.id, data);
+    reevaluatePerformanceRelationshipsAfterSourceMutation(company.id, "PERFORMANCE", created?.id);
     setEventEvidenceCreatedId(null);
     onRefresh();
   };
 
-  const handleUpdateEvent = (eventId: string, patch: Partial<DriverPerformanceEvent>) => {
-    updatePerformanceEvent(company.id, eventId, patch);
+  const handleUpdateEventWorkflow = (eventId: string, update: Parameters<typeof updatePerformanceEventWorkflow>[2]) => {
+    updatePerformanceEventWorkflow(company.id, eventId, update);
     onRefresh();
   };
 
   const handleArchiveEvent = (eventId: string) => {
     archivePerformanceEvent(company.id, eventId);
+    onRefresh();
+  };
+
+  const handleLinkCompanyDetermination = (eventId: string, determinationId: string) => {
+    linkPerformanceEventDetermination(company.id, eventId, determinationId);
     onRefresh();
   };
 
@@ -324,20 +341,33 @@ export function DriverWorkspace({
     return created;
   };
 
+  const handleRequestPerformanceSourceUpload = () => {
+    setEventEvidenceCreatedId(null);
+    setEventEvidenceMode(false);
+    setPerformanceSourceMode(true);
+    setIsSourcePickerOpen(true);
+  };
+
   const handleRequestEventEvidenceUpload = () => {
     setEventEvidenceCreatedId(null);
     setEventEvidenceMode(true);
+    setPerformanceSourceMode(false);
     setIsSourcePickerOpen(true);
   };
 
   // OCR Processing
   const handleSelectFile = (file: File) => {
-    if (eventEvidenceMode) {
+    if (eventEvidenceMode || performanceSourceMode) {
       const reader = new FileReader();
       reader.onload = () => {
         const created = addDriverEvidence(company.id, master.id, { fileName: file.name, mimeType: file.type, dataUrl: String(reader.result || ""), documentType: "Performance Event Evidence" });
-        setEventEvidenceCreatedId(created.id);
+        if (eventEvidenceMode) {
+          setEventEvidenceCreatedId(created.id);
+        } else {
+          receivePerformanceSourceForMachineProcessing(company.id, master.id, created);
+        }
         setEventEvidenceMode(false);
+        setPerformanceSourceMode(false);
         setIsSourcePickerOpen(false);
         onRefresh();
       };
@@ -487,13 +517,16 @@ export function DriverWorkspace({
             companyDeterminations={companyDeterminations}
             allDriversCohort={allDriversCohort}
             onAddEvent={handleAddEvent}
-            onUpdateEvent={handleUpdateEvent}
+            onUpdateEventWorkflow={handleUpdateEventWorkflow}
             onAddHOSReview={handleAddHOSReview}
             onAddCompanyAction={handleAddCompanyAction}
             onAddCompanyDetermination={handleAddCompanyDetermination}
+            onLinkCompanyDetermination={handleLinkCompanyDetermination}
             onOpenDocument={handleOpenEvidenceById}
             evidence={evidence}
             onRequestEvidenceUpload={handleRequestEventEvidenceUpload}
+            onRequestPerformanceSourceUpload={handleRequestPerformanceSourceUpload}
+            pendingPerformanceSources={pendingPerformanceSources}
             evidenceCreatedId={eventEvidenceCreatedId}
             onArchiveEvent={handleArchiveEvent}
             onClearEvidenceCreatedId={() => setEventEvidenceCreatedId(null)}
@@ -607,7 +640,7 @@ export function DriverWorkspace({
       {isSourcePickerOpen && (
         <DocumentSourcePicker
           isOpen={isSourcePickerOpen}
-          onClose={() => setIsSourcePickerOpen(false)}
+          onClose={() => { setIsSourcePickerOpen(false); setEventEvidenceMode(false); setPerformanceSourceMode(false); }}
           onSelectFile={handleSelectFile}
           onSelectCamera={handleSelectCamera}
           title={eventEvidenceMode ? "Attach Performance Event Evidence" : "Ingest Driver Document or Licence"}

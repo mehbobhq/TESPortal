@@ -710,7 +710,7 @@ export type EventStatus =
   | "Not Applicable";
 
 export interface LinkedRecordRef {
-  entityType: "Vehicle" | "Trailer" | "Trip" | "Load" | "Customer" | "Customer Site" | "Citation" | "Inspection" | "Repair" | "Training" | "Screening" | "Document" | "Event" | "HOS" | "Maintenance" | "Company Action" | "Evidence" | "Unlinked Operational Reference";
+  entityType: "Vehicle" | "Trailer" | "Trip" | "Load" | "Customer" | "Customer Site" | "Citation" | "Inspection" | "Repair" | "Training" | "Screening" | "Document" | "Event" | "HOS" | "Maintenance" | "Company Action" | "Evidence" | "Unlinked Operational Reference" | "Training Requirement";
   id: string;
   label: string;
   secondaryText?: string;
@@ -755,12 +755,117 @@ export interface StructuredEventFact {
   normalizedValue?: number;
   normalizedUnit?: string;
   source?: string;
+  /** Preserve machine extraction separately from any later verified/corrected value. */
+  reconciliation?: PerformanceFactReconciliation;
+  extraction?: {
+    rawValue?: string | number | boolean | null;
+    confidence?: number;
+    provider?: string;
+    documentId?: string;
+    documentType?: string;
+    extractedAt?: string;
+    reviewState?: "PENDING_REVIEW" | "HUMAN_REVIEW_REQUIRED" | "VERIFIED" | "VERIFICATION_ISSUE";
+    verifiedValue?: string | number | boolean | null;
+    correctedBy?: string;
+    correctedAt?: string;
+  };
+}
+
+export type PerformanceIngestionOrigin =
+  | "DOCUMENT_OCR"
+  | "MANUAL_ENTRY"
+  | "API_INTEGRATION"
+  | "SYSTEM_DERIVED"
+  | "TELEMATICS_INGESTION"
+  | "ELD_INGESTION";
+
+export interface PerformanceIngestionMetadata {
+  origin: PerformanceIngestionOrigin;
+  sourceType: string;
+  sourceRecordId?: string;
+  sourceEvidenceIds: string[];
+  receivedAt: string;
+  processedAt?: string;
+  processorVersion?: string;
+  extractorVersion?: string;
+}
+
+export type PerformanceSourceIngestionState = "AWAITING_EXTRACTION" | "PROCESSING" | "EXTRACTION_COMPLETE" | "REVIEW_REQUIRED" | "INGESTED";
+
+export interface PerformanceSourceIngestionItem {
+  id: string;
+  companyId: string;
+  driverMasterId?: string;
+  evidenceId: string;
+  receivedAt: string;
+  sourceFileName: string;
+  sourceMimeType?: string;
+  sourceType: string;
+  origin: "DOCUMENT_UPLOAD";
+  state: PerformanceSourceIngestionState;
+  machineResolvedDriverMasterId?: string;
+  processedAt?: string;
+  processingReviewState?: "PENDING" | "IN_PROGRESS" | "REVIEW_REQUIRED" | "COMPLETE";
+  lastError?: string;
+}
+
+export type PerformanceReconciliationState = "CLEAN" | "CONFLICT" | "REVIEW_REQUIRED" | "RESOLVED";
+
+export interface PerformanceFactObservation {
+  value: StructuredEventFactValue;
+  valueType: StructuredEventFact["valueType"];
+  source?: string;
+  sourceRecordId?: string;
+  sourceEvidenceIds: string[];
+  confidence?: number;
+  observedAt: string;
+}
+
+export interface PerformanceFactReconciliation {
+  state: PerformanceReconciliationState;
+  observations: PerformanceFactObservation[];
+  resolutionMethod?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolutionReason?: string;
+}
+
+export type PerformanceRelationshipResolutionState =
+  | "PENDING_SOURCE_DATA"
+  | "CANDIDATE_MATCH"
+  | "AUTO_RESOLVED"
+  | "REVIEW_REQUIRED"
+  | "CONFIRMED"
+  | "UNRESOLVED";
+
+export interface PerformanceRelationshipResolution {
+  id: string;
+  eventId: string;
+  relationshipKey: string;
+  targetEntityType: string;
+  resolvedRecordId?: string;
+  state: PerformanceRelationshipResolutionState;
+  candidateIds: string[];
+  deterministicMatchingReason?: string;
+  confidence?: number;
+  evaluatedAt: string;
+  resolutionReason?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
 }
 
 export interface OperationalReference {
   referenceType: string;
   referenceValue: string;
+  label?: string;
   source?: string;
+}
+
+export interface CanonicalEntityLink {
+  entityType: LinkedRecordRef["entityType"];
+  recordId: string;
+  label?: string;
+  source: "CANONICAL_STORE";
 }
 
 export interface PerformanceEventRecord {
@@ -803,6 +908,10 @@ export interface PerformanceEventRecord {
   structuredEventFacts?: StructuredEventFact[];
   schemaVersion?: string;
   operationalReferences?: OperationalReference[];
+  canonicalLinks?: CanonicalEntityLink[];
+  ingestion?: PerformanceIngestionMetadata;
+  factReconciliation?: Record<string, PerformanceFactReconciliation>;
+  relationshipResolutions?: PerformanceRelationshipResolution[];
 
   // Follow-up Tracking
   followUpActionRequired?: boolean;
@@ -1003,6 +1112,10 @@ export interface ProvenanceMetadata {
   sourceType: "SOURCE_FACT" | "COMPANY_DETERMINATION" | "SYSTEM_DERIVED" | "TES_DERIVED_METRIC" | "LEGACY_MIGRATION";
   source?: string;
   sourceRecordId?: string;
+  /** How the record entered TES; distinct from the authoritative source. */
+  ingestionOrigin?: string;
+  /** Human/actor that reported or submitted the information when applicable. */
+  reportedBy?: string;
   capturedAt?: string;
   capturedBy?: string;
   sourceTimestamp?: string;
@@ -1010,6 +1123,11 @@ export interface ProvenanceMetadata {
   sourceConfidence?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
   dataQuality?: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
   rawPayloadReference?: string;
+  sourceEvidenceIds?: string[];
+  extractionState?: "NOT_APPLICABLE" | "PENDING_EXTRACTION" | "EXTRACTION_COMPLETE" | "HUMAN_REVIEW_REQUIRED" | "VERIFIED" | "VERIFICATION_ISSUE";
+  extractionProvider?: string;
+  extractionDocumentType?: string;
+  extractionConfidence?: number;
   migratedFrom?: string;
 }
 
@@ -1506,6 +1624,8 @@ export interface CompanyDriverStore {
   trainingRecords: TrainingRecord[];
   trainingRequirements: TrainingRequirement[];
   events: PerformanceEventRecord[];
+  performanceRelationshipResolutions?: PerformanceRelationshipResolution[];
+  performanceIngestionItems?: PerformanceSourceIngestionItem[];
   evidence: DriverEvidenceItem[];
   hosRawRecords: HOSRawRecord[];
   telematicsObservations?: TelematicsObservation[];

@@ -183,6 +183,184 @@ export function validateVehicleUniqueness(
   return { isValid: true };
 }
 
+export type VehicleIdentifierResolutionMethod = "VIN_GLOBAL" | "PLATE_JURISDICTION" | "UNIT_COMPANY_SCOPED" | "MULTI_IDENTIFIER_AGREEMENT";
+export type VehicleIdentifierResolutionState = "PENDING_SOURCE_DATA" | "AUTO_RESOLVED" | "UNRESOLVED" | "REVIEW_REQUIRED";
+
+export interface VehicleIdentifierResolutionInput {
+  vin?: string;
+  plate?: string;
+  plateJurisdiction?: string;
+  unitNumber?: string;
+}
+
+export interface CanonicalVehicleResolution {
+  state: VehicleIdentifierResolutionState;
+  method?: VehicleIdentifierResolutionMethod;
+  reason: string;
+  canonicalVehicle?: VehicleRecord;
+  canonicalCompanyId?: string;
+  canonicalCompanyName?: string;
+  canonicalPlateJurisdiction?: string;
+  conflicts: string[];
+  identifierDiscrepancies: string[];
+  candidateVehicleIds: string[];
+  evaluatedAt: string;
+}
+
+function normalizeIdentifier(value: string | undefined): string {
+  return value ? value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+}
+
+function registrationEffectiveOn(record: VehicleRegistrationRecord, asOfDate: string): boolean {
+  if (record.archived || record.status === "Cancelled" || record.status === "Replaced") return false;
+  if (record.registrationDate && record.registrationDate.slice(0, 10) > asOfDate) return false;
+  if (record.expiryDate && record.expiryDate !== "Continuous" && record.expiryDate.slice(0, 10) < asOfDate) return false;
+  return record.status === "Active" || record.status === "Draft";
+}
+
+function loadAllCompanyVehicleRecords(): Array<{ companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }> {
+  const results: Array<{ companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }> = [];
+  if (typeof window === "undefined") return results;
+  const companies = loadCompanies();
+  for (const company of companies) {
+    try {
+      const store = loadVehicleStore(company.id);
+      for (const vehicle of store.vehicles) {
+        if (vehicle.status === "Archived" || vehicle.status === "Inactive") continue;
+        results.push({ companyId: company.id, companyName: company.name, vehicle, store });
+      }
+    } catch {}
+  }
+  return results;
+}
+
+function vehiclePlateMatches(entry: { vehicle: VehicleRecord; store: VehicleStore }, plate: string, jurisdiction: string, asOfDate: string): boolean {
+  const normalizedPlate = normalizeIdentifier(plate);
+  const normalizedJurisdiction = normalizeIdentifier(jurisdiction);
+  if (!normalizedPlate || !normalizedJurisdiction) return false;
+  const historical = entry.store.registrationRecords.some((record) =>
+    record.vehicleId === entry.vehicle.id &&
+    normalizeIdentifier(record.plate) === normalizedPlate &&
+    normalizeIdentifier(record.stateProvince) === normalizedJurisdiction &&
+    registrationEffectiveOn(record, asOfDate)
+  );
+  if (historical) return true;
+  const embedded = entry.vehicle.registration;
+  return Boolean(
+    embedded &&
+    normalizeIdentifier(embedded.plateNumber) === normalizedPlate &&
+    normalizeIdentifier(embedded.jurisdiction) === normalizedJurisdiction
+  );
+}
+
+/**
+ * Platform-capable Vehicle identity resolution used by Performance and future modules.
+ * VIN is global, Plate+jurisdiction is global/temporal, Unit is company-scoped only.
+ * This function resolves identity only; it never establishes ownership, custody, responsibility, or attribution.
+ */
+export function resolveCanonicalVehicleByIdentifiers(
+  operatingCompanyId: string,
+  identifiers: VehicleIdentifierResolutionInput,
+  asOfDate: string = todayISO(),
+): CanonicalVehicleResolution {
+  const evaluatedAt = isoNow();
+  const vin = normalizeIdentifier(identifiers.vin);
+  const plate = normalizeIdentifier(identifiers.plate);
+  const jurisdiction = normalizeIdentifier(identifiers.plateJurisdiction);
+  const unit = normalizeIdentifier(identifiers.unitNumber);
+  if (!vin && !plate && !unit) {
+    return { state: "PENDING_SOURCE_DATA", reason: "No source vehicle identifier is available yet.", conflicts: [], identifierDiscrepancies: [], candidateVehicleIds: [], evaluatedAt };
+  }
+
+  const all = loadAllCompanyVehicleRecords();
+  const byId = new Map<string, { companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }>();
+  for (const entry of all) byId.set(`${entry.companyId}:${entry.vehicle.id}`, entry);
+
+  const vinMatches = vin ? all.filter((entry) => normalizeIdentifier(entry.vehicle.vin) === vin) : [];
+  const plateMatches = plate && jurisdiction ? all.filter((entry) => vehiclePlateMatches(entry, plate, jurisdiction, asOfDate)) : [];
+  const unitMatches = unit ? all.filter((entry) => entry.companyId === operatingCompanyId && normalizeIdentifier(entry.vehicle.unitNumber) === unit) : [];
+
+  const candidateSets: Array<{ source: "VIN" | "PLATE" | "UNIT"; entries: typeof all }> = [];
+  if (vin) candidateSets.push({ source: "VIN", entries: vinMatches });
+  if (plate && jurisdiction) candidateSets.push({ source: "PLATE", entries: plateMatches });
+  if (unit) candidateSets.push({ source: "UNIT", entries: unitMatches });
+
+  const distinct = (entries: typeof all) => [...new Map(entries.map((entry) => [`${entry.companyId}:${entry.vehicle.id}`, entry])).values()];
+  const union = distinct(candidateSets.flatMap((set) => set.entries));
+  const availableSets = candidateSets.filter((set) => set.entries.length > 0);
+  const intersections = availableSets.length > 1
+    ? distinct(availableSets[0].entries.filter((entry) => availableSets.every((set) => set.entries.some((candidate) => candidate.companyId === entry.companyId && candidate.vehicle.id === entry.vehicle.id))))
+    : availableSets[0]?.entries || [];
+
+  // Authoritative identity is a two-question calculation. VIN and Plate +
+  // Jurisdiction alone determine whether the authoritative identifiers agree
+  // or conflict. Unit is intentionally excluded from this calculation.
+  const authoritativeVinPlateAgreement = Boolean(
+    vinMatches.length === 1 &&
+    plateMatches.length === 1 &&
+    vinMatches[0].companyId === plateMatches[0].companyId &&
+    vinMatches[0].vehicle.id === plateMatches[0].vehicle.id
+  );
+
+  const conflicts: string[] = [];
+  if (vinMatches.length > 1) conflicts.push("VIN identifies multiple active canonical Vehicle records.");
+  if (plateMatches.length > 1) conflicts.push("Plate + issuing jurisdiction identify multiple active/effective canonical Vehicle records.");
+  const authoritativeConflict = Boolean(
+    vinMatches.length &&
+    plateMatches.length &&
+    !authoritativeVinPlateAgreement
+  );
+  if (authoritativeConflict) conflicts.push("Source VIN and Plate + Jurisdiction resolve to different canonical Vehicles.");
+
+  // Unit is an operational/company-scoped identifier. It can contribute to a
+  // resolution when authoritative identifiers are absent, but it can never
+  // veto a deterministic VIN or Plate resolution. Preserve any mismatch as a
+  // non-blocking discrepancy instead of classifying it as an identity conflict.
+  const identifierDiscrepancies: string[] = [];
+  if (vinMatches.length && unit && !vinMatches.some((entry) => unitMatches.some((u) => u.companyId === entry.companyId && u.vehicle.id === entry.vehicle.id))) {
+    identifierDiscrepancies.push("Source Unit Number differs from the canonical Vehicle identified by VIN.");
+  }
+  if (plateMatches.length && unit && !plateMatches.some((entry) => unitMatches.some((u) => u.companyId === entry.companyId && u.vehicle.id === entry.vehicle.id)) && !identifierDiscrepancies.length) {
+    identifierDiscrepancies.push("Source Unit Number differs from the canonical Vehicle identified by Plate + Jurisdiction.");
+  }
+  if (authoritativeConflict || vinMatches.length > 1 || plateMatches.length > 1) {
+    return { state: "REVIEW_REQUIRED", method: undefined, reason: "IDENTITY / REGISTRATION CONFLICT", conflicts, identifierDiscrepancies, candidateVehicleIds: union.map((entry) => entry.vehicle.id), evaluatedAt };
+  }
+
+  // Authoritative identifiers determine physical identity before the weaker
+  // Unit identifier is considered for agreement. A Unit mismatch therefore
+  // cannot make an otherwise deterministic VIN/Plate resolution disappear.
+  const authoritativeMatches = vinMatches.length === 1 ? vinMatches : plateMatches.length === 1 ? plateMatches : [];
+  const authoritativeWinner = authoritativeMatches.length === 1 ? authoritativeMatches[0] : undefined;
+  const winner = authoritativeWinner || (intersections.length === 1 ? intersections[0] : availableSets.length === 1 && availableSets[0].entries.length === 1 ? availableSets[0].entries[0] : undefined);
+  if (winner) {
+    const authoritativeMethod: VehicleIdentifierResolutionMethod | undefined = authoritativeVinPlateAgreement ? "MULTI_IDENTIFIER_AGREEMENT" : vinMatches.length === 1 ? "VIN_GLOBAL" : plateMatches.length === 1 ? "PLATE_JURISDICTION" : undefined;
+    const method: VehicleIdentifierResolutionMethod = authoritativeMethod || (availableSets.length > 1 ? "MULTI_IDENTIFIER_AGREEMENT" : availableSets[0].source === "UNIT" ? "UNIT_COMPANY_SCOPED" : availableSets[0].source === "VIN" ? "VIN_GLOBAL" : "PLATE_JURISDICTION");
+    const matchedPlate = winner.store.registrationRecords.find((record) => normalizeIdentifier(record.plate) === plate && normalizeIdentifier(record.stateProvince) === jurisdiction && registrationEffectiveOn(record, asOfDate));
+    return {
+      state: "AUTO_RESOLVED",
+      method,
+      reason: method === "VIN_GLOBAL" ? "Resolved by global VIN match." : method === "PLATE_JURISDICTION" ? "Resolved by Plate + issuing jurisdiction and effective registration." : method === "UNIT_COMPANY_SCOPED" ? "Resolved by Unit / Equipment Number within the operating-company context only." : "Multiple supplied identifiers agree on one canonical Vehicle.",
+      canonicalVehicle: winner.vehicle,
+      canonicalCompanyId: winner.companyId,
+      canonicalCompanyName: winner.companyName,
+      canonicalPlateJurisdiction: matchedPlate?.stateProvince || winner.vehicle.registration?.jurisdiction,
+      conflicts: [],
+      identifierDiscrepancies,
+      candidateVehicleIds: [winner.vehicle.id],
+      evaluatedAt,
+    };
+  }
+
+  if (candidateSets.length === 1 && candidateSets[0].source === "UNIT" && unit) {
+    return { state: "UNRESOLVED", method: "UNIT_COMPANY_SCOPED", reason: "No deterministic company-scoped Unit match; TES did not search other companies by Unit Number.", conflicts: [], identifierDiscrepancies: [], candidateVehicleIds: [], evaluatedAt };
+  }
+  if (vin && !vinMatches.length && plate && jurisdiction && !plateMatches.length) {
+    return { state: "UNRESOLVED", reason: "No canonical Vehicle matched the supplied VIN or Plate + Jurisdiction; equipment may be external, borrowed, rented, or otherwise outside the current TES Vehicle registry.", conflicts: [], identifierDiscrepancies: [], candidateVehicleIds: [], evaluatedAt };
+  }
+  return { state: "UNRESOLVED", reason: "No deterministic canonical Vehicle match is currently available; source-observed equipment may remain unresolved.", conflicts: [], identifierDiscrepancies: [], candidateVehicleIds: union.map((entry) => entry.vehicle.id), evaluatedAt };
+}
+
 export function emptyVehicleDraft(company: Company): VehicleDraft {
   const isCanada = (company.regCorpCountry || "").toLowerCase().includes("canada");
   const isCross = (company.region || "").toLowerCase().includes("cross");
@@ -819,10 +997,10 @@ export function loadVehicleStore(companyId: string): VehicleStore {
         store.registrationRecords.push(normalizeLegacyRegistration(vehicleRecord.registration as Record<string, unknown>, vehicleId));
       }
       if (Array.isArray(vehicleRecord.permits) && !store.permitRecords.some((record) => record.vehicleId === vehicleId)) {
-        store.permitRecords.push(...vehicleRecord.permits.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyPermit(item as Record<string, unknown>, vehicleId)] : []));
+        store.permitRecords.push(...vehicleRecord.permits.flatMap((item: unknown) => item && typeof item === "object" ? [normalizeLegacyPermit(item as Record<string, unknown>, vehicleId)] : []));
       }
       if (Array.isArray(vehicleRecord.inspections) && !store.inspectionRecords.some((record) => record.vehicleId === vehicleId)) {
-        store.inspectionRecords.push(...vehicleRecord.inspections.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyInspection(item as Record<string, unknown>, vehicleId)] : []));
+        store.inspectionRecords.push(...vehicleRecord.inspections.flatMap((item: unknown) => item && typeof item === "object" ? [normalizeLegacyInspection(item as Record<string, unknown>, vehicleId)] : []));
       }
       if (!store.ownershipRecords.some((record) => record.vehicleId === vehicleId) && (vehicleRecord.ownershipType || vehicleRecord.ownerCompanyName)) {
         const relationship = vehicleRecord.ownershipType === "Leased" ? "Leased" : vehicleRecord.ownershipType === "Owner Operator" ? "Owner-Operator" : "Company-Owned";

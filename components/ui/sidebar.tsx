@@ -503,11 +503,15 @@ function SidebarMenuButton({
   size = "default",
   tooltip,
   className,
+  // Legacy shadcn callers may still pass `asChild`. Base UI uses `render`
+  // instead, so consume the prop here rather than leaking it to the DOM.
+  asChild: _asChild,
   ...props
 }: useRender.ComponentProps<"button"> &
   React.ComponentProps<"button"> & {
     isActive?: boolean
     tooltip?: string | React.ComponentProps<typeof TooltipContent>
+    asChild?: boolean
   } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const { isMobile, state } = useSidebar()
   const comp = useRender({

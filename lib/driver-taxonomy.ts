@@ -496,6 +496,7 @@ export const MEDICAL_QUALIFICATION_STATUSES = ["QUALIFIED_2_YEARS", "QUALIFIED_1
 export const SUBSTANCE_TEST_TYPES = ["Pre-Employment", "Follow-up", "Post-Accident", "Random", "Reasonable Suspicion/Cause", "Return to Duty"] as const
 export const SUBSTANCE_TEST_RESULTS = ["Negative", "Positive", "Refusal to Test", "Cancelled / Invalid", "Pending Verification"] as const
 
+/** @deprecated Performance writes must use the Driver Performance registry. Kept only as a compatibility/read export for legacy consumers. */
 export const EVENT_TYPES = [
   "Collision", "Near Miss", "Roadside Inspection", "Out-of-Service Order", "HOS Violation", "Traffic Citation",
   "Cargo Damage", "Cargo Theft", "Spill or Release", "Customer Complaint", "Customer Commendation",

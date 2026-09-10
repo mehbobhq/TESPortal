@@ -1,5 +1,6 @@
-﻿import type { EventType, SemanticState } from "@/types/drivers";
+import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
+import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
 
 export type PerformanceFieldKind =
   | "text"
@@ -62,6 +63,13 @@ export interface PerformancePolicyDefinition {
   steps?: readonly PerformanceStepDefinition[];
 }
 
+export interface PerformanceValidationDefinition {
+  min?: number;
+  max?: number;
+  pattern?: string;
+  maxLength?: number;
+}
+
 export interface PerformanceFieldDefinition {
   key: string;
   dataPointId: string;
@@ -78,6 +86,15 @@ export interface PerformanceFieldDefinition {
   visibleWhen?: Readonly<Record<string, readonly string[]>>;
   unitInput?: boolean;
   applicability?: readonly PerformanceApplicabilityRule[];
+  definition?: string;
+  semanticPrimitive?: string;
+  semanticCapabilities?: readonly PerformanceSemanticCapability[];
+  statePolicy?: readonly ("REQUIRED" | "OPTIONAL" | "CONDITIONAL" | "HIDDEN" | "NOT_APPLICABLE")[];
+  validation?: PerformanceValidationDefinition;
+  sourcePolicy?: PerformanceDataPointSourcePolicy;
+  analyticalEligibility?: boolean;
+  sensitivity?: "STANDARD" | "SENSITIVE";
+  relationshipTarget?: string;
 }
 
 export interface PerformanceCategoryDefinition {
@@ -92,6 +109,7 @@ export interface PerformanceCategoryDefinition {
   analyticsEligible: boolean;
   positiveEligible: boolean;
   temporalBehavior: "Occurrence" | "Measured Interval" | "Lifecycle";
+  semanticCapabilities?: readonly PerformanceSemanticCapability[];
   usesSeverity?: boolean;
   usesStatus?: boolean;
   fields: readonly PerformanceFieldDefinition[];
@@ -116,7 +134,8 @@ const CONTROLLED = {
   thresholdBasis: ["POSTED_SPEED_LIMIT", "COMPANY_THRESHOLD", "JURISDICTION_RULE", "PROVIDER_THRESHOLD", "OTHER"],
   oosScope: ["DRIVER", "VEHICLE", "BOTH", "OTHER"],
   yesNoUnknown: ["NO", "YES", "PENDING_DETERMINATION"],
-  inspectionOutcome: [{ value: "CLEAN", label: "Clean" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }, { value: "OUT_OF_SERVICE", label: "Out of Service" }, { value: "OTHER_REVIEW_REQUIRED", label: "Other / Review Required" }],
+  yesNoUnknownStrict: ["NO", "YES", "UNKNOWN"],
+  inspectionOutcome: [{ value: "PASS", label: "Pass" }, { value: "OUT_OF_SERVICE", label: "Out of Service" }, { value: "UNKNOWN", label: "Unknown / Not Provided" }],
 };
 
 const jurisdictionOptions: ControlledOption[] = JURISDICTIONS.map((item) => ({ value: item.code, label: item.label }));
@@ -179,6 +198,14 @@ const EXPLICIT_DATA_POINT_IDS: Readonly<Record<string, string>> = {
   'jurisdiction': 'DRV.PERF.JURISDICTION',
   'inspectionRegime': 'DRV.PERF.INSPECTIONREGIME',
   'inspectionClassification': 'DRV.PERF.INSPECTIONCLASSIFICATION',
+  'inspectionScope': 'DRV.PERF.INSPECTIONSCOPE',
+  'driverInspectionResult': 'DRV.PERF.DRIVERINSPECTIONRESULT',
+  'driverOOSState': 'DRV.PERF.DRIVEROOSSTATE',
+  'driverDemeritPoints': 'DRV.PERF.DRIVERDEMERITPOINTS',
+  'vehicleInspectionResult': 'DRV.PERF.VEHICLEINSPECTIONRESULT',
+  'vehicleOOSState': 'DRV.PERF.VEHICLEOOSSTATE',
+  'vehicleDemeritPoints': 'DRV.PERF.VEHICLEDEMERITPOINTS',
+  'sourceReportedViolationCount': 'DRV.PERF.SOURCEREPORTEDVIOLATIONCOUNT',
   'agency': 'DRV.PERF.AGENCY',
   'inspectionReportNumber': 'DRV.PERF.INSPECTIONREPORTNUMBER',
   'inspectionResult': 'DRV.PERF.INSPECTIONRESULT',
@@ -456,7 +483,7 @@ const time = (key: string, label: string, extra: Partial<PerformanceFieldDefinit
 const area = (key: string, label: string, extra: Partial<PerformanceFieldDefinition> = {}) => f(key, label, "textarea", extra);
 
 const base: PerformanceFieldDefinition[] = [
-  select("sourceType", "Source", options.source, { required: true }),
+  select("sourceType", "Source", options.source, { required: true, semanticPrimitive: "REGULATORY_IDENTITY" }),
   text("sourceRecordId", "Source Record ID", { helpText: "Use the authoritative source identifier when one exists." }),
 ];
 
@@ -465,7 +492,7 @@ const MANUAL_POLICY: PerformancePolicyDefinition = { evidenceRequired: false, ve
 const SYSTEM_POLICY: PerformancePolicyDefinition = { evidenceRequired: false, verification: "DERIVED", lifecycle: "NOT_APPLICABLE", followUp: "EXPLICIT", ingestion: "SYSTEM_SOURCE" };
 
 const SOURCE_ORIGINS: readonly ControlledOption[] = [
-  { value: "DOCUMENT_OCR", label: "Document / OCR" },
+  { value: "DOCUMENT_OCR", label: "Document extraction (OCR)" },
   { value: "MANUAL_ENTRY", label: "Manual Entry" },
   { value: "API_INTEGRATION", label: "API Integration" },
   { value: "SYSTEM_DERIVED", label: "System Derived" },
@@ -575,6 +602,7 @@ const SOURCE_POLICY_FAMILIES = {
   OOS: makeSourcePolicy("OOS", ORIGINS_DOCUMENT_MANUAL_API),
   COLLISION_INCIDENT: makeSourcePolicy("COLLISION_INCIDENT", ORIGINS_DOCUMENT_MANUAL_API),
   CUSTOMER: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
+  CARGO: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   SECURITY: makeSourcePolicy("SECURITY", ORIGINS_DOCUMENT_MANUAL_API),
   EQUIPMENT_MAINTENANCE: makeSourcePolicy("EQUIPMENT_MAINTENANCE", ORIGINS_DOCUMENT_MANUAL_API),
   SERVICE_TRIP: makeSourcePolicy("SERVICE_TRIP", ORIGINS_DOCUMENT_MANUAL_API_SYSTEM),
@@ -588,14 +616,13 @@ const oosRelationships: PerformanceRelationshipDefinition[] = [
   { key: "hos", entityType: "HOS", label: "Related HOS Record", applicability: [{ state: "CONDITIONAL", when: { relatedHOS: ["YES"] } }], operationalReferenceType: "HOS_REFERENCE" },
   { key: "citation", entityType: "Citation", label: "Related Citation", applicability: [{ state: "CONDITIONAL", when: { citationIssued: ["YES"] } }], operationalReferenceType: "CITATION_REFERENCE" },
   { key: "maintenance", entityType: "Maintenance", label: "Related Maintenance Record", applicability: [{ state: "CONDITIONAL", when: { maintenanceRequired: ["YES"], oosScope: ["VEHICLE", "BOTH"] } }], canonical: true, operationalReferenceType: "MAINTENANCE_REFERENCE" },
-  { key: "training", entityType: "Training", label: "Related Training Record", applicability: [{ state: "CONDITIONAL", when: { trainingRequired: ["YES"] } }], canonical: true },
+  { key: "training", entityType: "Training Requirement", label: "Related Training Requirement", applicability: [{ state: "CONDITIONAL", when: { trainingRequired: ["YES"] } }], canonical: true },
 ];
 
 const OPTIONAL_VEHICLE_RELATIONSHIP: PerformanceRelationshipDefinition = { key: "vehicle", entityType: "Vehicle", label: "Related Vehicle", applicability: [{ state: "OPTIONAL" }], canonical: true };
 const REPRESENTATIVE_RELATIONSHIPS: Readonly<Partial<Record<EventType, readonly PerformanceRelationshipDefinition[]>>> = {
   "Collision": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Near Miss": [OPTIONAL_VEHICLE_RELATIONSHIP],
-  "Roadside Inspection": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Speeding": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Harsh Braking": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Device / Data Integrity": [OPTIONAL_VEHICLE_RELATIONSHIP],
@@ -642,6 +669,7 @@ export function resolvePerformanceSteps(
     resolveRelationshipApplicability(definition, facts).length > 0;
 
   return steps.filter((step) => {
+    if (definition.value === "Roadside Inspection" && step.key === "RELATIONSHIPS") return false;
     if (step.key === "RELATIONSHIPS") {
       return relationshipsApplicable;
     }
@@ -685,8 +713,26 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
     fields: [select("nearMissType", "Near-Miss Configuration", ["Rear-End Risk", "Lane Conflict", "Pedestrian Conflict", "Intersection Conflict", "Backing Conflict", "Rollover Risk", "Other"], { required: true }), select("triggerSource", "Trigger Source", options.trigger, { required: true }), text("otherPartyObject", "Other Party / Object"), number("distanceToImpact", "Distance to Impact", "m"), number("timeToCollision", "Time to Collision", "s"), number("speed", "Vehicle Speed", "mph / km/h"), text("avoidanceAction", "Avoidance Action"), select("zoneType", "Zone Type", options.zone), area("contextNotes", "Context / Circumstances"), ...base],
   },
   {
-    code: "ROADSIDE_INSPECTION", value: "Roadside Inspection", label: "Roadside Inspection", description: "An enforcement inspection with inspection level, result, violations, and linked regulatory evidence.", group: "Regulatory", sources: ["Roadside Inspection", "Driver Report", "Company Staff"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: true, temporalBehavior: "Occurrence",
-    fields: [select("jurisdiction", "Jurisdiction", ["US", "CA"], { required: true }), select("inspectionRegime", "Inspection Regime", ["US_CVSA", "CA_NSC_CVSA", "OTHER"], { required: true }), select("inspectionClassification", "Inspection Level / Type", ["US_LEVEL_I", "US_LEVEL_II", "US_LEVEL_III", "US_LEVEL_IV", "US_LEVEL_V", "US_LEVEL_VI", "US_LEVEL_VII", "US_LEVEL_VIII", "CA_TYPE_1", "CA_TYPE_2", "CA_TYPE_3", "CA_TYPE_4", "CA_TYPE_5", "OTHER"], { required: true, optionsWhen: { inspectionRegime: { US_CVSA: ["US_LEVEL_I", "US_LEVEL_II", "US_LEVEL_III", "US_LEVEL_IV", "US_LEVEL_V", "US_LEVEL_VI", "US_LEVEL_VII", "US_LEVEL_VIII"], CA_NSC_CVSA: ["CA_TYPE_1", "CA_TYPE_2", "CA_TYPE_3", "CA_TYPE_4", "CA_TYPE_5"], OTHER: ["OTHER"] } } }), text("agency", "Enforcement Agency"), select("inspectionResult", "Inspection Result", [{ value: "CLEAN", label: "Clean" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }, { value: "OUT_OF_SERVICE", label: "Out of Service" }, { value: "OTHER_REVIEW_REQUIRED", label: "Other / Review Required" }], { required: true }), number("driverViolationsCount", "Driver Violations", "count"), number("vehicleViolationsCount", "Vehicle Violations", "count"), number("hosViolationsCount", "HOS Violations", "count"), bool("driverOOS", "Driver OOS Issued"), bool("vehicleOOS", "Vehicle OOS Issued"), bool("hazmatInspected", "Hazmat Inspected"), select("oosType", "OOS Type", CONTROLLED.oosType), date("oosReleaseDate", "OOS Release Date"), ...base],
+    code: "ROADSIDE_INSPECTION", value: "Roadside Inspection", label: "Roadside Inspection", description: "An enforcement inspection with source observations, inspection scope, equipment, findings, OOS state, statements, and evidence.", group: "Regulatory", sources: ["Roadside Inspection", "Driver Report", "Company Staff"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: true, temporalBehavior: "Occurrence",
+    semanticCapabilities: ["REGULATORY", "OBSERVATION", "ASSET_EQUIPMENT"],
+    fields: [
+      select("jurisdiction", "Jurisdiction", jurisdictionOptions, { required: true, semanticPrimitive: "REGULATORY_IDENTITY", definition: "Jurisdiction establishing the inspection authority or regime." }),
+      select("inspectionRegime", "Inspection Regime", [{ value: "US_CVSA", label: "U.S. CVSA" }, { value: "CA_NSC_CVSA", label: "Canadian NSC / CVSA" }, { value: "OTHER", label: "Other" }], { required: true, semanticPrimitive: "REGULATORY_IDENTITY" }),
+      select("inspectionClassification", "Inspection Level / Type", [{ value: "US_LEVEL_I", label: "Level I — North American Standard Inspection" }, { value: "US_LEVEL_II", label: "Level II — Walk-Around Driver/Vehicle Inspection" }, { value: "US_LEVEL_III", label: "Level III — Driver-Only Inspection" }, { value: "US_LEVEL_IV", label: "Level IV — Special Inspection" }, { value: "US_LEVEL_V", label: "Level V — Vehicle-Only Inspection" }, { value: "US_LEVEL_VI", label: "Level VI — Radioactive Materials Inspection" }, { value: "US_LEVEL_VII", label: "Level VII — Jurisdiction-Specific Inspection" }, { value: "US_LEVEL_VIII", label: "Level VIII — Electronic Inspection" }, { value: "CA_TYPE_1", label: "Type 1" }, { value: "CA_TYPE_2", label: "Type 2" }, { value: "CA_TYPE_3", label: "Type 3" }, { value: "CA_TYPE_4", label: "Type 4" }, { value: "CA_TYPE_5", label: "Type 5" }, { value: "OTHER", label: "Other" }], { required: true, semanticPrimitive: "REGULATORY_IDENTITY", optionsWhen: { inspectionRegime: { US_CVSA: ["US_LEVEL_I", "US_LEVEL_II", "US_LEVEL_III", "US_LEVEL_IV", "US_LEVEL_V", "US_LEVEL_VI", "US_LEVEL_VII", "US_LEVEL_VIII"], CA_NSC_CVSA: ["CA_TYPE_1", "CA_TYPE_2", "CA_TYPE_3", "CA_TYPE_4", "CA_TYPE_5"], OTHER: ["OTHER"] } } }),
+      select("inspectionScope", "Inspection Scope", [{ value: "DRIVER", label: "Driver" }, { value: "VEHICLE", label: "Vehicle" }, { value: "BOTH", label: "Driver & Vehicle" }], { required: true, definition: "What the source establishes was inspected; not a violation, OOS, or responsibility attribution." }),
+      text("agency", "Enforcement Agency", { semanticPrimitive: "REGULATORY_IDENTITY" }),
+      text("inspectionReportNumber", "Inspection / Report Number", { semanticPrimitive: "REGULATORY_IDENTITY" }),
+      select("inspectionResult", "Source-Reported Overall Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, semanticPrimitive: "REGULATORY_IDENTITY" }),
+      select("driverInspectionResult", "Driver Inspection Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"] } }] }),
+      select("driverOOSState", "Driver OOS", [{ value: "NO", label: "No" }, { value: "YES", label: "Yes" }, { value: "UNKNOWN", label: "Unknown / Not Provided" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], driverInspectionResult: ["VIOLATIONS_FOUND"] } }] }),
+      number("driverDemeritPoints", "Driver Demerit / Points", "points", { applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], driverInspectionResult: ["VIOLATIONS_FOUND"] } }], definition: "Regulator-provided points only when actually sourced." }),
+      select("vehicleInspectionResult", "Vehicle Inspection Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["VEHICLE", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"] } }] }),
+      select("vehicleOOSState", "Vehicle OOS", [{ value: "NO", label: "No" }, { value: "YES", label: "Yes" }, { value: "UNKNOWN", label: "Unknown / Not Provided" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["VEHICLE", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], vehicleInspectionResult: ["VIOLATIONS_FOUND"] } }] }),
+      number("vehicleDemeritPoints", "Vehicle Demerit / Points", "points", { applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["VEHICLE", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], vehicleInspectionResult: ["VIOLATIONS_FOUND"] } }], definition: "Regulator-provided points only when actually sourced." }),
+      select("hazmatInspected", "Hazmat Inspected", [{ value: "YES", label: "Yes" }, { value: "NO", label: "No" }, { value: "UNKNOWN", label: "Unknown / Not Provided" }], { applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["VEHICLE", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"] } }] }),
+      number("sourceReportedViolationCount", "Source-Reported Total Violations", "count", { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionResult: ["VIOLATIONS_FOUND"] } }], helpText: "Source-reported total. It never replaces the violation child collection." }),
+      ...base,
+    ],
   },
   {
     code: "OUT_OF_SERVICE_ORDER", value: "Out-of-Service Order", label: "Out-of-Service Order", description: "A documented out-of-service order and its governing source, scope, release, and evidence.", group: "Regulatory", sources: ["Roadside Inspection", "Company Staff", "Other"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Lifecycle", policy: DOCUMENT_POLICY, relationships: oosRelationships,
@@ -894,16 +940,18 @@ const EXPLICIT_CATEGORY_DATA_POINT_IDS: Readonly<Record<string, string>> = {
   'ROADSIDE_INSPECTION:jurisdiction': 'DRV.PERF.ROADSIDE_INSPECTION.JURISDICTION',
   'ROADSIDE_INSPECTION:inspectionRegime': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONREGIME',
   'ROADSIDE_INSPECTION:inspectionClassification': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONCLASSIFICATION',
+  'ROADSIDE_INSPECTION:inspectionScope': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONSCOPE',
   'ROADSIDE_INSPECTION:agency': 'DRV.PERF.ROADSIDE_INSPECTION.AGENCY',
+  'ROADSIDE_INSPECTION:inspectionReportNumber': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONREPORTNUMBER',
   'ROADSIDE_INSPECTION:inspectionResult': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONRESULT',
-  'ROADSIDE_INSPECTION:driverViolationsCount': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERVIOLATIONSCOUNT',
-  'ROADSIDE_INSPECTION:vehicleViolationsCount': 'DRV.PERF.ROADSIDE_INSPECTION.VEHICLEVIOLATIONSCOUNT',
-  'ROADSIDE_INSPECTION:hosViolationsCount': 'DRV.PERF.ROADSIDE_INSPECTION.HOSVIOLATIONSCOUNT',
-  'ROADSIDE_INSPECTION:driverOOS': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVEROOS',
-  'ROADSIDE_INSPECTION:vehicleOOS': 'DRV.PERF.ROADSIDE_INSPECTION.VEHICLEOOS',
+  'ROADSIDE_INSPECTION:driverInspectionResult': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERRESULT',
+  'ROADSIDE_INSPECTION:driverOOSState': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVEROOSSTATE',
+  'ROADSIDE_INSPECTION:driverDemeritPoints': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERDEMERITPOINTS',
+  'ROADSIDE_INSPECTION:vehicleInspectionResult': 'DRV.PERF.ROADSIDE_INSPECTION.VEHICLERESULT',
+  'ROADSIDE_INSPECTION:vehicleOOSState': 'DRV.PERF.ROADSIDE_INSPECTION.VEHICLEOOSSTATE',
+  'ROADSIDE_INSPECTION:vehicleDemeritPoints': 'DRV.PERF.ROADSIDE_INSPECTION.VEHICLEDEMERITPOINTS',
   'ROADSIDE_INSPECTION:hazmatInspected': 'DRV.PERF.ROADSIDE_INSPECTION.HAZMATINSPECTED',
-  'ROADSIDE_INSPECTION:oosType': 'DRV.PERF.ROADSIDE_INSPECTION.OOSTYPE',
-  'ROADSIDE_INSPECTION:oosReleaseDate': 'DRV.PERF.ROADSIDE_INSPECTION.OOSRELEASEDATE',
+  'ROADSIDE_INSPECTION:sourceReportedViolationCount': 'DRV.PERF.ROADSIDE_INSPECTION.SOURCEREPORTEDVIOLATIONCOUNT',
   'OUT_OF_SERVICE_ORDER:issuingAgency': 'DRV.PERF.OUT_OF_SERVICE_ORDER.ISSUINGAGENCY',
   'OUT_OF_SERVICE_ORDER:oosType': 'DRV.PERF.OUT_OF_SERVICE_ORDER.OOSTYPE',
   'OUT_OF_SERVICE_ORDER:issuedDate': 'DRV.PERF.OUT_OF_SERVICE_ORDER.ISSUEDDATE',
@@ -1205,16 +1253,49 @@ const CATEGORY_SOURCE_POLICY_FAMILY: Readonly<Partial<Record<EventType, Performa
   "PPE / Safety Protocol": SOURCE_POLICY_FAMILIES.OBSERVATION,
 };
 
+const sourcePolicyToAcquisitionTypes = (policy: PerformanceSourcePolicy): PerformanceAcquisitionType[] => policy.allowedOrigins.map((origin) => origin === "DOCUMENT_OCR" ? "DOCUMENT" : origin === "API_INTEGRATION" ? "API" : origin === "ELD_INGESTION" ? "ELD" : origin === "TELEMATICS_INGESTION" ? "TELEMATICS" : origin === "SYSTEM_DERIVED" ? "SYSTEM_DERIVED" : "MANUAL_FALLBACK");
+const capabilitiesForCategory = (definition: PerformanceCategoryDefinition): readonly PerformanceSemanticCapability[] => {
+  if (definition.semanticCapabilities?.length) return definition.semanticCapabilities;
+  if (definition.value === "Roadside Inspection" || definition.group === "Regulatory") return ["REGULATORY"];
+  if (definition.group === "HOS / Telematics") return ["BEHAVIOR_TELEMATICS"];
+  if (definition.group === "Customer") return ["CUSTOMER_SITE"];
+  if (definition.group === "Operations") return ["OPERATIONAL_PERFORMANCE"];
+  if (definition.group === "Security") return ["INCIDENT_OUTCOME"];
+  if (definition.group === "Positive") return ["OBSERVATION"];
+  if (definition.value.includes("Equipment")) return ["ASSET_EQUIPMENT", "INCIDENT_OUTCOME"];
+  return ["INCIDENT_OUTCOME"];
+};
+
+const sourcePolicyForCategory = (value: EventType): PerformanceSourcePolicy => {
+  const family = CATEGORY_SOURCE_POLICY_FAMILY[value];
+  return family || { allowedOrigins: SOURCE_ORIGINS.map((item) => item.value), defaultOrigin: "MANUAL_ENTRY", authoritativeSourceTypes: [{ value: value, label: value }], reporterApplicability: REPORTER_OPTIONS };
+};
+
 export const DRIVER_PERFORMANCE_CATEGORY_REGISTRY: readonly PerformanceCategoryDefinition[] = DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW.map((definition) => {
   const basePolicy = definition.policy || (definition.evidenceRequired ? DOCUMENT_POLICY : MANUAL_POLICY);
   const sourcePolicy = CATEGORY_SOURCE_POLICY_FAMILY[definition.value];
   return {
     ...definition,
+    semanticCapabilities: capabilitiesForCategory(definition),
     policy: sourcePolicy ? { ...basePolicy, sourcePolicy } : basePolicy,
     relationships: definition.relationships || REPRESENTATIVE_RELATIONSHIPS[definition.value],
     fields: definition.fields.map((field) => ({
       ...field,
       dataPointId: EXPLICIT_CATEGORY_DATA_POINT_IDS[`${definition.code}:${field.key}`] || field.dataPointId,
+      statePolicy: field.statePolicy || (field.required ? ["REQUIRED"] : ["OPTIONAL", "CONDITIONAL", "HIDDEN", "NOT_APPLICABLE"]),
+      semanticCapabilities: field.semanticCapabilities || capabilitiesForCategory(definition),
+      analyticalEligibility: field.analyticalEligibility !== false,
+      sourcePolicy: field.sourcePolicy || {
+        permittedAcquisitionSources: sourcePolicyToAcquisitionTypes(sourcePolicyForCategory(definition.value)),
+        preferredSource: sourcePolicyForCategory(definition.value).defaultOrigin === "MANUAL_ENTRY" ? "MANUAL_FALLBACK" : sourcePolicyForCategory(definition.value).defaultOrigin === "DOCUMENT_OCR" ? "DOCUMENT" : "API",
+        authoritativeSourceClass: sourcePolicyForCategory(definition.value).authoritativeSourceTypes[0]?.value,
+        evidenceRequired: field.key !== "sourceType" && Boolean(definition.evidenceRequired),
+        manualFallbackAllowed: sourcePolicyForCategory(definition.value).allowedOrigins.includes("MANUAL_ENTRY"),
+        manualFallbackIsAuthoritative: true,
+        systemDerivationAllowed: sourcePolicyForCategory(definition.value).allowedOrigins.includes("SYSTEM_DERIVED"),
+        confidenceApplicable: true,
+        conflictBehavior: "REVIEW_REQUIRED",
+      },
     })),
   };
 });
@@ -1280,6 +1361,13 @@ function validatePerformanceDataPointRegistry(
         locations.push(location);
         dataPointLocations.set(field.dataPointId, locations);
       }
+      if (field.semanticPrimitive && !DRIVER_PERFORMANCE_PRIMITIVE_BY_ID[field.semanticPrimitive]) {
+        problems.push(`Unknown Performance semantic primitive ${field.semanticPrimitive}: ${location}`);
+      }
+      if (field.sourcePolicy) {
+        if (!field.sourcePolicy.permittedAcquisitionSources.length) problems.push(`Empty source capability policy: ${location}`);
+        if (field.sourcePolicy.preferredSource && !field.sourcePolicy.permittedAcquisitionSources.includes(field.sourcePolicy.preferredSource)) problems.push(`Preferred source is not permitted: ${location}`);
+      }
     }
   }
 
@@ -1327,4 +1415,3 @@ export const DRIVER_PERFORMANCE_LEGACY_CATEGORY_ALIASES: Readonly<Record<string,
 export const PERFORMANCE_VERIFICATION_STATES = ["Unverified", "Partially Verified", "Verified", "Unable to Verify"] as const;
 export const PERFORMANCE_DISPUTE_STATES = ["Not Disputed", "Disputed", "Resolved"] as const;
 export const PERFORMANCE_SEMANTIC_UNKNOWN: SemanticState = "Unknown";
-

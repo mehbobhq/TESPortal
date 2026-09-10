@@ -1,8 +1,9 @@
 import { normalizeName } from "@/lib/identifier-normalization"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
-import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION } from "@/lib/driver-performance-schema"
+import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
 import { loadVehicleStore } from "@/lib/vehicle-data"
+import { getRoadsideViolationCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, ROADSIDE_VIOLATION_COLLECTION_ID } from "@/lib/driver-performance-child-facts"
 
 import type {
   AddressRecord,
@@ -20,6 +21,7 @@ import type {
   StructuredEventFact,
   PerformanceFactReconciliation,
   PerformanceRelationshipResolution,
+  PerformanceFactObservation,
   PerformanceSourceIngestionItem,
   EventStatus,
   DriverTaxDocRecord,
@@ -362,6 +364,24 @@ function migrateCompanyAction(raw: any, companyId: string): CompanyActionRecord 
   }
 }
 
+function normalizePerformanceEventCompatibility(raw: any): DriverPerformanceEvent {
+  const event = { ...raw } as DriverPerformanceEvent;
+  if (Array.isArray(event.evidenceIds)) event.evidenceIds = [...new Set(event.evidenceIds.filter(Boolean))];
+  if (!event.occurrencePrecision) event.occurrencePrecision = event.eventTime ? "EXACT_DATETIME" : event.eventDate ? "DATE_ONLY" : "UNKNOWN";
+  event.factReconciliation = normalizePerformanceReconciliation(event.factReconciliation);
+  if (event.factReconciliation && Array.isArray(event.structuredEventFacts)) {
+    for (const fact of event.structuredEventFacts) {
+      const resolution = event.factReconciliation[fact.dataPointId];
+      if (!resolution) continue;
+      // structuredEventFacts is canonical current truth; reconciliation metadata is normalized to it.
+      resolution.canonicalDataPointId = fact.dataPointId;
+      resolution.resolvedValue = fact.value;
+      resolution.supportingObservationIds = [...new Set(resolution.supportingObservationIds || resolution.observations.map((observation) => observation.observationId))];
+    }
+  }
+  return event;
+}
+
 function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCourseDefinition[]): CompanyDriverStore {
   const base: CompanyDriverStore = {
     version: 2,
@@ -392,7 +412,7 @@ function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCours
 
   const relationships = Array.isArray(raw.relationships) ? raw.relationships.map((r: any) => normalizeRelationship(r, companyId)) : []
   const legacyEvents = Array.isArray(raw.performanceEvents) ? raw.performanceEvents : []
-  const events = Array.isArray(raw.events) && raw.events.length ? raw.events : legacyEvents
+  const events = (Array.isArray(raw.events) && raw.events.length ? raw.events : legacyEvents).map((event: any) => normalizePerformanceEventCompatibility(event))
   const training = Array.isArray(raw.trainingRecords) ? raw.trainingRecords.map((r: any) => migrateTrainingRecord(r, companyId, catalog)) : []
   const trainingRequirements = Array.isArray(raw.trainingRequirements) ? raw.trainingRequirements.map((r: any) => migrateTrainingRequirement(r, companyId)) : []
 
@@ -467,6 +487,8 @@ export const saveCompanyDriverStore = (store: CompanyDriverStore) => {
   const events = store.events.map((event) => ({
     ...event,
     companyDriverRelationshipId: event.companyDriverRelationshipId || (event.driverMasterId ? relationshipByDriver.get(event.driverMasterId) : undefined),
+    evidenceIds: [...new Set((event.evidenceIds || []).filter(Boolean))],
+    factReconciliation: normalizePerformanceReconciliation(event.factReconciliation),
   }))
   write(companyDriverStorageKey(store.companyId), {
     ...store,
@@ -479,6 +501,7 @@ export const saveCompanyDriverStore = (store: CompanyDriverStore) => {
     companyDeterminations,
     companyActions,
     events,
+    performanceEvents: events,
     performanceRelationshipResolutions: store.performanceRelationshipResolutions || [],
     performanceIngestionItems: store.performanceIngestionItems || [],
   })
@@ -857,6 +880,75 @@ export function createPendingPerformanceIngestion(companyId: string, driverMaste
   return item;
 }
 
+function makePerformanceObservation(eventId: string, fact: StructuredEventFact, source: string | undefined, sourceRecordId: string | undefined, evidenceIds: string[], observedAt: string, origin?: string): PerformanceFactObservation {
+  const extractionOccurred = Boolean(fact.extraction?.provider || fact.extraction?.extractedAt || fact.extraction?.reviewState || fact.extraction?.rawValue !== undefined);
+  const rawValue = fact.extraction?.rawValue !== undefined ? fact.extraction.rawValue : fact.value;
+  return {
+    observationId: uid("PO"),
+    dataPointId: fact.dataPointId,
+    value: fact.value,
+    valueType: fact.valueType,
+    rawValue,
+    normalizedValue: fact.normalizedValue,
+    normalizedUnit: fact.normalizedUnit,
+    unit: fact.unit,
+    source,
+    sourceRecordId,
+    sourceEvidenceIds: [...new Set(evidenceIds)],
+    confidence: fact.extraction?.confidence,
+    confidenceType: extractionOccurred ? "EXTRACTION" : undefined,
+    observedAt,
+    ingestedAt: observedAt,
+    extraction: extractionOccurred ? {
+      occurred: true,
+      provider: fact.extraction?.provider,
+      version: undefined,
+      extractedAt: fact.extraction?.extractedAt,
+      confidence: fact.extraction?.confidence,
+    } : { occurred: false },
+    provenance: {
+      sourceType: origin === "MANUAL_FALLBACK" || origin === "MANUAL_ENTRY" ? "SOURCE_FACT" : origin === "DOCUMENT_OCR" ? "SOURCE_FACT" : "SOURCE_FACT",
+      source,
+      sourceRecordId,
+      ingestionOrigin: origin,
+      ingestionTimestamp: observedAt,
+      sourceEvidenceIds: evidenceIds.length ? [...new Set(evidenceIds)] : undefined,
+    },
+    reviewState: origin === "MANUAL_FALLBACK" || origin === "MANUAL_ENTRY" ? "PENDING_REVIEW" : (fact.extraction?.reviewState === "VERIFIED" ? "VERIFIED" : "PENDING_REVIEW"),
+  };
+}
+
+function buildInitialPerformanceReconciliation(eventId: string, facts: StructuredEventFact[], source: string | undefined, sourceRecordId: string | undefined, evidenceIds: string[], observedAt: string, origin?: string): Record<string, PerformanceFactReconciliation> {
+  return Object.fromEntries(facts.map((fact) => {
+    const observation = makePerformanceObservation(eventId, fact, source, sourceRecordId, evidenceIds, observedAt, origin);
+    return [fact.dataPointId, {
+      canonicalDataPointId: fact.dataPointId,
+      resolvedValue: fact.value,
+      supportingObservationIds: [observation.observationId],
+      state: "CLEAN",
+      observations: [observation],
+      resolutionMethod: "INITIAL_SOURCE_OBSERVATION",
+      resolvedAt: observedAt,
+    } satisfies PerformanceFactReconciliation];
+  }));
+}
+
+function normalizePerformanceReconciliation(reconciliation: Record<string, PerformanceFactReconciliation> | undefined): Record<string, PerformanceFactReconciliation> | undefined {
+  if (!reconciliation) return undefined;
+  return Object.fromEntries(Object.entries(reconciliation).map(([dataPointId, item]) => [dataPointId, {
+    ...item,
+    observations: (item.observations || []).map((observation, index) => ({
+      ...observation,
+      observationId: observation.observationId || `PO-LEGACY-${dataPointId}-${index}`,
+      dataPointId: observation.dataPointId || dataPointId,
+      sourceEvidenceIds: [...new Set(observation.sourceEvidenceIds || [])],
+    })),
+    canonicalDataPointId: item.canonicalDataPointId || dataPointId,
+    resolvedValue: item.resolvedValue,
+    supportingObservationIds: [...new Set(item.supportingObservationIds || item.observations?.map((observation) => observation.observationId) || [])],
+  }]));
+}
+
 export function addPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
   const store = loadCompanyDriverStore(companyId)
   const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[data.eventType]
@@ -864,24 +956,56 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   if (PERFORMANCE_CATEGORY_OWNERSHIP[data.eventType] !== "RECORDABLE_EVENT") {
     throw new Error(`Performance Event category ${data.eventType} is owned by ${PERFORMANCE_CATEGORY_OWNERSHIP[data.eventType]} and cannot be created as a new Performance Event.`)
   }
+  if (!data.structuredEventFacts) {
+    throw new Error("New Performance Event writes require structuredEventFacts; structuredFacts remains read-only compatibility storage.");
+  }
   if (data.structuredFacts && data.structuredEventFacts?.length) {
     throw new Error("New Performance Events may not write both structuredFacts and structuredEventFacts.")
   }
   if (data.linkedRecords?.length) {
     throw new Error("New Performance Events must use canonicalLinks, evidenceIds, or operationalReferences; legacy linkedRecords cannot be written by the new creation path.")
   }
+  if (data.eventType === "Roadside Inspection") {
+    const roadsideEquipmentCollection = (data.childCollections || []).find((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.INSPECTED_EQUIPMENT");
+    if (!roadsideEquipmentCollection) throw new Error("Every Roadside Inspection requires an inspected-equipment collection.");
+    const roadsideFactValues = Object.fromEntries((data.structuredEventFacts || []).map((fact) => [definition.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value]));
+    const equipmentErrors = validateRoadsideEquipmentCollection(roadsideEquipmentCollection, roadsideFactValues.inspectionScope as string | undefined);
+    if (equipmentErrors.length) throw new Error(equipmentErrors[0]);
+    for (const collection of data.childCollections || []) {
+      if (collection.collectionId === ROADSIDE_VIOLATION_COLLECTION_ID) {
+        const errors = validateRoadsideViolationCollection(collection);
+        if (errors.length) throw new Error(errors[0]);
+      }
+      if (collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.INSPECTED_EQUIPMENT") {
+        const errors = validateRoadsideEquipmentCollection(collection, Object.fromEntries((data.structuredEventFacts || []).map((fact) => [definition.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])).inspectionScope as string | undefined);
+        if (errors.length) throw new Error(errors[0]);
+      }
+      if (collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.DRIVER_STATEMENTS") {
+        const errors = validateRoadsideStatementCollection(collection);
+        if (errors.length) throw new Error(errors[0]);
+      }
+    }
+  }
   for (const link of data.canonicalLinks || []) {
     if (link.source !== "CANONICAL_STORE") throw new Error("Canonical entity links must declare CANONICAL_STORE provenance.")
-    if (link.entityType === "Vehicle" && !(() => { try { return loadVehicleStore(companyId).vehicles.some((vehicle) => vehicle.id === link.recordId) } catch { return false } })()) throw new Error(`Vehicle ${link.recordId} does not resolve in the canonical Vehicle store.`)
-    if (link.entityType === "Training" && !store.trainingRecords.some((training) => training.id === link.recordId)) throw new Error(`Training ${link.recordId} does not resolve in the canonical Training store.`)
-    if (link.entityType === "Maintenance" && !loadVehicleStore(companyId).maintenanceRecords.some((record) => record.id === link.recordId && !record.archived)) throw new Error(`Maintenance ${link.recordId} does not resolve in the canonical Vehicle maintenance store.`)
-    if (!["Vehicle", "Training", "Maintenance"].includes(link.entityType)) throw new Error(`Canonical ${link.entityType} links must be created through their owning module, not Performance Event creation.`)
   }
   if (data.structuredEventFacts) {
-    const allowed = new Map(definition.fields.map((field) => [field.dataPointId, field]))
+    const factValues = Object.fromEntries(data.structuredEventFacts.map((fact) => {
+      const field = definition.fields.find((candidate) => candidate.dataPointId === fact.dataPointId);
+      return [field?.key || fact.dataPointId, fact.value];
+    }));
+    const missingRequired = definition.fields.filter((field) => {
+      const state = resolvePerformanceApplicability(field.applicability, factValues);
+      const required = state === "REQUIRED" || (state === "CONDITIONAL" && Boolean(field.required)) || (field.required && !field.applicability);
+      return field.key !== "sourceType" && field.key !== "sourceRecordId" && required && (factValues[field.key] === undefined || factValues[field.key] === null || factValues[field.key] === "");
+    });
+    if (missingRequired.length) throw new Error(`Performance Event is missing required data point(s): ${missingRequired.map((field) => field.dataPointId).join(", ")}`);
+    const seen = new Set<string>()
     for (const fact of data.structuredEventFacts) {
-      const field = allowed.get(fact.dataPointId)
-      if (!field) throw new Error(`Data Point ${fact.dataPointId} is not allowed for ${data.eventType}.`)
+      if (seen.has(fact.dataPointId)) throw new Error(`Duplicate Performance Data Point: ${fact.dataPointId}`)
+      seen.add(fact.dataPointId)
+      const field = definition.fields.find((candidate) => candidate.dataPointId === fact.dataPointId)
+      if (!field) throw new Error(`Unknown Performance Data Point for ${data.eventType}: ${fact.dataPointId}`)
       if (field.kind === "select" && typeof fact.value === "string" && field.options && !field.options.some((option) => option.value === fact.value)) {
         throw new Error(`Invalid controlled value for ${fact.dataPointId}.`)
       }
@@ -892,25 +1016,109 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   }
   const now = new Date().toISOString()
   const relationshipId = activeRelationship(store, driverMasterId)?.id
-  const record: DriverPerformanceEvent = { ...data, id: uid("EVT"), companyId, driverMasterId, companyDriverRelationshipId: relationshipId, schemaVersion: data.schemaVersion || PERFORMANCE_EVENT_SCHEMA_VERSION, linkedRecords: data.linkedRecords || [], evidenceIds: data.evidenceIds || [], chronology: data.chronology || [], provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" }, isArchived: false, createdAt: now, updatedAt: now }
+  const eventId = uid("EVT")
+  const evidenceIds = [...new Set((data.evidenceIds || []).filter(Boolean))]
+  const facts = data.structuredEventFacts || []
+  const origin = data.ingestion?.origin || data.provenance?.ingestionOrigin
+  const reconciliation: Record<string, PerformanceFactReconciliation> = normalizePerformanceReconciliation(data.factReconciliation) || (facts.length ? buildInitialPerformanceReconciliation(eventId, facts, data.provenance?.source, data.provenance?.sourceRecordId, evidenceIds, now, origin) : {})
+  if (data.eventType === "Roadside Inspection" && reconciliation) {
+    const reported = facts.find((fact) => fact.dataPointId === DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"].fields.find((field) => field.key === "sourceReportedViolationCount")?.dataPointId);
+    const collection = getRoadsideViolationCollection(data);
+    if (reported && typeof reported.value === "number" && collection) {
+      const derived = deriveRoadsideViolationCounts(collection).total;
+      if (collection.completeness === "COMPLETE" && reported.value !== derived) {
+        reconciliation[reported.dataPointId] = {
+          ...(reconciliation[reported.dataPointId] || { observations: [] }),
+          canonicalDataPointId: reported.dataPointId,
+          resolvedValue: reported.value,
+          supportingObservationIds: reconciliation[reported.dataPointId]?.supportingObservationIds || reconciliation[reported.dataPointId]?.observations?.map((observation) => observation.observationId) || [],
+          state: "REVIEW_REQUIRED",
+          resolutionMethod: "SOURCE_TOTAL_VS_STRUCTURED_CHILD_RECONCILIATION",
+          resolutionReason: `Complete structured child count (${derived}) differs from source-reported violation total (${reported.value}).`,
+        };
+      } else if (collection.completeness === "PARTIAL") {
+        reconciliation[reported.dataPointId] = {
+          ...(reconciliation[reported.dataPointId] || { observations: [] }),
+          canonicalDataPointId: reported.dataPointId,
+          resolvedValue: reported.value,
+          supportingObservationIds: reconciliation[reported.dataPointId]?.supportingObservationIds || reconciliation[reported.dataPointId]?.observations?.map((observation) => observation.observationId) || [],
+          state: "REVIEW_REQUIRED",
+          resolutionMethod: "SOURCE_TOTAL_VS_PARTIAL_CHILD_RECONCILIATION",
+          resolutionReason: `Source-reported violation total (${reported.value}) is preserved while only ${derived} structured child violation(s) are itemized; child collection is PARTIAL.`,
+        };
+      }
+    }
+  }
+  if (data.eventType === "Roadside Inspection") {
+    const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"];
+    const factsByKey = Object.fromEntries(facts.map((fact) => [definition.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value]));
+    const roadsideCollection = getRoadsideViolationCollection(data);
+    if (roadsideCollection) {
+      const collectionErrors = validateRoadsideViolationCollection(roadsideCollection);
+      if (collectionErrors.length) throw new Error(collectionErrors[0]);
+    }
+    const consistencyErrors = validateRoadsideInspectionConsistency(factsByKey, roadsideCollection);
+    if (consistencyErrors.length) throw new Error(consistencyErrors[0]);
+    const derivedOutcome = deriveRoadsideInspectionOutcome(factsByKey, roadsideCollection);
+    const sourceOutcomeField = definition.fields.find((field) => field.key === "inspectionResult");
+    const sourceOutcome = sourceOutcomeField ? facts.find((fact) => fact.dataPointId === sourceOutcomeField.dataPointId)?.value : undefined;
+    if (sourceOutcome && derivedOutcome !== "UNKNOWN" && sourceOutcome !== derivedOutcome && sourceOutcomeField) {
+      reconciliation[sourceOutcomeField.dataPointId] = {
+        ...(reconciliation[sourceOutcomeField.dataPointId] || { observations: [] }),
+        canonicalDataPointId: sourceOutcomeField.dataPointId,
+        resolvedValue: sourceOutcome,
+        supportingObservationIds: reconciliation[sourceOutcomeField.dataPointId]?.supportingObservationIds || reconciliation[sourceOutcomeField.dataPointId]?.observations?.map((observation) => observation.observationId) || [],
+        state: "REVIEW_REQUIRED",
+        resolutionMethod: "SOURCE_OVERALL_OUTCOME_VS_DERIVED_RECONCILIATION",
+        resolutionReason: `Source-reported overall outcome (${sourceOutcome}) differs from deterministic component outcome (${derivedOutcome}).`,
+      };
+    }
+  }
+  const record: DriverPerformanceEvent = {
+    ...data,
+    id: eventId,
+    companyId,
+    driverMasterId,
+    companyDriverRelationshipId: relationshipId,
+    schemaVersion: data.schemaVersion || PERFORMANCE_EVENT_SCHEMA_VERSION,
+    evidenceIds,
+    chronology: data.chronology || [],
+    provenance: data.provenance || { sourceType: "SOURCE_FACT", source: "Driver event" },
+    factReconciliation: reconciliation,
+    recordProcessingState: data.recordProcessingState || "RECEIVED",
+    workflowState: data.workflowState || (data.followUpActionRequired ? "OPEN" : "NOT_REQUIRED"),
+    isArchived: false,
+    createdAt: now,
+    updatedAt: now,
+  }
   saveCompanyDriverStore({ ...store, events: [...store.events, record] })
   auditDriverMutation(companyId, record.id, "CREATE", "Created canonical company-owned Driver event record.")
   return record
 }
 
+function derivedManualProcessingState(data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">, evidenceIds: string[]): "RECEIVED" | "VERIFIED" {
+  if (data.recordProcessingState === "VERIFIED") return "VERIFIED";
+  return evidenceIds.length && data.verificationState === "Verified" ? "VERIFIED" : "RECEIVED";
+}
+
 export function addManualPerformanceEvent(companyId: string, driverMasterId: string, data: Omit<DriverPerformanceEvent, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) {
+  const now = new Date().toISOString();
+  const evidenceIds = [...new Set((data.evidenceIds || []).filter(Boolean))];
   const provenance = {
     ...(data.provenance || { sourceType: "SOURCE_FACT" as const, source: "Manual Driver Performance Entry" }),
     sourceType: "SOURCE_FACT" as const,
-    ingestionOrigin: "MANUAL_ENTRY",
+    ingestionOrigin: evidenceIds.length ? "MANUAL_FALLBACK" : "MANUAL_ENTRY",
+    sourceEvidenceIds: evidenceIds.length ? evidenceIds : undefined,
+    extractionState: "NOT_APPLICABLE" as const,
+    extractionConfidence: undefined,
   };
-  return addPerformanceEvent(companyId, driverMasterId, { ...data, provenance, ingestion: {
+  return addPerformanceEvent(companyId, driverMasterId, { ...data, evidenceIds, recordProcessingState: derivedManualProcessingState(data, evidenceIds), provenance, ingestion: {
     origin: "MANUAL_ENTRY",
     sourceType: provenance.source || "Manual Driver Performance Entry",
     sourceRecordId: provenance.sourceRecordId,
-    sourceEvidenceIds: data.evidenceIds || [],
-    receivedAt: provenance.ingestionTimestamp || new Date().toISOString(),
-    processedAt: new Date().toISOString(),
+    sourceEvidenceIds: evidenceIds,
+    receivedAt: provenance.ingestionTimestamp || now,
+    processedAt: now,
   } });
 }
 
@@ -936,20 +1144,71 @@ export function persistPerformanceRelationshipResolutions(companyId: string, eve
   const store = loadCompanyDriverStore(companyId);
   const current = store.events.find((event) => event.id === eventId);
   if (!current) throw new Error("Performance event not found.");
-  const existing = (store.performanceRelationshipResolutions || []).filter((item) => item.eventId !== eventId);
+  const previous = current.relationshipResolutions || [];
+  const previousByKey = new Map(previous.map((item) => [item.relationshipKey, item]));
+  const effectiveResolutions = resolutions.map((next) => {
+    const prior = previousByKey.get(next.relationshipKey);
+    if (prior?.state === "CONFIRMED" && prior.resolvedRecordId && canonicalRelationshipExists(companyId, current, prior.targetEntityType, prior.resolvedRecordId)) {
+      return { ...prior, evaluatedAt: next.evaluatedAt };
+    }
+    return next;
+  });
+
+  const semanticEqual = (a: PerformanceRelationshipResolution | undefined, b: PerformanceRelationshipResolution | undefined) => {
+    if (!a || !b) return false;
+    return a.targetEntityType === b.targetEntityType && a.state === b.state && a.resolvedRecordId === b.resolvedRecordId &&
+      JSON.stringify([...a.candidateIds].sort()) === JSON.stringify([...b.candidateIds].sort());
+  };
+  const changed = effectiveResolutions.some((item) => !semanticEqual(previousByKey.get(item.relationshipKey), item)) || previous.some((item) => !effectiveResolutions.some((next) => next.relationshipKey === item.relationshipKey));
+
   const eventLinks = [...(current.canonicalLinks || [])];
-  for (const resolution of resolutions) {
-    if (resolution.eventId !== eventId) throw new Error("Relationship resolution event ID mismatch.");
-    if (resolution.state === "AUTO_RESOLVED" || resolution.state === "CONFIRMED") {
-      if (!resolution.resolvedRecordId) throw new Error(`Resolved relationship ${resolution.relationshipKey} requires a canonical record ID.`);
-      const link = { entityType: resolution.targetEntityType as CanonicalEntityLink["entityType"], recordId: resolution.resolvedRecordId, label: resolution.resolvedRecordId, source: "CANONICAL_STORE" as const };
-      if (!eventLinks.some((item) => item.entityType === link.entityType && item.recordId === link.recordId)) eventLinks.push(link);
+  const confirmedLinks = effectiveResolutions.filter((item) => item.state === "CONFIRMED" && item.resolvedRecordId);
+  for (const prior of previous) {
+    if (prior.state !== "AUTO_RESOLVED" || !prior.resolvedRecordId) continue;
+    const next = effectiveResolutions.find((item) => item.relationshipKey === prior.relationshipKey);
+    if (next?.resolvedRecordId === prior.resolvedRecordId) continue;
+    const targetType = prior.targetEntityType as CanonicalEntityLink["entityType"];
+    const protectedLink = confirmedLinks.some((item) => item.targetEntityType === prior.targetEntityType && item.resolvedRecordId === prior.resolvedRecordId);
+    if (!protectedLink) {
+      for (let i = eventLinks.length - 1; i >= 0; i -= 1) {
+        if (eventLinks[i].entityType === targetType && eventLinks[i].recordId === prior.resolvedRecordId && (!eventLinks[i].relationshipKey || eventLinks[i].relationshipKey === prior.relationshipKey)) eventLinks.splice(i, 1);
+      }
+    }
+  }
+  for (const resolution of effectiveResolutions) {
+    if (resolution.state === "AUTO_RESOLVED" && resolution.resolvedRecordId) {
+      const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[current.eventType];
+      const relationship = definition?.relationships?.find((item) => item.key === resolution.relationshipKey);
+      const entityType = resolution.targetEntityType as CanonicalEntityLink["entityType"];
+      // Replace stale AUTO-resolved links only for the same typed relationship target.
+      for (let i = eventLinks.length - 1; i >= 0; i -= 1) {
+        if (eventLinks[i].entityType === entityType && relationship && relationship.key === resolution.relationshipKey && eventLinks[i].recordId !== resolution.resolvedRecordId) eventLinks.splice(i, 1);
+      }
+      if (!eventLinks.some((item) => item.entityType === entityType && item.recordId === resolution.resolvedRecordId)) {
+        eventLinks.push({ entityType, recordId: resolution.resolvedRecordId, label: resolution.resolvedRecordId, relationshipKey: resolution.relationshipKey, source: "CANONICAL_STORE" });
+      }
+    }
+  }
+  for (const resolution of effectiveResolutions.filter((item) => item.state === "CONFIRMED" && item.resolvedRecordId)) {
+    const entityType = resolution.targetEntityType as CanonicalEntityLink["entityType"];
+    if (!eventLinks.some((item) => item.entityType === entityType && item.recordId === resolution.resolvedRecordId)) {
+      eventLinks.push({ entityType, recordId: resolution.resolvedRecordId!, label: resolution.resolvedRecordId, source: "CANONICAL_STORE" });
     }
   }
   const now = new Date().toISOString();
-  const updatedEvents = store.events.map((event) => event.id === eventId ? { ...event, canonicalLinks: eventLinks, relationshipResolutions: resolutions, updatedAt: now, chronology: appendEventChronology(event, "RELATIONSHIPS_REEVALUATED", `Evaluated ${resolutions.length} Performance relationship(s).`, null) } : event);
-  saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...existing, ...resolutions] });
-  auditDriverMutation(companyId, eventId, "UPDATE", `Performance relationships reevaluated: ${resolutions.map((item) => `${item.relationshipKey}=${item.state}`).join(", ")}.`);
+  const updatedEvents = store.events.map((event) => {
+    if (event.id !== eventId) return event;
+    const nextEvent = { ...event, canonicalLinks: eventLinks, relationshipResolutions: effectiveResolutions, updatedAt: now };
+    if (nextEvent.eventType === "Roadside Inspection" && nextEvent.childCollections?.length) {
+      nextEvent.childCollections = nextEvent.childCollections.map((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.INSPECTED_EQUIPMENT"
+        ? { ...collection, items: collection.items.map((item) => ({ ...item, relationships: effectiveResolutions.filter((resolution) => resolution.relationshipKey === `equipment:${item.itemId}`) })) }
+        : collection);
+    }
+    if (changed) nextEvent.chronology = appendEventChronology(event, "RELATIONSHIPS_REEVALUATED", `Relationship resolution changed: ${effectiveResolutions.map((item) => `${item.relationshipKey}=${item.state}`).join(", ")}.`, null);
+    return nextEvent;
+  });
+  saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...(store.performanceRelationshipResolutions || []).filter((item) => item.eventId !== eventId), ...effectiveResolutions] });
+  if (changed) auditDriverMutation(companyId, eventId, "UPDATE", `Performance relationships reevaluated: ${effectiveResolutions.map((item) => `${item.relationshipKey}=${item.state}`).join(", ")}.`);
   return updatedEvents.find((event) => event.id === eventId);
 }
 
@@ -988,20 +1247,35 @@ export function correctPerformanceEventFacts(companyId: string, eventId: string,
     const index = facts.findIndex((fact) => fact.dataPointId === correction.dataPointId);
     const previous = index >= 0 ? facts[index].value : undefined;
     if (correction.previousValue !== previous) throw new Error(`Previous value mismatch for ${correction.dataPointId}; reload the event before correcting it.`);
-    if (index >= 0) facts[index] = { ...facts[index], value: correction.newValue };
-    else facts.push({ dataPointId: correction.dataPointId, value: correction.newValue, valueType: typeof correction.newValue === "number" ? "number" : typeof correction.newValue === "boolean" ? "boolean" : "string", source: correction.provenance });
-    if (current.factReconciliation?.[correction.dataPointId]) {
+    const previousFact = index >= 0 ? facts[index] : undefined;
+    const reconciliation = current.factReconciliation?.[correction.dataPointId];
+    if (previousFact) {
+      const existingObservations = [...(reconciliation?.observations || [])];
+      const priorObservation = existingObservations.length ? undefined : makePerformanceObservation(current.id, previousFact, previousFact.source, current.provenance?.sourceRecordId, current.evidenceIds || [], now, current.ingestion?.origin || current.provenance?.ingestionOrigin);
+      const nextObservation = makePerformanceObservation(current.id, { ...previousFact, value: correction.newValue, extraction: undefined }, correction.provenance || "Manual correction", current.provenance?.sourceRecordId, current.evidenceIds || [], now, "MANUAL_ENTRY");
+      const observations = [...existingObservations, ...(priorObservation ? [priorObservation] : []), nextObservation];
+      const uniqueObservations = observations.filter((observation, index, list) => list.findIndex((candidate) => candidate.observationId === observation.observationId) === index);
       current.factReconciliation = {
-        ...current.factReconciliation,
+        ...(current.factReconciliation || {}),
         [correction.dataPointId]: {
-          ...current.factReconciliation[correction.dataPointId],
+          ...(reconciliation || { state: "CLEAN", observations: [] }),
+          canonicalDataPointId: correction.dataPointId,
+          resolvedValue: correction.newValue,
+          supportingObservationIds: uniqueObservations.map((observation) => observation.observationId),
           state: "RESOLVED",
+          observations: uniqueObservations,
           resolutionMethod: "HUMAN_CORRECTION",
           resolvedBy: correction.actor || undefined,
           resolvedAt: now,
           resolutionReason: correction.reason,
         },
       };
+      facts[index] = { ...previousFact, value: correction.newValue, source: correction.provenance || previousFact.source };
+    } else {
+      const newFact: StructuredEventFact = { dataPointId: correction.dataPointId, value: correction.newValue, valueType: typeof correction.newValue === "number" ? "number" : typeof correction.newValue === "boolean" ? "boolean" : "string", source: correction.provenance };
+      facts.push(newFact);
+      const observation = makePerformanceObservation(current.id, newFact, correction.provenance || "Manual correction", current.provenance?.sourceRecordId, current.evidenceIds || [], now, "MANUAL_ENTRY");
+      current.factReconciliation = { ...(current.factReconciliation || {}), [correction.dataPointId]: { canonicalDataPointId: correction.dataPointId, resolvedValue: correction.newValue, supportingObservationIds: [observation.observationId], state: "RESOLVED", observations: [observation], resolutionMethod: "HUMAN_CORRECTION", resolvedBy: correction.actor || undefined, resolvedAt: now, resolutionReason: correction.reason } };
     }
     current.chronology = appendEventChronology(current, "FACT_CORRECTED", `Data Point ${correction.dataPointId} corrected. Previous value: ${JSON.stringify(previous)}; new value: ${JSON.stringify(correction.newValue)}. Reason: ${correction.reason}.`, correction.actor || null);
     auditDriverMutation(companyId, eventId, "UPDATE", `Factual correction ${correction.dataPointId}; previous=${JSON.stringify(previous)}; new=${JSON.stringify(correction.newValue)}; reason=${correction.reason}; actor=${correction.actor || "system"}.`);
@@ -1063,7 +1337,17 @@ export function linkPerformanceEventRecord(companyId: string, eventId: string, l
 function canonicalRelationshipExists(companyId: string, event: DriverPerformanceEvent, entityType: string, recordId: string) {
   const store = loadCompanyDriverStore(companyId);
   if (entityType === "Vehicle") {
-    try { return loadVehicleStore(companyId).vehicles.some((item) => item.id === recordId); } catch { return false; }
+    try {
+      if (loadVehicleStore(companyId).vehicles.some((item) => item.id === recordId && item.status !== "Archived" && item.status !== "Inactive")) return true;
+      if (typeof window !== "undefined") {
+        const rawCompanies = window.localStorage.getItem("tes_companies");
+        const companies = rawCompanies ? JSON.parse(rawCompanies) : [];
+        if (Array.isArray(companies)) {
+          return companies.some((company) => { try { return loadVehicleStore(String(company.id)).vehicles.some((item) => item.id === recordId && item.status !== "Archived" && item.status !== "Inactive"); } catch { return false; } });
+        }
+      }
+      return false;
+    } catch { return false; }
   }
   if (entityType === "Maintenance") {
     try { return loadVehicleStore(companyId).maintenanceRecords.some((item) => item.id === recordId && !item.archived); } catch { return false; }
@@ -1089,22 +1373,33 @@ export function confirmPerformanceRelationshipResolution(companyId: string, even
   if (!current) throw new Error("Performance event not found.");
   if (!canonicalRelationshipExists(companyId, current, targetEntityType, targetRecordId)) throw new Error(`Canonical ${targetEntityType} record ${targetRecordId} does not resolve in its owning store.`);
   const existing = (store.performanceRelationshipResolutions || []).filter((item) => !(item.eventId === eventId && item.relationshipKey === relationshipKey));
+  const now = new Date().toISOString();
+  const relationshipType = relationshipKey === "training" ? "GENERATED_REQUIREMENT" : relationshipKey === "hos" ? "DETECTED_DURING" : relationshipKey === "evidence" ? "SUPPORTING_EVIDENCE" : "ASSOCIATED_WITH";
   const resolution: PerformanceRelationshipResolution = {
     id: `PRR-${eventId}-${relationshipKey}`,
+    relationshipId: `PRR-${eventId}-${relationshipKey}`,
     eventId,
+    fromEntityType: "DriverPerformanceEvent",
+    fromEntityId: eventId,
     relationshipKey,
+    relationshipRole: relationshipKey,
+    relationshipType,
     targetEntityType,
+    toEntityId: targetRecordId,
     resolvedRecordId: targetRecordId,
     state: "CONFIRMED",
     candidateIds: [targetRecordId],
     deterministicMatchingReason: "Human exception review confirmed the selected canonical relationship.",
-    evaluatedAt: new Date().toISOString(),
+    resolutionSource: "HUMAN_REVIEW",
+    evidenceIds: [...new Set(current.evidenceIds || [])],
+    provenance: { sourceType: "SYSTEM_DERIVED", source: "Human relationship review", sourceRecordId: eventId, sourceEvidenceIds: current.evidenceIds || [], ingestionTimestamp: now },
+    createdAt: now,
+    evaluatedAt: now,
     resolutionReason: reason.trim(),
-    resolvedAt: new Date().toISOString(),
+    resolvedAt: now,
     resolvedBy: actor || undefined,
   };
   const links = [...(current.canonicalLinks || []).filter((item) => !(item.entityType === targetEntityType && item.recordId !== targetRecordId)), { entityType: targetEntityType as CanonicalEntityLink["entityType"], recordId: targetRecordId, label: targetRecordId, source: "CANONICAL_STORE" as const }];
-  const now = new Date().toISOString();
   const updatedEvents = store.events.map((event) => event.id === eventId ? { ...event, canonicalLinks: links, relationshipResolutions: [...(event.relationshipResolutions || []).filter((item) => item.relationshipKey !== relationshipKey), resolution], updatedAt: now, chronology: appendEventChronology(event, "RELATIONSHIP_CONFIRMED", `${relationshipKey} confirmed to ${targetEntityType} ${targetRecordId}. Reason: ${reason.trim()}.`, actor) } : event);
   saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...existing, resolution] });
   auditDriverMutation(companyId, eventId, "UPDATE", `Confirmed Performance relationship ${relationshipKey} to ${targetEntityType} ${targetRecordId}.`);

@@ -103,7 +103,7 @@ export function DriverWorkspace({
 
   useEffect(() => {
     const syncPerformanceRoute = () => {
-      if (getQueryParam("performanceView")) setActiveTab("performance");
+      setActiveTab(getQueryParam("performanceView") ? "performance" : "profile");
     };
     syncPerformanceRoute();
     window.addEventListener("popstate", syncPerformanceRoute);
@@ -360,7 +360,7 @@ export function DriverWorkspace({
     if (eventEvidenceMode || performanceSourceMode) {
       const reader = new FileReader();
       reader.onload = () => {
-        const created = addDriverEvidence(company.id, master.id, { fileName: file.name, mimeType: file.type, dataUrl: String(reader.result || ""), documentType: "Performance Event Evidence" });
+        const created = addDriverEvidence(company.id, master.id, { fileName: file.name, mimeType: file.type, dataUrl: String(reader.result || ""), documentType: "Performance Source Document" });
         if (eventEvidenceMode) {
           setEventEvidenceCreatedId(created.id);
         } else {

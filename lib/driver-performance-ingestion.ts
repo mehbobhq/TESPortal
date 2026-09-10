@@ -11,12 +11,15 @@ import {
   DRIVER_PERFORMANCE_CATEGORY_BY_VALUE,
   PERFORMANCE_CATEGORY_OWNERSHIP,
   PERFORMANCE_EVENT_SCHEMA_VERSION,
+  resolvePerformanceApplicability,
 } from "@/lib/driver-performance-schema";
 import { reevaluatePerformanceRelationships } from "@/lib/driver-performance-relationship-resolution";
+import { getRoadsideEquipmentCollection, validateRoadsideEquipmentCollection, getRoadsideViolationCollection, validateRoadsideViolationCollection, validateRoadsideInspectionConsistency } from "@/lib/driver-performance-child-facts";
 import type {
   DriverPerformanceEvent,
   PerformanceFactObservation,
   PerformanceFactReconciliation,
+  PerformanceChildCollection,
   PerformanceIngestionMetadata,
   PerformanceIngestionOrigin,
   StructuredEventFact,
@@ -66,6 +69,7 @@ export interface PerformanceIngestionInput {
   processorVersion?: string;
   extractorVersion?: string;
   extractedFacts: PerformanceExtractionFactInput[];
+  childCollections?: PerformanceChildCollection[];
   eventDate: string;
   eventTime?: string;
   reportedDate?: string;
@@ -99,6 +103,20 @@ export interface PreparedPerformanceIngestion {
 }
 
 const valuesEqual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const validateRequiredExtractionFacts = (definition: (typeof DRIVER_PERFORMANCE_CATEGORY_BY_VALUE)[keyof typeof DRIVER_PERFORMANCE_CATEGORY_BY_VALUE], extractedFacts: PerformanceExtractionFactInput[]) => {
+  const values: Record<string, unknown> = {};
+  for (const fact of extractedFacts) {
+    const field = definition.fields.find((candidate) => candidate.dataPointId === fact.dataPointId);
+    if (field) values[field.key] = fact.value;
+  }
+  const missing = definition.fields.filter((field) => field.key !== "sourceType" && field.key !== "sourceRecordId").filter((field) => {
+    const state = resolvePerformanceApplicability(field.applicability, values);
+    const required = state === "REQUIRED" || (state === "CONDITIONAL" && Boolean(field.required)) || (field.required && !field.applicability);
+    return required && (values[field.key] === undefined || values[field.key] === null || values[field.key] === "");
+  });
+  if (missing.length) throw new Error(`Machine extraction cannot create ${definition.label}: required source-supported data point(s) missing: ${missing.map((field) => field.dataPointId).join(", ")}.`);
+};
+
 
 function resolveDriverIdentity(companyId: string, identity: PerformanceDriverIdentityInput): PerformanceDriverIdentityResolution {
   const masterStore = loadDriverMasterStore();
@@ -160,21 +178,39 @@ function buildReconciliation(
 ): PerformanceFactReconciliation {
   const now = incoming.extractedAt || ingestion.processedAt || ingestion.receivedAt;
   const existingObservation: PerformanceFactObservation | null = existing ? {
+    observationId: `PO-LEGACY-${existing.dataPointId}-${now}`,
+    dataPointId: existing.dataPointId,
     value: existing.value,
     valueType: existing.valueType,
+    rawValue: existing.extraction?.rawValue ?? existing.value,
+    normalizedValue: existing.normalizedValue,
+    normalizedUnit: existing.normalizedUnit,
+    unit: existing.unit,
     source: existingEvent?.provenance?.source || existing.source,
     sourceRecordId: existingEvent?.provenance?.sourceRecordId,
     sourceEvidenceIds: existingEvent?.evidenceIds || existingEvent?.provenance?.sourceEvidenceIds || (existing.extraction?.documentId ? [existing.extraction.documentId] : []),
     observedAt: now,
+    ingestedAt: existingEvent?.ingestion?.receivedAt || now,
+    reviewState: "VERIFIED",
   } : null;
   const incomingObservation: PerformanceFactObservation = {
+    observationId: `PO-${ingestion.sourceRecordId || "SOURCE"}-${incoming.dataPointId}-${now}`,
+    dataPointId: incoming.dataPointId,
     value: incoming.value,
     valueType: incoming.valueType,
+    rawValue: incoming.rawValue ?? incoming.value,
+    normalizedValue: incoming.normalizedValue,
+    normalizedUnit: incoming.normalizedUnit,
+    unit: incoming.unit,
     source: ingestion.sourceType,
     sourceRecordId: ingestion.sourceRecordId,
     sourceEvidenceIds: incoming.sourceEvidenceIds || ingestion.sourceEvidenceIds,
     confidence: incoming.confidence,
+    confidenceType: "EXTRACTION",
     observedAt: now,
+    ingestedAt: ingestion.receivedAt,
+    extraction: { occurred: true, provider: incoming.provider, extractedAt: incoming.extractedAt || now, confidence: incoming.confidence },
+    reviewState: "PENDING_REVIEW",
   };
   const observations = existingObservation ? [existingObservation, incomingObservation] : [incomingObservation];
   return {
@@ -187,8 +223,26 @@ export function preparePerformanceIngestion(input: PerformanceIngestionInput): P
   const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[input.eventType];
   if (!definition) throw new Error(`Unsupported Performance Event category: ${input.eventType}`);
   if (PERFORMANCE_CATEGORY_OWNERSHIP[input.eventType] !== "RECORDABLE_EVENT") throw new Error(`Performance category ${input.eventType} is not owned by the canonical Performance event store.`);
+  validateRequiredExtractionFacts(definition, input.extractedFacts);
   if (!input.summary.trim()) throw new Error("Performance ingestion requires a factual summary.");
   if (!input.eventDate) throw new Error("Performance ingestion requires an event date.");
+  if (input.eventType === "Roadside Inspection") {
+    const values: Record<string, unknown> = Object.fromEntries(input.extractedFacts.map((fact) => {
+      const field = definition.fields.find((candidate) => candidate.dataPointId === fact.dataPointId);
+      return [field?.key || fact.dataPointId, fact.value];
+    }));
+    const equipment = input.childCollections?.find((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.INSPECTED_EQUIPMENT");
+    if (!equipment) throw new Error("Machine-ingested Roadside Inspection requires an inspected-equipment collection.");
+    const equipmentErrors = validateRoadsideEquipmentCollection(equipment, values.inspectionScope as string | undefined);
+    if (equipmentErrors.length) throw new Error(equipmentErrors[0]);
+    const violations = getRoadsideViolationCollection({ childCollections: input.childCollections });
+    if (violations) {
+      const violationErrors = validateRoadsideViolationCollection(violations);
+      if (violationErrors.length) throw new Error(violationErrors[0]);
+      const consistencyErrors = validateRoadsideInspectionConsistency(values, violations);
+      if (consistencyErrors.length) throw new Error(consistencyErrors[0]);
+    }
+  }
   if (["DOCUMENT_OCR", "API_INTEGRATION", "TELEMATICS_INGESTION", "ELD_INGESTION"].includes(input.origin) && input.origin === "DOCUMENT_OCR" && !(input.sourceEvidenceIds || []).length) {
     throw new Error("Document-originated Performance ingestion requires canonical evidence before event creation.");
   }
@@ -270,16 +324,19 @@ export function preparePerformanceIngestion(input: PerformanceIngestionInput): P
     eventType: input.eventType,
     eventDate: input.eventDate,
     eventTime: input.eventTime,
-    reportedDate: input.reportedDate || input.eventDate,
+    reportedDate: input.reportedDate || undefined,
     location: input.location,
     city: input.city,
     stateProvince: input.stateProvince,
     country: input.country,
     severity: input.severity || "Not Applicable",
     status: input.followUpActionRequired ? "Follow-up Required" : "Open",
+    recordProcessingState: "EXTRACTED",
+    workflowState: input.followUpActionRequired ? "OPEN" : "NOT_REQUIRED",
     summary: input.summary.trim(),
     description: input.description?.trim() || `${definition.label} ingested from ${input.sourceType}.`,
     structuredEventFacts,
+    childCollections: input.childCollections,
     schemaVersion: PERFORMANCE_EVENT_SCHEMA_VERSION,
     followUpActionRequired: input.followUpActionRequired,
     followUpDueDate: input.followUpDueDate,
@@ -296,7 +353,7 @@ export function preparePerformanceIngestion(input: PerformanceIngestionInput): P
       reportedBy: input.reportedBy,
       sourceRecordId: input.sourceRecordId,
       capturedAt: ingestion.receivedAt,
-      sourceTimestamp: input.eventDate ? `${input.eventDate}${input.eventTime ? `T${input.eventTime}:00` : "T00:00:00"}` : undefined,
+      sourceTimestamp: input.eventDate ? `${input.eventDate}${input.eventTime ? `T${input.eventTime}:00` : ""}` : undefined,
       ingestionTimestamp: ingestion.receivedAt,
       sourceConfidence: "UNKNOWN",
       dataQuality: "UNKNOWN",
@@ -305,7 +362,7 @@ export function preparePerformanceIngestion(input: PerformanceIngestionInput): P
       extractionState: input.origin === "DOCUMENT_OCR" ? "EXTRACTION_COMPLETE" : "EXTRACTION_COMPLETE",
       extractionProvider: input.extractorVersion,
       extractionDocumentType: input.sourceType,
-      extractionConfidence: structuredEventFacts.map((fact) => fact.extraction?.confidence).filter((value): value is number => typeof value === "number").reduce((min, value) => Math.min(min, value), 1),
+      extractionConfidence: (() => { const confidences = structuredEventFacts.map((fact) => fact.extraction?.confidence).filter((value): value is number => typeof value === "number"); return confidences.length ? Math.min(...confidences) : undefined; })(),
     },
     ingestion,
     factReconciliation: Object.keys(reconciliation).length ? reconciliation : undefined,

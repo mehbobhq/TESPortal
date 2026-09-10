@@ -768,6 +768,7 @@ export function detectPerformancePatterns(
 }
 
 /**
+ * @deprecated Legacy compatibility model. The live Performance UI no longer uses universal score/rank output.
  * MASTER SNAPSHOT CALCULATION
  * Produces deterministic, explainable DriverPerformanceSnapshot.
  */
@@ -861,6 +862,7 @@ export function calculateDriverPerformanceSnapshot(
 }
 
 /**
+ * @deprecated Legacy compatibility model. Fleet rank is quarantined from live Performance output.
  * FLEET RANKING ENGINE
  * Calculates ranks among comparable drivers within the same company and operating region.
  */

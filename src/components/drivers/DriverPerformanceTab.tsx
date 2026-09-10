@@ -42,20 +42,18 @@ import {
   HOSReview,
   CompanyDetermination,
   CompanyActionRecord,
+  PerformanceRelationshipResolution,
 } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { EntityLink } from "../shared/EntityLink";
-import {
-  calculateDriverPerformanceSnapshot,
-  calculateFleetRankings,
-} from "@/lib/driver-performance-model";
-import { DriverIntelligenceView } from "./DriverIntelligenceView";
 import { DriverHOSAuditModal } from "./DriverHOSAuditModal";
 import { DriverCompanyActionModal } from "./DriverCompanyActionModal";
 import { DriverPerformanceEventWorkflow } from "./DriverPerformanceEventWorkflow";
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_VERIFICATION_STATES, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
 import { HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
+import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideInspectionOutcome, deriveRoadsideViolationCounts } from "@/lib/driver-performance-child-facts";
+import { getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverPerformanceTabProps {
   master: DriverMaster;
@@ -89,10 +87,20 @@ export interface DriverPerformanceTabProps {
 
 const EVENT_TYPE_DEFINITIONS = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.map((definition) => ({ type: definition.value, label: definition.label, category: definition.group, description: definition.description, ownership: PERFORMANCE_CATEGORY_OWNERSHIP[definition.value] }));
 const displayFact = (event: DriverPerformanceEvent, dataPointId: string, value: unknown) => {
+  if (event.eventType === "Roadside Inspection" && typeof value === "string") {
+    const legacyLabels: Record<string, string> = { CLEAN: "Pass", PASS: "Pass", BOTH: "Driver & Vehicle", YES: "Yes", NO: "No", UNKNOWN: "Unknown / Not Provided", NO_VIOLATIONS: "No Violations", VIOLATIONS_FOUND: "Violations Found", OUT_OF_SERVICE: "Out of Service", DRIVER: "Driver", OPERATING_CARRIER: "Operating Carrier", POWER_UNIT: "Power Unit", TOWED_UNIT: "Specific Towed Unit", OTHER: "Other", US_CVSA: "U.S. CVSA", CA_NSC_CVSA: "Canadian NSC / CVSA", US_LEVEL_I: "Level I — North American Standard Inspection", US_LEVEL_II: "Level II — Walk-Around Driver/Vehicle Inspection", US_LEVEL_III: "Level III — Driver-Only Inspection", US_LEVEL_IV: "Level IV — Special Inspection", US_LEVEL_V: "Level V — Vehicle-Only Inspection", US_LEVEL_VI: "Level VI — Radioactive Materials Inspection", US_LEVEL_VII: "Level VII — Jurisdiction-Specific Inspection", US_LEVEL_VIII: "Level VIII — Electronic Inspection" };
+    if (legacyLabels[value]) return legacyLabels[value];
+  }
   const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[event.eventType];
   const field = definition?.fields.find((item) => item.dataPointId === dataPointId);
   if (field?.options && typeof value === "string") return field.options.find((option) => option.value === value)?.label || value;
   return value === true ? "Yes" : value === false ? "No" : String(value ?? "");
+};
+const getEventFact = (event: DriverPerformanceEvent, key: string): unknown => {
+  const definition = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[event.eventType];
+  const field = definition?.fields.find((item) => item.key === key);
+  if (field) return event.structuredEventFacts?.find((fact) => fact.dataPointId === field.dataPointId)?.value;
+  return event.structuredFacts?.[key];
 };
 
 export function DriverPerformanceTab({
@@ -160,22 +168,6 @@ export function DriverPerformanceTab({
   const [auditingHOSEvent, setAuditingHOSEvent] = useState<DriverPerformanceEvent | null>(null);
   const [isCompanyActionModalOpen, setIsCompanyActionModalOpen] = useState(false);
 
-  // Deterministic Performance Intelligence Snapshot
-  const performanceSnapshot = useMemo(() => {
-    return calculateDriverPerformanceSnapshot(
-      master.id,
-      relationship.companyDriverRecordId || relationship.id || master.id,
-      events,
-      trainings,
-      metricsWindow
-    );
-  }, [master.id, relationship, events, trainings, metricsWindow]);
-
-  // Fleet Cohort Rankings
-  const fleetRankings = useMemo(() => {
-    return calculateFleetRankings(allDriversCohort || [], master.id, metricsWindow);
-  }, [allDriversCohort, metricsWindow, master.id]);
-
   // Determination modal state remains separate from source/event facts.
   const [determinationData, setDeterminationData] = useState<{
     preventability: "Preventable" | "Non-Preventable" | "Undetermined";
@@ -189,6 +181,20 @@ export function DriverPerformanceTab({
   const activeEvents = useMemo(() => {
     return events.filter((e) => !e.isArchived);
   }, [events]);
+
+  // Deterministic factual Performance Intelligence. No universal driver score or fleet rank is calculated here.
+  const intelligenceMetrics = useMemo(() => {
+    const regulatory = activeEvents.filter((event) => ["Roadside Inspection", "Out-of-Service Order", "Traffic Citation", "Violation", "Warning"].includes(event.eventType));
+    const safety = activeEvents.filter((event) => ["Collision", "Near Miss", "Speeding", "Harsh Braking", "Harsh Acceleration", "Harsh Cornering", "Following Distance", "Fatigue Indicator", "Lane Departure", "Seatbelt", "Distracted Driving", "Backing", "Stop Sign / Red Light", "Railroad Crossing"].includes(event.eventType));
+    const operational = activeEvents.filter((event) => ["Trip Completion / Service Performance", "Idle Time", "Route Deviation", "Customer-Site Behavior"].includes(event.eventType));
+    const vehicleInteraction = activeEvents.filter((event) => event.vehicleId || event.canonicalLinks?.some((link) => link.entityType === "Vehicle"));
+    const dataIntegrity = activeEvents.filter((event) => event.eventType === "Device / Data Integrity");
+    const oos = activeEvents.filter((event) => event.eventType === "Roadside Inspection" && (event.childCollections || []).some((collection) => collection.items.some((item) => item.facts.oosState === "YES")) || (event.eventType === "Roadside Inspection" && ["OOS_ISSUED"].includes(event.subjectState || "")));
+    const inspections = activeEvents.filter((event) => event.eventType === "Roadside Inspection");
+    const unresolvedRelationships = activeEvents.reduce((count, event) => count + (event.relationshipResolutions || []).filter((resolution) => ["REVIEW_REQUIRED", "UNRESOLVED", "PENDING_SOURCE_DATA", "CANDIDATE_MATCH"].includes(resolution.state)).length, 0);
+    return { safety: safety.length, regulatory: regulatory.length, operational: operational.length, vehicleInteraction: vehicleInteraction.length, dataIntegrity: dataIntegrity.length, inspections: inspections.length, oos: oos.length, unresolvedRelationships };
+  }, [activeEvents]);
+
 
   const selectedEvent = useMemo(() => {
     return activeEvents.find((e) => e.id === selectedEventId) || null;
@@ -245,13 +251,14 @@ export function DriverPerformanceTab({
 
   const stats = useMemo(() => {
     const collisions = filteredByWindow.filter((e) => e.eventType === "Collision");
-    const preventableCollisions = collisions.filter((c) => c.collisionDetails?.preventability === "Preventable");
-    const nonPreventableCollisions = collisions.filter((c) => c.collisionDetails?.preventability === "Non-Preventable");
-    const undeterminedCollisions = collisions.filter((c) => !c.collisionDetails?.preventability || c.collisionDetails.preventability === "Undetermined");
+    const determinationByEvent = new Map(companyDeterminations.filter((d) => !d.isArchived).map((d) => [d.relatedRecordId, d]));
+    const preventableCollisions = collisions.filter((c) => determinationByEvent.get(c.id)?.determinationValue === "PREVENTABLE");
+    const nonPreventableCollisions = collisions.filter((c) => determinationByEvent.get(c.id)?.determinationValue === "NON_PREVENTABLE");
+    const undeterminedCollisions = collisions.filter((c) => !determinationByEvent.has(c.id) || !["PREVENTABLE", "NON_PREVENTABLE"].includes(String(determinationByEvent.get(c.id)?.determinationValue || "")));
 
     const inspections = filteredByWindow.filter((e) => e.eventType === "Roadside Inspection");
-    const cleanInspections = inspections.filter((i) => i.inspectionDetails?.result === "Passed" && (i.inspectionDetails?.driverViolationsCount || 0) === 0);
-    const driverOOSInspections = inspections.filter((i) => i.inspectionDetails?.driverOOS);
+    const passInspections = inspections.filter((inspection) => deriveRoadsideInspectionOutcome(Object.fromEntries((inspection.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[inspection.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])), getRoadsideViolationCollection(inspection)) === "PASS");
+    const driverOOSInspections = inspections.filter((inspection) => { const facts = Object.fromEntries((inspection.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[inspection.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])); return facts.driverOOSState === "YES"; });
 
     const hosViolations = filteredByWindow.filter((e) => e.eventType === "HOS Violation");
     const citations = filteredByWindow.filter((e) => e.eventType === "Traffic Citation");
@@ -282,7 +289,7 @@ export function DriverPerformanceTab({
       nonPreventableCollisions: nonPreventableCollisions.length,
       undeterminedCollisions: undeterminedCollisions.length,
       inspectionsCount: inspections.length,
-      cleanInspections: cleanInspections.length,
+      passInspections: passInspections.length,
       driverOOSCount: driverOOSInspections.length,
       hosCount: hosViolations.length,
       citationsCount: citations.length,
@@ -291,7 +298,7 @@ export function DriverPerformanceTab({
       coachingsCount,
       openCapsCount,
     };
-  }, [filteredByWindow, filteredActionsByWindow, companyActions]);
+  }, [filteredByWindow, filteredActionsByWindow, companyActions, companyDeterminations]);
 
   // Open follow-up items
   const openFollowUpEvents = useMemo(() => {
@@ -336,7 +343,7 @@ export function DriverPerformanceTab({
   }, [registerTotalPages]);
 
   // Event creation is delegated to the schema-driven workflow component.
-  const [initialEntryMode, setInitialEntryMode] = useState<"DOCUMENT" | "MANUAL">("DOCUMENT");
+  const [initialEntryMode, setInitialEntryMode] = useState<"DOCUMENT" | "MANUAL">("MANUAL");
   const handleOpenAddWizard = (mode: "DOCUMENT" | "MANUAL") => { setInitialEntryMode(mode); setIsAddModalOpen(true); };
 
   const handleRecordDetermination = (e: React.FormEvent) => {
@@ -403,14 +410,8 @@ export function DriverPerformanceTab({
           >
             <Sparkles className="size-3.5 text-primary" />
             <span>Performance Intelligence</span>
-            <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-              performanceSnapshot.overallScore >= 85
-                ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
-                : performanceSnapshot.overallScore >= 70
-                ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
-                : "bg-rose-500/20 text-rose-700 dark:text-rose-300"
-            }`}>
-              {performanceSnapshot.overallScore}/100
+            <span className="rounded-full bg-primary/10 px-1.5 py-0.2 text-[10px] font-bold text-primary">
+              {activeEvents.length} facts
             </span>
           </button>
 
@@ -514,21 +515,6 @@ export function DriverPerformanceTab({
         </div>
       </div>
 
-      {pendingPerformanceSources.filter((item) => item.state === "AWAITING_EXTRACTION").length > 0 && (
-        <div className="rounded-xl border border-border bg-muted/20 px-4 py-3">
-          <div className="text-xs font-bold text-foreground">Source received — awaiting machine extraction</div>
-          <div className="mt-1 text-[11px] text-muted-foreground">The uploaded source is preserved as canonical Driver evidence. No Performance category, facts, confidence, or event were created.</div>
-          <div className="mt-2 space-y-1">
-            {pendingPerformanceSources.filter((item) => item.state === "AWAITING_EXTRACTION").map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-3 text-[10px]">
-                <span className="truncate text-foreground">{item.sourceFileName}</span>
-                <span className="shrink-0 font-bold uppercase tracking-wider text-muted-foreground">AWAITING_EXTRACTION</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* SUBVIEW 1: OVERVIEW */}
       {subView === "overview" && (
         <div className="space-y-6">
@@ -551,8 +537,8 @@ export function DriverPerformanceTab({
             </div>
 
             <div className="rounded-xl border border-border bg-card p-3.5 shadow-2xs">
-              <span className="text-[11px] font-semibold text-muted-foreground">Clean Inspections</span>
-              <p className="mt-1 text-2xl font-bold text-emerald-600">{stats.cleanInspections}</p>
+              <span className="text-[11px] font-semibold text-muted-foreground">Pass Inspections</span>
+              <p className="mt-1 text-2xl font-bold text-emerald-600">{stats.passInspections}</p>
               <span className="text-[10px] text-muted-foreground">Out of {stats.inspectionsCount} Total</span>
             </div>
 
@@ -819,15 +805,30 @@ export function DriverPerformanceTab({
         </div>
       )}
 
-      {/* SUBVIEW: PERFORMANCE INTELLIGENCE & EXPLAINABLE RATINGS */}
+      {/* SUBVIEW: PERFORMANCE INTELLIGENCE — FACTUAL / DETERMINISTIC METRICS */}
       {subView === "intelligence" && (
-        <DriverIntelligenceView
-          snapshot={performanceSnapshot}
-          fleetRankings={fleetRankings}
-          events={events}
-          onSelectPeriod={(period) => setMetricsWindow(period)}
-          onInspectEvent={(eventId) => setSelectedEventId(eventId)}
-        />
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h3 className="text-sm font-bold text-foreground">Performance Intelligence</h3><p className="mt-1 text-xs text-muted-foreground">Transparent counts, relationships, recurrence and trend-ready facts. No universal Driver judgment score or fleet rank is used.</p></div>
+              <select value={metricsWindow} onChange={(e) => setMetricsWindow(e.target.value as typeof metricsWindow)} className="rounded-lg border border-border bg-background px-3 py-2 text-xs"><option value="30D">30 Days</option><option value="90D">90 Days</option><option value="12M">12 Months</option><option value="YTD">YTD</option><option value="ALL">All</option></select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              ["Safety", intelligenceMetrics.safety, "Occurrence records in the selected window"],
+              ["Regulatory / Compliance", intelligenceMetrics.regulatory, "Inspections, OOS orders, citations and violations"],
+              ["Operational", intelligenceMetrics.operational, "Service, route, idle and site performance records"],
+              ["Vehicle Interaction", intelligenceMetrics.vehicleInteraction, "Events with a canonical or direct Vehicle relationship"],
+              ["Data Integrity", intelligenceMetrics.dataIntegrity, `${intelligenceMetrics.unresolvedRelationships} unresolved relationship decision(s)`],
+            ].map(([label, value, note]) => <div key={String(label)} className="rounded-xl border border-border bg-background p-4"><span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</span><p className="mt-1 text-2xl font-extrabold text-foreground">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{note}</p></div>)}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="rounded-xl border border-border bg-card p-4"><span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Roadside Inspections</span><p className="mt-1 text-xl font-bold text-foreground">{intelligenceMetrics.inspections}</p><p className="mt-1 text-[10px] text-muted-foreground">Canonical inspection records in the selected window.</p></div>
+            <div className="rounded-xl border border-border bg-card p-4"><span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">OOS Findings</span><p className="mt-1 text-xl font-bold text-foreground">{intelligenceMetrics.oos}</p><p className="mt-1 text-[10px] text-muted-foreground">Derived only from explicit OOS facts; unknown is not treated as NO.</p></div>
+            <div className="rounded-xl border border-border bg-card p-4"><span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Source / Relationship Review</span><p className="mt-1 text-xl font-bold text-foreground">{intelligenceMetrics.unresolvedRelationships}</p><p className="mt-1 text-[10px] text-muted-foreground">Pending, candidate, unresolved or review-required relationship states.</p></div>
+          </div>
+        </div>
       )}
 
       {/* SUBVIEW: HOS & TELEMATICS */}
@@ -1172,15 +1173,19 @@ export function DriverPerformanceTab({
               {/* Event Core Facts Grid */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <ReadOnlyField label="Event Date" value={selectedEvent.eventDate} mono />
-                <ReadOnlyField label="Reported Date" value={selectedEvent.reportedDate} mono />
+                <ReadOnlyField label="Occurrence Precision" value={selectedEvent.occurrencePrecision || (selectedEvent.eventTime ? "EXACT_DATETIME" : "DATE_ONLY")} />
+                <ReadOnlyField label="Reported Date" value={selectedEvent.reportedDate || "Not recorded"} mono />
                 <ReadOnlyField label="Location" value={selectedEvent.location || "Unspecified"} />
                 <ReadOnlyField label="Jurisdiction / Country" value={`${selectedEvent.stateProvince || ""} ${selectedEvent.country || ""}`.trim() || "Unspecified"} />
+                <ReadOnlyField label="Processing State" value={selectedEvent.recordProcessingState || "Legacy / Not Recorded"} />
+                {selectedEvent.eventType !== "Roadside Inspection" ? <ReadOnlyField label="Subject State" value={selectedEvent.subjectState || "Not Applicable / Not Recorded"} /> : null}
+                <ReadOnlyField label="Workflow State" value={selectedEvent.workflowState || "Legacy / Not Recorded"} />
               </div>
 
               {/* Full Description */}
               <div className="space-y-1">
                 <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                  Full Event Narrative & Description
+                  {selectedEvent.descriptionOrigin === "SYSTEM_GENERATED" ? "TES-Generated Event Description" : "Full Event Narrative & Description"}
                 </span>
                 <div className="rounded-xl bg-muted/20 p-3.5 text-xs text-foreground leading-relaxed">
                   {selectedEvent.description}
@@ -1223,21 +1228,50 @@ export function DriverPerformanceTab({
                 </div>
               )}
 
-              {/* Roadside Inspection Specific Payload */}
-              {selectedEvent.eventType === "Roadside Inspection" && selectedEvent.inspectionDetails && (
-                <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-4">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                    Roadside Inspection Details
-                  </h4>
-
-                  <div className="grid gap-3 sm:grid-cols-3 text-xs">
-                    <ReadOnlyField label="Inspection Level" value={selectedEvent.inspectionDetails.inspectionLevel} />
-                    <ReadOnlyField label="Enforcement Agency" value={selectedEvent.inspectionDetails.agency} />
-                    <ReadOnlyField label="Report Number" value={selectedEvent.inspectionDetails.reportNumber || "Not recorded"} mono />
-                    <ReadOnlyField label="Inspection Result" value={selectedEvent.inspectionDetails.result} />
-                    <ReadOnlyField label="Driver Violations" value={String(selectedEvent.inspectionDetails.driverViolationsCount)} />
-                    <ReadOnlyField label="Driver Out of Service" value={selectedEvent.inspectionDetails.driverOOS ? "YES (OOS)" : "No"} />
+              {/* Roadside Inspection — semantic record presentation */}
+              {selectedEvent.eventType === "Roadside Inspection" && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Inspection Identity</h4>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <ReadOnlyField label="Inspection / Report #" value={String(getEventFact(selectedEvent, "inspectionReportNumber") || "Not recorded")} mono />
+                      <ReadOnlyField label="Enforcement Agency" value={String(getEventFact(selectedEvent, "agency") || "Not recorded")} />
+                      <ReadOnlyField label="Jurisdiction" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "jurisdiction")?.dataPointId || "", getEventFact(selectedEvent, "jurisdiction")) || "Not recorded")} />
+                      <ReadOnlyField label="Inspection Regime" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionRegime")?.dataPointId || "", getEventFact(selectedEvent, "inspectionRegime")) || "Not recorded")} />
+                      <ReadOnlyField label="Inspection Level / Type" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionClassification")?.dataPointId || "", getEventFact(selectedEvent, "inspectionClassification")) || "Not recorded")} />
+                      <ReadOnlyField label="Inspection Scope" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionScope")?.dataPointId || "", getEventFact(selectedEvent, "inspectionScope")) || "Not recorded")} />
+                      <ReadOnlyField label="Derived Overall Outcome" value={displayFact(selectedEvent, "", deriveRoadsideInspectionOutcome(Object.fromEntries((selectedEvent.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])), getRoadsideViolationCollection(selectedEvent)))} />
+                      <ReadOnlyField label="Source-Reported Total" value={String(getEventFact(selectedEvent, "sourceReportedViolationCount") ?? "Not reported")} />
+                    </div>
                   </div>
+
+                  {(getEventFact(selectedEvent, "inspectionScope") === "DRIVER" || getEventFact(selectedEvent, "inspectionScope") === "BOTH") && (
+                    <div className="rounded-xl border border-border p-4 bg-background space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Driver Inspection</h4>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <ReadOnlyField label="Inspected" value="Yes" />
+                        <ReadOnlyField label="Result" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "driverInspectionResult")?.dataPointId || "", getEventFact(selectedEvent, "driverInspectionResult")) || "Unknown")} />
+                        <ReadOnlyField label="OOS" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "driverOOSState")?.dataPointId || "", getEventFact(selectedEvent, "driverOOSState")) || "Unknown")} />
+                        <ReadOnlyField label="Demerit / Points" value={String(getEventFact(selectedEvent, "driverDemeritPoints") ?? "Not recorded")} />
+                      </div>
+                    </div>
+                  )}
+
+                  {(getEventFact(selectedEvent, "inspectionScope") === "VEHICLE" || getEventFact(selectedEvent, "inspectionScope") === "BOTH") && (
+                    <div className="rounded-xl border border-border p-4 bg-background space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Vehicle Inspection</h4>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <ReadOnlyField label="Inspected" value="Yes" />
+                        <ReadOnlyField label="Result" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "vehicleInspectionResult")?.dataPointId || "", getEventFact(selectedEvent, "vehicleInspectionResult")) || "Unknown")} />
+                        <ReadOnlyField label="OOS" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "vehicleOOSState")?.dataPointId || "", getEventFact(selectedEvent, "vehicleOOSState")) || "Unknown")} />
+                        <ReadOnlyField label="Demerit / Points" value={String(getEventFact(selectedEvent, "vehicleDemeritPoints") ?? "Not recorded")} />
+                        {(() => { const equipment = getRoadsideEquipmentCollection(selectedEvent); const items = equipment?.items || []; const legacy = items.length === 0 ? [{ itemId: "legacy-equipment", facts: { role: "POWER_UNIT", sourceVin: getEventFact(selectedEvent, "vehicleSourceVin"), sourcePlate: getEventFact(selectedEvent, "vehicleSourcePlate"), plateJurisdiction: getEventFact(selectedEvent, "vehiclePlateJurisdiction"), sourceUnitNumber: getEventFact(selectedEvent, "vehicleSourceUnitNumber") }, relationships: [] as PerformanceRelationshipResolution[] }] : items; return legacy.some((item) => item.facts.sourceVin || item.facts.sourcePlate || item.facts.sourceUnitNumber) ? legacy.map((item) => { const resolution = item.relationships?.find((r) => r.targetEntityType === "Vehicle") || selectedEvent.relationshipResolutions?.find((r) => r.relationshipKey === `equipment:${item.itemId}`); return <div key={item.itemId} className="rounded-lg border border-border bg-muted/10 p-3 sm:col-span-2 lg:col-span-4"><div className="text-xs font-bold">{item.facts.role === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}</div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 mt-2"><ReadOnlyField label="Source VIN" value={String(item.facts.sourceVin || "Not recorded")} mono /><ReadOnlyField label="Source Plate" value={String(item.facts.sourcePlate || "Not recorded")} mono /><ReadOnlyField label="Plate Jurisdiction" value={String(item.facts.plateJurisdiction ? getJurisdictionLabel(String(item.facts.plateJurisdiction)) : "Not recorded")} /><ReadOnlyField label="Source Unit #" value={String(item.facts.sourceUnitNumber || "Not recorded")} mono /><ReadOnlyField label="Resolution" value={resolution?.state === "AUTO_RESOLVED" ? "Matched" : resolution?.state === "REVIEW_REQUIRED" ? "Conflict / Review Required" : resolution?.state === "PENDING_SOURCE_DATA" ? "Pending Source Data" : "Unresolved / External"} /><ReadOnlyField label="Resolution Reason" value={resolution?.deterministicMatchingReason || "Not recorded"} />{resolution?.resolvedRecordId ? <ReadOnlyField label="Canonical Vehicle" value={resolution.resolvedEntitySummary || resolution.resolvedRecordId} /> : null}</div></div>}) : <p className="text-[11px] text-muted-foreground sm:col-span-2 lg:col-span-4">No inspected equipment identifiers were provided.</p>; })()}
+                      </div>
+                    </div>
+                  )}
+
+                  {(() => { const collection = getRoadsideViolationCollection(selectedEvent); const counts = deriveRoadsideViolationCounts(collection); const completeness = collection?.completeness || "NOT_PROVIDED"; return <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-3"><div className="flex items-center justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Violations</h4><span className="text-[10px] text-muted-foreground">{completeness === "COMPLETE" ? `${counts.total} known` : completeness}</span></div>{collection?.items.length ? <div className="space-y-2">{collection.items.map((item) => <div key={item.itemId} className="rounded-lg border border-border bg-background p-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"><ReadOnlyField label="Rule / Regulation" value={String(item.facts.ruleRegulationCode || "Not recorded")} /><ReadOnlyField label="Description" value={String(item.facts.description || "Not recorded")} /><ReadOnlyField label="Attribution" value={String(item.facts.subjectType || "UNKNOWN")} /><ReadOnlyField label="OOS" value={String(item.facts.oosState || "UNKNOWN")} /><ReadOnlyField label="Category" value={String(item.facts.regulatoryCategory || "Not recorded")} /><ReadOnlyField label="Component / System" value={String(item.facts.componentSystem || "Not recorded")} /><ReadOnlyField label="Regulator Weight" value={String(item.facts.regulatorSeverityWeight ?? "Not recorded")} /><ReadOnlyField label="Demerit / Points" value={String(item.facts.demeritPoints ?? "Not recorded")} /></div></div>)}</div> : <p className="text-[11px] text-muted-foreground">{completeness === "COMPLETE" ? "No violations were established in the complete collection (known zero)." : completeness === "PARTIAL" ? "Violation itemization is partial; the source may contain additional unitemized violations." : "Violation information was not provided; this is not equivalent to zero violations."}</p>}<p className="text-[10px] text-muted-foreground">Collection: {collection?.completeness || "NOT_PROVIDED"} · Driver: {counts.driver} · Vehicle: {counts.vehicle} · Carrier: {counts.carrier} · Other: {counts.other}</p></div>; })()}
+                {(() => { const statements = selectedEvent.childCollections?.find((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.DRIVER_STATEMENTS"); return statements?.items.length ? <div className="rounded-xl border border-border p-4 bg-background space-y-3"><h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Driver Statements / Accounts</h4>{statements.items.map((item) => <div key={item.itemId} className="rounded-lg border border-border bg-muted/10 p-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><ReadOnlyField label="Status" value={String(item.facts.status || "Not recorded")} /><ReadOnlyField label="Date" value={String(item.facts.date || "Not recorded")} /><ReadOnlyField label="Time" value={String(item.facts.time || "Not recorded")} /><ReadOnlyField label="Method" value={String(item.facts.method || "Not recorded")} /></div><p className="mt-2 whitespace-pre-wrap text-xs text-foreground">{String(item.facts.content || "No statement content recorded.")}</p></div>)}</div> : null; })()}
                 </div>
               )}
 
@@ -1264,17 +1298,7 @@ export function DriverPerformanceTab({
                 </span>
                 {selectedEvent.evidenceIds.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    {selectedEvent.evidenceIds.map((evidenceId) => (
-                      <button
-                        key={evidenceId}
-                        type="button"
-                        onClick={() => onOpenDocument?.(evidenceId)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-muted"
-                      >
-                        <FileText className="size-3.5" />
-                        Open {evidenceId}
-                      </button>
-                    ))}
+                    {selectedEvent.evidenceIds.map((evidenceId) => { const item = evidence.find((candidate) => candidate.id === evidenceId); const reportNumber = selectedEvent.eventType === "Roadside Inspection" ? getEventFact(selectedEvent, "inspectionReportNumber") : undefined; return <button key={evidenceId} type="button" onClick={() => onOpenDocument?.(evidenceId)} className="inline-flex min-w-[240px] items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-left hover:bg-muted"><FileText className="size-4 shrink-0 text-primary" /><span className="min-w-0"><span className="block text-xs font-semibold text-foreground">{selectedEvent.eventType === "Roadside Inspection" ? "Inspection Report" : item?.documentType || "Evidence"}</span><span className="block truncate text-[10px] text-muted-foreground">{reportNumber ? `Report #${reportNumber} · ` : ""}{selectedEvent.eventType === "Roadside Inspection" && getEventFact(selectedEvent, "agency") ? `${String(getEventFact(selectedEvent, "agency"))} · ` : ""}{item?.documentDate ? `${item.documentDate} · ` : ""}{item?.fileName || evidenceId}</span></span></button>; })}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground">
@@ -1397,6 +1421,7 @@ export function DriverPerformanceTab({
           evidence={evidence}
           onRequestEvidenceUpload={onRequestEvidenceUpload}
           evidenceCreatedId={evidenceCreatedId}
+          pendingPerformanceSources={pendingPerformanceSources}
           onClearEvidenceCreatedId={onClearEvidenceCreatedId}
           initialEntryMode={initialEntryMode}
           onClose={() => { onClearEvidenceCreatedId?.(); setIsAddModalOpen(false); }}

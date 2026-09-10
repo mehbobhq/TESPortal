@@ -1,7 +1,8 @@
-﻿import { addTrainingRequirement, getTrainingCourseCatalog, loadCompanyDriverStore, persistPerformanceRelationshipResolutions } from "@/lib/driver-data";
+import { addTrainingRequirement, getTrainingCourseCatalog, loadCompanyDriverStore, persistPerformanceRelationshipResolutions } from "@/lib/driver-data";
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, resolveRelationshipApplicability } from "@/lib/driver-performance-schema";
-import { loadVehicleStore } from "@/lib/vehicle-data";
+import { loadVehicleStore, resolveCanonicalVehicleByIdentifiers } from "@/lib/vehicle-data";
 import type { VehicleStore } from "@/lib/vehicle-data";
+import { getRoadsideEquipmentCollection } from "@/lib/driver-performance-child-facts";
 import type {
   DriverPerformanceEvent,
   TrainingCourseDefinition,
@@ -41,24 +42,51 @@ function resolution(
   candidateIds: string[],
   reason: string,
   resolvedRecordId?: string,
+  metadata?: Pick<PerformanceRelationshipResolution, "resolutionMethod" | "resolvedEntitySummary" | "resolvedEntityCompanyId" | "conflictCodes" | "identifierDiscrepancies">,
 ): PerformanceRelationshipResolution {
   return {
     id: `PRR-${event.id}-${relationshipKey}`,
     eventId: event.id,
+    fromEntityType: "DriverPerformanceEvent",
+    fromEntityId: event.id,
     relationshipKey,
     targetEntityType,
     resolvedRecordId,
+    toEntityId: resolvedRecordId,
     state,
     candidateIds,
     deterministicMatchingReason: reason,
+    relationshipType: "ASSOCIATED_WITH",
+    resolutionSource: "DETERMINISTIC_RESOLVER",
+    evidenceIds: event.evidenceIds || [],
+    ...metadata,
     evaluatedAt: new Date().toISOString(),
   };
 }
 
 function resolveVehicle(event: DriverPerformanceEvent, relationshipKey: string): PerformanceRelationshipResolution {
-  const id = event.vehicleId || event.canonicalLinks?.find((link) => link.entityType === "Vehicle")?.recordId;
-  if (id) return resolution(event, relationshipKey, "Vehicle", "AUTO_RESOLVED", [id], "Canonical Vehicle ID is already attached to the Performance event.", id);
-  return resolution(event, relationshipKey, "Vehicle", "UNRESOLVED", [], "No deterministic canonical Vehicle identifier is available from the Performance event.");
+  const direct = event.vehicleId || event.canonicalLinks?.find((link) => link.entityType === "Vehicle")?.recordId;
+  if (direct) return resolution(event, relationshipKey, "Vehicle", "AUTO_RESOLVED", [direct], "Canonical Vehicle ID is already attached to the Performance event.", direct);
+  const vin = factValue(event, "vehicleSourceVin");
+  const plate = factValue(event, "vehicleSourcePlate");
+  const jurisdiction = factValue(event, "vehiclePlateJurisdiction");
+  const unit = factValue(event, "vehicleSourceUnitNumber");
+  const resolved = resolveCanonicalVehicleByIdentifiers(event.companyId, { vin: String(vin || ""), plate: String(plate || ""), plateJurisdiction: String(jurisdiction || ""), unitNumber: String(unit || "") }, event.eventDate);
+  return resolution(event, relationshipKey, "Vehicle", resolved.state, resolved.candidateVehicleIds, resolved.reason, resolved.canonicalVehicle?.id);
+}
+
+function resolveRoadsideEquipment(event: DriverPerformanceEvent): PerformanceRelationshipResolution[] {
+  const collection = getRoadsideEquipmentCollection(event);
+  if (!collection) return [];
+  return collection.items.map((item) => {
+    const vin = typeof item.facts.sourceVin === "string" ? item.facts.sourceVin : "";
+    const plate = typeof item.facts.sourcePlate === "string" ? item.facts.sourcePlate : "";
+    const jurisdiction = typeof item.facts.plateJurisdiction === "string" ? item.facts.plateJurisdiction : "";
+    const unit = typeof item.facts.sourceUnitNumber === "string" ? item.facts.sourceUnitNumber : "";
+    const resolved = resolveCanonicalVehicleByIdentifiers(event.companyId, { vin, plate, plateJurisdiction: jurisdiction, unitNumber: unit }, event.eventDate);
+    const relationshipKey = `equipment:${item.itemId}`;
+    return resolution(event, relationshipKey, "Vehicle", resolved.state, resolved.candidateVehicleIds, resolved.reason, resolved.canonicalVehicle?.id, { resolutionMethod: resolved.method, resolvedEntityCompanyId: resolved.canonicalCompanyId, resolvedEntitySummary: resolved.canonicalVehicle ? `${resolved.canonicalVehicle.year} ${resolved.canonicalVehicle.make} ${resolved.canonicalVehicle.model} · Unit ${resolved.canonicalVehicle.unitNumber} · VIN ${resolved.canonicalVehicle.vin}` : undefined, conflictCodes: resolved.conflicts, identifierDiscrepancies: resolved.identifierDiscrepancies });
+  });
 }
 
 function resolveHOS(event: DriverPerformanceEvent, store: CompanyDriverStore, relationshipKey: string): PerformanceRelationshipResolution {
@@ -156,9 +184,11 @@ function resolveTrainingRequirement(event: DriverPerformanceEvent, store: Compan
       return resolution(event, relationshipKey, "Training Requirement", "REVIEW_REQUIRED", matching.map((candidate) => candidate.requirementId), "Multiple outstanding Training Requirements match the same deterministic canonical course; no duplicate or silent selection was made.");
     }
 
-    if (allowCreate) {
-      const requirement = addTrainingRequirement(event.companyId, event.driverMasterId, {
-        courseId: mappedCourse.courseId,
+    const mappedCourseId = mappedCourse?.courseId;
+    const driverMasterId = event.driverMasterId;
+    if (allowCreate && mappedCourseId && driverMasterId) {
+      const requirement = addTrainingRequirement(event.companyId, driverMasterId, {
+        courseId: mappedCourseId,
         applicability: "Applicable",
         requiredState: "Required",
         assignmentState: "Not Assigned",
@@ -249,7 +279,9 @@ export function resolvePerformanceRelationshipsForEvent(store: CompanyDriverStor
   if (!definition) return [];
   const facts = asFacts(event);
   const applicable = resolveRelationshipApplicability(definition, facts);
-  return applicable.map((relationship) => resolveRelationship(event, store, relationship, context));
+  const base = applicable.map((relationship) => resolveRelationship(event, store, relationship, context)).filter((item) => item.relationshipKey !== "vehicle");
+  const equipment = event.eventType === "Roadside Inspection" ? resolveRoadsideEquipment(event) : [];
+  return [...base, ...equipment];
 }
 
 export function reevaluatePerformanceRelationships(companyId: string, eventId?: string) {
@@ -276,7 +308,8 @@ export function reevaluatePerformanceRelationships(companyId: string, eventId?: 
         ? resolveTrainingRequirement(event, store, relationship.key, true)
         : resolveRelationship(event, store, relationship, context)
     );
-    return persistPerformanceRelationshipResolutions(companyId, event.id, resolutions);
+    const equipmentResolutions = event.eventType === "Roadside Inspection" ? resolveRoadsideEquipment(event) : [];
+    return persistPerformanceRelationshipResolutions(companyId, event.id, [...resolutions.filter((item) => item.relationshipKey !== "vehicle"), ...equipmentResolutions]);
   });
 }
 

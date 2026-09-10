@@ -747,6 +747,101 @@ export interface RootCauseFactor {
 
 export type StructuredEventFactValue = string | number | boolean | null;
 
+export type PerformanceSemanticCapability =
+  | "REGULATORY"
+  | "INCIDENT_OUTCOME"
+  | "OBSERVATION"
+  | "BEHAVIOR_TELEMATICS"
+  | "CUSTOMER_SITE"
+  | "OPERATIONAL_PERFORMANCE"
+  | "ASSET_EQUIPMENT";
+
+export type PerformanceAcquisitionType =
+  | "DOCUMENT"
+  | "API"
+  | "ELD"
+  | "TELEMATICS"
+  | "SYSTEM_DERIVED"
+  | "MANUAL_FALLBACK";
+
+export type PerformanceOccurrencePrecision = "EXACT_DATETIME" | "DATE_ONLY" | "APPROXIMATE" | "UNKNOWN";
+export type PerformanceRecordProcessingState = "RECEIVED" | "AWAITING_EXTRACTION" | "EXTRACTED" | "REVIEW_REQUIRED" | "VERIFIED";
+export type PerformanceSubjectState = "OOS_ISSUED" | "OOS_CLEARED" | "UNKNOWN" | "NOT_APPLICABLE";
+export type PerformanceWorkflowState = "NOT_REQUIRED" | "OPEN" | "IN_REVIEW" | "COMPLETED";
+
+export interface PerformanceDataPointSourcePolicy {
+  permittedAcquisitionSources: readonly PerformanceAcquisitionType[];
+  preferredSource?: PerformanceAcquisitionType;
+  authoritativeSourceClass?: string;
+  evidenceRequired?: boolean;
+  manualFallbackAllowed?: boolean;
+  manualFallbackIsAuthoritative?: boolean;
+  systemDerivationAllowed?: boolean;
+  confidenceApplicable?: boolean;
+  conflictBehavior?: "REVIEW_REQUIRED" | "PRESERVE_ALL" | "AUTHORITATIVE_WINS";
+}
+
+export interface PerformanceObservationExtraction {
+  occurred?: boolean;
+  provider?: string;
+  version?: string;
+  extractedAt?: string;
+  confidence?: number;
+}
+
+export interface PerformanceChildFactItem {
+  itemId: string;
+  facts: Record<string, StructuredEventFactValue>;
+  observations?: PerformanceFactObservation[];
+  evidenceIds: string[];
+  relationships?: PerformanceRelationshipResolution[];
+  provenance?: ProvenanceMetadata;
+}
+
+export type PerformanceChildCollectionCompleteness = "COMPLETE" | "PARTIAL" | "NOT_PROVIDED";
+
+export interface PerformanceChildCollection {
+  collectionId: string;
+  collectionVersion: string;
+  itemType: string;
+  completeness: PerformanceChildCollectionCompleteness;
+  items: PerformanceChildFactItem[];
+  derivedAggregateDefinitions?: Record<string, { expression: string; valueType: "number" }>;
+}
+
+export type RoadsideInspectedEquipmentRole = "POWER_UNIT" | "TOWED_UNIT";
+
+export type RoadsideVehicleResolutionState =
+  | "PENDING_SOURCE_DATA"
+  | "AUTO_RESOLVED"
+  | "UNRESOLVED"
+  | "REVIEW_REQUIRED";
+
+export interface RoadsideCanonicalVehicleSummary {
+  vehicleId: string;
+  companyId: string;
+  companyName?: string;
+  unitNumber: string;
+  equipmentType: string;
+  year: string;
+  make: string;
+  model: string;
+  vin: string;
+  plate?: string;
+  plateJurisdiction?: string;
+}
+
+export interface RoadsideVehicleResolution {
+  state: RoadsideVehicleResolutionState;
+  method?: "VIN_GLOBAL" | "PLATE_JURISDICTION" | "UNIT_COMPANY_SCOPED" | "MULTI_IDENTIFIER_AGREEMENT";
+  reason: string;
+  canonicalVehicleId?: string;
+  canonicalCompanyId?: string;
+  canonicalSummary?: RoadsideCanonicalVehicleSummary;
+  conflicts: string[];
+  evaluatedAt: string;
+}
+
 export interface StructuredEventFact {
   dataPointId: string;
   value: StructuredEventFactValue;
@@ -812,16 +907,31 @@ export interface PerformanceSourceIngestionItem {
 export type PerformanceReconciliationState = "CLEAN" | "CONFLICT" | "REVIEW_REQUIRED" | "RESOLVED";
 
 export interface PerformanceFactObservation {
+  observationId: string;
+  dataPointId?: string;
   value: StructuredEventFactValue;
   valueType: StructuredEventFact["valueType"];
+  rawValue?: StructuredEventFactValue;
+  normalizedValue?: StructuredEventFactValue;
+  normalizedUnit?: string;
+  unit?: string;
   source?: string;
   sourceRecordId?: string;
   sourceEvidenceIds: string[];
   confidence?: number;
+  confidenceType?: "CLASSIFICATION" | "EXTRACTION" | "IDENTITY_RESOLUTION" | "RELATIONSHIP_RESOLUTION";
   observedAt: string;
+  ingestedAt?: string;
+  extraction?: PerformanceObservationExtraction;
+  provenance?: ProvenanceMetadata;
+  reviewState?: "PENDING_REVIEW" | "HUMAN_REVIEW_REQUIRED" | "VERIFIED" | "REJECTED";
 }
 
 export interface PerformanceFactReconciliation {
+  /** The canonical current fact represented by structuredEventFacts. This metadata never replaces that canonical value. */
+  canonicalDataPointId?: string;
+  resolvedValue?: StructuredEventFactValue;
+  supportingObservationIds?: string[];
   state: PerformanceReconciliationState;
   observations: PerformanceFactObservation[];
   resolutionMethod?: string;
@@ -838,16 +948,33 @@ export type PerformanceRelationshipResolutionState =
   | "CONFIRMED"
   | "UNRESOLVED";
 
+export type PerformanceRelationshipType = "ASSOCIATED_WITH" | "DETECTED_DURING" | "GENERATED_REQUIREMENT" | "SAME_OCCURRENCE" | "SUPPORTING_EVIDENCE" | "RESULTED_IN";
+
 export interface PerformanceRelationshipResolution {
   id: string;
+  relationshipId?: string;
   eventId: string;
+  fromEntityType?: "DriverPerformanceEvent";
+  fromEntityId?: string;
   relationshipKey: string;
+  relationshipRole?: string;
+  relationshipType: PerformanceRelationshipType;
   targetEntityType: string;
+  toEntityId?: string;
   resolvedRecordId?: string;
   state: PerformanceRelationshipResolutionState;
   candidateIds: string[];
   deterministicMatchingReason?: string;
+  resolutionMethod?: string;
+  resolvedEntitySummary?: string;
+  resolvedEntityCompanyId?: string;
+  conflictCodes?: string[];
+  identifierDiscrepancies?: string[];
   confidence?: number;
+  resolutionSource?: "DETERMINISTIC_RESOLVER" | "HUMAN_REVIEW" | "LEGACY_MIGRATION";
+  evidenceIds?: string[];
+  provenance?: ProvenanceMetadata;
+  createdAt?: string;
   evaluatedAt: string;
   resolutionReason?: string;
   resolvedAt?: string;
@@ -865,6 +992,7 @@ export interface CanonicalEntityLink {
   entityType: LinkedRecordRef["entityType"];
   recordId: string;
   label?: string;
+  relationshipKey?: string;
   source: "CANONICAL_STORE";
 }
 
@@ -888,7 +1016,8 @@ export interface PerformanceEventRecord {
   eventType: EventType;
   eventDate: string;
   eventTime?: string;
-  reportedDate: string;
+  occurrencePrecision?: PerformanceOccurrencePrecision;
+  reportedDate?: string;
   location?: string;
   city?: string;
   stateProvince?: string;
@@ -897,6 +1026,8 @@ export interface PerformanceEventRecord {
   status: EventStatus;
   summary: string;
   description: string;
+  /** Distinguishes source narrative from TES-generated display text. */
+  descriptionOrigin?: "SOURCE_NARRATIVE" | "SYSTEM_GENERATED";
 
   /**
    * Schema-driven category facts. Keys are defined by the canonical
@@ -907,7 +1038,11 @@ export interface PerformanceEventRecord {
   structuredFacts?: Record<string, string | number | boolean | null>;
   structuredEventFacts?: StructuredEventFact[];
   schemaVersion?: string;
+  recordProcessingState?: PerformanceRecordProcessingState;
+  subjectState?: PerformanceSubjectState;
+  workflowState?: PerformanceWorkflowState;
   operationalReferences?: OperationalReference[];
+  childCollections?: PerformanceChildCollection[];
   canonicalLinks?: CanonicalEntityLink[];
   ingestion?: PerformanceIngestionMetadata;
   factReconciliation?: Record<string, PerformanceFactReconciliation>;

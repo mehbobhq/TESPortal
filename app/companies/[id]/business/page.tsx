@@ -3,7 +3,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Building2,
   Plus,
   FileText,
@@ -37,6 +36,7 @@ import {
   normalizeTaxId,
 } from "@/lib/identifier-normalization";
 import { recordAuditEvent } from "@/lib/audit-logger";
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
 
 // --- Business Domain Types ---
 import {
@@ -869,27 +869,14 @@ export default function BusinessPage() {
   );
 
   return (
-    <div className="flex flex-col gap-6 pb-12 max-w-6xl mx-auto">
+    <div className="flex flex-col gap-6 pb-12">
       {/* 1. HEADER & COMPLIANCE CONTEXT */}
       <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => router.push(`/companies/${company.id}/profile`)}
-            className="flex size-9 items-center justify-center rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title="Back to Company Profile"
-          >
-            <ArrowLeft className="size-4" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Business & Corporate Records
-            </h1>
-            <p className="text-muted-foreground text-xs">
-              {company.name} • <span className="font-mono">{company.id}</span>
-            </p>
-          </div>
-        </div>
+        <CompanyWorkspaceHeader
+          company={company}
+          section="Business & Corporate Records"
+          description="Corporate formation, ownership, and statutory filing records."
+        />
 
         {/* Regulatory Origin & Operating Status Bar */}
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">

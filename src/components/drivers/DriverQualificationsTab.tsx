@@ -71,6 +71,7 @@ const normalizedLicenceNumber = licence
 
 const syntaxCheck = {
   validFormat: licence ? Boolean(normalizedLicenceNumber) : true,
+  hint: "The licence number could not be normalized from the stored record.",
 };
 
   const handleSaveNewLicence = (e: React.FormEvent) => {
@@ -287,33 +288,28 @@ const syntaxCheck = {
         </div>
       )}
 
-      {/* 3. Commercial Driving Qualifications & Operating Facts */}
+      {/* 3. Canonical Licence Qualification Facts */}
       <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
         <div className="bg-muted/20 px-5 py-3 border-b border-border">
           <h3 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
             <Award className="size-4 text-primary" />
-            Commercial Operating Qualification Facts
+            Licence Qualification Facts
           </h3>
         </div>
 
         <div className="p-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+          <ReadOnlyField label="Licence Class" value={licence?.class || "Not recorded"} />
           <ReadOnlyField
-            label="US FMCSA Operating Qualified"
-            value="Qualified (Part 391 Verified)"
-            badge={<CheckCircle2 className="size-3 text-emerald-600" />}
+            label="Endorsements"
+            value={licence?.endorsements?.length ? licence.endorsements.join(", ") : "None recorded"}
           />
           <ReadOnlyField
-            label="Canada NSC Standard Qualified"
-            value="Qualified (Standard 9 / 10)"
-            badge={<CheckCircle2 className="size-3 text-emerald-600" />}
+            label="Restrictions"
+            value={licence?.restrictions?.length ? licence.restrictions.join(", ") : "None recorded"}
           />
           <ReadOnlyField
-            label="Dangerous Goods / Hazmat"
-            value="Classified (Certified Dec 2024)"
-          />
-          <ReadOnlyField
-            label="Equipment Competency"
-            value="53ft Multi-Temp Reefer, Dry Van, Super-B"
+            label="Air Brake Qualification"
+            value={licence ? (licence.airBrakeQualified ? "Qualified" : "Not qualified / not recorded") : "Not recorded"}
           />
         </div>
       </div>

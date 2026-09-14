@@ -28,6 +28,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import { AuditLogSection } from "@/src/components/shared/AuditLogSection"
+import { getCurrentUser } from "@/lib/current-user"
 
 /* =========================================================
    TYPES
@@ -127,9 +129,9 @@ const SETTING_CATEGORIES: SettingCategory[] = [
   },
   {
     id: "audit",
-    title: "Audit & Retention",
+    title: "Audit Log",
     description:
-      "Master Register, retention and historical access configuration.",
+      "System Administrator activity log — record access, sensitive views, exports and security events.",
     icon: History,
     status: "planned",
   },
@@ -278,6 +280,17 @@ function RulePreview({
 ========================================================= */
 
 export default function SettingsPage() {
+  const currentUser = useMemo(() => getCurrentUser(), [])
+  const isSystemAdmin = currentUser.role === "SYSTEM_ADMIN"
+
+  const visibleCategories = useMemo(
+    () =>
+      SETTING_CATEGORIES.filter((category) => category.id !== "audit" || isSystemAdmin).map((category) =>
+        category.id === "audit" && isSystemAdmin ? { ...category, status: "active" as const } : category
+      ),
+    [isSystemAdmin]
+  )
+
   const [settings, setSettings] =
     useState<SystemSettings>(
       DEFAULT_SETTINGS
@@ -448,7 +461,7 @@ export default function SettingsPage() {
 
           <CardContent className="p-2">
             <div className="space-y-1">
-              {SETTING_CATEGORIES.map(
+              {visibleCategories.map(
                 (category) => {
                   const Icon =
                     category.icon
@@ -845,6 +858,10 @@ export default function SettingsPage() {
                 </div>
               </div>
             </>
+          )}
+
+          {activeSection === "audit" && isSystemAdmin && (
+            <AuditLogSection currentUser={currentUser} />
           )}
         </div>
       </div>

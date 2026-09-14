@@ -39,6 +39,7 @@ import {
   recordDocumentViewEvent,
   generateViewRef,
 } from "@/lib/audit-logger";
+import { logAuditEvent } from "@/lib/audit-log";
 
 /**
  * PDF.js worker
@@ -328,6 +329,16 @@ export function SecureDocumentViewer({
         details: `Forensic viewing session opened for "${fileName}" (Ref: ${viewRef})`,
         viewRef,
         entityId: auditEventId || "DOC-VIEW",
+      });
+
+      logAuditEvent({
+        e: "DOCUMENT_OPENED",
+        co: resolvedCompanyId,
+        cn: propCompanyName || watermarkContext?.companyName,
+        doc: auditEventId,
+        dn: fileName,
+        wm: true,
+        det: `Document opened: ${fileName}`,
       });
     } catch (err) {
       console.warn(
@@ -770,10 +781,10 @@ export function SecureDocumentViewer({
     }
 
     /*
-     * Existing viewer geometry:
-     * 20px on each side = 40px total.
+     * Preserve generous margins without shrinking narrow scanned pages into
+     * unreadable slivers. This is a review surface, not a decorative preview.
      */
-    const padding = 40;
+    const padding = 24;
 
     const availableWidth =
       Math.max(
@@ -798,6 +809,7 @@ export function SecureDocumentViewer({
       effectiveHeight;
 
     return Math.min(
+      2,
       scaleX,
       scaleY,
     );
@@ -1606,7 +1618,7 @@ export function SecureDocumentViewer({
         {/* ----------------------------------------------------- */}
 
         <div
-          className="relative flex items-center justify-center shadow-2xl rounded-lg bg-background border border-border overflow-hidden select-none"
+          className="relative flex items-center justify-center shadow-2xl rounded-lg bg-background border border-border overflow-visible select-none"
           style={{
             width: `${docSize.width}px`,
             height: `${docSize.height}px`,
@@ -1630,7 +1642,7 @@ export function SecureDocumentViewer({
           {/* --------------------------------------------------- */}
 
           {isPdf ? (
-            <div className="relative h-full w-full bg-white flex items-center justify-center overflow-hidden">
+            <div className="relative h-full w-full bg-white flex items-center justify-center overflow-visible">
               {pdfPage && (
                 <canvas
                   ref={pdfCanvasRef}

@@ -10,7 +10,8 @@ import {
   Sparkles,
   BookOpen,
 } from "lucide-react";
-import { DriverMaster, TrainingRecord, TrainingType, TrainingStatus } from "@/types/drivers";
+import { DriverMaster, TrainingRecord, TrainingStatus, TrainingType } from "@/types/drivers";
+import { getTrainingCourseCatalog } from "@/lib/driver-data";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { getDeadlineStatus, getDeadlineClasses } from "@/lib/deadline-engine";
 
@@ -20,16 +21,6 @@ export interface DriverTrainingTabProps {
   onAddTraining: (training: Omit<TrainingRecord, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => void;
   onWaiveTraining: (id: string, reason: string) => void;
 }
-
-const COURSE_TEMPLATES: Array<{ title: string; type: TrainingType; defaultValidityMonths?: number }> = [
-  { title: "Hours of Service (HOS) & Electronic Logging Devices (ELD) Regulations", type: "Regulatory Mandate", defaultValidityMonths: 12 },
-  { title: "Transportation of Dangerous Goods (TDG) / Hazmat Compliance", type: "Certification", defaultValidityMonths: 36 },
-  { title: "Cargo Securement Standard 10 (Flatbed / Van)", type: "Orientation", defaultValidityMonths: 24 },
-  { title: "Commercial Vehicle Air Brake Systems & Pre-Trip Air Loss Tests", type: "Orientation", defaultValidityMonths: 36 },
-  { title: "Proactive Defensive Driving & Extreme Winter Operations", type: "Safety Seminar", defaultValidityMonths: 12 },
-  { title: "Daily Vehicle Inspection Standard (Schedule 1 / DVIR)", type: "Company Policy", defaultValidityMonths: 24 },
-  { title: "Post-Incident Corrective Re-training", type: "Corrective Action Re-training", defaultValidityMonths: 12 },
-];
 
 export function DriverTrainingTab({
   master,
@@ -43,8 +34,12 @@ export function DriverTrainingTab({
   const [waiveReason, setWaiveReason] = useState("");
   const [waivedBy, setWaivedBy] = useState("");
 
+  const courseCatalog = getTrainingCourseCatalog().filter((course) => course.state === "ACTIVE");
+
   const [form, setForm] = useState<{
+    courseId: string;
     courseTitle: string;
+    courseVersion: string;
     trainingType: TrainingType;
     provider: string;
     status: TrainingStatus;
@@ -56,8 +51,10 @@ export function DriverTrainingTab({
     certificateNumber: string;
     notes: string;
   }>({
+    courseId: "",
     courseTitle: "",
-    trainingType: "Orientation",
+    courseVersion: "",
+    trainingType: "OTHER",
     provider: "",
     status: "Assigned",
     assignedDate: new Date().toISOString().slice(0, 10),
@@ -73,28 +70,30 @@ export function DriverTrainingTab({
 
   const activeTrainings = trainings.filter((t) => !t.isArchived);
 
-  const handleSelectTemplate = (title: string) => {
-    const template = COURSE_TEMPLATES.find((p) => p.title === title);
-    if (template) {
-      setForm((prev) => ({
-        ...prev,
-        courseTitle: template.title,
-        trainingType: template.type,
-      }));
-    }
+  const handleSelectCourse = (courseId: string) => {
+    const course = courseCatalog.find((item) => item.courseId === courseId);
+    if (!course) return;
+    setForm((prev) => ({
+      ...prev,
+      courseId: course.courseId,
+      courseTitle: course.title,
+      courseVersion: course.version,
+    }));
   };
 
   const handleSaveTraining = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
-    if (!form.courseTitle.trim() || !form.provider.trim()) {
-      setFormError("Course title and training provider are required.");
+    if (!form.courseId || !form.provider.trim()) {
+      setFormError("A canonical course and training provider are required.");
       return;
     }
 
     onAddTraining({
-      courseTitle: form.courseTitle.trim(),
+      courseId: form.courseId,
+      courseVersion: form.courseVersion || undefined,
+      courseTitle: form.courseTitle,
       trainingType: form.trainingType,
       provider: form.provider.trim(),
       status: form.status,
@@ -270,25 +269,29 @@ export function DriverTrainingTab({
               </button>
             </div>
 
-            {/* Quick Template Picker */}
+            {/* Canonical Course Picker */}
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Load Course Title from Standard Topic Templates (Optional)
+                Training Course *
               </label>
               <select
-                onChange={(e) => handleSelectTemplate(e.target.value)}
-                defaultValue=""
+                value={form.courseId}
+                onChange={(e) => handleSelectCourse(e.target.value)}
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 font-medium mt-1"
+                required
               >
-                <option value="" disabled>
-                  Select a template or type custom title below...
-                </option>
-                {COURSE_TEMPLATES.map((p) => (
-                  <option key={p.title} value={p.title}>
-                    {p.title} ({p.type})
+                <option value="" disabled>Select a canonical training course</option>
+                {courseCatalog.map((course) => (
+                  <option key={course.courseId} value={course.courseId}>
+                    {course.title} — {course.courseCode}
                   </option>
                 ))}
               </select>
+              {form.courseId && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {courseCatalog.find((course) => course.courseId === form.courseId)?.description || "Canonical course selected."}
+                </p>
+              )}
             </div>
 
             {formError && (
@@ -299,19 +302,7 @@ export function DriverTrainingTab({
 
             <form onSubmit={handleSaveTraining} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    Course Title *
-                  </label>
-                  <input
-                    type="text"
-                    value={form.courseTitle}
-                    onChange={(e) => setForm({ ...form, courseTitle: e.target.value })}
-                    required
-                    placeholder="e.g. Hours of Service & ELD Regulations"
-                    className="w-full h-9 rounded-xl border border-border bg-background px-3 font-semibold mt-1"
-                  />
-                </div>
+
 
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -322,12 +313,17 @@ export function DriverTrainingTab({
                     onChange={(e) => setForm({ ...form, trainingType: e.target.value as TrainingType })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   >
-                    <option value="Orientation">Orientation</option>
-                    <option value="Certification">Certification</option>
-                    <option value="Regulatory Mandate">Regulatory Mandate</option>
-                    <option value="Safety Seminar">Safety Seminar</option>
-                    <option value="Corrective Action Re-training">Corrective Action Re-training</option>
-                    <option value="Company Policy">Company Policy</option>
+                    <option value="INITIAL">Initial</option>
+                    <option value="REFRESHER">Refresher</option>
+                    <option value="REGULATORY_MANDATED">Regulatory Mandated</option>
+                    <option value="CERTIFICATION">Certification</option>
+                    <option value="ORIENTATION">Orientation</option>
+                    <option value="SAFETY_SEMINAR">Safety Seminar</option>
+                    <option value="COMPANY_POLICY">Company Policy</option>
+                    <option value="CORRECTIVE_ACTION_RETRAINING">Corrective Action Retraining</option>
+                    <option value="SPECIALIZED_CARGO">Specialized Cargo</option>
+                    <option value="WINTER_GRADE_OPERATIONS">Winter Grade Operations</option>
+                    <option value="OTHER">Other</option>
                   </select>
                 </div>
 

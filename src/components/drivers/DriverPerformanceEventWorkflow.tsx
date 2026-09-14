@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, FileText, Link2, X } from "lucide-react";
 import type {
   CompanyDriverRelationship,
@@ -13,12 +13,18 @@ import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, RECORDABLE_PERFORMANCE_CATEGORIES
 import { JURISDICTIONS, getJurisdictionLabel, resolveCountryForJurisdiction } from "@/lib/jurisdictions";
 import { createRoadsideViolationItem, createRoadsideViolationCollection, createRoadsideEquipmentItem, createRoadsideEquipmentCollection, createRoadsideStatementItem, createRoadsideStatementCollection, validateRoadsideViolationCollection, validateRoadsideInspectionConsistency, deriveRoadsideInspectionOutcome, type RoadsideViolationSubjectType, type RoadsideViolationOOSState } from "@/lib/driver-performance-child-facts";
 import { resolveCanonicalVehicleByIdentifiers } from "@/lib/vehicle-data";
+import { resolveRoadsideCanonicalFacts, resolveRoadsideCanonicalOccurrence, type RoadsideMachineSourceRecord } from "@/lib/roadside-machine-schema";
 
 interface Props {
   relationship: CompanyDriverRelationship;
   trainings: TrainingRecord[];
   evidence: DriverEvidenceItem[];
   onRequestEvidenceUpload?: () => void;
+  machineAcquisitionDraft?: RoadsideMachineSourceRecord | null;
+  initialMachineAcquisitionDraft?: RoadsideMachineSourceRecord | null;
+  isProcessingOCR?: boolean;
+  ocrError?: string | null;
+  companyRegJurisdiction?: string;
   initialEntryMode?: "DOCUMENT" | "MANUAL";
   evidenceCreatedId?: string | null;
   pendingPerformanceSources?: import("@/types/drivers").PerformanceSourceIngestionItem[];
@@ -67,8 +73,103 @@ function displayRoadsideReviewValue(field: { options?: readonly { value: string;
   return value;
 }
 
+// Maps a machine-acquired document to the correct event category so the
+// user never has to pick one manually when OCR already knows the document
+// type. Returns null (never guess) when nothing matches — the category
+// picker then behaves exactly as it does for manual entry.
+function getCategoryFromDraft(draft: RoadsideMachineSourceRecord): DriverPerformanceEvent["eventType"] | null {
+  const title = (draft.sourceDocumentTitle || "").toLowerCase();
+  const status = (draft.sourceStatus || "").toLowerCase();
 
-export function DriverPerformanceEventWorkflow({ relationship, evidence, onRequestEvidenceUpload, evidenceCreatedId, onClearEvidenceCreatedId, initialEntryMode, pendingPerformanceSources = [], onClose, onSave }: Props) {
+  if (
+    title.includes("inspection report") ||
+    title.includes("notice and order") ||
+    title.includes("commercial vehicle inspection") ||
+    status.includes("pass inspection") ||
+    status.includes("required attention") ||
+    status.includes("out of service")
+  ) {
+    // "Roadside Inspection" is the exact `.value` used throughout this file
+    // (see category === "Roadside Inspection" checks) and the exact
+    // DriverPerformanceEvent["eventType"] union member — not the schema's
+    // internal "ROADSIDE_INSPECTION" `.code`.
+    return "Roadside Inspection";
+  }
+
+  return null;
+}
+
+const draftId = (prefix: string) => `${prefix}-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`;
+
+function roadsideSubjectFromFinding(finding: RoadsideMachineSourceRecord["findings"][number]): RoadsideViolationSubjectType {
+  const item = (finding.inspectionItem || finding.defectCategory || "").trim().toUpperCase();
+  const reference = (finding.sourceEquipmentReference || finding.sourceUnitNumber || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, " ");
+  if (item === "DRIVER" || item.includes("HOURS")) return "DRIVER";
+  if (reference === "PU" || reference.startsWith("PU ") || reference === "POWER UNIT") return "POWER_UNIT";
+  if (/^T\s*\d+$/.test(reference) || reference.includes("TRAILER")) return "TOWED_UNIT";
+  return "OTHER";
+}
+
+function roadsideEquipmentIdForFinding(
+  finding: RoadsideMachineSourceRecord["findings"][number],
+  equipment: Array<{ itemId: string; role: "POWER_UNIT" | "TOWED_UNIT" }>
+): string {
+  const reference = (finding.sourceEquipmentReference || finding.sourceUnitNumber || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, " ");
+  if (reference === "PU" || reference.startsWith("PU ") || reference === "POWER UNIT") {
+    return equipment.find((item) => item.role === "POWER_UNIT")?.itemId || "";
+  }
+  const trailerMatch = reference.match(/^T\s*(\d+)$/);
+  if (trailerMatch) {
+    const trailerIndex = Number(trailerMatch[1]) - 1;
+    return equipment.filter((item) => item.role === "TOWED_UNIT")[trailerIndex]?.itemId || "";
+  }
+  return "";
+}
+
+function inferredRoadsideEquipmentType(role: "POWER_UNIT" | "TOWED_UNIT", sourceType?: string): string {
+  if (sourceType?.trim()) return sourceType.trim();
+  return role === "POWER_UNIT" ? "Tractor" : "";
+}
+
+function roadsideFindingDescription(finding: RoadsideMachineSourceRecord["findings"][number]): string {
+  const code = (finding.sourceResultCode || "").trim().toUpperCase();
+  const codeLabel = code === "X" ? "Violation Present" : code === "O" ? "Out of Service" : code === "N" ? "Inspection Note" : "";
+  const text = finding.violationDescription || finding.defectDescription || finding.comments || "";
+  return [codeLabel ? `Source result ${code}: ${codeLabel}.` : "", text || (code === "N" ? "No defect indicated by source inspection row." : "")].filter(Boolean).join(" ");
+}
+
+function roadsideViolationRowsFromDraft(
+  draft: RoadsideMachineSourceRecord,
+  equipment: Array<{ itemId: string; role: "POWER_UNIT" | "TOWED_UNIT" }>
+): Array<{ itemId: string; ruleRegulationCode: string; description: string; regulatoryCategory: string; subjectType: RoadsideViolationSubjectType; subjectEquipmentId: string; componentSystem: string; oosState: RoadsideViolationOOSState; regulatorSeverityWeight: string; demeritPoints: string }> {
+  return draft.findings
+    .filter((finding) => {
+      const code = (finding.sourceResultCode || "").trim().toUpperCase();
+      return code === "X" || code === "O" || code === "N" || finding.outOfService === true || finding.majorDefect === true;
+    })
+    .map((finding) => {
+      const subjectType = roadsideSubjectFromFinding(finding);
+      const resultCode = (finding.sourceResultCode || "").trim().toUpperCase();
+      return {
+        itemId: draftId("RVI-DRAFT"),
+        ruleRegulationCode: finding.violationCode || finding.sourceReferenceNumber || finding.defectCode || "",
+        description: roadsideFindingDescription(finding),
+        regulatoryCategory: finding.inspectionItem || finding.defectCategory || (resultCode === "N" ? "Inspection Note" : ""),
+        subjectType,
+        subjectEquipmentId: ["POWER_UNIT", "TOWED_UNIT"].includes(subjectType) ? roadsideEquipmentIdForFinding(finding, equipment) : "",
+        componentSystem: ["POWER_UNIT", "TOWED_UNIT"].includes(subjectType) ? "" : finding.sourceEquipmentReference || "",
+        oosState: resultCode === "O" || finding.outOfService === true ? "YES" : "NO",
+        regulatorSeverityWeight: finding.sourcePoints === undefined ? "" : String(finding.sourcePoints),
+        demeritPoints: "",
+      };
+    });
+}
+
+
+export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdiction, evidence, onRequestEvidenceUpload, machineAcquisitionDraft, initialMachineAcquisitionDraft, isProcessingOCR = false, ocrError = null, evidenceCreatedId, onClearEvidenceCreatedId, initialEntryMode, pendingPerformanceSources = [], onClose, onSave }: Props) {
+  console.log("[WORKFLOW] machineAcquisitionDraft prop received:", machineAcquisitionDraft);
+  const appliedDraftRef = useRef(false);
+  const appliedFieldsRef = useRef(false);
   const [step, setStep] = useState(0);
   const [entryMode, setEntryMode] = useState<EntryMode | null>(initialEntryMode || null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -92,6 +193,21 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
   const [roadsideEquipment, setRoadsideEquipment] = useState<Array<{ itemId: string; role: "POWER_UNIT" | "TOWED_UNIT"; equipmentType: string; sourceVin: string; sourcePlate: string; plateJurisdiction: string; sourceUnitNumber: string }>>([]);
   const [roadsideViolations, setRoadsideViolations] = useState<Array<{ itemId: string; ruleRegulationCode: string; description: string; regulatoryCategory: string; subjectType: RoadsideViolationSubjectType; subjectEquipmentId: string; componentSystem: string; oosState: RoadsideViolationOOSState; regulatorSeverityWeight: string; demeritPoints: string }>>([]);
   const [driverStatement, setDriverStatement] = useState<{ itemId: string; status: "OBTAINED" | "REQUESTED" | "DECLINED" | "UNABLE_TO_OBTAIN" | "NOT_APPLICABLE"; date: string; time: string; method: "WRITTEN" | "RECORDED" | "INTERVIEW" | "UPLOADED_DOCUMENT" | "OTHER" | ""; content: string }>({ itemId: `RST-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, status: "NOT_APPLICABLE", date: "", time: "", method: "", content: "" });
+
+  React.useEffect(() => {
+    if (category !== "Roadside Inspection") return;
+    const jurisdiction = typeof facts.jurisdiction === "string" ? facts.jurisdiction : "";
+    const country = jurisdiction ? resolveCountryForJurisdiction(jurisdiction) : undefined;
+    const expectedRegime = country === "Canada" ? "CA_NSC_CVSA" : country === "United States" ? "US_CVSA" : undefined;
+    if (expectedRegime && facts.inspectionRegime !== expectedRegime) {
+      setFacts((current) => ({
+        ...current,
+        inspectionRegime: expectedRegime,
+        inspectionClassification: null,
+      }));
+      setValidationError(null);
+    }
+  }, [category, facts.jurisdiction, facts.inspectionRegime]);
 
   React.useEffect(() => {
     if (category === "Roadside Inspection") {
@@ -132,7 +248,7 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
   const sourcePolicy = useMemo(() => definition ? resolvePerformanceSourcePolicy(definition) : { allowedOrigins: ["MANUAL_ENTRY"], defaultOrigin: "MANUAL_ENTRY", authoritativeSourceTypes: [], reporterApplicability: [] }, [definition]);
   const sourceOptions = sourcePolicy.authoritativeSourceTypes;
   const recordableDefinitions = useMemo(() => RECORDABLE_PERFORMANCE_CATEGORIES.map((value) => DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[value]), []);
-  const categoryFields = useMemo(() => definition ? definition.fields.filter((field) => field.key !== "sourceType" && field.key !== "sourceRecordId" && !(category === "Roadside Inspection" && ["driverStatementStatus","driverStatementDate","driverStatementTime","driverStatementMethod","driverStatementContent"].includes(field.key))) : [], [definition, category]);
+  const categoryFields = useMemo(() => definition ? definition.fields.filter((field) => field.key !== "sourceType" && field.key !== "sourceRecordId" && !(category === "Roadside Inspection" && ["jurisdiction","driverStatementStatus","driverStatementDate","driverStatementTime","driverStatementMethod","driverStatementContent"].includes(field.key))) : [], [definition, category]);
   const applicableRelationships = useMemo(() => definition ? resolveRelationshipApplicability(definition, facts) : [], [definition, facts]);
   const visibleSteps = useMemo(() => definition ? resolvePerformanceSteps(definition, facts) as Array<{ key: StepKey; label: string }> : [{ key: "CATEGORY" as StepKey, label: "Category" }], [definition, facts]);
   const currentStep = visibleSteps[step] || visibleSteps[0];
@@ -152,11 +268,45 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
     if (roadsidePreviewReconciliationConflict) return "PARTIAL" as const;
     return roadsidePreviewStructuredCount < roadsidePreviewReportedTotal ? "PARTIAL" as const : "COMPLETE" as const;
   })() : undefined;
+  const roadsideResolvedEquipment = useMemo(() => category === "Roadside Inspection" ? roadsideEquipment.map((item) => {
+    const normalizedVin = item.sourceVin.trim().toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
+    const vinMatchMode = item.role === "POWER_UNIT" && normalizedVin.length >= 6 && normalizedVin.length !== 17 ? "LAST_6" as const : "FULL" as const;
+    return { item, resolution: resolveCanonicalVehicleByIdentifiers(relationship.companyId, { vin: item.sourceVin, vinMatchMode, plate: item.sourcePlate, plateJurisdiction: item.plateJurisdiction, unitNumber: item.sourceUnitNumber }, common.eventDate || undefined) };
+  }) : [], [category, roadsideEquipment, relationship.companyId, common.eventDate]);
+  const powerUnitResolution = roadsideResolvedEquipment.find((entry) => entry.item.role === "POWER_UNIT")?.resolution;
+  const powerUnitVehicleId = powerUnitResolution?.state === "AUTO_RESOLVED" ? powerUnitResolution.canonicalVehicle?.id : undefined;
   const roadsidePreviewViolationCollection = category === "Roadside Inspection" ? createRoadsideViolationCollection(roadsideViolations.map((item) => createRoadsideViolationItem({ itemId: item.itemId, ruleRegulationCode: item.ruleRegulationCode || undefined, description: item.description || undefined, regulatoryCategory: item.regulatoryCategory || undefined, subjectType: item.subjectType, subjectEquipmentId: item.subjectEquipmentId || undefined, componentSystem: item.componentSystem || undefined, oosState: item.oosState, regulatorSeverityWeight: item.regulatorSeverityWeight === "" ? undefined : Number(item.regulatorSeverityWeight), demeritPoints: item.demeritPoints === "" ? undefined : Number(item.demeritPoints), effectiveEvidenceIds, ingestionOrigin: entryMode === "DOCUMENT" ? "MANUAL_FALLBACK" : "MANUAL_ENTRY" })), roadsidePreviewCompleteness || "NOT_PROVIDED") : undefined;
-  const roadsidePreviewEquipmentCollection = category === "Roadside Inspection" ? createRoadsideEquipmentCollection(roadsideEquipment.map((item) => createRoadsideEquipmentItem({ itemId: item.itemId, role: item.role, equipmentType: item.equipmentType || undefined, sourceVin: item.sourceVin || undefined, sourcePlate: item.sourcePlate || undefined, plateJurisdiction: item.plateJurisdiction || undefined, sourceUnitNumber: item.sourceUnitNumber || undefined, effectiveEvidenceIds })), roadsideEquipment.length ? "COMPLETE" : "NOT_PROVIDED") : undefined;
+  const roadsidePreviewEquipmentCollection = category === "Roadside Inspection" ? createRoadsideEquipmentCollection(roadsideEquipment.map((item) => {
+    const resolved = roadsideResolvedEquipment.find((entry) => entry.item.itemId === item.itemId)?.resolution;
+    const child = createRoadsideEquipmentItem({ itemId: item.itemId, role: item.role, equipmentType: item.equipmentType || undefined, sourceVin: item.sourceVin || undefined, sourcePlate: item.sourcePlate || undefined, plateJurisdiction: item.plateJurisdiction || undefined, sourceUnitNumber: item.sourceUnitNumber || undefined, effectiveEvidenceIds });
+    return {
+      ...child,
+      relationships: resolved ? [{
+        id: `REL-${item.itemId}-VEHICLE`,
+        eventId: "PENDING_EVENT",
+        relationshipKey: `equipment:${item.itemId}`,
+        relationshipRole: item.role === "POWER_UNIT" ? "Inspected Power Unit" : "Inspected Towed Unit",
+        relationshipType: "ASSOCIATED_WITH" as const,
+        targetEntityType: "Vehicle",
+        toEntityId: resolved.canonicalVehicle?.id,
+        resolvedRecordId: resolved.canonicalVehicle?.id,
+        state: resolved.state === "AUTO_RESOLVED" ? "AUTO_RESOLVED" as const : resolved.state === "REVIEW_REQUIRED" ? "REVIEW_REQUIRED" as const : resolved.state === "PENDING_SOURCE_DATA" ? "PENDING_SOURCE_DATA" as const : "UNRESOLVED" as const,
+        candidateIds: resolved.candidateVehicleIds,
+        deterministicMatchingReason: resolved.reason,
+        resolutionMethod: resolved.method,
+        resolvedEntitySummary: resolved.canonicalVehicle ? `${resolved.canonicalVehicle.year} ${resolved.canonicalVehicle.make} ${resolved.canonicalVehicle.model} - Unit ${resolved.canonicalVehicle.unitNumber} - VIN ${resolved.canonicalVehicle.vin}` : undefined,
+        resolvedEntityCompanyId: resolved.canonicalCompanyId,
+        conflictCodes: resolved.conflicts,
+        identifierDiscrepancies: resolved.identifierDiscrepancies,
+        resolutionSource: "DETERMINISTIC_RESOLVER" as const,
+        evidenceIds: effectiveEvidenceIds,
+        evaluatedAt: resolved.evaluatedAt,
+        resolvedAt: resolved.state === "AUTO_RESOLVED" ? resolved.evaluatedAt : undefined,
+      }] : undefined,
+    };
+  }), roadsideEquipment.length ? "COMPLETE" : "NOT_PROVIDED") : undefined;
   const roadsidePreviewStatementCollection = category === "Roadside Inspection" && driverStatement.status !== "NOT_APPLICABLE" ? createRoadsideStatementCollection([createRoadsideStatementItem({ itemId: driverStatement.itemId, status: driverStatement.status, date: driverStatement.date || undefined, time: driverStatement.time || undefined, method: driverStatement.method || undefined, content: driverStatement.content || undefined, evidenceIds: effectiveEvidenceIds })], "COMPLETE") : undefined;
   const roadsideDerivedOutcome = category === "Roadside Inspection" ? (facts.inspectionResult === "PASS" ? "PASS" : deriveRoadsideInspectionOutcome(facts, roadsidePreviewViolationCollection)) : undefined;
-  const roadsideResolvedEquipment = useMemo(() => category === "Roadside Inspection" ? roadsideEquipment.map((item) => ({ item, resolution: resolveCanonicalVehicleByIdentifiers(relationship.companyId, { vin: item.sourceVin, plate: item.sourcePlate, plateJurisdiction: item.plateJurisdiction, unitNumber: item.sourceUnitNumber }, common.eventDate || undefined) })) : [], [category, roadsideEquipment, relationship.companyId, common.eventDate]);
 
   React.useEffect(() => {
     if (category !== "Roadside Inspection") return;
@@ -178,7 +328,7 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
   React.useEffect(() => {
     if (category !== "Roadside Inspection") return;
     if (roadsideEquipment.some((item) => item.role === "POWER_UNIT")) return;
-    setRoadsideEquipment([{ itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: "", sourceUnitNumber: "" }]);
+    setRoadsideEquipment([{ itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: companyRegJurisdiction ?? "", sourceUnitNumber: "" }]);
   }, [category, roadsideEquipment]);
 
   React.useEffect(() => {
@@ -195,6 +345,230 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
 
   const setFact = (key: string, value: FactValue) => { setValidationError(null); setFacts((current) => ({ ...current, [key]: value })); };
 
+  // Pre-fill Roadside fields once Document AI has processed the evidence
+  // selected via the real DocumentSourcePicker flow in DriverWorkspace,
+  // which maps the raw result to RoadsideMachineSourceRecord and passes it
+  // down as `machineAcquisitionDraft` (or, if this component instance
+  // remounted before the draft arrived, via the module-level pending-draft
+  // store in lib/roadside-machine-client.ts, which survives Fast Refresh
+  // and remounts since it lives outside React state entirely).
+  // Category auto-selection — runs once per draft (guarded by
+  // appliedDraftRef in the polling effect below). Sets category, then
+  // advances past the CATEGORY step directly via setStep (bypassing next()
+  // /validateCurrentStep(), which also requires entryMode/evidence — not
+  // relevant here since we already know the document type from OCR).
+  // Category must be set before the step advances so `visibleSteps`
+  // (derived from `definition`, which is derived from `category`) reflects
+  // the new category's steps by the time step 1 renders.
+  const applyDraft = useCallback((draft: RoadsideMachineSourceRecord) => {
+    const mappedCategory = getCategoryFromDraft(draft);
+    if (mappedCategory) {
+      console.log("[PREFILL] Auto-detected category:", mappedCategory);
+      setCategory(mappedCategory);
+      setStep(1);
+    } else {
+      console.log("[PREFILL] No category mapping found for this draft — leaving category picker for manual selection.");
+    }
+  }, []);
+
+  // Field-level pre-fill — separate from category selection so it can be
+  // triggered either immediately (draft already resolvable at mount) or
+  // once `category` actually changes (see the useEffect below), without
+  // ever re-selecting the category itself.
+  const applyFieldsFromDraft = useCallback((draft: RoadsideMachineSourceRecord) => {
+    console.log("[PREFILL] Applying draft:", draft.reportNumber);
+
+    // Event date — resolveRoadsideCanonicalOccurrence prefers
+    // inspectionEndDate/Time over inspectionDate/Time, same derivation
+    // buildRoadsideMachineDraft uses. Setter: setCommon (common.eventDate).
+    const occurrence = resolveRoadsideCanonicalOccurrence(draft);
+    if (occurrence.eventDate) {
+      setCommon((current) => ({
+        ...current,
+        eventDate: occurrence.eventDate || current.eventDate,
+        eventTime: occurrence.eventTime || current.eventTime,
+        sourceRecordId: draft.reportNumber || current.sourceRecordId,
+        location: draft.location || current.location,
+        city: draft.city || current.city,
+        stateProvince: draft.stateProvince || current.stateProvince,
+        country: draft.country || current.country,
+        summary: current.summary || `Roadside Inspection${draft.reportNumber ? ` — ${draft.reportNumber}` : ""}`,
+        description: current.description || [
+          draft.sourceDocumentTitle ? `Source document: ${draft.sourceDocumentTitle}.` : "",
+          draft.enforcementDisposition ? `Enforcement disposition: ${draft.enforcementDisposition}.` : "",
+          draft.findings.some((finding) => (finding.sourceResultCode || "").trim().toUpperCase() === "N") ? "Source inspection notes were extracted and preserved in machine observations; review them against the source document before saving." : "",
+        ].filter(Boolean).join(" "),
+      }));
+      console.log("[PREFILL] set eventDate:", occurrence.eventDate);
+    }
+
+    // Canonical Roadside fields share the exact same conservative resolver
+    // as unattended auto-save. Values that cannot be established from the
+    // source remain blank for human review.
+    const canonicalFacts = resolveRoadsideCanonicalFacts(draft);
+    setOriginatingSourceEvidenceIds((current) => current.includes(draft.sourceEvidenceId) ? current : [...current, draft.sourceEvidenceId]);
+    setEvidenceIds((current) => current.includes(draft.sourceEvidenceId) ? current : [...current, draft.sourceEvidenceId]);
+    const sourceJurisdiction = canonicalFacts.jurisdiction || draft.stateProvince || companyRegJurisdiction || "";
+    if (sourceJurisdiction) {
+      setCommon((current) => ({
+        ...current,
+        stateProvince: current.stateProvince || sourceJurisdiction,
+        country: current.country || resolveCountryForJurisdiction(sourceJurisdiction) || "",
+      }));
+    }
+    for (const [key, value] of Object.entries(canonicalFacts)) {
+      if (value && key !== "jurisdiction") setFact(key, value);
+    }
+
+    // Report / citation / record number. The Roadside Inspection category
+    // schema (lib/driver-performance-schema.ts) defines a dedicated
+    // text("inspectionReportNumber", "Inspection / Report Number", ...)
+    // fact field — a closer semantic match to draft.reportNumber than the
+    // generic common.sourceRecordId ("External Reference") or the
+    // base-spread facts.sourceRecordId ("Source Record ID"). Setter: setFact.
+    if (draft.reportNumber) {
+      setFact("inspectionReportNumber", draft.reportNumber);
+      console.log("[PREFILL] set reportNumber:", draft.reportNumber);
+    }
+
+    // Agency. Setter: setFact (facts.agency) — confirmed field key on the
+    // Roadside Inspection schema (text("agency", "Enforcement Agency", ...)).
+    if (draft.agency) {
+      setFact("agency", draft.agency);
+      console.log("[PREFILL] set agency:", draft.agency);
+    }
+
+    // TODO: Officer name (draft.officerName) — no field or state exists
+    // anywhere in this file for an officer/inspector name. Searched useState
+    // declarations and the Roadside Inspection category field list
+    // (lib/driver-performance-schema.ts); neither defines one.
+    // Left unmapped rather than guessing a new field.
+    console.log("[PREFILL] officerName (no setter exists, not set):", draft.officerName);
+
+    // TODO: Officer number/badge (draft.officerNumber) — same as above, no
+    // corresponding field or state exists in this file.
+    console.log("[PREFILL] officerNumber (no setter exists, not set):", draft.officerNumber);
+
+    // TODO: Driver name (draft.driverName) — this component only has the
+    // Driver Master's identity (via `relationship`), not an editable
+    // "driver name" field of its own; no setter exists.
+    console.log("[PREFILL] driverName (no setter exists, not set):", draft.driverName);
+
+    // TODO: Driver licence number/jurisdiction/DOB
+    // (driverLicenceNumber/driverLicenceJurisdiction/driverDateOfBirth) —
+    // licence data belongs to the Driver's Qualifications tab, not this
+    // event workflow; no corresponding field or state exists here.
+    console.log("[PREFILL] driverLicenceNumber (no setter exists, not set):", draft.driverLicenceNumber);
+    console.log("[PREFILL] driverLicenceJurisdiction (no setter exists, not set):", draft.driverLicenceJurisdiction);
+    console.log("[PREFILL] driverDateOfBirth (no setter exists, not set):", draft.driverDateOfBirth);
+
+    // TODO: Carrier name (draft.carrierName) — no field or state for a
+    // carrier name exists in this file (company identity comes from
+    // `relationship`, not a user-editable form field here).
+    console.log("[PREFILL] carrierName (no setter exists, not set):", draft.carrierName);
+
+    // TODO: Source document title (draft.sourceDocumentTitle) and
+    // sourceEvidenceId — no corresponding field or state exists in this
+    // file to display or store either value.
+    console.log("[PREFILL] sourceDocumentTitle (no setter exists, not set):", draft.sourceDocumentTitle);
+    console.log("[PREFILL] sourceEvidenceId (no setter exists, not set):", draft.sourceEvidenceId);
+
+    // Equipment — only pre-fill when the current list is empty or every row
+    // is still blank/default (ignoring plateJurisdiction, since the
+    // category-selection/safety-net effects already default that from
+    // companyRegJurisdiction on an otherwise-untouched row). Never overwrite
+    // rows the user has already filled in. Setter: setRoadsideEquipment.
+    const equipmentIsBlank = roadsideEquipment.every(
+      (item) => !item.sourceVin && !item.sourcePlate && !item.sourceUnitNumber && !item.equipmentType
+    );
+    const draftEquipmentRows = draft.equipment
+      .filter((item) => Boolean(item.vinSerialNumber || item.plateNumber || item.sourceUnitNumber))
+      .map((item, index) => {
+        const role = index === 0 ? "POWER_UNIT" as const : "TOWED_UNIT" as const;
+        return {
+        itemId: draftId("RIE-DRAFT"),
+        role,
+        equipmentType: inferredRoadsideEquipmentType(role, item.equipmentType),
+        sourceVin: item.vinSerialNumber || "",
+        sourcePlate: item.plateNumber || "",
+        plateJurisdiction: item.plateJurisdiction || sourceJurisdiction,
+        sourceUnitNumber: item.sourceUnitNumber || "",
+      };
+      });
+    if ((roadsideEquipment.length === 0 || equipmentIsBlank) && draft.equipment.length) {
+      setRoadsideEquipment(draftEquipmentRows);
+      console.log("[PREFILL] set equipment:", draft.equipment);
+    }
+
+    const violationRows = roadsideViolationRowsFromDraft(draft, draftEquipmentRows.length ? draftEquipmentRows : roadsideEquipment);
+    if (violationRows.length) {
+      setRoadsideViolations((current) => current.some(hasMeaningfulViolation) ? current : violationRows);
+      setFact("sourceReportedViolationCount", Math.max(Number(canonicalFacts.sourceReportedViolationCount || 0), violationRows.length));
+      console.log("[PREFILL] set violation findings:", violationRows);
+    }
+    const noteCount = draft.findings.filter((finding) => (finding.sourceResultCode || "").trim().toUpperCase() === "N").length;
+    if (noteCount) console.log("[PREFILL] inspection notes preserved in source observations, not counted as violations:", noteCount);
+  }, [companyRegJurisdiction, roadsideEquipment]);
+
+  // Poll the module-level pending-draft store (lib/roadside-machine-client.ts)
+  // instead of relying solely on machineAcquisitionDraft/initialMachineAcquisitionDraft
+  // props, since a Fast Refresh remount mid-upload can reset this component
+  // instance before those props ever reflect the draft. The module store
+  // lives outside React entirely, so polling it here picks up the draft
+  // whichever instance (pre- or post-remount) is mounted when it arrives.
+  useEffect(() => {
+    console.log("[PREFILL] Polling useEffect mounted");
+    if (appliedDraftRef.current) return;
+
+    const tryApply = async () => {
+      console.log("[PREFILL] tryApply called, appliedRef:", appliedDraftRef.current);
+      const { peekPendingRoadsideDraft, consumePendingRoadsideDraft } = await import("@/lib/roadside-machine-client");
+
+      const draft = machineAcquisitionDraft ?? initialMachineAcquisitionDraft ?? peekPendingRoadsideDraft();
+
+      console.log("[PREFILL] tryApply - draft found:", !!draft);
+
+      if (!draft || appliedDraftRef.current) return;
+      appliedDraftRef.current = true;
+      consumePendingRoadsideDraft();
+
+      applyDraft(draft);
+      if (!appliedFieldsRef.current) {
+        appliedFieldsRef.current = true;
+        applyFieldsFromDraft(draft);
+      }
+    };
+
+    // Try immediately on mount
+    tryApply();
+
+    // Also poll every 500ms for up to 30 seconds in case the OCR result
+    // arrives after mount
+    const interval = setInterval(tryApply, 500);
+    const timeout = setTimeout(() => clearInterval(interval), 30000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, []); // empty deps — intentional, runs once on mount
+
+  // Second pre-fill trigger: if category was auto-detected asynchronously
+  // (e.g. the polling effect above resolved the draft from the module
+  // store on a Fast-Refresh remount, after this instance's own initial
+  // mount pass), re-run field pre-fill once `category` actually lands —
+  // not category re-selection, just the field values. Guarded separately
+  // from appliedDraftRef so category selection and field pre-fill can
+  // each only ever happen once, independent of which trigger fires first.
+  useEffect(() => {
+    if (!machineAcquisitionDraft) return
+    if (!category) return // wait for category
+    if (appliedFieldsRef.current) return // only once
+
+    appliedFieldsRef.current = true
+    applyFieldsFromDraft(machineAcquisitionDraft)
+  }, [category, machineAcquisitionDraft, applyFieldsFromDraft])
+
   const validateCurrentStep = (): string | null => {
     const key = currentStep?.key;
     if (key === "CATEGORY") {
@@ -209,7 +583,7 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
       if (!sourcePolicy.authoritativeSourceTypes.some((item) => item.value === common.sourceType)) return "Select an authoritative source applicable to this category.";
       const derivedOrigin = entryMode === "DOCUMENT" ? (effectiveEvidenceIds.length > 0 ? "MANUAL_FALLBACK" : "") : "MANUAL_ENTRY";
       if (!sourcePolicy.allowedOrigins.includes(derivedOrigin)) return "The record origin could not be derived from the selected ingestion pathway.";
-      if (common.stateProvince && !resolveCountryForJurisdiction(common.stateProvince)) return "Select a valid canonical state / province.";
+      if (category !== "Roadside Inspection" && common.stateProvince && !resolveCountryForJurisdiction(common.stateProvince)) return "Select a valid canonical state / province.";
     }
     if (key === "FACTS") {
       const missing = categoryFields.find((field) => {
@@ -232,8 +606,10 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
         if (jurisdictionCountry === "United States" && regime === "CA_NSC_CVSA") return "Review required: Canadian inspection regime conflicts with U.S. jurisdiction.";
       }
       if (category === "Roadside Inspection") {
-        const scope = facts.inspectionScope;
         if (!roadsideEquipment.some((item) => item.role === "POWER_UNIT")) return "A Power Unit is required for every Roadside Inspection.";
+        if (!powerUnitResolution || powerUnitResolution.state === "PENDING_SOURCE_DATA") return "Power Unit must include a VIN, Plate + Jurisdiction, or Unit # so TES can connect the Roadside Inspection to the company Vehicle.";
+        if (powerUnitResolution.state === "REVIEW_REQUIRED") return `Power Unit identity conflict requires review before saving: ${powerUnitResolution.conflicts.join(" ") || powerUnitResolution.reason}`;
+        if (powerUnitResolution.state !== "AUTO_RESOLVED" || !powerUnitVehicleId) return "Power Unit must match one canonical company Vehicle before saving this Roadside Inspection. Check the source VIN, plate jurisdiction, or Vehicle record.";
         if (facts.inspectionResult === "VIOLATIONS_FOUND" && typeof facts.sourceReportedViolationCount !== "number") return "Source-Reported Total Violations is required when the overall result is Violations Found.";
         if (facts.inspectionResult === "VIOLATIONS_FOUND" && typeof facts.sourceReportedViolationCount === "number" && roadsidePreviewStructuredCount > facts.sourceReportedViolationCount) return `Reconciliation conflict: ${roadsidePreviewStructuredCount} structured violations exceed the source-reported total of ${facts.sourceReportedViolationCount}. Review before saving.`;
         if (roadsideViolations.some((item) => (["POWER_UNIT","TOWED_UNIT"].includes(item.subjectType) && !item.subjectEquipmentId))) return "Each equipment-specific finding must identify the inspected-equipment child it concerns.";
@@ -354,6 +730,7 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
       followUpActionRequired: followUpRequired,
       followUpDueDate: followUpDueDate || undefined,
       followUpActionSummary: followUpSummary || undefined,
+      vehicleId: category === "Roadside Inspection" ? powerUnitVehicleId : undefined,
       linkedRecords: [],
       canonicalLinks: [],
       evidenceIds: canonicalEvidenceIds,
@@ -475,14 +852,14 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-6">{validationError ? <div role="alert" className="mb-4 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{validationError}</div> : null}
-          {currentStep?.key === "CATEGORY" && <section className="space-y-4"><div><h4 className="text-sm font-bold text-foreground">Select Event Category</h4><p className="mt-1 text-xs text-muted-foreground">Choose the occurrence family. The selected category controls the structured capture schema.</p></div><div className="grid gap-2 sm:grid-cols-2"><div className={`rounded-xl border p-3 text-left ${entryMode === "DOCUMENT" ? "border-primary bg-primary/5" : "border-border bg-muted/20"}`}><div className="text-xs font-bold text-foreground">Source Evidence / Manual Fallback</div><p className="mt-1 text-[10px] text-muted-foreground">Source documents enter through the separate machine-ingestion path. If extraction is unavailable, the originating evidence can be preserved on a manual fallback record.</p></div><button type="button" onClick={() => setEntryMode("MANUAL")} className={`rounded-xl border p-3 text-left ${entryMode === "MANUAL" ? "border-primary bg-primary/5" : "border-border bg-background hover:bg-muted/20"}`}><div className="text-xs font-bold text-foreground">Enter Manually</div><p className="mt-1 text-[10px] text-muted-foreground">Manual acquisition path using the same canonical Performance Event schema.</p></button></div><div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">{recordableDefinitions.map((item) => <button key={item.value} type="button" onClick={() => { setCategory(item.value); setFacts({}); setRoadsideViolations([]); setValidationError(null); setStep(0); setCommon((current) => ({ ...current, sourceType: "", sourceRecordId: "", reportedBy: "" })); setRoadsideEquipment(item.value === "Roadside Inspection" ? [{ itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: "", sourceUnitNumber: "" }] : []); }} className={`rounded-xl border p-3 text-left transition ${category === item.value ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "border-border bg-background hover:border-primary/40 hover:bg-muted/20"}`}><div className="flex items-start justify-between gap-2"><span className="text-xs font-bold text-foreground">{item.label}</span>{category === item.value ? <CheckCircle2 className="size-4 shrink-0 text-primary" /> : null}</div><p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">{item.description}</p><span className="mt-2 inline-flex rounded-md bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{item.group}</span></button>)}</div><div className="rounded-xl border border-border bg-muted/20 p-3 text-[11px] text-muted-foreground"><strong className="text-foreground">Company Actions remain separate.</strong> Coaching, discipline, CAPs, suspension, and corrective actions are not owned by this occurrence record.</div></section>}
+          {currentStep?.key === "CATEGORY" && <section className="space-y-4"><div><h4 className="text-sm font-bold text-foreground">Select Event Category</h4><p className="mt-1 text-xs text-muted-foreground">Choose the occurrence family. The selected category controls the structured capture schema.</p></div><div className="grid gap-2 sm:grid-cols-2"><div className={`rounded-xl border p-3 text-left ${entryMode === "DOCUMENT" ? "border-primary bg-primary/5" : "border-border bg-muted/20"}`}><div className="text-xs font-bold text-foreground">Source Evidence / Manual Fallback</div><p className="mt-1 text-[10px] text-muted-foreground">Source documents enter through the separate machine-ingestion path. If extraction is unavailable, the originating evidence can be preserved on a manual fallback record.</p></div><button type="button" onClick={() => setEntryMode("MANUAL")} className={`rounded-xl border p-3 text-left ${entryMode === "MANUAL" ? "border-primary bg-primary/5" : "border-border bg-background hover:bg-muted/20"}`}><div className="text-xs font-bold text-foreground">Enter Manually</div><p className="mt-1 text-[10px] text-muted-foreground">Manual acquisition path using the same canonical Performance Event schema.</p></button></div><div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">{recordableDefinitions.map((item) => <button key={item.value} type="button" onClick={() => { setCategory(item.value); setFacts({}); setRoadsideViolations([]); setValidationError(null); setStep(0); setCommon((current) => ({ ...current, sourceType: "", sourceRecordId: "", reportedBy: "" })); setRoadsideEquipment(item.value === "Roadside Inspection" ? [{ itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: companyRegJurisdiction ?? "", sourceUnitNumber: "" }] : []); }} className={`rounded-xl border p-3 text-left transition ${category === item.value ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "border-border bg-background hover:border-primary/40 hover:bg-muted/20"}`}><div className="flex items-start justify-between gap-2"><span className="text-xs font-bold text-foreground">{item.label}</span>{category === item.value ? <CheckCircle2 className="size-4 shrink-0 text-primary" /> : null}</div><p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">{item.description}</p><span className="mt-2 inline-flex rounded-md bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{item.group}</span></button>)}</div><div className="rounded-xl border border-border bg-muted/20 p-3 text-[11px] text-muted-foreground"><strong className="text-foreground">Company Actions remain separate.</strong> Coaching, discipline, CAPs, suspension, and corrective actions are not owned by this occurrence record.</div></section>}
 
           {currentStep?.key === "OCCURRENCE" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Occurrence & Source</h4><p className="mt-1 text-xs text-muted-foreground">Record what occurred and where the source came from. No universal severity is imposed.</p></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><div><label className="text-xs font-semibold">Event Date *</label><input type="date" required value={common.eventDate} onChange={(e) => setCommon({ ...common, eventDate: e.target.value })} className={inputClass} /></div><div><label className="text-xs font-semibold">Event Time</label><input type="time" value={common.eventTime} onChange={(e) => setCommon({ ...common, eventTime: e.target.value })} className={inputClass} /></div><div><label className="text-xs font-semibold">Reported / Detected Date</label><input type="date" value={common.reportedDate} onChange={(e) => setCommon({ ...common, reportedDate: e.target.value })} className={inputClass} /></div><div><label className="text-xs font-semibold">Authoritative Source *</label>{sourcePolicy.deriveAuthoritativeSource ? <div className="mt-1 rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold">{sourceOptions.find((item) => item.value === sourcePolicy.deriveAuthoritativeSource)?.label || sourcePolicy.deriveAuthoritativeSource}</div> : <select required value={common.sourceType} onChange={(e) => setCommon({ ...common, sourceType: e.target.value })} className={inputClass}><option value="">Select...</option>{sourceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>}<p className="mt-1 text-[10px] text-muted-foreground">{sourcePolicy.deriveAuthoritativeSource ? "Derived from the selected event category." : "Category-specific source policy. Select the authoritative source that establishes the facts."}</p></div><div><label className="text-xs font-semibold">External Reference</label><input value={common.sourceRecordId} onChange={(e) => setCommon({ ...common, sourceRecordId: e.target.value })} className={inputClass} placeholder="External report / reference number" /><p className="mt-1 text-[10px] text-muted-foreground">Do not enter an internal TES record ID.</p></div><div><label className="text-xs font-semibold">Reported / Submitted By</label><select value={common.reportedBy} onChange={(e) => setCommon({ ...common, reportedBy: e.target.value })} className={inputClass}><option value="">Not applicable / not provided</option>{(sourcePolicy.reporterApplicability || []).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="text-xs font-semibold">Event Summary *</label><input required value={common.summary} onChange={(e) => setCommon({ ...common, summary: e.target.value })} className={inputClass} placeholder="Concise factual summary" /></div><div><label className="text-xs font-semibold">Narrative / Description</label><textarea rows={2} value={common.description} onChange={(e) => setCommon({ ...common, description: e.target.value })} className={inputClass} placeholder="Contextual narrative; structured facts belong to the category schema." /></div></div>{category !== "Roadside Inspection" ? <div><div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Location Context</div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><input value={common.location} onChange={(e) => setCommon({ ...common, location: e.target.value })} className={inputClass} placeholder="Location" /><input value={common.city} onChange={(e) => setCommon({ ...common, city: e.target.value })} className={inputClass} placeholder="City" /><select value={common.stateProvince} onChange={(e) => setCommon({ ...common, stateProvince: e.target.value, country: resolveCountryForJurisdiction(e.target.value) || "" })} className={inputClass}><option value="">State / Province</option>{JURISDICTIONS.map((item) => <option key={item.code} value={item.code}>{item.label} ({item.code})</option>)}</select><input value={common.country} readOnly className={inputClass} placeholder="Country (derived)" /></div></div> : null}</section>}
 
           {currentStep?.key === "FACTS" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">{definition?.label || "Select Event Category"} Facts</h4><p className="mt-1 text-xs text-muted-foreground">These fields are generated from the category schema; only fields applicable to this category appear.</p></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{categoryFields.map((field) => <FieldInput key={field.key} field={field} facts={facts} value={facts[field.key] ?? null} onChange={(value) => setFact(field.key, value)} />)}</div>{category === "Roadside Inspection" ? <div className="space-y-4">
   <div className="rounded-xl border border-border bg-muted/10 p-4 space-y-3">
-    <div className="flex items-center justify-between gap-3"><div><h5 className="text-xs font-bold text-foreground">Inspected Equipment</h5><p className="text-[10px] text-muted-foreground">Source identifiers remain unchanged. TES resolves VIN globally, Plate + jurisdiction globally/effectively, and Unit only inside the operating-company context.</p></div><button type="button" onClick={() => setRoadsideEquipment((items) => [...items, { itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: items.some((x) => x.role === "POWER_UNIT") ? "TOWED_UNIT" : "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: "", sourceUnitNumber: "" }])} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-muted">Add Equipment</button></div>
-    {roadsideEquipment.length === 0 ? <p className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted-foreground">No equipment identifiers supplied yet. A Power Unit is required for every Roadside Inspection; add Towed Equipment when present in the source.</p> : <div className="space-y-3">{roadsideEquipment.map((item, index) => { const resolved = roadsideResolvedEquipment[index]?.resolution; return <div key={item.itemId} className="rounded-lg border border-border bg-background p-3 space-y-3"><div className="flex items-center justify-between"><div className="text-xs font-bold">{item.role === "POWER_UNIT" ? "Power Unit" : `Towed Unit ${roadsideEquipment.slice(0, index + 1).filter((x) => x.role === "TOWED_UNIT").length}`}</div>{item.role === "TOWED_UNIT" ? <button type="button" onClick={() => setRoadsideEquipment((items) => items.filter((x) => x.itemId !== item.itemId))} className="text-[10px] font-bold text-destructive hover:underline">Remove</button> : null}</div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><select value={item.role} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,role:e.target.value as "POWER_UNIT"|"TOWED_UNIT"}:v))} className={inputClass}><option value="POWER_UNIT">Power Unit</option><option value="TOWED_UNIT">Towed Unit</option></select><select value={item.equipmentType} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,equipmentType:e.target.value}:v))} className={inputClass}><option value="">Equipment Type</option>{(item.role === "POWER_UNIT" ? ["Tractor","Straight Truck","Service Vehicle","Other Equipment"] : ["Trailer - Dry Van","Trailer - Reefer","Trailer - Flatbed","Trailer - Step Deck / Lowboy","Trailer - Intermodal Chassis","Converter Dolly","Other Equipment"]).map((option) => <option key={option} value={option}>{option}</option>)}</select><input value={item.sourceVin} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourceVin:e.target.value}:v))} placeholder="Source VIN" className={inputClass}/><input value={item.sourcePlate} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourcePlate:e.target.value}:v))} placeholder="Source Plate" className={inputClass}/><select value={item.plateJurisdiction} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,plateJurisdiction:e.target.value}:v))} className={inputClass}><option value="">Plate Jurisdiction</option>{JURISDICTIONS.map((j) => <option key={j.code} value={j.code}>{j.label}</option>)}</select><input value={item.sourceUnitNumber} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourceUnitNumber:e.target.value}:v))} placeholder="Source Unit / Equipment #" className={inputClass}/></div>{resolved ? <div className={`rounded-lg border p-3 ${resolved.state === "AUTO_RESOLVED" ? "border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20" : resolved.state === "REVIEW_REQUIRED" ? "border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20" : "border-border bg-muted/20"}`}><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-wider">{resolved.state === "AUTO_RESOLVED" ? "Matched" : resolved.state === "REVIEW_REQUIRED" ? "Conflict / Review Required" : "External / No Canonical Match"}</span><span className="text-[10px] text-muted-foreground">{resolved.method === "VIN_GLOBAL" ? "Resolved by VIN" : resolved.method === "PLATE_JURISDICTION" ? "Resolved by Plate + Jurisdiction" : resolved.method === "UNIT_COMPANY_SCOPED" ? "Resolved by company Unit #" : resolved.method === "MULTI_IDENTIFIER_AGREEMENT" ? "Multiple identifiers agree" : "Pending"}</span></div>{resolved.canonicalVehicle ? <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"><RecordRow label="TES Unit" value={resolved.canonicalVehicle.unitNumber}/><RecordRow label="Vehicle" value={`${resolved.canonicalVehicle.year} ${resolved.canonicalVehicle.make} ${resolved.canonicalVehicle.model}`}/><RecordRow label="VIN" value={resolved.canonicalVehicle.vin}/><RecordRow label="Plate" value={`${resolved.canonicalVehicle.registration?.plateNumber || "Not recorded"}${resolved.canonicalVehicle.registration?.jurisdiction ? ` · ${getJurisdictionLabel(resolved.canonicalVehicle.registration.jurisdiction)}` : ""}`}/></div> : null}<p className="mt-2 text-[10px] text-muted-foreground">{resolved.reason}</p>{resolved.identifierDiscrepancies?.length ? <p className="mt-1 text-[10px] font-semibold text-muted-foreground">Identifier Note: {resolved.identifierDiscrepancies.join(" ")}</p> : null}{resolved.conflicts.length ? <p className="mt-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">{resolved.conflicts.join(" ")}</p> : null}</div> : null}</div>})}</div>}
+    <div className="flex items-center justify-between gap-3"><div><h5 className="text-xs font-bold text-foreground">Inspected Equipment</h5><p className="text-[10px] text-muted-foreground">Source identifiers remain unchanged. TES resolves VIN globally, Plate + jurisdiction globally/effectively, and Unit only inside the operating-company context.</p></div><button type="button" onClick={() => setRoadsideEquipment((items) => [...items, { itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: items.some((x) => x.role === "POWER_UNIT") ? "TOWED_UNIT" : "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: companyRegJurisdiction ?? "", sourceUnitNumber: "" }])} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-muted">Add Equipment</button></div>
+    {roadsideEquipment.length === 0 ? <p className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted-foreground">No equipment identifiers supplied yet. A Power Unit is required for every Roadside Inspection; add Towed Equipment when present in the source.</p> : <div className="space-y-3">{roadsideEquipment.map((item, index) => { const resolved = roadsideResolvedEquipment[index]?.resolution; return <div key={item.itemId} className="rounded-lg border border-border bg-background p-3 space-y-3"><div className="flex items-center justify-between"><div className="text-xs font-bold">{item.role === "POWER_UNIT" ? "Power Unit" : `Towed Unit ${roadsideEquipment.slice(0, index + 1).filter((x) => x.role === "TOWED_UNIT").length}`}</div>{item.role === "TOWED_UNIT" ? <button type="button" onClick={() => setRoadsideEquipment((items) => items.filter((x) => x.itemId !== item.itemId))} className="text-[10px] font-bold text-destructive hover:underline">Remove</button> : null}</div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><select value={item.role} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,role:e.target.value as "POWER_UNIT"|"TOWED_UNIT"}:v))} className={inputClass}><option value="POWER_UNIT">Power Unit</option><option value="TOWED_UNIT">Towed Unit</option></select><select value={item.equipmentType} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,equipmentType:e.target.value}:v))} className={inputClass}><option value="">Equipment Type</option>{(item.role === "POWER_UNIT" ? ["Tractor","Straight Truck","Service Vehicle","Other Equipment"] : ["Trailer - Dry Van","Trailer - Reefer","Trailer - Flatbed","Trailer - Step Deck / Lowboy","Trailer - Intermodal Chassis","Converter Dolly","Other Equipment"]).map((option) => <option key={option} value={option}>{option}</option>)}</select><input value={item.sourceVin} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourceVin:e.target.value}:v))} placeholder="Source VIN" className={inputClass}/><input value={item.sourcePlate} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourcePlate:e.target.value}:v))} placeholder="Source Plate" className={inputClass}/><select value={item.plateJurisdiction} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,plateJurisdiction:e.target.value}:v))} className={inputClass}><option value="">Plate Jurisdiction</option>{JURISDICTIONS.map((j) => <option key={j.code} value={j.code}>{j.label}</option>)}</select><input value={item.sourceUnitNumber} onChange={(e) => setRoadsideEquipment((items) => items.map((v,i)=>i===index?{...v,sourceUnitNumber:e.target.value}:v))} placeholder="Source Unit / Equipment #" className={inputClass}/></div>{resolved ? <div className={`rounded-lg border p-3 ${resolved.state === "AUTO_RESOLVED" ? "border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20" : resolved.state === "REVIEW_REQUIRED" ? "border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20" : "border-border bg-muted/20"}`}><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-wider">{resolved.state === "AUTO_RESOLVED" ? "Matched" : resolved.state === "REVIEW_REQUIRED" ? "Conflict / Review Required" : "External / No Canonical Match"}</span><span className="text-[10px] text-muted-foreground">{resolved.method === "VIN_GLOBAL" ? "Resolved by VIN" : resolved.method === "VIN_SUFFIX_COMPANY_SCOPED" ? "Resolved by company VIN last six" : resolved.method === "PLATE_JURISDICTION" ? "Resolved by Plate + Jurisdiction" : resolved.method === "UNIT_COMPANY_SCOPED" ? "Resolved by company Unit #" : resolved.method === "MULTI_IDENTIFIER_AGREEMENT" ? "Multiple identifiers agree" : "Pending"}</span></div>{resolved.canonicalVehicle ? <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"><RecordRow label="TES Unit" value={resolved.canonicalVehicle.unitNumber}/><RecordRow label="Vehicle" value={`${resolved.canonicalVehicle.year} ${resolved.canonicalVehicle.make} ${resolved.canonicalVehicle.model}`}/><RecordRow label="VIN" value={resolved.canonicalVehicle.vin}/><RecordRow label="Plate" value={`${resolved.canonicalVehicle.registration?.plateNumber || "Not recorded"}${resolved.canonicalVehicle.registration?.jurisdiction ? ` · ${getJurisdictionLabel(resolved.canonicalVehicle.registration.jurisdiction)}` : ""}`}/></div> : null}<p className="mt-2 text-[10px] text-muted-foreground">{resolved.reason}</p>{resolved.identifierDiscrepancies?.length ? <p className="mt-1 text-[10px] font-semibold text-muted-foreground">Identifier Note: {resolved.identifierDiscrepancies.join(" ")}</p> : null}{resolved.conflicts.length ? <p className="mt-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">{resolved.conflicts.join(" ")}</p> : null}</div> : null}</div>})}</div>}
   </div>
   {facts.inspectionResult === "VIOLATIONS_FOUND" ? <div className="rounded-xl border border-border bg-muted/10 p-4 space-y-3"><div className="flex items-center justify-between"><div><h5 className="text-xs font-bold text-foreground">Violations / Findings</h5><p className="text-[10px] text-muted-foreground">A Pass inspection may still contain non-OOS violations. Each finding identifies a specific subject.</p></div><button type="button" disabled={roadsideViolations.length > 0 && !hasMeaningfulViolation(roadsideViolations[roadsideViolations.length - 1])} onClick={() => setRoadsideViolations((items) => [...items, { itemId: `RVI-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, ruleRegulationCode: "", description: "", regulatoryCategory: "", subjectType: "DRIVER", subjectEquipmentId: "", componentSystem: "", oosState: "UNKNOWN", regulatorSeverityWeight: "", demeritPoints: "" }])} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Add Violation</button></div>{roadsideViolations.length === 0 ? <p className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted-foreground">No child violations entered. This is known zero only when the applicable violation finding state(s) establish No Violations.</p> : <div className="space-y-3">{roadsideViolations.map((item,index)=><div key={item.itemId} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 rounded-lg border border-border bg-background p-3"><input value={item.ruleRegulationCode} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,ruleRegulationCode:e.target.value}:v))} placeholder="Rule / regulation code" className={inputClass}/><input value={item.description} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,description:e.target.value}:v))} placeholder="Description" className={inputClass}/><input value={item.regulatoryCategory} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,regulatoryCategory:e.target.value}:v))} placeholder="Regulatory category / BASIC" className={inputClass}/><select value={item.subjectType} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,subjectType:e.target.value as RoadsideViolationSubjectType,subjectEquipmentId:["POWER_UNIT","TOWED_UNIT"].includes(e.target.value)?v.subjectEquipmentId:""}:v))} className={inputClass}><option value="DRIVER">Driver</option><option value="OPERATING_CARRIER">Operating Carrier</option><option value="POWER_UNIT">Power Unit</option><option value="TOWED_UNIT">Specific Towed Unit</option><option value="OTHER">Other</option></select>{["POWER_UNIT","TOWED_UNIT"].includes(item.subjectType) ? <select value={item.subjectEquipmentId} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,subjectEquipmentId:e.target.value}:v))} className={inputClass}><option value="">Select equipment</option>{roadsideEquipment.map((eq)=>eq.role === (item.subjectType === "POWER_UNIT" ? "POWER_UNIT" : "TOWED_UNIT") ? <option key={eq.itemId} value={eq.itemId}>{eq.role === "POWER_UNIT" ? "Power Unit" : "Towed Unit"} · {eq.sourceUnitNumber || eq.sourceVin || eq.itemId}</option> : null)}</select> : <input value={item.componentSystem} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,componentSystem:e.target.value}:v))} placeholder="Component / system" className={inputClass}/>}<select value={item.oosState} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,oosState:e.target.value as RoadsideViolationOOSState}:v))} className={inputClass}><option value="YES">OOS: Yes</option><option value="NO">OOS: No</option><option value="UNKNOWN">OOS: Unknown</option></select><input type="number" value={item.regulatorSeverityWeight} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,regulatorSeverityWeight:e.target.value}:v))} placeholder="Regulator weight" className={inputClass}/><input type="number" value={item.demeritPoints} onChange={(e)=>setRoadsideViolations((items)=>items.map((v,i)=>i===index?{...v,demeritPoints:e.target.value}:v))} placeholder="Demerit / points" className={inputClass}/><div className="sm:col-span-2 lg:col-span-4 flex justify-end"><button type="button" onClick={()=>setRoadsideViolations((items)=>items.filter((v)=>v.itemId!==item.itemId))} className="text-[10px] font-bold text-destructive hover:underline">Remove violation</button></div></div>)}</div>}</div> : null}
   <div className="rounded-xl border border-border bg-muted/10 p-4 space-y-3"><div><h5 className="text-xs font-bold text-foreground">Driver Statement / Account</h5><p className="text-[10px] text-muted-foreground">First-class source account, separate from Investigation Narrative.</p></div><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><select value={driverStatement.status} onChange={(e)=>setDriverStatement((v)=>({...v,status:e.target.value as typeof v.status}))} className={inputClass}><option value="OBTAINED">Obtained</option><option value="REQUESTED">Requested</option><option value="DECLINED">Declined</option><option value="UNABLE_TO_OBTAIN">Unable to Obtain</option><option value="NOT_APPLICABLE">Not Applicable</option></select><input type="date" value={driverStatement.date} onChange={(e)=>setDriverStatement((v)=>({...v,date:e.target.value}))} className={inputClass}/><input type="time" value={driverStatement.time} onChange={(e)=>setDriverStatement((v)=>({...v,time:e.target.value}))} className={inputClass}/><select value={driverStatement.method} onChange={(e)=>setDriverStatement((v)=>({...v,method:e.target.value as typeof v.method}))} className={inputClass}><option value="">Statement Method</option><option value="WRITTEN">Written</option><option value="RECORDED">Recorded</option><option value="INTERVIEW">Interview</option><option value="UPLOADED_DOCUMENT">Uploaded Document</option><option value="OTHER">Other</option></select><textarea value={driverStatement.content} onChange={(e)=>setDriverStatement((v)=>({...v,content:e.target.value}))} rows={4} placeholder="Driver's actual account / statement" className={`${inputClass} sm:col-span-2 lg:col-span-3`}/></div></div>
@@ -491,9 +868,9 @@ export function DriverPerformanceEventWorkflow({ relationship, evidence, onReque
 
           {currentStep?.key === "RELATIONSHIPS" && category !== "Roadside Inspection" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Context & Relationships</h4><p className="mt-1 text-xs text-muted-foreground">TES evaluates applicable relationships after the canonical Performance event exists. Relationship creation is independent from event creation.</p></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{applicableRelationships.map((relationship) => { const state = resolvePerformanceRelationshipState(relationship, facts); const required = state === "REQUIRED"; return <div key={relationship.key} className="rounded-xl border border-border bg-muted/10 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold">{relationship.label}</span>{required ? <span className="text-[9px] font-bold uppercase tracking-wider text-primary">Required</span> : <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Applicable</span>}</div><div className="mt-2 rounded-lg border border-border bg-background px-2.5 py-2 text-[10px] font-semibold text-foreground">{relationship.key === "hos" || relationship.key === "citation" || relationship.key === "maintenance" ? "PENDING_SOURCE_DATA" : "PENDING_SOURCE_DATA"}</div><p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">The resolver will auto-link a unique deterministic canonical record, retain candidates for review when ambiguous, or remain pending when the downstream source has not arrived.</p></div>; })}</div></section>}
 
-          {currentStep?.key === "EVIDENCE" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Evidence, Verification & Follow-up</h4><p className="mt-1 text-xs text-muted-foreground">Verification and dispute are separate semantic states. Follow-up is workflow state, not evidence.</p></div><div className="grid gap-4 lg:grid-cols-2"><div className="rounded-xl border border-border p-4"><div className="flex items-center justify-between"><div><span className="text-xs font-bold">Evidence</span><span className="ml-2 text-[10px] text-muted-foreground">{definition?.evidenceRequired ? "Required" : "Optional"}</span></div>{definition?.evidenceRequired && onRequestEvidenceUpload ? <button type="button" onClick={onRequestEvidenceUpload} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-muted">Upload / Add Document</button> : null}</div><div className="mt-3"><div className="mb-2 flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Event Evidence</div>{eligibleExistingEventEvidence.length ? <button type="button" onClick={() => setShowExistingEventEvidence((value) => !value)} className="text-[10px] font-semibold text-primary hover:underline">{showExistingEventEvidence ? "Hide existing Event evidence" : "Link existing Event evidence"}</button> : null}</div><div className="space-y-2">{displayedEventEvidence.length === 0 ? <div className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted-foreground">No evidence is linked to this event yet. Use Upload / Add Document to attach source/event evidence.</div> : displayedEventEvidence.map((item) => <label key={item.id} className="flex items-center gap-2 rounded-lg border border-border bg-background p-2.5 text-xs"><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={(e) => setEvidenceIds((current) => e.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} className="size-3.5 accent-primary" /><FileText className="size-3.5 text-primary" /><span className="min-w-0 flex-1"><span className="block truncate font-semibold">{item.documentType || "Event Evidence"} · {item.fileName}</span><span className="block truncate text-[10px] text-muted-foreground">{common.sourceType || "Source not recorded"} · {common.eventDate || "Date not recorded"}{common.sourceRecordId ? ` · Report ${common.sourceRecordId}` : ""}{facts.agency ? ` · ${String(facts.agency)}` : ""}</span></span><span className="text-[9px] text-muted-foreground">{item.id}</span></label>)}</div></div></div><div className="rounded-xl border border-border p-4 space-y-3"><div><label className="text-xs font-semibold">Verification State</label><div className="mt-1 rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold">{derivedVerificationState}</div><p className="mt-1 text-[10px] text-muted-foreground">Derived from linked evidence/review state. Verification is not manually selected during event creation.</p></div><div><label className="text-xs font-semibold">Dispute State</label><select value={disputeState} onChange={(e) => setDisputeState(e.target.value as typeof disputeState)} className={inputClass}>{PERFORMANCE_DISPUTE_STATES.map((item) => <option key={item}>{item}</option>)}</select></div><label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={followUpRequired} onChange={(e) => setFollowUpRequired(e.target.checked)} className="size-3.5 accent-primary" />Follow-up Required</label>{followUpRequired ? <><div><label className="text-xs font-semibold">Follow-up Due Date</label><input type="date" value={followUpDueDate} onChange={(e) => setFollowUpDueDate(e.target.value)} className={inputClass} /></div><div><label className="text-xs font-semibold">Follow-up Description</label><textarea value={followUpSummary} onChange={(e) => setFollowUpSummary(e.target.value)} rows={3} className={inputClass} /></div></> : null}{lifecycle ? <div><label className="text-xs font-semibold">Lifecycle State</label><div className="mt-1 rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold">{followUpRequired ? "Follow-up Required" : "Open"}</div><p className="mt-1 text-[10px] text-muted-foreground">Derived from follow-up workflow; not manually selected.</p></div> : null}</div></div></section>}
+          {currentStep?.key === "EVIDENCE" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Evidence, Verification & Follow-up</h4><p className="mt-1 text-xs text-muted-foreground">Verification and dispute are separate semantic states. Follow-up is workflow state, not evidence.</p></div><div className="grid gap-4 lg:grid-cols-2"><div className="rounded-xl border border-border p-4"><div className="flex items-center justify-between"><div><span className="text-xs font-bold">Evidence</span><span className="ml-2 text-[10px] text-muted-foreground">{definition?.evidenceRequired ? "Required" : "Optional"}</span></div>{definition?.evidenceRequired ? <div className="flex flex-col items-end gap-1"><button type="button" onClick={() => onRequestEvidenceUpload?.()} disabled={!onRequestEvidenceUpload} className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40">Upload / Add Document</button>{isProcessingOCR ? <p className="mt-1 text-[11px] text-muted-foreground animate-pulse">Processing document with AI...</p> : null}{ocrError ? <p className="mt-1 text-[11px] text-destructive">{ocrError}</p> : null}{machineAcquisitionDraft ? <div className="mt-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-[11px] text-green-800 dark:border-green-900/50 dark:bg-green-950/40 dark:text-green-300">Document processed — fields pre-filled from OCR. Review all extracted values before saving.</div> : null}</div> : null}</div><div className="mt-3"><div className="mb-2 flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Event Evidence</div>{eligibleExistingEventEvidence.length ? <button type="button" onClick={() => setShowExistingEventEvidence((value) => !value)} className="text-[10px] font-semibold text-primary hover:underline">{showExistingEventEvidence ? "Hide existing Event evidence" : "Link existing Event evidence"}</button> : null}</div><div className="space-y-2">{displayedEventEvidence.length === 0 ? <div className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted-foreground">No evidence is linked to this event yet. Use Upload / Add Document to attach source/event evidence.</div> : displayedEventEvidence.map((item) => <label key={item.id} className="flex items-center gap-2 rounded-lg border border-border bg-background p-2.5 text-xs"><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={(e) => setEvidenceIds((current) => e.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} className="size-3.5 accent-primary" /><FileText className="size-3.5 text-primary" /><span className="min-w-0 flex-1"><span className="block truncate font-semibold">{item.documentType || "Event Evidence"} · {item.fileName}</span><span className="block truncate text-[10px] text-muted-foreground">{common.sourceType || "Source not recorded"} · {common.eventDate || "Date not recorded"}{common.sourceRecordId ? ` · Report ${common.sourceRecordId}` : ""}{facts.agency ? ` · ${String(facts.agency)}` : ""}</span></span><span className="text-[9px] text-muted-foreground">{item.id}</span></label>)}</div></div></div><div className="rounded-xl border border-border p-4 space-y-3"><div><label className="text-xs font-semibold">Verification State</label><div className="mt-1 rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold">{derivedVerificationState}</div><p className="mt-1 text-[10px] text-muted-foreground">Derived from linked evidence/review state. Verification is not manually selected during event creation.</p></div><div><label className="text-xs font-semibold">Dispute State</label><select value={disputeState} onChange={(e) => setDisputeState(e.target.value as typeof disputeState)} className={inputClass}>{PERFORMANCE_DISPUTE_STATES.map((item) => <option key={item}>{item}</option>)}</select></div><label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={followUpRequired} onChange={(e) => setFollowUpRequired(e.target.checked)} className="size-3.5 accent-primary" />Follow-up Required</label>{followUpRequired ? <><div><label className="text-xs font-semibold">Follow-up Due Date</label><input type="date" value={followUpDueDate} onChange={(e) => setFollowUpDueDate(e.target.value)} className={inputClass} /></div><div><label className="text-xs font-semibold">Follow-up Description</label><textarea value={followUpSummary} onChange={(e) => setFollowUpSummary(e.target.value)} rows={3} className={inputClass} /></div></> : null}{lifecycle ? <div><label className="text-xs font-semibold">Lifecycle State</label><div className="mt-1 rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold">{followUpRequired ? "Follow-up Required" : "Open"}</div><p className="mt-1 text-[10px] text-muted-foreground">Derived from follow-up workflow; not manually selected.</p></div> : null}</div></div></section>}
 
-          {currentStep?.key === "REVIEW" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Review Before Save</h4><p className="mt-1 text-xs text-muted-foreground">Confirm the actual structured record before it is committed to CompanyDriverStore.events.</p></div><div className="space-y-4"><div className="rounded-xl border border-border p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><RecordRow label="Category" value={definition?.label || "Select Event Category"} /><RecordRow label="Event Date" value={common.eventDate} /><RecordRow label="Source" value={common.sourceType} /><RecordRow label="Source Record" value={common.sourceRecordId} /><RecordRow label="Location" value={[common.location, common.city, common.stateProvince].filter(Boolean).join(", ")} /><RecordRow label="Verification" value={derivedVerificationState} /><RecordRow label="Dispute" value={disputeState} /><RecordRow label="Lifecycle" value={lifecycle ? (followUpRequired ? "Follow-up Required" : "Open") : "Not applicable"} /><RecordRow label="Evidence" value={`${effectiveEvidenceIds.length} linked`} />{category === "Roadside Inspection" && roadsidePreviewReconciliationConflict ? <RecordRow label="Reconciliation" value="Conflict / Review Required" /> : null}{category === "Roadside Inspection" ? <RecordRow label="Derived Inspection Outcome" value={roadsideDerivedOutcome === "PASS" ? "Pass" : roadsideDerivedOutcome === "VIOLATIONS_FOUND" ? "Violations Found" : roadsideDerivedOutcome === "OUT_OF_SERVICE" ? "Out of Service" : "Unknown / Not Provided"} /> : null}</div></div><div className="rounded-xl border border-border p-4"><div className="mb-3 flex items-center gap-2"><Link2 className="size-4 text-primary" /><span className="text-xs font-bold">Category-Specific Facts</span></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{categoryFields.map((field) => <RecordRow key={field.key} label={field.label} value={category === "Roadside Inspection" ? displayRoadsideReviewValue(field, facts[field.key] ?? null) : facts[field.key] ?? null} />)}</div></div>{category === "Roadside Inspection" ? <div className="rounded-xl border border-border p-4 space-y-3"><div className="text-xs font-bold">Inspected Equipment & Driver Statement</div><div className="space-y-2">{roadsideEquipment.map((item) => { const resolved = roadsideResolvedEquipment.find((entry) => entry.item.itemId === item.itemId)?.resolution; return <div key={item.itemId} className="rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs"><div className="font-semibold">{item.role === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}</div><div className="mt-1 text-[10px] text-muted-foreground">Source VIN: {item.sourceVin || "—"} · Plate: {item.sourcePlate || "—"} · Unit: {item.sourceUnitNumber || "—"}</div><div className="mt-1 text-[10px] text-muted-foreground">Resolution: {resolved?.state === "AUTO_RESOLVED" ? "Matched" : resolved?.state === "REVIEW_REQUIRED" ? "Conflict / Review Required" : resolved?.state === "PENDING_SOURCE_DATA" ? "Pending Source Data" : "Unresolved / External"}{resolved?.method ? ` · ${resolved.method === "VIN_GLOBAL" ? "VIN" : resolved.method === "PLATE_JURISDICTION" ? "Plate + Jurisdiction" : resolved.method === "UNIT_COMPANY_SCOPED" ? "Company Unit #" : "Multiple identifiers"}` : ""}{resolved?.identifierDiscrepancies?.length ? ` · Identifier note: ${resolved.identifierDiscrepancies.join(" ")}` : ""}</div></div>})}</div>{driverStatement.status !== "NOT_APPLICABLE" ? <div className="rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs"><div className="font-semibold">Driver Statement: {driverStatement.status === "OBTAINED" ? "Obtained" : driverStatement.status === "REQUESTED" ? "Requested" : driverStatement.status === "DECLINED" ? "Declined" : "Unable to Obtain"}</div><div className="mt-1 text-[10px] text-muted-foreground">{driverStatement.date || "Date not recorded"}{driverStatement.time ? ` · ${driverStatement.time}` : ""}{driverStatement.method ? ` · ${driverStatement.method === "UPLOADED_DOCUMENT" ? "Uploaded Document" : driverStatement.method}` : ""}</div></div> : null}</div> : null}
+          {currentStep?.key === "REVIEW" && <section className="space-y-5"><div><h4 className="text-sm font-bold text-foreground">Review Before Save</h4><p className="mt-1 text-xs text-muted-foreground">Confirm the actual structured record before it is committed to CompanyDriverStore.events.</p></div><div className="space-y-4"><div className="rounded-xl border border-border p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><RecordRow label="Category" value={definition?.label || "Select Event Category"} /><RecordRow label="Event Date" value={common.eventDate} /><RecordRow label="Source" value={common.sourceType} /><RecordRow label="Source Record" value={common.sourceRecordId} /><RecordRow label="Location" value={[common.location, common.city, common.stateProvince].filter(Boolean).join(", ")} /><RecordRow label="Verification" value={derivedVerificationState} /><RecordRow label="Dispute" value={disputeState} /><RecordRow label="Lifecycle" value={lifecycle ? (followUpRequired ? "Follow-up Required" : "Open") : "Not applicable"} /><RecordRow label="Evidence" value={`${effectiveEvidenceIds.length} linked`} />{category === "Roadside Inspection" && roadsidePreviewReconciliationConflict ? <RecordRow label="Reconciliation" value="Conflict / Review Required" /> : null}{category === "Roadside Inspection" ? <RecordRow label="Derived Inspection Outcome" value={roadsideDerivedOutcome === "PASS" ? "Pass" : roadsideDerivedOutcome === "VIOLATIONS_FOUND" ? "Violations Found" : roadsideDerivedOutcome === "OUT_OF_SERVICE" ? "Out of Service" : "Unknown / Not Provided"} /> : null}</div></div><div className="rounded-xl border border-border p-4"><div className="mb-3 flex items-center gap-2"><Link2 className="size-4 text-primary" /><span className="text-xs font-bold">Category-Specific Facts</span></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{categoryFields.map((field) => <RecordRow key={field.key} label={field.label} value={category === "Roadside Inspection" ? displayRoadsideReviewValue(field, facts[field.key] ?? null) : facts[field.key] ?? null} />)}</div></div>{category === "Roadside Inspection" ? <div className="rounded-xl border border-border p-4 space-y-3"><div className="text-xs font-bold">Inspected Equipment & Driver Statement</div><div className="space-y-2">{roadsideEquipment.map((item) => { const resolved = roadsideResolvedEquipment.find((entry) => entry.item.itemId === item.itemId)?.resolution; return <div key={item.itemId} className="rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs"><div className="font-semibold">{item.role === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}</div><div className="mt-1 text-[10px] text-muted-foreground">Source VIN: {item.sourceVin || "—"} · Plate: {item.sourcePlate || "—"} · Unit: {item.sourceUnitNumber || "—"}</div><div className="mt-1 text-[10px] text-muted-foreground">Resolution: {resolved?.state === "AUTO_RESOLVED" ? "Matched" : resolved?.state === "REVIEW_REQUIRED" ? "Conflict / Review Required" : resolved?.state === "PENDING_SOURCE_DATA" ? "Pending Source Data" : "Unresolved / External"}{resolved?.method ? ` · ${resolved.method === "VIN_GLOBAL" ? "VIN" : resolved.method === "VIN_SUFFIX_COMPANY_SCOPED" ? "Company VIN last six" : resolved.method === "PLATE_JURISDICTION" ? "Plate + Jurisdiction" : resolved.method === "UNIT_COMPANY_SCOPED" ? "Company Unit #" : "Multiple identifiers"}` : ""}{resolved?.identifierDiscrepancies?.length ? ` · Identifier note: ${resolved.identifierDiscrepancies.join(" ")}` : ""}</div></div>})}</div>{driverStatement.status !== "NOT_APPLICABLE" ? <div className="rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs"><div className="font-semibold">Driver Statement: {driverStatement.status === "OBTAINED" ? "Obtained" : driverStatement.status === "REQUESTED" ? "Requested" : driverStatement.status === "DECLINED" ? "Declined" : "Unable to Obtain"}</div><div className="mt-1 text-[10px] text-muted-foreground">{driverStatement.date || "Date not recorded"}{driverStatement.time ? ` · ${driverStatement.time}` : ""}{driverStatement.method ? ` · ${driverStatement.method === "UPLOADED_DOCUMENT" ? "Uploaded Document" : driverStatement.method}` : ""}</div></div> : null}</div> : null}
 {category !== "Roadside Inspection" ? <div className="rounded-xl border border-border p-4"><div className="mb-3 text-xs font-bold">Related Records & Evidence</div><div className="space-y-2">{applicableRelationships.length === 0 ? <p className="text-[11px] text-muted-foreground">No applicable relationships.</p> : applicableRelationships.map((item) => <div key={item.key} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs"><span className="font-semibold">{item.label}</span><span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">PENDING_SOURCE_DATA</span></div>)}</div></div> : null}</div></section>}
         </main>
 

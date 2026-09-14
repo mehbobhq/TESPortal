@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 
 // --- Shared Foundation Components ---
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
 import { ReadOnlyField, RegulatoryIdentifierField } from "@/src/components/shared/ReadOnlyField";
 import { LoadingState, EmptyState, ErrorAlert } from "@/src/components/shared/StateDisplays";
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker";
@@ -57,6 +58,7 @@ import {
   getDeadlineClasses,
 } from "@/lib/deadline-engine";
 import { recordAuditEvent } from "@/lib/audit-logger";
+import { logAuditEvent } from "@/lib/audit-log";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 
 // Standard string similarity helper for fuzzy entity candidate discovery
@@ -774,6 +776,14 @@ export default function InsurancePage() {
               details: `Uploaded insurance compliance evidence "${newEvidence.fileName}" (${evidenceId}) from source ${source}.`,
               actor: "System Administrator",
             });
+            logAuditEvent({
+              e: "DOCUMENT_UPLOADED",
+              co: companyId,
+              cn: company?.name,
+              eid: evidenceId,
+              el: newEvidence.fileName,
+              det: `Uploaded insurance compliance evidence "${newEvidence.fileName}" from source ${source}.`,
+            });
           }
         );
 
@@ -907,6 +917,14 @@ export default function InsurancePage() {
               details: `Created policy renewal ${policyNumber} (${newPolicyId}) renewing predecessor ${editingTransportation.policyNumber} (${editingTransportation.id}).`,
               actor: "System Administrator",
             });
+            logAuditEvent({
+              e: "RECORD_CREATED",
+              co: companyId,
+              cn: company?.name,
+              eid: newPolicyId,
+              el: policyNumber,
+              det: `Created policy renewal ${policyNumber} renewing predecessor ${editingTransportation.policyNumber}.`,
+            });
           }
         );
       } else if (editingTransportation) {
@@ -940,6 +958,14 @@ export default function InsurancePage() {
               role: "Compliance Administrator",
               details: `Updated transportation insurance policy ${policyNumber} (${updatedRecord.id}).`,
               actor: "System Administrator",
+            });
+            logAuditEvent({
+              e: "RECORD_UPDATED",
+              co: companyId,
+              cn: company?.name,
+              eid: updatedRecord.id,
+              el: policyNumber,
+              det: `Updated transportation insurance policy ${policyNumber}.`,
             });
           }
         );
@@ -975,6 +1001,14 @@ export default function InsurancePage() {
               role: "Compliance Administrator",
               details: `Created transportation insurance policy ${policyNumber} (${newPolicyId}) with insurer ${resolvedInsurer.name}.`,
               actor: "System Administrator",
+            });
+            logAuditEvent({
+              e: "RECORD_CREATED",
+              co: companyId,
+              cn: company?.name,
+              eid: newPolicyId,
+              el: policyNumber,
+              det: `Created transportation insurance policy ${policyNumber} with insurer ${resolvedInsurer.name}.`,
             });
           }
         );
@@ -1072,6 +1106,14 @@ export default function InsurancePage() {
             }.`,
             actor: "System Administrator",
           });
+          logAuditEvent({
+            e: "RECORD_UPDATED",
+            co: companyId,
+            cn: company?.name,
+            eid: brokerTargetRecord.id,
+            el: brokerTargetRecord.policyNumber,
+            det: `Updated broker reference to ${resolvedBrokerOrg.name} for policy ${brokerTargetRecord.policyNumber}.`,
+          });
         }
       );
 
@@ -1152,6 +1194,14 @@ export default function InsurancePage() {
               details: `Updated Workers Compensation account ${accountNumber} in ${jurisdiction} (${updated.id}).`,
               actor: "System Administrator",
             });
+            logAuditEvent({
+              e: "RECORD_UPDATED",
+              co: companyId,
+              cn: company?.name,
+              eid: updated.id,
+              el: accountNumber,
+              det: `Updated Workers Compensation account ${accountNumber} in ${jurisdiction}.`,
+            });
           }
         );
       } else {
@@ -1183,6 +1233,14 @@ export default function InsurancePage() {
               role: "Compliance Administrator",
               details: `Created Workers Compensation account ${accountNumber} (${jurisdiction}) with provider ${resolvedProvider.name}.`,
               actor: "System Administrator",
+            });
+            logAuditEvent({
+              e: "RECORD_CREATED",
+              co: companyId,
+              cn: company?.name,
+              eid: newId,
+              el: accountNumber,
+              det: `Created Workers Compensation account ${accountNumber} (${jurisdiction}) with provider ${resolvedProvider.name}.`,
             });
           }
         );
@@ -1269,6 +1327,14 @@ export default function InsurancePage() {
               details: `Updated surety bond ${bondNumber} (${bondType}) with surety ${resolvedSurety.name}.`,
               actor: "System Administrator",
             });
+            logAuditEvent({
+              e: "RECORD_UPDATED",
+              co: companyId,
+              cn: company?.name,
+              eid: updated.id,
+              el: bondNumber,
+              det: `Updated surety bond ${bondNumber} (${bondType}) with surety ${resolvedSurety.name}.`,
+            });
           }
         );
       } else {
@@ -1303,6 +1369,14 @@ export default function InsurancePage() {
               role: "Compliance Administrator",
               details: `Created surety bond ${bondNumber} (${bondType}) for amount $${bondAmount.toLocaleString()}.`,
               actor: "System Administrator",
+            });
+            logAuditEvent({
+              e: "RECORD_CREATED",
+              co: companyId,
+              cn: company?.name,
+              eid: newId,
+              el: bondNumber,
+              det: `Created surety bond ${bondNumber} (${bondType}) for amount $${bondAmount.toLocaleString()}.`,
             });
           }
         );
@@ -1377,6 +1451,14 @@ export default function InsurancePage() {
           details: `Archived ${family} record ${label} (${recordId}). Reason: ${archiveReasonText}`,
           actor: "System Administrator",
         });
+        logAuditEvent({
+          e: "RECORD_ARCHIVED",
+          co: companyId,
+          cn: company?.name,
+          eid: recordId,
+          el: label,
+          det: `Archived ${family} record ${label}. Reason: ${archiveReasonText}`,
+        });
       }
     );
 
@@ -1450,6 +1532,14 @@ export default function InsurancePage() {
           role: "Compliance Administrator",
           details: `Restored ${family} record ${label} (${recordId}) to active compliance monitoring.`,
           actor: "System Administrator",
+        });
+        logAuditEvent({
+          e: "RECORD_UPDATED",
+          co: companyId,
+          cn: company?.name,
+          eid: recordId,
+          el: label,
+          det: `Restored ${family} record ${label} to active compliance monitoring.`,
         });
       }
     );
@@ -1622,6 +1712,14 @@ export default function InsurancePage() {
             details: `Ingested Certificate of Insurance COI group ${coiGroupId} extracting ${policiesToCreate.length} coverage lines with insurer ${resolvedInsurer.name}.`,
             actor: "System Administrator",
           });
+          logAuditEvent({
+            e: "RECORD_CREATED",
+            co: companyId,
+            cn: company?.name,
+            eid: coiGroupId,
+            el: `COI ${coiGroupId}`,
+            det: `Ingested Certificate of Insurance COI group ${coiGroupId} extracting ${policiesToCreate.length} coverage lines with insurer ${resolvedInsurer.name}.`,
+          });
         }
       );
 
@@ -1760,103 +1858,79 @@ export default function InsurancePage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 pb-20 font-sans">
-      {/* 1. TOP HEADER & BREADCRUMB */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-5">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <button
-              type="button"
-              onClick={() => router.push(`/companies/${companyId}`)}
-              className="hover:text-foreground transition-colors flex items-center gap-1"
-            >
-              <ArrowLeft className="size-3.5" /> Company Profile
-            </button>
-            <ChevronRight className="size-3 text-muted-foreground/40" />
-            <span className="text-foreground">{company?.name || "Company"}</span>
-            <ChevronRight className="size-3 text-muted-foreground/40" />
-            <span className="text-primary font-bold">Insurance & Risk</span>
-          </div>
+    <div className="space-y-6 pb-20 font-sans">
+      {/* 1. TOP HEADER */}
+      {company && (
+        <CompanyWorkspaceHeader
+          company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
+          section="Insurance"
+          description="Fleet liability, cargo coverage, Workers Compensation (WCB), and surety bonds."
+          actions={
+            <>
+              <button
+                type="button"
+                onClick={() => handleOpenSourcePicker("Certificate of Insurance", (evidenceId) => {})}
+                className="flex items-center gap-2 rounded-xl border border-border bg-background px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs hover:bg-muted transition-colors"
+              >
+                <UploadCloud className="size-4 text-primary" />
+                <span>Upload Document</span>
+              </button>
 
-          <div className="mt-2 flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 shadow-xs">
-              <ShieldCheck className="size-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                Insurance & Risk Management
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                Fleet liability, cargo coverage, Workers Compensation (WCB), and surety bonds.
-              </p>
-            </div>
-          </div>
-        </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDocumentTargetDescription("Live COI Certificate");
+                  setIsCameraOpen(true);
+                }}
+                className="flex items-center gap-2 rounded-xl border border-border bg-background px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs hover:bg-muted transition-colors"
+              >
+                <Camera className="size-4 text-primary" />
+                <span>Scan with Camera</span>
+              </button>
 
-        {/* Global Action Bar */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => handleOpenSourcePicker("Certificate of Insurance", (evidenceId) => {})}
-            className="flex items-center gap-2 rounded-xl border border-border bg-background px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs hover:bg-muted transition-colors"
-          >
-            <UploadCloud className="size-4 text-primary" />
-            <span>Upload Document</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setDocumentTargetDescription("Live COI Certificate");
-              setIsCameraOpen(true);
-            }}
-            className="flex items-center gap-2 rounded-xl border border-border bg-background px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs hover:bg-muted transition-colors"
-          >
-            <Camera className="size-4 text-primary" />
-            <span>Scan with Camera</span>
-          </button>
-
-          {/* New Policy Dropdown / Buttons */}
-          <div className="flex items-center gap-1 bg-primary text-primary-foreground rounded-xl p-0.5 shadow-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setEditingTransportation(null);
-                setIsRenewalMode(false);
-                setIsTransportationModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold hover:bg-primary-foreground/10 rounded-lg transition-colors"
-            >
-              <Plus className="size-3.5" />
-              <span>Add Transportation Policy</span>
-            </button>
-            <span className="opacity-30">|</span>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingWorkers(null);
-                setIsWorkersModalOpen(true);
-              }}
-              className="px-2.5 py-1.5 text-xs font-semibold hover:bg-primary-foreground/10 rounded-lg transition-colors"
-              title="Add WCB / Workers Account"
-            >
-              WCB
-            </button>
-            <span className="opacity-30">|</span>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingBond(null);
-                setIsBondModalOpen(true);
-              }}
-              className="px-2.5 py-1.5 text-xs font-semibold hover:bg-primary-foreground/10 rounded-lg transition-colors"
-              title="Add Surety Bond"
-            >
-              Bond
-            </button>
-          </div>
-        </div>
-      </div>
+              {/* New Policy Dropdown / Buttons */}
+              <div className="flex items-center gap-1 bg-primary text-primary-foreground rounded-xl p-0.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingTransportation(null);
+                    setIsRenewalMode(false);
+                    setIsTransportationModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold hover:bg-primary-foreground/10 rounded-lg transition-colors"
+                >
+                  <Plus className="size-3.5" />
+                  <span>Add Transportation Policy</span>
+                </button>
+                <span className="opacity-30">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingWorkers(null);
+                    setIsWorkersModalOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-semibold hover:bg-primary-foreground/10 rounded-lg transition-colors"
+                  title="Add WCB / Workers Account"
+                >
+                  WCB
+                </button>
+                <span className="opacity-30">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingBond(null);
+                    setIsBondModalOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-semibold hover:bg-primary-foreground/10 rounded-lg transition-colors"
+                  title="Add Surety Bond"
+                >
+                  Bond
+                </button>
+              </div>
+            </>
+          }
+        />
+      )}
 
       {/* ERROR BANNER */}
       {errorBanner && (

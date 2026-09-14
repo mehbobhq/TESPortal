@@ -183,11 +183,12 @@ export function validateVehicleUniqueness(
   return { isValid: true };
 }
 
-export type VehicleIdentifierResolutionMethod = "VIN_GLOBAL" | "PLATE_JURISDICTION" | "UNIT_COMPANY_SCOPED" | "MULTI_IDENTIFIER_AGREEMENT";
+export type VehicleIdentifierResolutionMethod = "VIN_GLOBAL" | "VIN_SUFFIX_COMPANY_SCOPED" | "PLATE_JURISDICTION" | "UNIT_COMPANY_SCOPED" | "MULTI_IDENTIFIER_AGREEMENT";
 export type VehicleIdentifierResolutionState = "PENDING_SOURCE_DATA" | "AUTO_RESOLVED" | "UNRESOLVED" | "REVIEW_REQUIRED";
 
 export interface VehicleIdentifierResolutionInput {
   vin?: string;
+  vinMatchMode?: "FULL" | "LAST_6";
   plate?: string;
   plateJurisdiction?: string;
   unitNumber?: string;
@@ -211,6 +212,33 @@ function normalizeIdentifier(value: string | undefined): string {
   return value ? value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
 }
 
+function normalizePlateOcrEquivalence(value: string | undefined): string {
+  return normalizeIdentifier(value).replace(/O/g, "0").replace(/B/g, "8");
+}
+
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function vinSimilarity(sourceVin: string | undefined, canonicalVin: string | undefined): number {
+  const source = normalizeVIN(sourceVin || "");
+  const canonical = normalizeVIN(canonicalVin || "");
+  if (!source || !canonical) return 0;
+  if (source.length >= 6 && canonical.endsWith(source.slice(-6))) return 1;
+  const tailLength = Math.min(source.length, canonical.length, 12);
+  if (!tailLength) return 0;
+  const sourceTail = source.slice(-tailLength);
+  const canonicalTail = canonical.slice(-tailLength);
+  return 1 - editDistance(sourceTail, canonicalTail) / Math.max(sourceTail.length, canonicalTail.length);
+}
+
 function registrationEffectiveOn(record: VehicleRegistrationRecord, asOfDate: string): boolean {
   if (record.archived || record.status === "Cancelled" || record.status === "Replaced") return false;
   if (record.registrationDate && record.registrationDate.slice(0, 10) > asOfDate) return false;
@@ -226,7 +254,7 @@ function loadAllCompanyVehicleRecords(): Array<{ companyId: string; companyName?
     try {
       const store = loadVehicleStore(company.id);
       for (const vehicle of store.vehicles) {
-        if (vehicle.status === "Archived" || vehicle.status === "Inactive") continue;
+        if (vehicle.status === "Archived") continue;
         results.push({ companyId: company.id, companyName: company.name, vehicle, store });
       }
     } catch {}
@@ -236,11 +264,12 @@ function loadAllCompanyVehicleRecords(): Array<{ companyId: string; companyName?
 
 function vehiclePlateMatches(entry: { vehicle: VehicleRecord; store: VehicleStore }, plate: string, jurisdiction: string, asOfDate: string): boolean {
   const normalizedPlate = normalizeIdentifier(plate);
+  const ocrPlate = normalizePlateOcrEquivalence(plate);
   const normalizedJurisdiction = normalizeIdentifier(jurisdiction);
   if (!normalizedPlate || !normalizedJurisdiction) return false;
   const historical = entry.store.registrationRecords.some((record) =>
     record.vehicleId === entry.vehicle.id &&
-    normalizeIdentifier(record.plate) === normalizedPlate &&
+    (normalizeIdentifier(record.plate) === normalizedPlate || normalizePlateOcrEquivalence(record.plate) === ocrPlate) &&
     normalizeIdentifier(record.stateProvince) === normalizedJurisdiction &&
     registrationEffectiveOn(record, asOfDate)
   );
@@ -248,14 +277,38 @@ function vehiclePlateMatches(entry: { vehicle: VehicleRecord; store: VehicleStor
   const embedded = entry.vehicle.registration;
   return Boolean(
     embedded &&
-    normalizeIdentifier(embedded.plateNumber) === normalizedPlate &&
+    (normalizeIdentifier(embedded.plateNumber) === normalizedPlate || normalizePlateOcrEquivalence(embedded.plateNumber) === ocrPlate) &&
     normalizeIdentifier(embedded.jurisdiction) === normalizedJurisdiction
+  );
+}
+
+function vehicleHistoricalPlateMatches(entry: { companyId: string; vehicle: VehicleRecord; store: VehicleStore }, operatingCompanyId: string, plate: string, jurisdiction: string): boolean {
+  if (entry.companyId !== operatingCompanyId) return false;
+  const normalizedPlate = normalizeIdentifier(plate);
+  const ocrPlate = normalizePlateOcrEquivalence(plate);
+  const normalizedJurisdiction = normalizeIdentifier(jurisdiction);
+  const jurisdictionMatches = (value: string | undefined) => !normalizedJurisdiction || normalizeIdentifier(value) === normalizedJurisdiction;
+  if (!normalizedPlate) return false;
+  const historical = entry.store.registrationRecords.some((record) =>
+    record.vehicleId === entry.vehicle.id &&
+    !record.archived &&
+    jurisdictionMatches(record.stateProvince) &&
+    (normalizeIdentifier(record.plate) === normalizedPlate || normalizePlateOcrEquivalence(record.plate) === ocrPlate)
+  );
+  if (historical) return true;
+  const embedded = entry.vehicle.registration;
+  return Boolean(
+    embedded &&
+    jurisdictionMatches(embedded.jurisdiction) &&
+    (normalizeIdentifier(embedded.plateNumber) === normalizedPlate || normalizePlateOcrEquivalence(embedded.plateNumber) === ocrPlate)
   );
 }
 
 /**
  * Platform-capable Vehicle identity resolution used by Performance and future modules.
- * VIN is global, Plate+jurisdiction is global/temporal, Unit is company-scoped only.
+ * Full VIN is global, Plate+jurisdiction is global/temporal, Unit is company-scoped only.
+ * Roadside inspections may source only the last six VIN characters for the
+ * Power Unit. That suffix is resolved only inside the operating company.
  * This function resolves identity only; it never establishes ownership, custody, responsibility, or attribution.
  */
 export function resolveCanonicalVehicleByIdentifiers(
@@ -264,7 +317,9 @@ export function resolveCanonicalVehicleByIdentifiers(
   asOfDate: string = todayISO(),
 ): CanonicalVehicleResolution {
   const evaluatedAt = isoNow();
-  const vin = normalizeIdentifier(identifiers.vin);
+  const vin = normalizeVIN(identifiers.vin || "");
+  const vinMatchMode = identifiers.vinMatchMode || "FULL";
+  const vinSuffix = vinMatchMode === "LAST_6" && vin.length >= 6 ? vin.slice(-6) : vin;
   const plate = normalizeIdentifier(identifiers.plate);
   const jurisdiction = normalizeIdentifier(identifiers.plateJurisdiction);
   const unit = normalizeIdentifier(identifiers.unitNumber);
@@ -276,8 +331,14 @@ export function resolveCanonicalVehicleByIdentifiers(
   const byId = new Map<string, { companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }>();
   for (const entry of all) byId.set(`${entry.companyId}:${entry.vehicle.id}`, entry);
 
-  const vinMatches = vin ? all.filter((entry) => normalizeIdentifier(entry.vehicle.vin) === vin) : [];
+  const vinMatches = vin
+    ? vinMatchMode === "LAST_6"
+      ? all.filter((entry) => entry.companyId === operatingCompanyId && vinSuffix.length === 6 && normalizeVIN(entry.vehicle.vin || "").endsWith(vinSuffix))
+      : all.filter((entry) => normalizeVIN(entry.vehicle.vin || "") === vin)
+    : [];
   const plateMatches = plate && jurisdiction ? all.filter((entry) => vehiclePlateMatches(entry, plate, jurisdiction, asOfDate)) : [];
+  const historicalPlateMatches = plate ? all.filter((entry) => vehicleHistoricalPlateMatches(entry, operatingCompanyId, plate, jurisdiction)) : [];
+  const historicalPlateVinMatches = historicalPlateMatches.filter((entry) => vinSimilarity(identifiers.vin, entry.vehicle.vin) >= 0.98);
   const unitMatches = unit ? all.filter((entry) => entry.companyId === operatingCompanyId && normalizeIdentifier(entry.vehicle.unitNumber) === unit) : [];
 
   const candidateSets: Array<{ source: "VIN" | "PLATE" | "UNIT"; entries: typeof all }> = [];
@@ -303,8 +364,10 @@ export function resolveCanonicalVehicleByIdentifiers(
   );
 
   const conflicts: string[] = [];
-  if (vinMatches.length > 1) conflicts.push("VIN identifies multiple active canonical Vehicle records.");
+  if (vinMatches.length > 1) conflicts.push(vinMatchMode === "LAST_6" ? "VIN suffix identifies multiple active Vehicles inside the operating company." : "VIN identifies multiple active canonical Vehicle records.");
   if (plateMatches.length > 1) conflicts.push("Plate + issuing jurisdiction identify multiple active/effective canonical Vehicle records.");
+  if (!vinMatches.length && !plateMatches.length && historicalPlateVinMatches.length > 1) conflicts.push("Historical Plate + VIN similarity identify multiple company Vehicles.");
+  if (!vinMatches.length && !plateMatches.length && historicalPlateMatches.length > 1 && !historicalPlateVinMatches.length) conflicts.push("Historical Plate identifies multiple company Vehicles and source VIN did not produce a confirming close match.");
   const authoritativeConflict = Boolean(
     vinMatches.length &&
     plateMatches.length &&
@@ -323,8 +386,8 @@ export function resolveCanonicalVehicleByIdentifiers(
   if (plateMatches.length && unit && !plateMatches.some((entry) => unitMatches.some((u) => u.companyId === entry.companyId && u.vehicle.id === entry.vehicle.id)) && !identifierDiscrepancies.length) {
     identifierDiscrepancies.push("Source Unit Number differs from the canonical Vehicle identified by Plate + Jurisdiction.");
   }
-  if (authoritativeConflict || vinMatches.length > 1 || plateMatches.length > 1) {
-    return { state: "REVIEW_REQUIRED", method: undefined, reason: "IDENTITY / REGISTRATION CONFLICT", conflicts, identifierDiscrepancies, candidateVehicleIds: union.map((entry) => entry.vehicle.id), evaluatedAt };
+  if (authoritativeConflict || vinMatches.length > 1 || plateMatches.length > 1 || conflicts.length) {
+    return { state: "REVIEW_REQUIRED", method: undefined, reason: "IDENTITY / REGISTRATION CONFLICT", conflicts, identifierDiscrepancies, candidateVehicleIds: distinct([...union, ...historicalPlateMatches]).map((entry) => entry.vehicle.id), evaluatedAt };
   }
 
   // Authoritative identifiers determine physical identity before the weaker
@@ -332,15 +395,16 @@ export function resolveCanonicalVehicleByIdentifiers(
   // cannot make an otherwise deterministic VIN/Plate resolution disappear.
   const authoritativeMatches = vinMatches.length === 1 ? vinMatches : plateMatches.length === 1 ? plateMatches : [];
   const authoritativeWinner = authoritativeMatches.length === 1 ? authoritativeMatches[0] : undefined;
-  const winner = authoritativeWinner || (intersections.length === 1 ? intersections[0] : availableSets.length === 1 && availableSets[0].entries.length === 1 ? availableSets[0].entries[0] : undefined);
+  const historicalWinner = !authoritativeWinner && !plateMatches.length && !vinMatches.length && historicalPlateVinMatches.length === 1 ? historicalPlateVinMatches[0] : undefined;
+  const winner = authoritativeWinner || historicalWinner || (intersections.length === 1 ? intersections[0] : availableSets.length === 1 && availableSets[0].entries.length === 1 ? availableSets[0].entries[0] : undefined);
   if (winner) {
-    const authoritativeMethod: VehicleIdentifierResolutionMethod | undefined = authoritativeVinPlateAgreement ? "MULTI_IDENTIFIER_AGREEMENT" : vinMatches.length === 1 ? "VIN_GLOBAL" : plateMatches.length === 1 ? "PLATE_JURISDICTION" : undefined;
+    const authoritativeMethod: VehicleIdentifierResolutionMethod | undefined = authoritativeVinPlateAgreement ? "MULTI_IDENTIFIER_AGREEMENT" : vinMatches.length === 1 ? vinMatchMode === "LAST_6" ? "VIN_SUFFIX_COMPANY_SCOPED" : "VIN_GLOBAL" : plateMatches.length === 1 ? "PLATE_JURISDICTION" : historicalWinner ? "MULTI_IDENTIFIER_AGREEMENT" : undefined;
     const method: VehicleIdentifierResolutionMethod = authoritativeMethod || (availableSets.length > 1 ? "MULTI_IDENTIFIER_AGREEMENT" : availableSets[0].source === "UNIT" ? "UNIT_COMPANY_SCOPED" : availableSets[0].source === "VIN" ? "VIN_GLOBAL" : "PLATE_JURISDICTION");
-    const matchedPlate = winner.store.registrationRecords.find((record) => normalizeIdentifier(record.plate) === plate && normalizeIdentifier(record.stateProvince) === jurisdiction && registrationEffectiveOn(record, asOfDate));
+    const matchedPlate = winner.store.registrationRecords.find((record) => (normalizeIdentifier(record.plate) === plate || normalizePlateOcrEquivalence(record.plate) === normalizePlateOcrEquivalence(plate)) && (!jurisdiction || normalizeIdentifier(record.stateProvince) === jurisdiction));
     return {
       state: "AUTO_RESOLVED",
       method,
-      reason: method === "VIN_GLOBAL" ? "Resolved by global VIN match." : method === "PLATE_JURISDICTION" ? "Resolved by Plate + issuing jurisdiction and effective registration." : method === "UNIT_COMPANY_SCOPED" ? "Resolved by Unit / Equipment Number within the operating-company context only." : "Multiple supplied identifiers agree on one canonical Vehicle.",
+      reason: historicalWinner ? "Resolved by company historical Plate registration confirmed by close source VIN match." : method === "VIN_GLOBAL" ? "Resolved by global VIN match." : method === "VIN_SUFFIX_COMPANY_SCOPED" ? "Resolved by company-scoped VIN last-six match." : method === "PLATE_JURISDICTION" ? "Resolved by Plate + issuing jurisdiction and effective registration." : method === "UNIT_COMPANY_SCOPED" ? "Resolved by Unit / Equipment Number within the operating-company context only." : "Multiple supplied identifiers agree on one canonical Vehicle.",
       canonicalVehicle: winner.vehicle,
       canonicalCompanyId: winner.companyId,
       canonicalCompanyName: winner.companyName,

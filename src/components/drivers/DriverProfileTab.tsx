@@ -89,7 +89,7 @@ export function DriverProfileTab({
     addressLine1: address?.addressLine1 || "",
     addressLine2: address?.addressLine2 || "",
     city: address?.city || "",
-    stateProvince: address?.stateProvince || "ON",
+    stateProvince: address?.stateProvince || "",
     postalZip: address?.postalZip || "",
     country: address?.country || ("Canada" as "Canada" | "United States"),
     effectiveFrom: address?.effectiveFrom || new Date().toISOString().slice(0, 10),
@@ -221,6 +221,18 @@ export function DriverProfileTab({
                   placeholder="(XXX) XXX-XXXX"
                   value={identityDraft.phone}
                   onChange={(e) => setIdentityDraft({ ...identityDraft, phone: e.target.value })}
+                  className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={identityDraft.email}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, email: e.target.value })}
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>

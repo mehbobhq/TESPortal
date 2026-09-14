@@ -47,16 +47,16 @@ export function AppSidebar() {
         collapsible="icon"
         className="border-r border-sidebar-border/60 bg-sidebar shadow-sm"
       >
-      <SidebarHeader className="border-b border-sidebar-border/60 px-2 pb-3 pt-3">
+      <SidebarHeader className="border-b border-sidebar-border/60 px-2 pb-2 pt-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              size="lg"
+              size="sm"
               asChild
               className="group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0! rounded-xl px-2 hover:bg-sidebar-accent/60"
             >
               <Link href="/" className="flex items-center gap-3">
-                <div className="flex shrink-0 aspect-square size-9 items-center justify-center rounded-xl bg-primary/10 border border-primary/15 shadow-sm overflow-hidden transition-transform duration-200 group-hover:scale-[1.03]">
+                <div className="flex shrink-0 aspect-square size-8 items-center justify-center rounded-xl bg-primary/10 border border-primary/15 shadow-sm overflow-hidden transition-transform duration-200 group-hover:scale-[1.03]">
                   <Image 
                     src="/logo.png" 
                     alt="TES Logo" 
@@ -66,7 +66,7 @@ export function AppSidebar() {
                   />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-bold tracking-tight text-lg text-foreground">
+                  <span className="truncate font-bold tracking-tight text-base text-foreground">
                     TES
                   </span>
                   <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
@@ -79,14 +79,14 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent className="px-2.5 py-3 scrollbar-hide">
+      <SidebarContent className="px-2.5 py-2 scrollbar-hide">
         <div className="space-y-1">
         
         {/* ========================================================= */}
         {/* SECTION 1: PLATFORM (Global Navigation)                   */}
         {/* ========================================================= */}
         <SidebarGroup className="p-0">
-          <SidebarGroupLabel className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+          <SidebarGroupLabel className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
             Platform
           </SidebarGroupLabel>
           <SidebarMenu className="gap-0.5">
@@ -121,7 +121,7 @@ export function AppSidebar() {
                       isActive={isActive} 
                       tooltip={item.title}
                       className={`
-                        h-10 rounded-lg transition-colors duration-150 group relative
+                        h-8 rounded-lg transition-colors duration-150 group relative
                         data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
                         hover:bg-sidebar-accent/70
                       `}
@@ -146,14 +146,14 @@ export function AppSidebar() {
         {/* SECTION 2: COMPANY WORKSPACE (Contextual Navigation)      */}
         {/* ========================================================= */}
         {activeCompany && (
-          <SidebarGroup className="mt-4 pt-4 border-t border-sidebar-border/50">
-            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 px-3">
+          <SidebarGroup className="mt-3 pt-3 border-t border-sidebar-border/50">
+            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 px-3">
               Workspace Environment
             </SidebarGroupLabel>
-            
+
             {/* ⚓ THE BEAUTIFUL CONTEXT ANCHOR CARD ⚓ */}
-            <div className="mb-4 px-1">
-              <div className="relative flex flex-col gap-1.5 overflow-hidden rounded-xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/[0.03] to-transparent p-3 shadow-sm">
+            <div className="mb-3 px-1">
+              <div className="relative flex flex-col gap-1.5 overflow-hidden rounded-xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/[0.03] to-transparent p-2.5 shadow-sm">
                 {/* Subtle top-glow effect */}
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
                 
@@ -181,10 +181,10 @@ export function AppSidebar() {
                 // Strip 'Customers' out of the Company Workspace list
                 let processedItems = group.items.filter(item => item.title !== "Customers")
                 
-                const isCustomerOrProspect = activeCompany.kind === "Customer" || activeCompany.kind === "Prospect"
+                const isCustomerOnly = activeCompany.kind === "Customer"
                 const allowedForOthers = ["Profile", "Contacts", "Credentials", "Settings"]
 
-                if (!isCustomerOrProspect) {
+                if (!isCustomerOnly) {
                   processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
                 }
 
@@ -212,7 +212,7 @@ export function AppSidebar() {
                         isActive={isActive} 
                         tooltip={item.title}
                         className={`
-                          h-9 rounded-lg text-sm transition-colors duration-150 relative
+                          h-8 rounded-lg text-sm transition-colors duration-150 relative
                           data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
                           hover:bg-sidebar-accent/70
                         `}
@@ -238,14 +238,14 @@ export function AppSidebar() {
       {/* ========================================================= */}
       {/* SECTION 3: FOOTER (User Profile)                          */}
       {/* ========================================================= */}
-      <SidebarFooter className="border-sidebar-border/60 border-t bg-sidebar/95 p-2.5">
+      <SidebarFooter className="border-sidebar-border/60 border-t bg-sidebar/95 p-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
                 size="lg"
                 className="rounded-xl border border-transparent px-2.5 transition-colors hover:border-sidebar-border/60 hover:bg-sidebar-accent/70 group-data-[collapsible=icon]:justify-center"
               >
-              <Avatar className="size-9 rounded-xl border border-primary/15 shadow-sm">
+              <Avatar className="size-8 rounded-xl border border-primary/15 shadow-sm">
                 <AvatarFallback className="bg-primary/10 text-primary font-bold rounded-lg text-sm">
                   MB
                 </AvatarFallback>

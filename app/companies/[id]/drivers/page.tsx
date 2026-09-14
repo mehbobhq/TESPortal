@@ -3,7 +3,7 @@
 import { use, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Plus, Search, Upload, UserPlus, Users, X } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { StatCard } from "@/components/stat-card"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -37,7 +37,24 @@ export default function DriversPage({params}:{params:Promise<{id:string}>}){
  if(loadError)return <Card><CardContent className="p-8"><div className="font-semibold">Driver records could not be loaded.</div><div className="mt-2 text-sm text-muted-foreground">{loadError}</div></CardContent></Card>
  if(!company)return <Card><CardContent className="p-8">Company not found.</CardContent></Card>
  return <div className="space-y-6">
-  <PageHeader title="Drivers" description={`${company.name} · Driver compliance records`} actions={<div className="flex gap-2"><Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button><Button onClick={()=>setOpen(true)}><Plus className="mr-2 size-4"/>Add Driver</Button></div>}/>
+  {company ? (
+    <CompanyWorkspaceHeader
+      company={{
+        id: company.id,
+        name: company.name,
+        kind: (company as any).kind ?? "Customer",
+        status: company.status ?? "Active",
+      }}
+      section="Drivers"
+      description="Driver compliance records"
+      actions={
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button>
+          <Button onClick={()=>setOpen(true)}><Plus className="mr-2 size-4"/>Add Driver</Button>
+        </div>
+      }
+    />
+  ) : null}
   <div className="grid gap-4 md:grid-cols-4">
   <StatCard
     label="Driver Records"

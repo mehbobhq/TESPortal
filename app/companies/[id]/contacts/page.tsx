@@ -40,6 +40,7 @@ import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker";
 import { CameraCapture } from "@/src/components/CameraCapture";
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer";
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
 
 // --- Types & Interfaces ---
 
@@ -1015,71 +1016,60 @@ export default function ContactsPage() {
     );
   }
 
+  const contactsActions = (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setManualForm({
+            firstName: "",
+            lastName: "",
+            dob: "",
+            dlNumber: "",
+            dlState: "ON",
+            dlExpiry: "",
+            dlIssueDate: "",
+            dlClass: "",
+            dlRestrictions: "",
+            email: "",
+            phone: "",
+            role: "Safety Manager",
+            isPrimary: false,
+            notes: "",
+          });
+          setManualFormErrors({});
+          setManualDuplicateWarning(null);
+          setIsManualModalOpen(true);
+        }}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3.5 py-2 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
+      >
+        <UserPlus className="size-3.5" />
+        Manual Add
+      </button>
+      <button
+        type="button"
+        onClick={() => setIsSourcePickerOpen(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
+      >
+        <Sparkles className="size-3.5" />
+        Upload ID for OCR
+      </button>
+    </>
+  );
+
   return (
     <div className="flex flex-col gap-6 pb-12">
-      {/* 1. TOP HEADER & DIRECTORY STATS BAR */}
+      <CompanyWorkspaceHeader
+        company={company}
+        section="Contacts"
+        description="Canonical personnel register, identity credentials, multi-company relationships, and compliance evidence."
+        actions={contactsActions}
+      />
+
+      {/* 1. DIRECTORY STATS BAR */}
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-              <Users className="size-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-foreground">Company Contacts</h1>
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
-                  {company.name}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Canonical personnel register, identity credentials, multi-company relationships, and compliance evidence.
-              </p>
-            </div>
-          </div>
-
-          {/* Action CTAs */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setManualForm({
-                  firstName: "",
-                  lastName: "",
-                  dob: "",
-                  dlNumber: "",
-                  dlState: "ON",
-                  dlExpiry: "",
-                  dlIssueDate: "",
-                  dlClass: "",
-                  dlRestrictions: "",
-                  email: "",
-                  phone: "",
-                  role: "Safety Manager",
-                  isPrimary: false,
-                  notes: "",
-                });
-                setManualFormErrors({});
-                setManualDuplicateWarning(null);
-                setIsManualModalOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3.5 py-2 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
-            >
-              <UserPlus className="size-3.5" />
-              Manual Add
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsSourcePickerOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
-            >
-              <Sparkles className="size-3.5" />
-              Upload ID for OCR
-            </button>
-          </div>
-        </div>
-
         {/* Stats Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-border">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-lg bg-muted/40 p-3 border border-border">
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Active Personnel</p>
             <p className="text-lg font-bold text-foreground mt-0.5">

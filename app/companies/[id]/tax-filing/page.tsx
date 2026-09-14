@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 
 import { recordAuditEvent } from "@/lib/audit-logger"
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
@@ -1701,26 +1702,13 @@ export default function TaxFilingsPage() {
 
   return (
     <>
-      <div className="flex max-w-[1600px] flex-col gap-6 pb-12">
+      <div className="flex flex-col gap-6 pb-12">
         {/* HEADER & OPERATIONAL SUMMARY */}
         <div>
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => router.push(`/companies/${company.id}/profile`)}
-              aria-label="Back to Company Profile"
-              className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="size-4" />
-            </button>
-
-            <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">Tax Filing</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {company.name} <span className="font-mono text-xs">({company.id})</span>
-              </p>
-            </div>
-          </div>
+          <CompanyWorkspaceHeader
+            company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
+            section="Tax Filing"
+          />
 
           <div className="mt-5 rounded-2xl border border-border bg-card p-5 shadow-xs">
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

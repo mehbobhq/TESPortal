@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react"
 
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -751,43 +752,26 @@ export default function SettingsPage() {
     <div className="mx-auto flex w-full max-w-[1280px] flex-col pb-12">
       {/* HEADER */}
       <div className="border-b pb-6">
-        <div className="flex items-start gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleBack}
-            className="mt-0.5 shrink-0"
-            aria-label="Back to company profile"
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                Compliance Profile
-              </h1>
-
-              {!isDirty && savedAt ? (
+        {company ? (
+          <CompanyWorkspaceHeader
+            company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
+            section="Compliance Profile"
+            actions={
+              !isDirty && savedAt ? (
                 <span className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
                   <Check className="size-3" />
                   Saved {savedAt}
                 </span>
-              ) : null}
-            </div>
+              ) : undefined
+            }
+          />
+        ) : null}
 
-            <p className="mt-1 text-sm text-muted-foreground">
-              {company.name}
-              {company.id ? ` · ${company.id}` : ""}
-            </p>
-
-            <p className="mt-4 max-w-3xl text-sm leading-6 text-muted-foreground">
-              Tell TES which compliance rules actually apply to this company.
-              These choices shape the alerts, document requirements, and
-              compliance checks the system generates.
-            </p>
-          </div>
-        </div>
+        <p className="mt-4 max-w-3xl text-sm leading-6 text-muted-foreground">
+          Tell TES which compliance rules actually apply to this company.
+          These choices shape the alerts, document requirements, and
+          compliance checks the system generates.
+        </p>
       </div>
 
       {/* MAIN LAYOUT */}

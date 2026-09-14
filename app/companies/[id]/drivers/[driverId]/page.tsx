@@ -9,6 +9,7 @@ import {
   loadCompanyDriverStore,
   loadDriverMasterStore,
 } from "@/lib/driver-data"
+import { logAuditEvent } from "@/lib/audit-log"
 
 import type {
   CompanyDriverStore,
@@ -44,6 +45,23 @@ export default function DriverPage({ params }: DriverPageProps) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!masterStore || !companyStore) return
+    const foundMaster = masterStore.drivers.find(
+      (driver) => driver.id === driverId || driver.driverMasterId === driverId
+    )
+    const foundCompany = getCompany(companyId)
+    if (!foundMaster || !foundCompany) return
+    logAuditEvent({
+      e: "SENSITIVE_RECORD_ACCESSED",
+      co: companyId,
+      cn: foundCompany.name,
+      eid: driverId,
+      el: `${foundMaster.identity.legalFirstName} ${foundMaster.identity.legalLastName}`.trim(),
+      det: "Driver compliance record opened",
+    })
+  }, [driverId, masterStore, companyStore])
 
   if (!masterStore || !companyStore) {
     return (

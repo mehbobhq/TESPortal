@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   DriverMaster,
   CompanyDriverRelationship,
@@ -17,8 +17,8 @@ import {
   CompanyDetermination,
   PerformanceSourceIngestionItem,
 } from "@/types/drivers";
-import { DriverHeader } from "./DriverHeader";
-import { getQueryParam } from "@/lib/deep-linking";
+import { DriverHeader, DRIVER_TABS } from "./DriverHeader";
+import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DriverProfileTab } from "./DriverProfileTab";
 import { DriverQualificationsTab } from "./DriverQualificationsTab";
 import { DriverDocumentsTab } from "./DriverDocumentsTab";
@@ -31,6 +31,7 @@ import { SecureDocumentViewer } from "../shared/SecureDocumentViewer";
 import { DocumentSourcePicker } from "../shared/DocumentSourcePicker";
 import { OCRReview } from "../shared/OCRReview";
 import { UnsavedChangesPrompt } from "../shared/UnsavedChangesPrompt";
+import type { RoadsideMachineSourceRecord } from "@/lib/roadside-machine-schema";
 import {
   updateDriverMasterIdentity,
   updateCompanyDriverRelationship,
@@ -54,6 +55,8 @@ import {
   addCompanyDetermination,
 } from "@/lib/driver-data";
 import { reevaluatePerformanceRelationshipsAfterSourceMutation } from "@/lib/driver-performance-relationship-resolution";
+import { getEvidencePayloads, migrateLegacyDriverEvidencePayloads, putEvidencePayload } from "@/lib/evidence-payload-store";
+import { logAuditEvent } from "@/lib/audit-log";
 
 export interface DriverWorkspaceProps {
   master: DriverMaster;
@@ -99,16 +102,39 @@ export function DriverWorkspace({
   onBack,
   onRefresh,
 }: DriverWorkspaceProps) {
-  const [activeTab, setActiveTab] = useState<string>(() => getQueryParam("performanceView") ? "performance" : "profile");
+  type DriverTab = (typeof DRIVER_TABS)[number]["id"];
+  const resolveDriverTab = (): DriverTab => {
+    if (getQueryParam("performanceView")) return "performance";
+    const requested = getQueryParam("driverTab");
+    return DRIVER_TABS.some((tab) => tab.id === requested) ? (requested as DriverTab) : "profile";
+  };
+
+  const [activeTab, setActiveTab] = useState<DriverTab>(resolveDriverTab);
 
   useEffect(() => {
-    const syncPerformanceRoute = () => {
-      setActiveTab(getQueryParam("performanceView") ? "performance" : "profile");
-    };
-    syncPerformanceRoute();
-    window.addEventListener("popstate", syncPerformanceRoute);
-    return () => window.removeEventListener("popstate", syncPerformanceRoute);
+    const syncDriverRoute = () => setActiveTab(resolveDriverTab());
+    syncDriverRoute();
+    window.addEventListener("popstate", syncDriverRoute);
+    return () => window.removeEventListener("popstate", syncDriverRoute);
   }, []);
+
+  useEffect(() => {
+    logAuditEvent({
+      e: "TAB_CHANGE",
+      co: company.id,
+      cn: company.name,
+      rt: typeof window !== "undefined" ? window.location.pathname : undefined,
+      tab: activeTab,
+      sf: ({
+        screening: ["MEDICAL_CERT", "DRUG_TEST", "MEDICAL_EXPIRY"],
+        qualifications: ["LICENCE_NUMBER", "LICENCE_CLASS"],
+        documents: ["DRIVER_APPLICATION", "HIRING_PACKAGE"],
+        performance: ["ROADSIDE_FINDINGS", "VIOLATIONS"],
+        profile: [],
+        training: [],
+      } as Record<string, string[]>)[activeTab] ?? [],
+    });
+  }, [activeTab]);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Modals
@@ -131,11 +157,48 @@ export function DriverWorkspace({
   const [eventEvidenceMode, setEventEvidenceMode] = useState(false);
   const [performanceSourceMode, setPerformanceSourceMode] = useState(false);
   const [pendingPerformanceSources, setPendingPerformanceSources] = useState<PerformanceSourceIngestionItem[]>([]);
+  const [evidencePayloads, setEvidencePayloads] = useState<Record<string, { dataUrl: string; mimeType: string }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateEvidencePayloads = async () => {
+      try {
+        await migrateLegacyDriverEvidencePayloads(company.id, evidence);
+        const stored = await getEvidencePayloads(evidence.map((item) => item.id));
+        if (!cancelled) {
+          setEvidencePayloads((current) => {
+            const next = { ...current };
+            for (const [id, payload] of Object.entries(stored)) {
+              next[id] = { dataUrl: payload.dataUrl, mimeType: payload.mimeType };
+            }
+            return next;
+          });
+        }
+      } catch (error) {
+        console.error("Unable to hydrate TES evidence payload storage.", error);
+      }
+    };
+
+    void hydrateEvidencePayloads();
+    return () => { cancelled = true; };
+  }, [company.id, evidence]);
+
+  const evidenceWithPayloads = evidence.map((item) => {
+    const payload = evidencePayloads[item.id];
+    return payload ? { ...item, dataUrl: payload.dataUrl, mimeType: payload.mimeType || item.mimeType } : item;
+  });
 
   useEffect(() => {
     setPendingPerformanceSources(loadCompanyDriverStore(company.id).performanceIngestionItems?.filter((item) => item.driverMasterId === master.id) || []);
   }, [company.id, master.id, events.length, evidence.length]);
   const [eventEvidenceCreatedId, setEventEvidenceCreatedId] = useState<string | null>(null);
+  const [machineAcquisitionDraft, setMachineAcquisitionDraft] = useState<RoadsideMachineSourceRecord | null>(null);
+  const machineAcquisitionDraftRef = useRef<RoadsideMachineSourceRecord | null>(null);
+  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [openAddEventModalSignal, setOpenAddEventModalSignal] = useState(false);
+  const [autoSaveNotification, setAutoSaveNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [ocrReviewData, setOcrReviewData] = useState<{
     docName: string;
     dataUrl: string;
@@ -149,8 +212,26 @@ export function DriverWorkspace({
   const openReviewsCount = master.jurisdictionReviews?.filter((r) => r.status === "OPEN").length || 0;
 
   const handleOpenEvidenceById = (evidenceId: string) => {
-    const item = evidence.find((candidate) => candidate.id === evidenceId);
+    const item = evidenceWithPayloads.find((candidate) => candidate.id === evidenceId);
     if (!item) {
+      const payload = evidencePayloads[evidenceId];
+      if (payload) {
+        setDocumentError(null);
+        setViewingDoc({
+          id: evidenceId,
+          companyId: company.id,
+          driverMasterId: master.id,
+          fileName: "Performance Source Document",
+          fileType: payload.mimeType,
+          mimeType: payload.mimeType,
+          documentType: "Performance Source Document",
+          uploadedAt: new Date().toISOString(),
+          source: "upload",
+          dataUrl: payload.dataUrl,
+          isArchived: false,
+        });
+        return;
+      }
       setViewingDoc(null);
       setDocumentError(`Evidence ${evidenceId} could not be resolved from the canonical Driver evidence collection.`);
       return;
@@ -165,13 +246,14 @@ export function DriverWorkspace({
   };
 
   const handleOpenEvidenceItem = (item: DriverEvidenceItem) => {
-    if (!item.dataUrl || !item.mimeType) {
+    const hydrated = evidenceWithPayloads.find((candidate) => candidate.id === item.id) || item;
+    if (!hydrated.dataUrl || !hydrated.mimeType) {
       setViewingDoc(null);
       setDocumentError(`Evidence ${item.id} is present, but its document payload is unavailable for viewing.`);
       return;
     }
     setDocumentError(null);
-    setViewingDoc(item);
+    setViewingDoc(hydrated);
   };
 
   const handleCreateApplication = () => {
@@ -184,6 +266,14 @@ export function DriverWorkspace({
         operatingRegion: applicationRegion,
         createdDate: new Date().toISOString().slice(0, 10),
         evidenceIds: [],
+      });
+      logAuditEvent({
+        e: "RECORD_CREATED",
+        co: company.id,
+        cn: company.name,
+        eid: master.id,
+        el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+        det: `Created Driver Application (${applicationType}).`,
       });
       setIsAddApplicationOpen(false);
       onRefresh();
@@ -208,6 +298,14 @@ export function DriverWorkspace({
         evidenceIds: [],
         notes: packageNotes.trim() || undefined,
       });
+      logAuditEvent({
+        e: "RECORD_CREATED",
+        co: company.id,
+        cn: company.name,
+        eid: master.id,
+        el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+        det: `Created Hiring Package ${packageVersion.trim()}.`,
+      });
       setPackageVersion("");
       setPackageNotes("");
       setIsAddHiringPackageOpen(false);
@@ -231,6 +329,14 @@ export function DriverWorkspace({
         effectiveDate: taxEffectiveDate,
         status: taxStatus,
       });
+      logAuditEvent({
+        e: "RECORD_CREATED",
+        co: company.id,
+        cn: company.name,
+        eid: master.id,
+        el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+        det: `Created Driver tax document (${taxFormType}).`,
+      });
       setTaxYear("");
       setTaxJurisdiction("");
       setTaxEffectiveDate("");
@@ -245,12 +351,28 @@ export function DriverWorkspace({
   // Handlers for Profile Tab
   const handleSaveMasterIdentity = (patch: Partial<DriverMaster["identity"]>) => {
     updateDriverMasterIdentity(master.id, patch);
+    logAuditEvent({
+      e: "RECORD_UPDATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Updated Driver identity profile.",
+    });
     setIsEditingProfile(false);
     onRefresh();
   };
 
   const handleSaveRelationship = (patch: Partial<CompanyDriverRelationship>) => {
     updateCompanyDriverRelationship(company.id, relationship.id, patch);
+    logAuditEvent({
+      e: "RECORD_UPDATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Updated Driver company relationship.",
+    });
     setIsEditingProfile(false);
     onRefresh();
   };
@@ -265,6 +387,14 @@ export function DriverWorkspace({
     effectiveFrom: string;
   }) => {
     addDriverAddress(master.id, addr);
+    logAuditEvent({
+      e: "RECORD_UPDATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Added Driver address record.",
+    });
     setIsEditingProfile(false);
     onRefresh();
   };
@@ -272,33 +402,81 @@ export function DriverWorkspace({
   // Handlers for Qualifications Tab
   const handleAddLicence = (licenceData: Omit<LicenceRecord, "id" | "createdAt" | "status" | "effectiveTo">) => {
     addLicence(company.id, master.id, licenceData);
+    logAuditEvent({
+      e: "RECORD_CREATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Added Driver licence record.",
+    });
     onRefresh();
   };
 
   // Handlers for Screening Tab
   const handleAddScreening = (data: Omit<ScreeningRecord, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => {
     addScreeningRecord(company.id, master.id, data);
+    logAuditEvent({
+      e: "RECORD_CREATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Added Driver screening record.",
+    });
     onRefresh();
   };
 
   const handleArchiveScreening = (id: string) => {
     archiveScreeningRecord(company.id, id);
+    logAuditEvent({
+      e: "RECORD_ARCHIVED",
+      co: company.id,
+      cn: company.name,
+      eid: id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Archived Driver screening record.",
+    });
     onRefresh();
   };
 
   // Handlers for Training Tab
   const handleAddTraining = (data: Omit<TrainingRecord, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => {
     addTrainingRecord(company.id, master.id, data);
+    logAuditEvent({
+      e: "RECORD_CREATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Added Driver training record.",
+    });
     onRefresh();
   };
 
   const handleAddTrainingRequirement = (data: Omit<TrainingRequirement, "requirementId" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt" | "isArchived">) => {
     addTrainingRequirement(company.id, master.id, data);
+    logAuditEvent({
+      e: "RECORD_CREATED",
+      co: company.id,
+      cn: company.name,
+      eid: master.id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: "Added Driver training requirement.",
+    });
     onRefresh();
   };
 
   const handleWaiveTraining = (id: string, reason: string) => {
     waiveTrainingRecord(company.id, id, reason);
+    logAuditEvent({
+      e: "RECORD_UPDATED",
+      co: company.id,
+      cn: company.name,
+      eid: id,
+      el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+      det: `Waived Driver training requirement. Reason: ${reason}`,
+    });
     onRefresh();
   };
 
@@ -343,6 +521,8 @@ export function DriverWorkspace({
 
   const handleRequestPerformanceSourceUpload = () => {
     setEventEvidenceCreatedId(null);
+    machineAcquisitionDraftRef.current = null;
+    import("@/lib/roadside-machine-client").then(({ setPendingRoadsideDraft }) => setPendingRoadsideDraft(null));
     setEventEvidenceMode(false);
     setPerformanceSourceMode(true);
     setIsSourcePickerOpen(true);
@@ -350,6 +530,10 @@ export function DriverWorkspace({
 
   const handleRequestEventEvidenceUpload = () => {
     setEventEvidenceCreatedId(null);
+    setMachineAcquisitionDraft(null);
+    machineAcquisitionDraftRef.current = null;
+    import("@/lib/roadside-machine-client").then(({ setPendingRoadsideDraft }) => setPendingRoadsideDraft(null));
+    setOcrError(null);
     setEventEvidenceMode(true);
     setPerformanceSourceMode(false);
     setIsSourcePickerOpen(true);
@@ -357,19 +541,112 @@ export function DriverWorkspace({
 
   // OCR Processing
   const handleSelectFile = (file: File) => {
+    console.log("[OCR] handleSelectFile called, eventEvidenceMode:", eventEvidenceMode, "performanceSourceMode:", performanceSourceMode);
     if (eventEvidenceMode || performanceSourceMode) {
       const reader = new FileReader();
-      reader.onload = () => {
-        const created = addDriverEvidence(company.id, master.id, { fileName: file.name, mimeType: file.type, dataUrl: String(reader.result || ""), documentType: "Performance Source Document" });
-        if (eventEvidenceMode) {
-          setEventEvidenceCreatedId(created.id);
-        } else {
-          receivePerformanceSourceForMachineProcessing(company.id, master.id, created);
+      reader.onload = async () => {
+        try {
+          const dataUrl = String(reader.result || "");
+          await migrateLegacyDriverEvidencePayloads(company.id, evidenceWithPayloads);
+
+          // Canonical Evidence metadata stays in the Driver store. The large
+          // document payload is stored separately in IndexedDB.
+          const created = addDriverEvidence(company.id, master.id, {
+            fileName: file.name,
+            mimeType: file.type,
+            dataUrl: "",
+            documentType: "Performance Source Document",
+          });
+
+          await putEvidencePayload(created.id, dataUrl, file.type || "application/octet-stream");
+          setEvidencePayloads((current) => ({
+            ...current,
+            [created.id]: { dataUrl, mimeType: file.type || "application/octet-stream" },
+          }));
+
+          const hydratedCreated = { ...created, dataUrl, mimeType: file.type || created.mimeType };
+
+          if (eventEvidenceMode) {
+            setEventEvidenceCreatedId(created.id);
+          } else {
+            receivePerformanceSourceForMachineProcessing(company.id, master.id, hydratedCreated);
+          }
+
+          // Fire Document AI in the background — do not block evidence save
+          if (eventEvidenceMode || performanceSourceMode) {
+            setIsProcessingOCR(true);
+            setOcrError(null);
+            console.log("[OCR] Starting Document AI processing for:", file.name, file.type, file.size);
+            import("@/lib/roadside-machine-client")
+              .then(({ processDocumentWithAI }) => processDocumentWithAI(file))
+              .then((aiResult) => {
+                const alignedAiResult = { ...aiResult, sourceEvidenceId: created.id };
+                console.log("[OCR] Document AI result received:", JSON.stringify(alignedAiResult, null, 2));
+                return import("@/lib/roadside-machine-mapper").then(async ({ mapMachineResultToRoadsideSource }) => {
+                  const draft = mapMachineResultToRoadsideSource(alignedAiResult);
+                  console.log("[OCR] Roadside draft:", JSON.stringify(draft, null, 2));
+
+                  const storeDraft = () => {
+                    setMachineAcquisitionDraft(draft);
+                    machineAcquisitionDraftRef.current = draft;
+                    import("@/lib/roadside-machine-client").then(({ setPendingRoadsideDraft }) => {
+                      setPendingRoadsideDraft(draft);
+                    });
+                  };
+                  const cleanup = () => {
+                    setEventEvidenceMode(false);
+                    setPerformanceSourceMode(false);
+                    setIsSourcePickerOpen(false);
+                    onRefresh();
+                  };
+
+                  console.log("[AUTO-SAVE] Attempting auto-save...");
+                  const { autoSaveRoadsideInspection } = await import("@/lib/auto-save-roadside");
+                  const saveResult = await autoSaveRoadsideInspection(alignedAiResult);
+                  console.log("[AUTO-SAVE] Result:", saveResult.status, saveResult);
+                  console.log("[AUTO-SAVE] Result:", JSON.stringify(saveResult, null, 2));
+
+                  if (saveResult.status === "AUTO_SAVED") {
+                    console.log("[AUTO-SAVE] SUCCESS - should NOT open modal");
+                    // Do NOT open the modal — record is already saved
+                    setAutoSaveNotification({
+                      type: "success",
+                      message: `Roadside Inspection auto-saved — ${saveResult.eventId}`,
+                    });
+                    setOpenAddEventModalSignal(false);
+                    // Still store the draft for reference
+                    storeDraft();
+                    cleanup();
+                    return;
+                  }
+
+                  console.log("[AUTO-SAVE] REVIEW REQUIRED - opening modal");
+                  // REVIEW_REQUIRED, ENTITY_UNRESOLVED, or ERROR — open modal for human review
+                  storeDraft();
+                  // Signal the modal to open BEFORE cleanup
+                  setOpenAddEventModalSignal(true);
+                  setTimeout(() => setOpenAddEventModalSignal(false), 100);
+                  // NOW clean up — after signal is sent
+                  cleanup();
+                });
+              })
+              .catch((err) => {
+                console.error("[Document AI] Processing error:", err);
+                console.error("[OCR] FAILED:", err);
+                console.error("[OCR] Error message:", err instanceof Error ? err.message : String(err));
+                console.error("[OCR] Error stack:", err instanceof Error ? err.stack : "no stack");
+                setOcrError(err instanceof Error ? err.message : "OCR processing failed");
+                // Cleanup on failure too
+                setEventEvidenceMode(false);
+                setPerformanceSourceMode(false);
+                setIsSourcePickerOpen(false);
+                onRefresh();
+              })
+              .finally(() => setIsProcessingOCR(false));
+          }
+        } catch (error) {
+          setCreationError(error instanceof Error ? error.message : "Unable to store the evidence document.");
         }
-        setEventEvidenceMode(false);
-        setPerformanceSourceMode(false);
-        setIsSourcePickerOpen(false);
-        onRefresh();
       };
       reader.readAsDataURL(file);
       return;
@@ -416,6 +693,24 @@ export function DriverWorkspace({
 
   return (
     <div className="space-y-6 pb-12">
+      {autoSaveNotification && (
+        <div
+          className={`fixed top-4 right-4 z-50 rounded-lg border px-4 py-3 text-sm font-medium shadow-lg flex items-center gap-3 ${
+            autoSaveNotification.type === "success"
+              ? "border-green-200 bg-green-50 text-green-800"
+              : "border-red-200 bg-red-50 text-red-800"
+          }`}
+        >
+          {autoSaveNotification.message}
+          <button
+            type="button"
+            onClick={() => setAutoSaveNotification(null)}
+            className="text-current opacity-60 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* Driver Workspace Header */}
       <DriverHeader
         master={master}
@@ -423,21 +718,29 @@ export function DriverWorkspace({
         company={company}
         activeTab={activeTab}
         onTabChange={(tab) => {
+          const nextTab = DRIVER_TABS.some((item) => item.id === tab) ? (tab as DriverTab) : "profile";
           setIsEditingProfile(false);
-          setActiveTab(tab);
+          setActiveTab(nextTab);
+          pushHistoryQueryParams({
+            driverTab: nextTab,
+            performanceView: nextTab === "performance" ? getQueryParam("performanceView") : null,
+          });
         }}
         onBack={onBack}
         onEditProfile={() => setIsEditingProfile(true)}
         onAddEvent={() => {
           setActiveTab("performance");
+          pushHistoryQueryParams({ driverTab: "performance" });
           setTriggerAddEvent(true);
         }}
         onAddScreening={() => {
           setActiveTab("screening");
+          pushHistoryQueryParams({ driverTab: "screening", performanceView: null });
           setTriggerAddScreening(true);
         }}
         onAddTraining={() => {
           setActiveTab("training");
+          pushHistoryQueryParams({ driverTab: "training", performanceView: null });
           setTriggerAddTraining(true);
         }}
         onAddDocument={() => setIsSourcePickerOpen(true)}
@@ -476,7 +779,7 @@ export function DriverWorkspace({
             applications={applications}
             hiringPackages={hiringPackages}
             taxDocs={taxDocs}
-            evidence={evidence}
+            evidence={evidenceWithPayloads}
             onAddApplication={() => { setCreationError(null); setIsAddApplicationOpen(true); }}
             onAddHiringPackage={() => { setCreationError(null); setIsAddHiringPackageOpen(true); }}
             onAddTaxDoc={() => { setCreationError(null); setIsAddTaxDocOpen(true); }}
@@ -499,9 +802,7 @@ export function DriverWorkspace({
           <DriverTrainingTab
             master={master}
             trainings={trainings}
-            requirements={trainingRequirements}
             onAddTraining={handleAddTraining}
-            onAddRequirement={handleAddTrainingRequirement}
             onWaiveTraining={handleWaiveTraining}
           />
         )}
@@ -510,6 +811,7 @@ export function DriverWorkspace({
           <DriverPerformanceTab
             master={master}
             relationship={relationship}
+            companyRegJurisdiction={company.regCorpState || ""}
             events={events}
             trainings={trainings}
             hosReviews={hosReviews}
@@ -523,13 +825,18 @@ export function DriverWorkspace({
             onAddCompanyDetermination={handleAddCompanyDetermination}
             onLinkCompanyDetermination={handleLinkCompanyDetermination}
             onOpenDocument={handleOpenEvidenceById}
-            evidence={evidence}
+            evidence={evidenceWithPayloads}
             onRequestEvidenceUpload={handleRequestEventEvidenceUpload}
             onRequestPerformanceSourceUpload={handleRequestPerformanceSourceUpload}
             pendingPerformanceSources={pendingPerformanceSources}
             evidenceCreatedId={eventEvidenceCreatedId}
             onArchiveEvent={handleArchiveEvent}
-            onClearEvidenceCreatedId={() => setEventEvidenceCreatedId(null)}
+            onClearEvidenceCreatedId={() => { setEventEvidenceCreatedId(null); setMachineAcquisitionDraft(null); setOcrError(null); }}
+            machineAcquisitionDraft={machineAcquisitionDraft}
+            initialMachineAcquisitionDraft={machineAcquisitionDraftRef.current}
+            openAddEventModalSignal={openAddEventModalSignal}
+            isProcessingOCR={isProcessingOCR}
+            ocrError={ocrError}
           />
         )}
       </div>
@@ -610,7 +917,7 @@ export function DriverWorkspace({
       {/* Secure Document Viewer Modal */}
       {viewingDoc && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-          <div className="w-full max-w-4xl h-[85vh] rounded-2xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col">
+          <div className="w-full max-w-[96vw] h-[92vh] rounded-2xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-muted/20">
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
                 Forensic Audited Document Viewer
@@ -623,7 +930,7 @@ export function DriverWorkspace({
                 ✕ Close
               </button>
             </div>
-            <div className="flex-1 p-3 min-h-0">
+            <div className="flex-1 p-3 min-h-0 overflow-hidden">
               <SecureDocumentViewer
                 fileName={viewingDoc.fileName}
                 mimeType={viewingDoc.mimeType}

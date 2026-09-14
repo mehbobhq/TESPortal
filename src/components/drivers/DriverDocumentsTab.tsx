@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   FileText,
   FileCheck2,
@@ -56,7 +56,8 @@ export function DriverDocumentsTab({
   onOpenEvidence,
   onRefresh,
 }: DriverDocumentsTabProps) {
-  const [selectedApp, setSelectedApp] = useState<DriverApplicationRecord | null>(applications[0] || null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(applications.at(0)?.id || null);
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(hiringPackages.at(0)?.id || null);
   const [isDeterminationModalOpen, setIsDeterminationModalOpen] = useState(false);
   const [determinationDecision, setDeterminationDecision] = useState<"Approved" | "Rejected" | "Withdrawn">("Approved");
   const [reviewerName, setReviewerName] = useState("");
@@ -68,13 +69,23 @@ export function DriverDocumentsTab({
   const [signerName, setSignerName] = useState("");
   const [signerError, setSignerError] = useState<string | null>(null);
 
-  const activeApplication = applications[0];
-  const activePackage = hiringPackages[0];
+  useEffect(() => {
+    if (selectedAppId && applications.some((application) => application.id === selectedAppId)) return;
+    setSelectedAppId(applications.at(0)?.id || null);
+  }, [applications, selectedAppId]);
+
+  useEffect(() => {
+    if (selectedPackageId && hiringPackages.some((pkg) => pkg.id === selectedPackageId)) return;
+    setSelectedPackageId(hiringPackages.at(0)?.id || null);
+  }, [hiringPackages, selectedPackageId]);
+
+  const activeApplication = applications.find((application) => application.id === selectedAppId) || null;
+  const activePackage = hiringPackages.find((pkg) => pkg.id === selectedPackageId) || null;
 
   const handleSaveDetermination = (e: React.FormEvent) => {
     e.preventDefault();
     setDeterminationError(null);
-    if (!selectedApp) return;
+    if (!activeApplication) return;
 
     if (!reviewerName.trim()) {
       setDeterminationError("Reviewer / Authorized Officer name is required.");
@@ -83,7 +94,7 @@ export function DriverDocumentsTab({
 
     updateDriverApplicationDetermination(
       company.id,
-      selectedApp.id,
+      activeApplication.id,
       determinationDecision,
       reviewerName.trim(),
       determinationNotes
@@ -138,7 +149,7 @@ export function DriverDocumentsTab({
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedApp(activeApplication);
+                  setSelectedAppId(activeApplication.id);
                   setDeterminationDecision(activeApplication.companyDetermination === "Rejected" ? "Rejected" : "Approved");
                   setDeterminationNotes(activeApplication.determinationNotes || "");
                   setIsDeterminationModalOpen(true);
@@ -160,6 +171,32 @@ export function DriverDocumentsTab({
             </button>
           </div>
         </div>
+
+        {applications.length > 0 && (
+          <div className="border-b border-border bg-background/60 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Application Records</p>
+                <p className="text-xs text-muted-foreground">Select a record to review its lifecycle and claimed information.</p>
+              </div>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{applications.length}</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {applications.map((application) => (
+                <button
+                  key={application.id}
+                  type="button"
+                  onClick={() => setSelectedAppId(application.id)}
+                  className={`rounded-xl border p-3 text-left transition-colors ${selectedAppId === application.id ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/30"}`}
+                >
+                  <span className="block text-[10px] font-mono text-muted-foreground">{application.id}</span>
+                  <span className="mt-1 block text-xs font-bold text-foreground">{application.applicationType}</span>
+                  <span className="mt-1 block text-[10px] text-muted-foreground">{application.status} · {application.submittedDate || application.createdDate || "Date not recorded"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {activeApplication ? (
           <div className="p-5 space-y-4">
@@ -295,6 +332,32 @@ export function DriverDocumentsTab({
           </div>
         </div>
 
+        {hiringPackages.length > 0 && (
+          <div className="border-b border-border bg-background/60 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Hiring Package Records</p>
+                <p className="text-xs text-muted-foreground">Select a package to review version, lifecycle, checklist, and signatures.</p>
+              </div>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{hiringPackages.length}</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {hiringPackages.map((pkg) => (
+                <button
+                  key={pkg.id}
+                  type="button"
+                  onClick={() => setSelectedPackageId(pkg.id)}
+                  className={`rounded-xl border p-3 text-left transition-colors ${selectedPackageId === pkg.id ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/30"}`}
+                >
+                  <span className="block text-[10px] font-mono text-muted-foreground">{pkg.id}</span>
+                  <span className="mt-1 block text-xs font-bold text-foreground">Version {pkg.packageVersion}</span>
+                  <span className="mt-1 block text-[10px] text-muted-foreground">{pkg.status} · {pkg.issuedDate || "Date not recorded"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {activePackage ? (
           <div className="p-5 space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -408,7 +471,7 @@ export function DriverDocumentsTab({
       </div>
 
       {/* Determination Modal */}
-      {isDeterminationModalOpen && selectedApp && (
+      {isDeterminationModalOpen && activeApplication && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-4 text-xs">
             <div className="flex items-center justify-between border-b border-border pb-3">
@@ -423,7 +486,7 @@ export function DriverDocumentsTab({
             </div>
 
             <p className="text-muted-foreground">
-              Record the company’s hiring decision for Application <strong>{selectedApp.id}</strong>.
+              Record the company’s hiring decision for Application <strong>{activeApplication.id}</strong>.
             </p>
 
             {determinationError && (

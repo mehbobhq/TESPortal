@@ -77,6 +77,12 @@ export interface DriverPerformanceTabProps {
   onLinkCompanyDetermination?: (eventId: string, determinationId: string) => void;
   onOpenDocument?: (docId: string) => void;
   onRequestEvidenceUpload?: () => void;
+  machineAcquisitionDraft?: import("@/lib/roadside-machine-schema").RoadsideMachineSourceRecord | null;
+  initialMachineAcquisitionDraft?: import("@/lib/roadside-machine-schema").RoadsideMachineSourceRecord | null;
+  openAddEventModalSignal?: boolean;
+  isProcessingOCR?: boolean;
+  ocrError?: string | null;
+  companyRegJurisdiction?: string;
   onRequestPerformanceSourceUpload?: () => void;
   pendingPerformanceSources?: import("@/types/drivers").PerformanceSourceIngestionItem[];
   evidenceCreatedId?: string | null;
@@ -106,6 +112,7 @@ const getEventFact = (event: DriverPerformanceEvent, key: string): unknown => {
 export function DriverPerformanceTab({
   master,
   relationship,
+  companyRegJurisdiction = "",
   events,
   trainings = [],
   hosReviews = [],
@@ -120,6 +127,11 @@ export function DriverPerformanceTab({
   onLinkCompanyDetermination,
   onOpenDocument,
   onRequestEvidenceUpload,
+  machineAcquisitionDraft = null,
+  initialMachineAcquisitionDraft = null,
+  openAddEventModalSignal = false,
+  isProcessingOCR = false,
+  ocrError = null,
   onRequestPerformanceSourceUpload,
   pendingPerformanceSources = [],
   evidenceCreatedId,
@@ -163,6 +175,15 @@ export function DriverPerformanceTab({
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  // When the parent (DriverWorkspace) signals that OCR has produced a
+  // Roadside draft, open the add-event modal automatically so the draft
+  // pre-fills as soon as it mounts.
+  useEffect(() => {
+    if (openAddEventModalSignal) {
+      setIsAddModalOpen(true);
+    }
+  }, [openAddEventModalSignal]);
   const [isDeterminationModalOpen, setIsDeterminationModalOpen] = useState(false);
   const [isHOSAuditModalOpen, setIsHOSAuditModalOpen] = useState(false);
   const [auditingHOSEvent, setAuditingHOSEvent] = useState<DriverPerformanceEvent | null>(null);
@@ -1420,6 +1441,11 @@ export function DriverPerformanceTab({
           trainings={trainings}
           evidence={evidence}
           onRequestEvidenceUpload={onRequestEvidenceUpload}
+          machineAcquisitionDraft={machineAcquisitionDraft}
+          initialMachineAcquisitionDraft={initialMachineAcquisitionDraft}
+          isProcessingOCR={isProcessingOCR}
+          ocrError={ocrError}
+          companyRegJurisdiction={companyRegJurisdiction}
           evidenceCreatedId={evidenceCreatedId}
           pendingPerformanceSources={pendingPerformanceSources}
           onClearEvidenceCreatedId={onClearEvidenceCreatedId}

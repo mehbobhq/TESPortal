@@ -52,6 +52,7 @@ import {
   normalizeTaxId,
 } from "@/lib/identifier-normalization"
 import { recordAuditEvent } from "@/lib/audit-logger"
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { ReadOnlyField, RegulatoryIdentifierField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
@@ -3403,25 +3404,10 @@ export default function AuthoritiesPage() {
       <div className="flex max-w-[1600px] flex-col gap-6 pb-12">
         {/* HEADER */}
         <div>
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => router.push(`/companies/${company.id}/profile`)}
-              className="size-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <ArrowLeft className="size-4" />
-            </button>
-
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Operating Authorities & Registrations
-              </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {company.name}{" "}
-                <span className="font-mono text-xs">({company.id})</span>
-              </p>
-            </div>
-          </div>
+          <CompanyWorkspaceHeader
+            company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
+            section="Authorities"
+          />
 
           <div className="mt-5 rounded-xl border border-border bg-muted/20 p-4">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-4">

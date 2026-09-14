@@ -44,6 +44,7 @@ import {
   ZoomOut,
 } from "lucide-react"
 
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -848,17 +849,13 @@ export default function CitationsPage() {
     <div className="flex max-w-[1600px] flex-col gap-6 pb-12">
       {/* 1. Header & Quick Context */}
       <div>
-        <div className="flex items-start gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/companies/${companyId}/profile`)}>
-            <ArrowLeft className="size-4" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Citations & Roadside Inspections</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {company?.name} <span className="font-mono text-xs">({companyId})</span> · FMCSA Roadside Inspections, CVOR Points & Traffic Citations
-            </p>
-          </div>
-        </div>
+        {company && (
+          <CompanyWorkspaceHeader
+            company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
+            section="Citations"
+            description="FMCSA Roadside Inspections, CVOR Points & Traffic Citations"
+          />
+        )}
 
         {/* 2. Top Stats KPIs */}
         <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">

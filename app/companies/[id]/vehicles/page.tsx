@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import type { Dispatch, ReactNode, SetStateAction } from "react"
+import type { ReactNode } from "react"
 import { useParams } from "next/navigation"
 import {
   AlertCircle,
@@ -82,6 +82,8 @@ import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentView
 import { CameraCapture } from "@/src/components/CameraCapture"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { TESRecordOverlay } from "@/src/components/shared/TESRecordOverlay"
+import { ProfileTab, VehicleProfileForm, buildVehicle } from "@/src/components/vehicles/profile/VehicleProfileTab"
+import type { ProfileForm, VehicleProfileRecord } from "@/src/components/vehicles/profile/VehicleProfileTab"
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking"
 
 const VEHICLE_TYPES: EquipmentType[] = [
@@ -480,101 +482,6 @@ type OCRContext =
   | { kind: "inspection"; recordId?: string; documentType: string }
   | { kind: "maintenance"; recordId?: string; documentType: string }
 
-type VehicleProfileRecord = VehicleRecord & {
-  fleetStartDate?: string
-  fleetEndDate?: string
-  tareWeightUnit?: "kg" | "lb"
-  equipmentLengthUnit?: "ft" | "m"
-}
-
-interface ProfileForm {
-  unitNumber: string
-  equipmentType: EquipmentType
-  status: VehicleStatus
-  vin: string
-  year: string
-  make: string
-  model: string
-  color: string
-  operatingRegion: VehicleRecord["operatingRegion"]
-  axles: string
-  fleetStartDate: string
-  fleetEndDate: string
-  tareWeight: string
-  tareWeightUnit: "kg" | "lb"
-  fuelType: VehicleRecord["fuelType"]
-  equipmentLength: string
-  equipmentLengthUnit: "ft" | "m"
-  gpsProvider: string
-}
-
-function profileFromVehicle(vehicle: VehicleRecord): ProfileForm {
-  const profileVehicle = vehicle as VehicleProfileRecord
-  return {
-    unitNumber: vehicle.unitNumber || "",
-    equipmentType: vehicle.equipmentType,
-    status: vehicle.status === "Archived" ? "Inactive" : vehicle.status,
-    vin: vehicle.vin || "",
-    year: vehicle.year || "",
-    make: vehicle.make || "",
-    model: vehicle.model || "",
-    color: vehicle.color || "",
-    operatingRegion: vehicle.operatingRegion,
-    axles: String(vehicle.axles ?? ""),
-    fleetStartDate: profileVehicle.fleetStartDate || "",
-    fleetEndDate: profileVehicle.fleetEndDate || "",
-    tareWeight: profileVehicle.tareWeightKgs !== undefined ? String(profileVehicle.tareWeightKgs) : "",
-    tareWeightUnit: profileVehicle.tareWeightUnit || "kg",
-    fuelType: vehicle.fuelType,
-    equipmentLength: profileVehicle.lengthFeet || "",
-    equipmentLengthUnit: profileVehicle.equipmentLengthUnit || "ft",
-    gpsProvider: vehicle.gpsProvider || "",
-  }
-}
-
-function buildVehicle(form: ProfileForm, existing?: VehicleRecord): VehicleRecord {
-  const tareKg = form.tareWeightUnit === "kg" ? Number(form.tareWeight) : Number(form.tareWeight) * 0.45359237
-  const lengthFt = form.equipmentLengthUnit === "ft" ? form.equipmentLength : Number.isFinite(Number(form.equipmentLength)) ? String(Number(form.equipmentLength) * 3.280839895) : ""
-  const now = isoNow()
-  const record: VehicleProfileRecord = {
-    id: existing?.id || createId("VEH"),
-    unitNumber: form.unitNumber.trim(),
-    equipmentType: form.equipmentType,
-    status: form.status,
-    vin: normalizeVIN(form.vin),
-    year: form.year.trim(),
-    make: form.make.trim(),
-    model: form.model.trim(),
-    color: form.color.trim(),
-    operatingRegion: form.operatingRegion,
-    axles: Number(form.axles) || 0,
-    lengthFeet: lengthFt,
-    tareWeightKgs: Number.isFinite(tareKg) && form.tareWeight !== "" ? Math.round(tareKg * 100) / 100 : undefined,
-    fuelType: form.fuelType,
-    gpsProvider: form.gpsProvider.trim(),
-    transponderNumber: existing?.transponderNumber,
-    fleetStartDate: form.fleetStartDate || undefined,
-    fleetEndDate: form.fleetEndDate || undefined,
-    tareWeightUnit: form.tareWeightUnit,
-    equipmentLengthUnit: form.equipmentLengthUnit,
-    ownershipType: existing?.ownershipType || "Owned",
-    ownerCompanyName: existing?.ownerCompanyName,
-    purchaseDate: existing?.purchaseDate,
-    purchasePrice: existing?.purchasePrice,
-    leaseTermMonths: existing?.leaseTermMonths,
-    leaseEndDate: existing?.leaseEndDate,
-    registration: existing?.registration,
-    permits: existing?.permits || [],
-    inspections: existing?.inspections || [],
-    evidenceIds: existing?.evidenceIds || [],
-    source: existing?.source || "Manual",
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    notes: existing?.notes,
-  }
-  return record
-}
-
 export default function VehiclesPage() {
   const params = useParams()
   const companyId = String(params.id || "")
@@ -879,7 +786,7 @@ function VehicleCreateDialog({ companyId, onClose, onSave, setError }: { company
   return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
     <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl border border-border bg-card shadow-2xl">
       <div className="flex items-center justify-between border-b px-4 py-3"><div><h2 className="text-sm font-bold">Create Vehicle</h2><p className="text-[11px] text-muted-foreground">OCR/document capture is the first entry path.</p></div><button onClick={onClose}><X className="size-4" /></button></div>
-      <div className="p-4"><VehicleProfileForm companyId={companyId} vehicle={null} form={form} setForm={setForm} onCancel={onClose} onSave={() => { if (!form.vin || !is17CharVIN(form.vin)) { setError("VIN must contain 17 valid VIN characters."); return } onSave(form, pendingEvidence || undefined) }} onStartOCR={() => setSourceOpen(true)} forceOCRPrompt /></div>
+      <div className="p-4"><VehicleProfileForm companyId={companyId} vehicle={null} form={form} FieldComponent={Field} setForm={setForm} onCancel={onClose} onSave={() => { if (!form.vin || !is17CharVIN(form.vin)) { setError("VIN must contain 17 valid VIN characters."); return } onSave(form, pendingEvidence || undefined) }} onStartOCR={() => setSourceOpen(true)} forceOCRPrompt /></div>
     </div>
     {sourceOpen ? <div className="fixed inset-0 z-[200]"><DocumentSourcePicker isOpen onClose={() => setSourceOpen(false)} onSelectCamera={() => { setSourceOpen(false); setCameraOpen(true) }} onSelectFile={(file) => { setSourceOpen(false); startOCR(file) }} title="Vehicle Profile — OCR First" subtitle="Capture the source document before entering structured Vehicle fields." /></div> : null}
     {cameraOpen ? <div className="fixed inset-0 z-[200]"><CameraCapture onClose={() => setCameraOpen(false)} onCapture={(file) => { setCameraOpen(false); startOCR(file) }} /></div> : null}
@@ -1279,7 +1186,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
 
       <div className={`flex gap-0 ${selectedRecordEvidence ? "divide-x divide-border" : ""}`}>
         <div className={selectedRecordEvidence ? "flex-1 min-w-0" : "w-full"}>
-          {tab === "profile" ? <ProfileTab companyId={companyId} vehicle={vehicle} onSave={onSaveVehicle} onStartOCR={() => openSourcePicker({ kind: "profile" })} ocrValues={profileOCRValues} /> : null}
+          {tab === "profile" ? <ProfileTab companyId={companyId} vehicle={vehicle} FieldComponent={Field} SectionTitleComponent={SectionTitle} onSave={onSaveVehicle} onStartOCR={() => openSourcePicker({ kind: "profile" })} ocrValues={profileOCRValues} /> : null}
           {tab === "ownership" ? <OwnershipTab companyId={companyId} store={store} vehicle={vehicle} records={ownershipRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "ownership", documentType })} pendingEvidenceId={pendingOwnershipEvidenceId} clearPendingEvidence={() => setPendingOwnershipEvidenceId(null)} setError={setError} setNotice={setNotice} /> : null}
           {tab === "registrations" ? <RegistrationTab companyId={companyId} store={store} vehicle={vehicle} records={registrationRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "registration", documentType })} pendingEvidence={pendingRegistrationEvidence} clearPendingEvidence={() => setPendingRegistrationEvidence(null)} setError={setError} setNotice={setNotice} onOpenEvidence={openEvidence} /> : null}
           {tab === "permits" ? <PermitTab companyId={companyId} store={store} vehicle={vehicle} records={permitRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "permit", documentType })} pendingEvidenceId={pendingPermitEvidenceId} clearPendingEvidence={() => setPendingPermitEvidenceId(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: `${record.permitType === "Other" ? record.customPermitType : record.permitType} · ${record.jurisdiction ?? ""}`, evidenceIds: record.evidenceIds ?? [] })} /> : null}
@@ -1402,102 +1309,6 @@ function VehicleOCRReview({ result, dataUrl, context, onCancel, onConfirm }: { r
     return value
   }, [fieldDefinitions])
   return <div className="fixed inset-0 z-[200] bg-background"><OCRReview documentResult={result} documentDataUrl={dataUrl} initialValues={initialValues} fieldDefinitions={fieldDefinitions} onConfirm={onConfirm} onCancel={onCancel} /></div>
-}
-
-function ProfileTab({ companyId, vehicle, onSave, onStartOCR, ocrValues }: { companyId: string; vehicle: VehicleRecord; onSave: (vehicle: VehicleRecord) => void; onStartOCR: () => void; ocrValues: Record<string, unknown> | null }) {
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState<ProfileForm>(profileFromVehicle(vehicle))
-  useEffect(() => { setForm({ ...profileFromVehicle(vehicle), ...(ocrValues ? Object.fromEntries(Object.entries(ocrValues).filter(([key]) => key in profileFromVehicle(vehicle))) as Partial<ProfileForm> : {}) }) }, [vehicle, ocrValues])
-  const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => setForm((current) => ({ ...current, [key]: value }))
-  const profileVehicle = vehicle as VehicleProfileRecord
-  if (!editing) return <div className="space-y-3">
-    <Card>
-      <SectionTitle
-        title="Vehicle Identity"
-        description="Master record identifiers and registration details."
-        action={
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onStartOCR}>
-              <Upload className="mr-1.5 size-3.5" />Document / OCR
-            </Button>
-            <Button size="sm" onClick={() => setEditing(true)}>
-              <Edit3 className="mr-1.5 size-3.5" />Edit
-            </Button>
-          </div>
-        }
-      />
-      <div className="grid gap-3 p-4 md:grid-cols-4">
-        <ReadOnlyField label="Record ID" value={vehicle.id} />
-        <ReadOnlyField label="Unit Number" value={vehicle.unitNumber} />
-        <ReadOnlyField label="Vehicle Type" value={vehicle.equipmentType} />
-        <ReadOnlyField label="Status" value={vehicle.status} />
-        <ReadOnlyField label="VIN" value={vehicle.vin} />
-        <ReadOnlyField label="Year" value={vehicle.year} />
-        <ReadOnlyField label="Make" value={vehicle.make} />
-        <ReadOnlyField label="Model" value={vehicle.model} />
-        <ReadOnlyField label="Color" value={vehicle.color} />
-      </div>
-    </Card>
-
-    <Card>
-      <SectionTitle
-        title="Operational Details"
-        description="Fleet configuration, compliance program basis, and service dates."
-      />
-      <div className="grid gap-3 p-4 md:grid-cols-4">
-        <ReadOnlyField label="Operating Region" value={vehicle.operatingRegion} />
-        <ReadOnlyField label="Axles" value={String(vehicle.axles ?? "—")} />
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tare Weight</p>
-          <p className="mt-1 text-lg font-bold tabular-nums">
-            {vehicle.tareWeightKgs ?? "—"}
-            <span className="ml-1 text-[10px] font-semibold text-muted-foreground">kg</span>
-          </p>
-        </div>
-        <ReadOnlyField label="Fuel Type" value={vehicle.fuelType} />
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Length</p>
-          <p className="mt-1 text-lg font-bold tabular-nums">
-            {vehicle.lengthFeet ?? "—"}
-            <span className="ml-1 text-[10px] font-semibold text-muted-foreground">ft</span>
-          </p>
-        </div>
-        <ReadOnlyField label="GPS Provider" value={vehicle.gpsProvider || "—"} />
-        <ReadOnlyField label="Start Date" value={profileVehicle.fleetStartDate || "—"} />
-        <ReadOnlyField label="End Date" value={profileVehicle.fleetEndDate || "—"} />
-      </div>
-
-    </Card>
-  </div>
-
-  return <Card><SectionTitle title="Edit Vehicle Profile" description="Review extracted values before saving." /><div className="p-4"><VehicleProfileForm companyId={companyId} vehicle={vehicle} form={form} setForm={setForm} onCancel={() => { setEditing(false); setForm(profileFromVehicle(vehicle)) }} onSave={() => { onSave(buildVehicle(form, vehicle)); setEditing(false) }} onStartOCR={onStartOCR} /></div></Card>
-}
-
-function VehicleProfileForm({ companyId, vehicle, form, setForm, onCancel, onSave, onStartOCR, forceOCRPrompt = false }: { companyId: string; vehicle: VehicleRecord | null; form: ProfileForm; setForm: Dispatch<SetStateAction<ProfileForm>>; onCancel: () => void; onSave: () => void; onStartOCR: () => void; forceOCRPrompt?: boolean }) {
-  const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => setForm((current) => ({ ...current, [key]: value }))
-  return <div className="space-y-4">
-    <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 p-3"><div><p className="text-xs font-bold">OCR-first source capture</p><p className="text-[11px] text-muted-foreground">Upload the source document, review extracted values, then save the structured Vehicle record.</p></div><Button variant="outline" size="sm" onClick={onStartOCR}><Upload className="mr-1.5 size-3.5" />Start with Document</Button></div>
-    <div className="grid gap-3 md:grid-cols-4">
-      <Field label="Record ID"><Input className={inputClass} value={vehicle?.id || "Generated on save"} disabled /></Field>
-      <Field label="Equipment Number" required><Input className={inputClass} value={form.unitNumber} onChange={(e) => set("unitNumber", e.target.value)} /></Field>
-      <Field label="Vehicle Type" required><select className={selectClass} value={form.equipmentType} onChange={(e) => set("equipmentType", e.target.value as EquipmentType)}>{VEHICLE_TYPES.map((item) => <option key={item}>{item}</option>)}</select></Field>
-      <Field label="Status"><select className={selectClass} value={form.status} onChange={(e) => set("status", e.target.value as VehicleStatus)}>{VEHICLE_STATUSES.map((item) => <option key={item}>{item}</option>)}</select></Field>
-      <Field label="VIN" required><Input className={inputClass} value={form.vin} onChange={(e) => set("vin", normalizeVIN(e.target.value))} maxLength={17} /></Field>
-      <Field label="Year"><Input className={inputClass} value={form.year} onChange={(e) => set("year", e.target.value)} /></Field>
-      <Field label="Make"><Input className={inputClass} value={form.make} onChange={(e) => set("make", e.target.value)} /></Field>
-      <Field label="Model"><Input className={inputClass} value={form.model} onChange={(e) => set("model", e.target.value)} /></Field>
-      <Field label="Color"><Input className={inputClass} value={form.color} onChange={(e) => set("color", e.target.value)} /></Field>
-      <Field label="Operating Region"><select className={selectClass} value={form.operatingRegion} onChange={(e) => set("operatingRegion", e.target.value as ProfileForm["operatingRegion"])}><option>Canada Only</option><option>US Only</option><option>Cross-Border</option></select></Field>
-      <Field label="Equipment Axles"><Input className={inputClass} type="number" min="0" value={form.axles} onChange={(e) => set("axles", e.target.value)} /></Field>
-      <Field label="Start Date"><Input className={inputClass} type="date" value={form.fleetStartDate} onChange={(e) => set("fleetStartDate", e.target.value)} /></Field>
-      <Field label="End Date"><Input className={inputClass} type="date" value={form.fleetEndDate} onChange={(e) => set("fleetEndDate", e.target.value)} /></Field>
-      <Field label="Tare Weight" className="md:col-span-2"><div className="flex items-center gap-2"><Input className={`${inputClass} text-base font-bold tabular-nums`} type="number" min="0" value={form.tareWeight} onChange={(e) => set("tareWeight", e.target.value)} /><select className="h-9 w-16 rounded-lg border border-input bg-background px-2 text-[10px] font-semibold" value={form.tareWeightUnit} onChange={(e) => set("tareWeightUnit", e.target.value as "kg" | "lb")}><option>kg</option><option>lb</option></select></div></Field>
-      <Field label="Fuel Type"><select className={selectClass} value={form.fuelType} onChange={(e) => set("fuelType", e.target.value as ProfileForm["fuelType"])}><option>Diesel</option><option>Electric</option><option>Gasoline</option><option>CNG/LNG</option><option>None / Unpowered</option></select></Field>
-      <Field label="Equipment Length" className="md:col-span-2"><div className="flex items-center gap-2"><Input className={`${inputClass} text-base font-bold tabular-nums`} type="number" min="0" value={form.equipmentLength} onChange={(e) => set("equipmentLength", e.target.value)} /><select className="h-9 w-16 rounded-lg border border-input bg-background px-2 text-[10px] font-semibold" value={form.equipmentLengthUnit} onChange={(e) => set("equipmentLengthUnit", e.target.value as "ft" | "m")}><option>ft</option><option>m</option></select></div></Field>
-      <Field label="GPS Provider"><Input className={inputClass} value={form.gpsProvider} onChange={(e) => set("gpsProvider", e.target.value)} /></Field>
-    </div>
-    <div className="flex justify-end gap-2 border-t pt-3"><Button variant="outline" onClick={onCancel}>Cancel</Button><Button onClick={onSave}>Save Vehicle</Button></div>
-  </div>
 }
 
 function OwnershipTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, pendingEvidenceId, clearPendingEvidence, setError, setNotice }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; records: VehicleOwnershipRecord[]; evidence: EvidenceRecord[]; onStoreChange: (store: VehicleStore) => void; onStartOCR: (documentType: string) => void; pendingEvidenceId: string | null; clearPendingEvidence: () => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void }) {

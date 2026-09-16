@@ -232,6 +232,7 @@ function vinSimilarity(sourceVin: string | undefined, canonicalVin: string | und
   const canonical = normalizeVIN(canonicalVin || "");
   if (!source || !canonical) return 0;
   if (source.length >= 6 && canonical.endsWith(source.slice(-6))) return 1;
+  if (source.length >= 6 && canonical.length >= 6 && editDistance(source.slice(-6), canonical.slice(-6)) <= 1) return 0.99;
   const tailLength = Math.min(source.length, canonical.length, 12);
   if (!tailLength) return 0;
   const sourceTail = source.slice(-tailLength);
@@ -333,7 +334,13 @@ export function resolveCanonicalVehicleByIdentifiers(
 
   const vinMatches = vin
     ? vinMatchMode === "LAST_6"
-      ? all.filter((entry) => entry.companyId === operatingCompanyId && vinSuffix.length === 6 && normalizeVIN(entry.vehicle.vin || "").endsWith(vinSuffix))
+      ? all.filter((entry) => {
+          if (entry.companyId !== operatingCompanyId || vinSuffix.length !== 6) return false;
+          const canonicalVin = normalizeVIN(entry.vehicle.vin || "");
+          if (canonicalVin.endsWith(vinSuffix)) return true;
+          const canonicalSuffix = canonicalVin.slice(-6);
+          return canonicalSuffix.length === 6 && editDistance(canonicalSuffix, vinSuffix) <= 1;
+        })
       : all.filter((entry) => normalizeVIN(entry.vehicle.vin || "") === vin)
     : [];
   const plateMatches = plate && jurisdiction ? all.filter((entry) => vehiclePlateMatches(entry, plate, jurisdiction, asOfDate)) : [];
@@ -362,6 +369,18 @@ export function resolveCanonicalVehicleByIdentifiers(
     vinMatches[0].companyId === plateMatches[0].companyId &&
     vinMatches[0].vehicle.id === plateMatches[0].vehicle.id
   );
+  const historicalPlateConfirmsVinSuffix = Boolean(
+    vinMatchMode === "LAST_6" &&
+    vinMatches.length === 1 &&
+    historicalPlateVinMatches.length === 1 &&
+    vinMatches[0].companyId === historicalPlateVinMatches[0].companyId &&
+    vinMatches[0].vehicle.id === historicalPlateVinMatches[0].vehicle.id
+  );
+  const currentPlateDiffersFromHistoricallyConfirmedVin = Boolean(
+    historicalPlateConfirmsVinSuffix &&
+    plateMatches.length === 1 &&
+    (plateMatches[0].companyId !== vinMatches[0].companyId || plateMatches[0].vehicle.id !== vinMatches[0].vehicle.id)
+  );
 
   const conflicts: string[] = [];
   if (vinMatches.length > 1) conflicts.push(vinMatchMode === "LAST_6" ? "VIN suffix identifies multiple active Vehicles inside the operating company." : "VIN identifies multiple active canonical Vehicle records.");
@@ -371,7 +390,8 @@ export function resolveCanonicalVehicleByIdentifiers(
   const authoritativeConflict = Boolean(
     vinMatches.length &&
     plateMatches.length &&
-    !authoritativeVinPlateAgreement
+    !authoritativeVinPlateAgreement &&
+    !currentPlateDiffersFromHistoricallyConfirmedVin
   );
   if (authoritativeConflict) conflicts.push("Source VIN and Plate + Jurisdiction resolve to different canonical Vehicles.");
 
@@ -385,6 +405,9 @@ export function resolveCanonicalVehicleByIdentifiers(
   }
   if (plateMatches.length && unit && !plateMatches.some((entry) => unitMatches.some((u) => u.companyId === entry.companyId && u.vehicle.id === entry.vehicle.id)) && !identifierDiscrepancies.length) {
     identifierDiscrepancies.push("Source Unit Number differs from the canonical Vehicle identified by Plate + Jurisdiction.");
+  }
+  if (currentPlateDiffersFromHistoricallyConfirmedVin) {
+    identifierDiscrepancies.push("Current Plate + Jurisdiction points to a different Vehicle, but company historical plate registration confirms the VIN last-six match.");
   }
   if (authoritativeConflict || vinMatches.length > 1 || plateMatches.length > 1 || conflicts.length) {
     return { state: "REVIEW_REQUIRED", method: undefined, reason: "IDENTITY / REGISTRATION CONFLICT", conflicts, identifierDiscrepancies, candidateVehicleIds: distinct([...union, ...historicalPlateMatches]).map((entry) => entry.vehicle.id), evaluatedAt };
@@ -404,7 +427,7 @@ export function resolveCanonicalVehicleByIdentifiers(
     return {
       state: "AUTO_RESOLVED",
       method,
-      reason: historicalWinner ? "Resolved by company historical Plate registration confirmed by close source VIN match." : method === "VIN_GLOBAL" ? "Resolved by global VIN match." : method === "VIN_SUFFIX_COMPANY_SCOPED" ? "Resolved by company-scoped VIN last-six match." : method === "PLATE_JURISDICTION" ? "Resolved by Plate + issuing jurisdiction and effective registration." : method === "UNIT_COMPANY_SCOPED" ? "Resolved by Unit / Equipment Number within the operating-company context only." : "Multiple supplied identifiers agree on one canonical Vehicle.",
+      reason: historicalWinner ? "Resolved by company historical Plate registration confirmed by close source VIN match." : historicalPlateConfirmsVinSuffix ? "Resolved by company VIN last-six match confirmed by historical Plate registration." : method === "VIN_GLOBAL" ? "Resolved by global VIN match." : method === "VIN_SUFFIX_COMPANY_SCOPED" ? "Resolved by company-scoped VIN last-six match." : method === "PLATE_JURISDICTION" ? "Resolved by Plate + issuing jurisdiction and effective registration." : method === "UNIT_COMPANY_SCOPED" ? "Resolved by Unit / Equipment Number within the operating-company context only." : "Multiple supplied identifiers agree on one canonical Vehicle.",
       canonicalVehicle: winner.vehicle,
       canonicalCompanyId: winner.companyId,
       canonicalCompanyName: winner.companyName,
@@ -845,6 +868,45 @@ export interface VehicleMaintenanceRecord {
   nextServiceDueOdometer?: string;
 }
 
+export type InspectionFindingStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
+
+export interface InspectionFinding {
+  id: string;
+  inspectionId: string;
+  rawDescription: string;
+  componentSystem?: string;
+  affectedEntityType?: "DRIVER" | "POWER_UNIT" | "TOWED_UNIT";
+  affectedEntityId?: string;
+  affectedEntityRawRef?: string;
+  sourceResultCode?: "X" | "O" | "N" | string;
+  status: InspectionFindingStatus;
+  evidenceIds: string[];
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaintenanceItem {
+  id: string;
+  maintenanceRecordId: string;
+  componentSystem?: string;
+  workAction?: string;
+  specificDescription: string;
+  status: "OPEN" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  evidenceIds: string[];
+  legacyMigrated?: boolean;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FindingMaintenanceLink {
+  id: string;
+  findingId: string;
+  maintenanceItemId: string;
+  createdAt: string;
+}
+
 export interface VehicleStore {
   version: number;
   vehicles: VehicleRecord[];
@@ -853,19 +915,25 @@ export interface VehicleStore {
   permitRecords: VehiclePermitRecord[];
   inspectionRecords: VehicleInspectionRecord[];
   maintenanceRecords: VehicleMaintenanceRecord[];
+  inspectionFindings: InspectionFinding[];
+  maintenanceItems: MaintenanceItem[];
+  findingMaintenanceLinks: FindingMaintenanceLink[];
   evidence: import("../types/evidence").EvidenceRecord[];
 }
 
 export const vehicleStorageKey = (companyId: string) => `tes_company_vehicles_${companyId}`;
 
 const EMPTY_VEHICLE_STORE = (): VehicleStore => ({
-  version: 2,
+  version: 3,
   vehicles: [],
   ownershipRecords: [],
   registrationRecords: [],
   permitRecords: [],
   inspectionRecords: [],
   maintenanceRecords: [],
+  inspectionFindings: [],
+  maintenanceItems: [],
+  findingMaintenanceLinks: [],
   evidence: [],
 });
 
@@ -1049,6 +1117,21 @@ export function loadVehicleStore(companyId: string): VehicleStore {
     const maintenance = Array.isArray(value.maintenanceRecords) ? value.maintenanceRecords : [];
     store.maintenanceRecords = maintenance.flatMap((item) => item && typeof item === "object" ? [normalizeLegacyMaintenance(item as Record<string, unknown>, typeof (item as Record<string, unknown>).vehicleId === "string" ? String((item as Record<string, unknown>).vehicleId) : "")] : []);
 
+    store.inspectionFindings = Array.isArray(value.inspectionFindings)
+      ? value.inspectionFindings.filter((item): item is InspectionFinding => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"))
+      : [];
+    store.maintenanceItems = Array.isArray(value.maintenanceItems)
+      ? value.maintenanceItems.filter((item): item is MaintenanceItem => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"))
+      : [];
+    store.findingMaintenanceLinks = Array.isArray(value.findingMaintenanceLinks)
+      ? value.findingMaintenanceLinks.filter((item): item is FindingMaintenanceLink => Boolean(
+          item
+          && typeof item === "object"
+          && typeof (item as Record<string, unknown>).findingId === "string"
+          && typeof (item as Record<string, unknown>).maintenanceItemId === "string"
+        ))
+      : [];
+
     store.evidence = Array.isArray(value.evidence)
       ? value.evidence.filter((item): item is import("../types/evidence").EvidenceRecord => Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"))
       : [];
@@ -1092,7 +1175,7 @@ export function loadVehicleStore(companyId: string): VehicleStore {
 
 export function saveVehicleStore(companyId: string, store: VehicleStore): void {
   if (typeof window === "undefined" || !companyId) throw new Error("Vehicle company context is unavailable.");
-  localStorage.setItem(vehicleStorageKey(companyId), JSON.stringify({ ...store, version: Math.max(2, store.version || 0) }));
+  localStorage.setItem(vehicleStorageKey(companyId), JSON.stringify({ ...store, version: Math.max(3, store.version || 0) }));
 }
 
 export function persistVehicleStore(companyId: string, updater: (current: VehicleStore) => VehicleStore): VehicleStore {
@@ -1100,4 +1183,126 @@ export function persistVehicleStore(companyId: string, updater: (current: Vehicl
   const next = updater(current);
   saveVehicleStore(companyId, next);
   return next;
+}
+
+export function createInspectionFinding(
+  companyId: string,
+  input: Omit<InspectionFinding, "id" | "status" | "evidenceIds" | "archived" | "createdAt" | "updatedAt">
+    & Partial<Pick<InspectionFinding, "status" | "evidenceIds">>,
+): InspectionFinding {
+  const now = isoNow();
+  const finding: InspectionFinding = {
+    ...input,
+    id: createId("FND"),
+    status: input.status || "OPEN",
+    evidenceIds: input.evidenceIds || [],
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  persistVehicleStore(companyId, (store) => ({
+    ...store,
+    inspectionFindings: [...store.inspectionFindings, finding],
+  }));
+  return finding;
+}
+
+export function updateInspectionFindingStatus(
+  companyId: string,
+  findingId: string,
+  status: InspectionFindingStatus,
+): InspectionFinding {
+  let updated: InspectionFinding | undefined;
+  persistVehicleStore(companyId, (store) => ({
+    ...store,
+    inspectionFindings: store.inspectionFindings.map((finding) => {
+      if (finding.id !== findingId) return finding;
+      updated = { ...finding, status, updatedAt: isoNow() };
+      return updated;
+    }),
+  }));
+  if (!updated) throw new Error("Inspection finding was not found.");
+  return updated;
+}
+
+export function createMaintenanceItem(
+  companyId: string,
+  input: Omit<MaintenanceItem, "id" | "status" | "evidenceIds" | "archived" | "createdAt" | "updatedAt">
+    & Partial<Pick<MaintenanceItem, "status" | "evidenceIds">>,
+): MaintenanceItem {
+  const now = isoNow();
+  const item: MaintenanceItem = {
+    ...input,
+    id: createId("MIT"),
+    status: input.status || "OPEN",
+    evidenceIds: input.evidenceIds || [],
+    archived: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  persistVehicleStore(companyId, (store) => ({
+    ...store,
+    maintenanceItems: [...store.maintenanceItems, item],
+  }));
+  return item;
+}
+
+export function linkFindingToMaintenanceItem(
+  companyId: string,
+  findingId: string,
+  maintenanceItemId: string,
+): FindingMaintenanceLink {
+  const store = loadVehicleStore(companyId);
+  if (!store.inspectionFindings.some((finding) => finding.id === findingId && !finding.archived)) {
+    throw new Error("Inspection finding was not found.");
+  }
+  if (!store.maintenanceItems.some((item) => item.id === maintenanceItemId && !item.archived)) {
+    throw new Error("Maintenance item was not found.");
+  }
+  const existing = store.findingMaintenanceLinks.find(
+    (link) => link.findingId === findingId && link.maintenanceItemId === maintenanceItemId,
+  );
+  if (existing) return existing;
+
+  const link: FindingMaintenanceLink = {
+    id: createId("FML"),
+    findingId,
+    maintenanceItemId,
+    createdAt: isoNow(),
+  };
+  saveVehicleStore(companyId, {
+    ...store,
+    findingMaintenanceLinks: [...store.findingMaintenanceLinks, link],
+  });
+  return link;
+}
+
+export function getFindingsForInspection(store: VehicleStore, inspectionId: string): InspectionFinding[] {
+  return store.inspectionFindings.filter((finding) => finding.inspectionId === inspectionId && !finding.archived);
+}
+
+export function getMaintenanceItemsForRecord(store: VehicleStore, maintenanceRecordId: string): MaintenanceItem[] {
+  return store.maintenanceItems.filter((item) => item.maintenanceRecordId === maintenanceRecordId && !item.archived);
+}
+
+export function getLinksForFinding(store: VehicleStore, findingId: string): FindingMaintenanceLink[] {
+  return store.findingMaintenanceLinks.filter((link) => link.findingId === findingId);
+}
+
+export function deriveMaintenanceItemProvenance(
+  store: VehicleStore,
+  item: MaintenanceItem,
+): { type: "INSPECTION_FINDING" | "MAINTENANCE_RECORD"; label: string; findingIds: string[] } {
+  const links = store.findingMaintenanceLinks.filter((link) => link.maintenanceItemId === item.id);
+  const findings = links
+    .map((link) => store.inspectionFindings.find((finding) => finding.id === link.findingId))
+    .filter((finding): finding is InspectionFinding => Boolean(finding));
+  if (findings.length > 0) {
+    return {
+      type: "INSPECTION_FINDING",
+      label: findings.length === 1 ? "Inspection finding" : `${findings.length} inspection findings`,
+      findingIds: findings.map((finding) => finding.id),
+    };
+  }
+  return { type: "MAINTENANCE_RECORD", label: "Maintenance record", findingIds: [] };
 }

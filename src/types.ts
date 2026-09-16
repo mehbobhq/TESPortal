@@ -68,13 +68,30 @@ export type PermitType =
   | "Annual Safety Permit"
   | "Other State/Provincial Permit";
 
-export type InspectionType =
-  | "Annual Periodic Inspection (CVIP / DOT 396.17)"
-  | "Semi-Annual Inspection"
-  | "90-Day Periodic Inspection"
-  | "Preventive Maintenance A"
-  | "Preventive Maintenance B"
-  | "Pre-Trip / Post-Trip Sign-off";
+/**
+ * The single authoritative controlled vocabulary for Inspection Type.
+ * Previously duplicated as a second hard-coded array in the Vehicles page
+ * UI — that UI now imports INSPECTION_TYPES below instead of maintaining
+ * its own copy. Legacy stored values outside this list (e.g. older seed
+ * data) are tolerated at runtime since VehicleInspectionRecord.inspectionType
+ * is stored as a plain string, but new records must use one of these.
+ */
+export const INSPECTION_TYPES = [
+  "Annual / Periodic Vehicle Inspection",
+  "Provincial / State Safety Inspection",
+  "Emissions Test",
+  "Pre-Trip Inspection",
+  "Post-Trip Inspection / DVIR",
+  "Scheduled Internal Inspection",
+  "Brake Inspection",
+  "Trailer Inspection",
+  "Reefer / Temperature-Control Unit Inspection",
+  "CVSA / Roadside Inspection",
+  "Special Inspection",
+  "Other",
+] as const;
+
+export type InspectionType = (typeof INSPECTION_TYPES)[number];
 
 export type DocumentSource = "camera" | "device";
 
@@ -241,9 +258,9 @@ export type OCRSession = {
 };
 
 // Re-export canonical generic shared contracts
-export * from "./types/entity-references";
-export * from "./types/ocr";
-export * from "./types/evidence";
-export * from "./types/applicability";
-export * from "./types/permissions";
+export * from "../types/entity-references";
+export * from "../types/ocr";
+export * from "../types/evidence";
+export * from "../types/applicability";
+export * from "../types/permissions";
 

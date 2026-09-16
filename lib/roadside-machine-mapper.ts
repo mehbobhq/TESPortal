@@ -35,22 +35,24 @@ function groups(result: TESMachineDocumentResult, prefix: string): MachineObserv
   return [...grouped.values()];
 }
 
-function sequentialGroups(result: TESMachineDocumentResult, prefix: string): MachineObservation[][] {
-  const rows: MachineObservation[][] = [];
-  let current: MachineObservation[] = [];
-  const observations = result.observations.filter((item) => item.dataPointId.startsWith(prefix));
-
-  for (const observation of observations) {
-    const alreadySeenInCurrentRow = current.some((item) => item.dataPointId === observation.dataPointId);
-    if (current.length && alreadySeenInCurrentRow) {
-      rows.push(current);
-      current = [];
-    }
-    current.push(observation);
+function splitRepeatedGroup(items: MachineObservation[]): MachineObservation[][] {
+  const occurrences = new Map<string, number>();
+  let rowCount = 1;
+  for (const item of items) {
+    const count = (occurrences.get(item.dataPointId) || 0) + 1;
+    occurrences.set(item.dataPointId, count);
+    rowCount = Math.max(rowCount, count);
   }
+  if (rowCount === 1) return [items];
 
-  if (current.length) rows.push(current);
-  return rows;
+  const rows = Array.from({ length: rowCount }, () => [] as MachineObservation[]);
+  const positions = new Map<string, number>();
+  for (const item of items) {
+    const position = positions.get(item.dataPointId) || 0;
+    rows[position].push(item);
+    positions.set(item.dataPointId, position + 1);
+  }
+  return rows.filter((row) => row.length > 0);
 }
 
 const childValue = (items: MachineObservation[], id: string) => {
@@ -85,7 +87,10 @@ function equipmentFrom(result: TESMachineDocumentResult): RoadsideMachineEquipme
 
 function findingsFrom(result: TESMachineDocumentResult): RoadsideMachineFindingObservation[] {
   const grouped = groups(result, "roadside.finding.");
-  const sourceGroups = grouped.every((items) => items.length === 1) ? sequentialGroups(result, "roadside.finding.") : grouped;
+  const allFindingObservations = result.observations.filter((item) => item.dataPointId.startsWith("roadside.finding."));
+  const sourceGroups = grouped.every((items) => items.length === 1)
+    ? splitRepeatedGroup(allFindingObservations)
+    : grouped.flatMap(splitRepeatedGroup);
   return sourceGroups.map((items) => ({
     sourceUnitNumber: text(childValue(items, "roadside.finding.source_unit_number")),
     sourceEquipmentReference: text(childValue(items, "roadside.finding.source_equipment_reference")),

@@ -49,10 +49,22 @@ function resolveJurisdiction(value?: string): string | undefined {
   return JURISDICTIONS.find((item) => normalizedWords(item.code) === normalized || normalizedWords(item.label) === normalized)?.code;
 }
 
-function isBcNoticeAndOrder(source: RoadsideMachineSourceRecord): boolean {
+export function resolveRoadsideSourceJurisdiction(source: RoadsideMachineSourceRecord): string | undefined {
+  const explicitJurisdiction = resolveJurisdiction(source.stateProvince);
+  if (explicitJurisdiction) return explicitJurisdiction;
+
   const title = normalizedWords(source.sourceDocumentTitle);
-  const report = source.reportNumber?.trim().toUpperCase();
-  return title === "NOTICE AND ORDER" && Boolean(report?.startsWith("MV510_"));
+  const report = normalizedWords(source.reportNumber)?.replace(/\s/g, "");
+  const agency = normalizedWords(source.agency);
+  const isBcSource = Boolean(
+    /^MV(?:510|1070)/.test(report || "")
+    || agency === "MINISTRY OF TRANSPORTATION AND INFRASTRUCTURE"
+    || agency?.includes("COMMERCIAL VEHICLE SAFETY AND ENFORCEMENT")
+    || agency?.includes("BRITISH COLUMBIA")
+    || title?.includes("BRITISH COLUMBIA")
+    || (title?.includes("NOTICE AND ORDER") && source.country?.trim().toUpperCase() === "CANADA")
+  );
+  return isBcSource ? "BC" : undefined;
 }
 
 function resolveClassification(value: string | undefined, regime: RoadsideCanonicalFacts["inspectionRegime"]): string | undefined {
@@ -91,7 +103,28 @@ function resolveResult(...values: Array<string | undefined>): RoadsideCanonicalF
   return undefined;
 }
 
-const normalizedResultCode = (value?: string) => normalizedWords(value);
+const normalizedResultCode = (value?: string): string | undefined => {
+  const normalized = normalizedWords(value);
+  if (normalized === "0") return "O";
+  const match = normalized?.match(/(?:^| )([XONC])(?: |$)/);
+  return match?.[1] || normalized;
+};
+
+function sourceResultObservationCount(source: RoadsideMachineSourceRecord): number {
+  return source.observations.filter((item) => {
+    if (item.dataPointId !== "roadside.finding.source_result_code" || typeof item.value !== "string") return false;
+    return ["X", "O", "N", "C"].includes(normalizedResultCode(item.value) || "");
+  }).length;
+}
+
+function sourceFindingObservationRowCount(source: RoadsideMachineSourceRecord): number {
+  const counts = new Map<string, number>();
+  for (const item of source.observations) {
+    if (!item.dataPointId.startsWith("roadside.finding.")) continue;
+    counts.set(item.dataPointId, (counts.get(item.dataPointId) || 0) + 1);
+  }
+  return Math.max(0, ...counts.values());
+}
 
 function isViolationFinding(finding: RoadsideMachineFindingObservation): boolean {
   const code = normalizedResultCode(finding.sourceResultCode);
@@ -100,7 +133,7 @@ function isViolationFinding(finding: RoadsideMachineFindingObservation): boolean
 
 function isSourceInspectionRow(finding: RoadsideMachineFindingObservation): boolean {
   const code = normalizedResultCode(finding.sourceResultCode);
-  return code === "X" || code === "O" || code === "N" || isViolationFinding(finding);
+  return code === "X" || code === "O" || code === "N" || code === "C" || isViolationFinding(finding);
 }
 
 function isOosFinding(finding: RoadsideMachineFindingObservation): boolean {
@@ -119,7 +152,7 @@ function isVehicleFinding(finding: RoadsideMachineFindingObservation): boolean {
 }
 
 export function resolveRoadsideCanonicalFacts(source: RoadsideMachineSourceRecord): RoadsideCanonicalFacts {
-  const jurisdiction = resolveJurisdiction(source.stateProvince) || (isBcNoticeAndOrder(source) ? "BC" : undefined);
+  const jurisdiction = resolveRoadsideSourceJurisdiction(source);
   const jurisdictionDefinition = JURISDICTIONS.find((item) => item.code === jurisdiction);
   const inspectionRegime = jurisdictionDefinition?.country === "Canada"
     ? "CA_NSC_CVSA"
@@ -141,6 +174,11 @@ export function resolveRoadsideCanonicalFacts(source: RoadsideMachineSourceRecor
     else if (vehicleSeen) inspectionScope = "VEHICLE";
   }
   const sourceInspectionRows = source.findings.filter(isSourceInspectionRow);
+  const sourceInspectionRowCount = Math.max(
+    sourceInspectionRows.length,
+    sourceResultObservationCount(source),
+    sourceFindingObservationRowCount(source),
+  );
   const violationFindings = source.findings.filter(isViolationFinding);
   const inspectionResult = resolveResult(source.cvsaResult, source.sourceStatus) || (violationFindings.length ? "VIOLATIONS_FOUND" : undefined);
   const driverViolation = violationFindings.some(isDriverFinding);
@@ -165,7 +203,7 @@ export function resolveRoadsideCanonicalFacts(source: RoadsideMachineSourceRecor
     vehicleOOSState: inspectionResult === "VIOLATIONS_FOUND" && (inspectionScope === "VEHICLE" || inspectionScope === "BOTH")
       ? vehicleOos ? "YES" : vehicleViolation ? "NO" : undefined
       : undefined,
-    sourceReportedViolationCount: inspectionResult === "VIOLATIONS_FOUND" ? sourceInspectionRows.length || violationFindings.length || undefined : undefined,
+    sourceReportedViolationCount: inspectionResult === "VIOLATIONS_FOUND" ? sourceInspectionRowCount || violationFindings.length || undefined : undefined,
   };
 }
 export function resolveRoadsideCanonicalOccurrence(source: RoadsideMachineSourceRecord): { eventDate?: string; eventTime?: string } {

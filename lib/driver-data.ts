@@ -3,7 +3,7 @@ import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
 import { loadVehicleStore } from "@/lib/vehicle-data"
-import { getRoadsideViolationCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, ROADSIDE_VIOLATION_COLLECTION_ID } from "@/lib/driver-performance-child-facts"
+import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, ROADSIDE_VIOLATION_COLLECTION_ID } from "@/lib/driver-performance-child-facts"
 
 import type {
   AddressRecord,
@@ -1074,6 +1074,15 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
       };
     }
   }
+
+  // NOTE: PerformanceEventRecord (this record) is the sole canonical record
+  // for Roadside Inspection events — see lib/driver-performance-relationship-resolution.ts,
+  // which already resolves Power Unit + every Towed Unit to canonical Vehicle
+  // identity via resolveCanonicalVehicleByIdentifiers and persists the result
+  // on relationshipResolutions[]. Vehicle-side surfaces read/reference this
+  // event (see getRoadsideEventsForVehicle) rather than copying it into a
+  // second VehicleInspectionRecord.
+
   const record: DriverPerformanceEvent = {
     ...data,
     id: eventId,
@@ -1210,6 +1219,43 @@ export function persistPerformanceRelationshipResolutions(companyId: string, eve
   saveCompanyDriverStore({ ...store, events: updatedEvents, performanceRelationshipResolutions: [...(store.performanceRelationshipResolutions || []).filter((item) => item.eventId !== eventId), ...effectiveResolutions] });
   if (changed) auditDriverMutation(companyId, eventId, "UPDATE", `Performance relationships reevaluated: ${effectiveResolutions.map((item) => `${item.relationshipKey}=${item.state}`).join(", ")}.`);
   return updatedEvents.find((event) => event.id === eventId);
+}
+
+export interface RoadsideEventForVehicle {
+  event: DriverPerformanceEvent;
+  /** Which physical unit this vehicle played in the event — a vehicle can appear as the Power Unit in one event and a Towed Unit in another. */
+  matchedRole: "POWER_UNIT" | "TOWED_UNIT";
+  resolution: PerformanceRelationshipResolution;
+}
+
+/**
+ * Read-only cross-reference from a canonical Vehicle to the Roadside
+ * Inspection Performance Events it actually participated in. This does NOT
+ * copy or duplicate the event — PerformanceEventRecord (EVT-*) remains the
+ * sole canonical record for Roadside/CVSA inspections; this only reads the
+ * identity resolution that lib/driver-performance-relationship-resolution.ts
+ * already computes and persists on event.relationshipResolutions[]
+ * (relationshipKey "equipment:<itemId>", resolvedRecordId = canonical
+ * Vehicle id). A vehicle that did not participate in any event correctly
+ * returns an empty array — nothing propagates company-wide.
+ */
+export function getRoadsideEventsForVehicle(companyId: string, vehicleId: string): RoadsideEventForVehicle[] {
+  const store = loadCompanyDriverStore(companyId);
+  const results: RoadsideEventForVehicle[] = [];
+  for (const event of store.events) {
+    if (event.isArchived || event.eventType !== "Roadside Inspection") continue;
+    const equipmentCollection = getRoadsideEquipmentCollection(event);
+    for (const resolution of event.relationshipResolutions || []) {
+      if (!resolution.relationshipKey.startsWith("equipment:")) continue;
+      if (resolution.targetEntityType !== "Vehicle") continue;
+      if (resolution.resolvedRecordId !== vehicleId) continue;
+      const itemId = resolution.relationshipKey.slice("equipment:".length);
+      const item = equipmentCollection?.items.find((candidate) => candidate.itemId === itemId);
+      const role = item?.facts.role === "TOWED_UNIT" ? "TOWED_UNIT" : "POWER_UNIT";
+      results.push({ event, matchedRole: role, resolution });
+    }
+  }
+  return results.sort((a, b) => b.event.eventDate.localeCompare(a.event.eventDate));
 }
 
 export type PerformanceEventFactCorrection = {

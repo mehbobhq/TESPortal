@@ -34,12 +34,22 @@ import {
   loadVehicleStore,
   saveVehicleStore,
   validateVehicleUniqueness,
+  createInspectionFinding,
+  updateInspectionFindingStatus,
+  createMaintenanceItem,
+  linkFindingToMaintenanceItem,
+  getFindingsForInspection,
+  getMaintenanceItemsForRecord,
+  getLinksForFinding,
+  deriveMaintenanceItemProvenance,
   type VehicleStore,
   type VehicleOwnershipRecord,
   type VehicleRegistrationRecord,
   type VehiclePermitRecord,
   type VehicleInspectionRecord,
   type VehicleMaintenanceRecord,
+  type InspectionFinding,
+  type MaintenanceItem,
 } from "@/lib/vehicle-data"
 import { normalizeVIN, is17CharVIN } from "@/lib/identifier-normalization"
 import {
@@ -54,10 +64,13 @@ import {
   type RepairLineInput,
 } from "@/lib/repair-invoice-data"
 import { loadPartCatalog, type PartCatalogEntry } from "@/lib/part-catalog-data"
+import { getRoadsideEventsForVehicle, type RoadsideEventForVehicle } from "@/lib/driver-data"
+import { getRoadsideViolationCollection } from "@/lib/driver-performance-child-facts"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { logAuditEvent } from "@/lib/audit-log"
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions"
 import type { Company, EquipmentType, VehicleRecord, VehicleStatus } from "@/src/types"
+import { INSPECTION_TYPES } from "@/src/types"
 import type { EvidenceRecord } from "@/types/evidence"
 import type { OCRDocumentResult } from "@/types/ocr"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
@@ -68,6 +81,7 @@ import { UnsavedChangesPrompt } from "@/src/components/shared/UnsavedChangesProm
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { CameraCapture } from "@/src/components/CameraCapture"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { TESRecordOverlay } from "@/src/components/shared/TESRecordOverlay"
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking"
 
 const VEHICLE_TYPES: EquipmentType[] = [
@@ -122,20 +136,8 @@ const PERMIT_TYPES = [
   "Other",
 ]
 
-const INSPECTION_TYPES = [
-  "Annual / Periodic Vehicle Inspection",
-  "Provincial / State Safety Inspection",
-  "Emissions Test",
-  "Pre-Trip Inspection",
-  "Post-Trip Inspection / DVIR",
-  "Scheduled Internal Inspection",
-  "Brake Inspection",
-  "Trailer Inspection",
-  "Reefer / Temperature-Control Unit Inspection",
-  "CVSA / Roadside Inspection",
-  "Special Inspection",
-  "Other",
-]
+// INSPECTION_TYPES is imported from @/src/types — the single authoritative
+// controlled vocabulary — rather than duplicated here.
 
 const INSPECTION_SOURCES = ["Internal", "Third-Party Shop", "Roadside Enforcement"] as const
 const INSPECTION_STATUSES = ["Pass", "Pass with Defects", "Fail", "Out of Service"] as const
@@ -1097,7 +1099,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
       setPendingOwnershipEvidenceId(evidenceRecord.id)
       nextTab = "ownership"
     } else if (ocrContext.kind === "registration") {
-      setPendingRegistrationEvidence({ id: evidenceRecord.id, documentType: ocrContext.documentType })
+      setPendingRegistrationEvidence({ id: evidenceRecord.id, documentType: ocrContext.documentType, values })
       nextTab = "registrations"
     } else if (ocrContext.kind === "permit") {
       setPendingPermitEvidenceId(evidenceRecord.id)
@@ -1125,7 +1127,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
 
   const [profileOCRValues, setProfileOCRValues] = useState<Record<string, unknown> | null>(null)
   const [pendingOwnershipEvidenceId, setPendingOwnershipEvidenceId] = useState<string | null>(null)
-  const [pendingRegistrationEvidence, setPendingRegistrationEvidence] = useState<{ id: string; documentType: string } | null>(null)
+  const [pendingRegistrationEvidence, setPendingRegistrationEvidence] = useState<{ id: string; documentType: string; values: Record<string, unknown> } | null>(null)
   const [pendingPermitEvidenceId, setPendingPermitEvidenceId] = useState<string | null>(null)
   const [pendingInspectionEvidenceId, setPendingInspectionEvidenceId] = useState<string | null>(null)
   const [pendingMaintenanceEvidenceId, setPendingMaintenanceEvidenceId] = useState<string | null>(null)
@@ -1279,7 +1281,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
         <div className={selectedRecordEvidence ? "flex-1 min-w-0" : "w-full"}>
           {tab === "profile" ? <ProfileTab companyId={companyId} vehicle={vehicle} onSave={onSaveVehicle} onStartOCR={() => openSourcePicker({ kind: "profile" })} ocrValues={profileOCRValues} /> : null}
           {tab === "ownership" ? <OwnershipTab companyId={companyId} store={store} vehicle={vehicle} records={ownershipRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "ownership", documentType })} pendingEvidenceId={pendingOwnershipEvidenceId} clearPendingEvidence={() => setPendingOwnershipEvidenceId(null)} setError={setError} setNotice={setNotice} /> : null}
-          {tab === "registrations" ? <RegistrationTab companyId={companyId} store={store} vehicle={vehicle} records={registrationRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "registration", documentType })} pendingEvidence={pendingRegistrationEvidence} clearPendingEvidence={() => setPendingRegistrationEvidence(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: `Registration · ${record.registrationDate ?? ""} – ${record.expiryDate ?? ""}`, evidenceIds: [record.registrationDocumentEvidenceId, record.cabCardEvidenceId].filter((id): id is string => Boolean(id)) })} /> : null}
+          {tab === "registrations" ? <RegistrationTab companyId={companyId} store={store} vehicle={vehicle} records={registrationRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "registration", documentType })} pendingEvidence={pendingRegistrationEvidence} clearPendingEvidence={() => setPendingRegistrationEvidence(null)} setError={setError} setNotice={setNotice} onOpenEvidence={openEvidence} /> : null}
           {tab === "permits" ? <PermitTab companyId={companyId} store={store} vehicle={vehicle} records={permitRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "permit", documentType })} pendingEvidenceId={pendingPermitEvidenceId} clearPendingEvidence={() => setPendingPermitEvidenceId(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: `${record.permitType === "Other" ? record.customPermitType : record.permitType} · ${record.jurisdiction ?? ""}`, evidenceIds: record.evidenceIds ?? [] })} /> : null}
           {tab === "maintenance" ? <MaintenanceTab companyId={companyId} store={store} vehicle={vehicle} inspections={inspectionRecords} maintenance={maintenanceRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(kind, documentType) => openSourcePicker({ kind, documentType })} pendingInspectionEvidenceId={pendingInspectionEvidenceId} pendingMaintenanceEvidenceId={pendingMaintenanceEvidenceId} clearInspectionEvidence={() => setPendingInspectionEvidenceId(null)} clearMaintenanceEvidence={() => setPendingMaintenanceEvidenceId(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: "inspectionType" in record ? record.inspectionType : record.maintenanceType, evidenceIds: record.evidenceIds ?? [] })} /> : null}
           {tab === "activity" ? (
@@ -1573,19 +1575,289 @@ function OwnershipForm({ companyId, vehicle, initial, store, pendingEvidenceId, 
   </div></div></div>
 }
 
-function RegistrationTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, pendingEvidence, clearPendingEvidence, setError, setNotice, onRecordClick }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; records: VehicleRegistrationRecord[]; evidence: EvidenceRecord[]; onStoreChange: (store: VehicleStore) => void; onStartOCR: (documentType: string) => void; pendingEvidence: { id: string; documentType: string } | null; clearPendingEvidence: () => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; onRecordClick?: (record: VehicleRegistrationRecord) => void }) {
+type RegistrationArchiveRequest = {
+  requestedBy: string
+  requestSource:
+    | "Client Portal"
+    | "Email"
+    | "Ticket"
+    | "Other Documented Source"
+    | ""
+  requestReference: string
+  archiveRequestEvidenceId: string
+  reason: string
+}
+
+function getPrototypeAuthenticatedActor(): string {
+  if (typeof window === "undefined") return "Authenticated TES user"
+  try {
+    const raw = localStorage.getItem("tes_current_user") || localStorage.getItem("tes_user")
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const value = parsed.displayName || parsed.name || parsed.email || parsed.id
+      if (typeof value === "string" && value.trim()) return value.trim()
+    }
+  } catch {}
+  return "Authenticated TES user (prototype fallback)"
+}
+
+function RegistrationArchiveDialog({ companyId, record, vehicle, evidence, onCancel, onArchive }: { companyId: string; record: VehicleRegistrationRecord; vehicle: VehicleRecord; evidence: EvidenceRecord[]; onCancel: () => void; onArchive: (request: RegistrationArchiveRequest, requestEvidence: EvidenceRecord, performedBy: string, archivedAt: string) => void }) {
+  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [requestedBy, setRequestedBy] = useState("")
+  const [requestSource, setRequestSource] = useState<RegistrationArchiveRequest["requestSource"]>("")
+  const [requestReference, setRequestReference] = useState("")
+  const [archiveRequestEvidence, setArchiveRequestEvidence] = useState<EvidenceRecord | null>(null)
+  const [reason, setReason] = useState("")
+  const [confirmation, setConfirmation] = useState("")
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  const performedBy = getPrototypeAuthenticatedActor()
+  const request: RegistrationArchiveRequest = {
+    requestedBy: requestedBy.trim(),
+    requestSource,
+    requestReference: requestReference.trim(),
+    archiveRequestEvidenceId: archiveRequestEvidence?.id || "",
+    reason: reason.trim(),
+  }
+  const requiresReference = requestSource === "Ticket" || requestSource === "Client Portal" || requestSource === "Other Documented Source"
+  const referenceLabel = requestSource === "Email"
+    ? "Email Reference"
+    : requestSource === "Ticket"
+      ? "Ticket Reference"
+      : requestSource === "Client Portal"
+        ? "Portal Request Reference"
+        : "Source Reference / Description"
+  const canContinue = Boolean(
+    request.requestedBy &&
+    request.requestSource &&
+    (!requiresReference || request.requestReference) &&
+    request.archiveRequestEvidenceId
+  )
+  const title = step === 1 ? "Archive Registration Record" : step === 2 ? "Archive this registration record?" : "Confirm Archive"
+  const goBack = () => setStep((current) => current === 3 ? 2 : 1)
+
+  const handleRequestEvidenceUpload = (file: File | undefined) => {
+    setUploadError(null)
+    if (!file) return
+    const isSupported = file.type === "application/pdf" || file.type.startsWith("image/")
+    if (!isSupported) {
+      setUploadError("Upload a screenshot/image or PDF for the archive request evidence.")
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const now = isoNow()
+      const requestId = createId("ARQ")
+      const evidenceRecord: EvidenceRecord = {
+        id: createId("EVD"),
+        companyId,
+        entityType: "ArchiveRequest",
+        entityId: requestId,
+        documentType: "Archive Request Evidence",
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        fileReference: String(reader.result || ""),
+        fileSize: file.size,
+        documentDate: todayISO(),
+        uploadedAt: now,
+        uploadedBy: performedBy,
+        source: "upload",
+        verificationState: "verified",
+        notes: `Evidence of archive request. Source: ${requestSource || "Not selected"}. Reference: ${requestReference.trim() || "Not provided"}.`,
+      }
+      // entityType=ArchiveRequest deliberately keeps this canonical evidence out of Vehicle evidence.
+      setArchiveRequestEvidence(evidenceRecord)
+    }
+    reader.onerror = () => setUploadError("The request evidence file could not be read.")
+    reader.readAsDataURL(file)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[190] flex items-center justify-center bg-black/55 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="border-b border-border px-4 py-3 sm:px-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold">{title}</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Step {step} of 3</p>
+            </div>
+            <button type="button" onClick={onCancel} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close archive workflow">
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="mb-5 rounded-lg border border-border bg-muted/20 p-3 text-sm">
+            <p className="font-semibold">{record.registrationType}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Unit {vehicle.unitNumber || "—"} · {getJurisdictionLabel(record.stateProvince)} · Plate {record.plate || "—"}</p>
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">Record ID: {record.id}</p>
+          </div>
+
+          {step === 1 ? (
+            <div className="space-y-4">
+              <Field label="Requested By" required>
+                <Input value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} placeholder="Name of the person requesting the archive" autoComplete="off" />
+              </Field>
+
+              <Field label="Request Source" required>
+                <select className={selectClass} value={requestSource} onChange={(event) => { setRequestSource(event.target.value as RegistrationArchiveRequest["requestSource"]); setRequestReference(""); setArchiveRequestEvidence(null); setUploadError(null) }}>
+                  <option value="">Select…</option>
+                  <option value="Client Portal">Client Portal</option>
+                  <option value="Email">Email</option>
+                  <option value="Ticket">Ticket</option>
+                  <option value="Other Documented Source">Other Documented Source</option>
+                </select>
+              </Field>
+
+              {requestSource ? (
+                <Field label={referenceLabel} required={requiresReference}>
+                  <Input
+                    value={requestReference}
+                    onChange={(event) => setRequestReference(event.target.value)}
+                    placeholder={requestSource === "Email" ? "Email subject, sender, or message/reference ID" : requestSource === "Ticket" ? "Ticket number or ID/reference" : requestSource === "Client Portal" ? "Temporary portal request reference" : "Describe the source or reference"}
+                  />
+                  {requestSource === "Email" ? <p className="mt-1 text-[11px] text-muted-foreground">Use the email subject, sender, and/or message/reference identifier where available.</p> : null}
+                  {requestSource === "Client Portal" ? <p className="mt-1 text-[11px] text-muted-foreground">Temporary prototype field. Authenticated portal request metadata will provide this automatically later.</p> : null}
+                </Field>
+              ) : null}
+
+              {requestSource ? (
+                <Field label="Archive Request Evidence" required>
+                  <div className="rounded-lg border border-dashed border-border bg-muted/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold">Upload screenshot / PDF</p>
+                        <p className="mt-1 truncate text-[11px] text-muted-foreground">{archiveRequestEvidence ? archiveRequestEvidence.fileName : "No request evidence uploaded"}</p>
+                      </div>
+                      <label className="inline-flex shrink-0 cursor-pointer items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-muted">
+                        <Upload className="mr-1.5 size-3.5" />{archiveRequestEvidence ? "Replace" : "Upload"}
+                        <input type="file" accept="image/*,application/pdf" className="sr-only" onChange={(event) => handleRequestEvidenceUpload(event.target.files?.[0])} />
+                      </label>
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">This creates a new canonical “Archive Request Evidence” record. It is not selected from Vehicle evidence.</p>
+                    {uploadError ? <p className="mt-2 text-[11px] text-destructive">{uploadError}</p> : null}
+                  </div>
+                </Field>
+              ) : null}
+
+              <Field label="Reason (optional)">
+                <Textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Optional context supplied with the request" />
+              </Field>
+
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Performed By</p>
+                <p className="mt-1 text-sm">{performedBy}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Taken from the current TES identity when available. The labeled fallback is temporary for this prototype.</p>
+              </div>
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border p-4 text-sm">
+                <p>The registration record will be archived without deleting the original record or its business evidence.</p>
+                <p className="mt-2 text-xs text-muted-foreground">The archive request evidence is stored separately as canonical evidence of the instruction itself.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-border p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Requested By</p><p className="mt-1 text-sm">{request.requestedBy}</p></div>
+                <div className="rounded-lg border border-border p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Request Source</p><p className="mt-1 text-sm">{request.requestSource}</p></div>
+                <div className="rounded-lg border border-border p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Request Reference</p><p className="mt-1 text-sm break-words">{request.requestReference || "Not provided"}</p></div>
+                <div className="rounded-lg border border-border p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Archive Request Evidence ID</p><p className="mt-1 font-mono text-[11px] break-all">{request.archiveRequestEvidenceId}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{archiveRequestEvidence?.fileName}</p></div>
+              </div>
+            </div>
+          ) : null}
+
+          {step === 3 ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                <p className="text-sm font-semibold">Final confirmation required</p>
+                <p className="mt-1 text-xs text-muted-foreground">This archives the registration record and preserves the original record, business evidence, and archive-request evidence.</p>
+              </div>
+              <Field label='Type "ARCHIVE" to confirm' required>
+                <Input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="ARCHIVE" autoComplete="off" />
+              </Field>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
+          <div>{step > 1 ? <Button variant="outline" onClick={goBack}>Back</Button> : <Button variant="outline" onClick={onCancel}>Cancel</Button>}</div>
+          <div className="flex gap-2">
+            {step === 1 ? <Button disabled={!canContinue} onClick={() => setStep(2)}>Continue</Button> : null}
+            {step === 2 ? <Button onClick={() => setStep(3)}>Continue</Button> : null}
+            {step === 3 ? <Button variant="destructive" disabled={confirmation !== "ARCHIVE"} onClick={() => onArchive(request, archiveRequestEvidence!, performedBy, isoNow())}>ARCHIVE</Button> : null}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+
+function RegistrationTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, pendingEvidence, clearPendingEvidence, setError, setNotice, onOpenEvidence }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; records: VehicleRegistrationRecord[]; evidence: EvidenceRecord[]; onStoreChange: (store: VehicleStore) => void; onStartOCR: (documentType: string) => void; pendingEvidence: { id: string; documentType: string; values: Record<string, unknown> } | null; clearPendingEvidence: () => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; onOpenEvidence: (item: EvidenceRecord) => void }) {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<VehicleRegistrationRecord | null>(null)
+  const [selectedRecord, setSelectedRecord] = useState<VehicleRegistrationRecord | null>(null)
+  const [archiveRecord, setArchiveRecord] = useState<VehicleRegistrationRecord | null>(null)
   const [showArchived, setShowArchived] = useState(false)
   const visible = records.filter((record) => showArchived || !record.archived).sort((a, b) => b.registrationDate.localeCompare(a.registrationDate))
-  const archive = (record: VehicleRegistrationRecord) => { const next = { ...store, registrationRecords: store.registrationRecords.map((item) => item.id === record.id ? { ...item, archived: true, updatedAt: isoNow() } : item) }; try { saveVehicleStore(companyId, next); onStoreChange(next); recordAuditEvent({ action: "ARCHIVE", entityType: "Vehicle", entityId: record.id, companyId, actor: "", role: "", details: `Archived registration record ${record.id}.` }); setNotice("Registration archived.") } catch (err) { setError(err instanceof Error ? err.message : "Could not archive registration.") } }
-  return <div className="space-y-3"><Card><SectionTitle title="Registration" description="Historical registrations; current plate comes from the active registration." action={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setShowArchived((value) => !value)}>{showArchived ? "Hide History" : "Show History"}</Button><Button size="sm" onClick={() => { setEditing(null); setShowForm(true) }}><Plus className="mr-1.5 size-3.5" />Add Registration</Button></div>} /></Card>
-    {visible.length === 0 ? <EmptyState title="No registration records" description="Registration Document is mandatory for every registration. Prorate PSV additionally requires a Cab Card." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-1.5 size-4" />Add Registration</Button>} /> : <div className="space-y-2">{visible.map((record) => <Card key={record.id} className={`${record.archived ? "opacity-70" : ""} cursor-pointer hover:bg-muted/20 transition-colors`} onClick={() => onRecordClick?.(record)}><div className="flex items-center justify-between border-b px-4 py-3"><div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.registrationType}</h3><StatusPill value={registrationStatus(record)} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div><div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(record); setShowForm(true) }}><Edit3 className="mr-1 size-3" />Edit</Button>{!record.archived ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archive(record) }}><Archive className="mr-1 size-3" />Archive</Button> : null}</div></div><div className="grid gap-3 p-4 md:grid-cols-4"><ReadOnlyField label="State / Province" value={`${getJurisdictionLabel(record.stateProvince)} (${record.stateProvince})`} /><ReadOnlyField label="Plate" value={record.plate || "—"} /><ReadOnlyField label="Registration Date" value={record.registrationDate || "—"} /><ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, record.registrationType) ? "Continuous" : record.expiryDate || "—"} /><ReadOnlyField label="Registration Document" value={record.registrationDocumentEvidenceId ? "Attached" : "Missing"} /><ReadOnlyField label="Cab Card" value={record.cabCardEvidenceId ? "Attached" : record.registrationType === "Prorate PSV" ? "Missing" : "Not required by rule"} /></div></Card>)}</div>}
+  const archive = (record: VehicleRegistrationRecord, request: RegistrationArchiveRequest, requestEvidence: EvidenceRecord, performedBy: string, archivedAt: string) => {
+    const next = {
+      ...store,
+      registrationRecords: store.registrationRecords.map((item) => item.id === record.id ? { ...item, archived: true, updatedAt: archivedAt } : item),
+      // Archive Request Evidence is canonical evidence, but deliberately NOT Vehicle evidence.
+      evidence: [requestEvidence, ...store.evidence],
+    }
+    const details = [
+      `Archived registration record ${record.id}.`,
+      `Requested By: ${request.requestedBy}.`,
+      `Request Source: ${request.requestSource}.`,
+      `Request Reference: ${request.requestReference || "Not provided"}.`,
+      `Archive Request Evidence ID: ${request.archiveRequestEvidenceId}.`,
+      `Performed By: ${performedBy}.`,
+      `Archive Timestamp: ${archivedAt}.`,
+      `Reason: ${request.reason || "Not provided"}.`,
+      "Original registration record and business evidence preserved.",
+    ].join(" ")
+    try {
+      saveVehicleStore(companyId, next); onStoreChange(next)
+      recordAuditEvent({ action: "ARCHIVE", entityType: "Vehicle", entityId: record.id, companyId, actor: performedBy, role: "", details })
+      addVehicleActivity(companyId, vehicle.id, { event: "ARCHIVE_REGISTRATION", detail: details, section: "registration" })
+      setArchiveRecord(null); setSelectedRecord(null)
+      setNotice("Record archived. The record, business evidence, and archive request evidence remain preserved in TES.")
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not archive registration.") }
+  }
+  const evidenceById = (id?: string) => id ? evidence.find((item) => item.id === id) : undefined
+  const evidenceItem = (label: string, id: string | undefined, required: boolean) => {
+    const item = evidenceById(id)
+    return item ? <button key={label} type="button" onClick={() => onOpenEvidence(item)} className="flex w-full items-start gap-3 rounded-lg border border-border bg-background p-3 text-left hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/30"><FileText className="mt-0.5 size-5 shrink-0 text-primary" /><span className="min-w-0"><span className="block text-xs font-semibold">{label}</span><span className="mt-1 block truncate text-sm">{item.fileName}</span><span className="mt-1 block text-[11px] text-muted-foreground">{item.documentType} · Attached</span></span></button> : <div key={label} className="rounded-lg border border-dashed border-border p-3"><p className="text-xs font-semibold">{label}</p><p className="mt-1 text-xs text-muted-foreground">{required ? "Required · Missing" : "Not attached"}</p></div>
+  }
+  return <div className="space-y-3">
+    <Card><SectionTitle title="Registration" description="Historical registrations; current plate comes from the active registration." action={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setShowArchived((value) => !value)}>{showArchived ? "Hide History" : "Show History"}</Button><Button size="sm" onClick={() => { setEditing(null); setShowForm(true) }}><Plus className="mr-1.5 size-3.5" />Add Registration</Button></div>} /></Card>
+    {visible.length === 0 ? <EmptyState title="No registration records" description="Registration Document is mandatory for every registration. Prorate PSV additionally requires a Cab Card." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-1.5 size-4" />Add Registration</Button>} /> : <div className="space-y-2">{visible.map((record) => <Card key={record.id} className={`${record.archived ? "opacity-70" : ""} cursor-pointer hover:bg-muted/20 transition-colors`} onClick={() => setSelectedRecord(record)}><div className="flex items-center justify-between border-b px-4 py-3"><div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.registrationType}</h3><StatusPill value={registrationStatus(record)} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div><ChevronRight className="size-4 text-muted-foreground" /></div><div className="grid gap-3 p-4 md:grid-cols-4"><ReadOnlyField label="State / Province" value={`${getJurisdictionLabel(record.stateProvince)} (${record.stateProvince})`} /><ReadOnlyField label="Plate" value={record.plate || "—"} /><ReadOnlyField label="Registration Date" value={record.registrationDate || "—"} /><ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, record.registrationType) ? "Continuous" : record.expiryDate || "—"} /><ReadOnlyField label="Registration Document" value={record.registrationDocumentEvidenceId ? "Attached" : "Missing"} /><ReadOnlyField label="Cab Card" value={record.cabCardEvidenceId ? "Attached" : record.registrationType === "Prorate PSV" ? "Missing" : "Not required by rule"} /></div></Card>)}</div>}
+    {selectedRecord ? <TESRecordOverlay open title={selectedRecord.registrationType} subtitle="Registration" context={`Unit ${vehicle.unitNumber || "—"} · ${getJurisdictionLabel(selectedRecord.stateProvince)} · ${registrationStatus(selectedRecord)}`} onClose={() => { if (!archiveRecord) setSelectedRecord(null) }} ariaLabel={`Registration record ${selectedRecord.id}`} actions={<><Button variant="outline" onClick={() => { setEditing(selectedRecord); setSelectedRecord(null); setShowForm(true) }} className="border-primary-foreground/55 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"><Edit3 className="mr-1.5 size-3.5" />Edit</Button>{!selectedRecord.archived ? <button type="button" title="Archive record" aria-label="Archive record" onClick={() => setArchiveRecord(selectedRecord)} className="flex size-9 items-center justify-center rounded-md border border-primary-foreground/35 text-primary-foreground/80 hover:bg-primary-foreground/10 hover:text-primary-foreground"><Archive className="size-4" /></button> : null}</>}>
+      <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+        <section className="rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3 sm:px-5"><h3 className="text-sm font-semibold">Registration Information</h3><p className="mt-0.5 text-xs text-muted-foreground">Read-only structured record.</p></div><div className="grid gap-x-6 gap-y-5 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-4"><ReadOnlyField label="Registration Type" value={selectedRecord.registrationType} /><ReadOnlyField label="Jurisdiction" value={`${getJurisdictionLabel(selectedRecord.stateProvince)} (${selectedRecord.stateProvince})`} /><ReadOnlyField label="Plate" value={selectedRecord.plate || "—"} /><ReadOnlyField label="Registration Date" value={selectedRecord.registrationDate || "—"} /><ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, selectedRecord.registrationType) ? "Continuous" : selectedRecord.expiryDate || "—"} />{selectedRecord.price ? <ReadOnlyField label="Price" value={money(selectedRecord.price)} /> : null}<div><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p><div className="mt-1"><StatusPill value={registrationStatus(selectedRecord)} /></div></div><ReadOnlyField label="Record ID" value={selectedRecord.id} /></div></section>
+        <section className="rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3 sm:px-5"><h3 className="text-sm font-semibold">Evidence</h3><p className="mt-0.5 text-xs text-muted-foreground">Source documents linked to this Registration record.</p></div><div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">{evidenceItem("Registration Document", selectedRecord.registrationDocumentEvidenceId, true)}{evidenceItem("Cab Card", selectedRecord.cabCardEvidenceId, selectedRecord.registrationType === "Prorate PSV")}</div></section>
+      </div>
+    </TESRecordOverlay> : null}
+    {archiveRecord ? <RegistrationArchiveDialog companyId={companyId} record={archiveRecord} vehicle={vehicle} evidence={evidence} onCancel={() => setArchiveRecord(null)} onArchive={(request, requestEvidence, performedBy, archivedAt) => archive(archiveRecord, request, requestEvidence, performedBy, archivedAt)} /> : null}
     {showForm ? <RegistrationForm companyId={companyId} store={store} vehicle={vehicle} initial={editing} pendingEvidence={pendingEvidence} onStartOCR={onStartOCR} clearPendingEvidence={clearPendingEvidence} onClose={() => setShowForm(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} /> : null}
   </div>
 }
-
-function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleRegistrationRecord | null; pendingEvidence: { id: string; documentType: string } | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void }) {
+function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleRegistrationRecord | null; pendingEvidence: { id: string; documentType: string; values: Record<string, unknown> } | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void }) {
   const [registrationType, setRegistrationType] = useState(initial?.registrationType || "Prorate PSV")
   const [stateProvince, setStateProvince] = useState(initial?.stateProvince || "")
   const [plate, setPlate] = useState(initial?.plate || "")
@@ -1596,7 +1868,15 @@ function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence,
   const [registrationDocumentEvidenceId, setRegistrationDocumentEvidenceId] = useState(initial?.registrationDocumentEvidenceId || "")
   const [cabCardEvidenceId, setCabCardEvidenceId] = useState(initial?.cabCardEvidenceId || "")
   const [docTarget, setDocTarget] = useState<"registration" | "cabCard">("registration")
-  useEffect(() => { if (pendingEvidence) { if (docTarget === "cabCard") setCabCardEvidenceId(pendingEvidence.id); else setRegistrationDocumentEvidenceId(pendingEvidence.id); clearPendingEvidence() } }, [pendingEvidence, docTarget, clearPendingEvidence])
+  useEffect(() => { if (pendingEvidence) {
+    if (docTarget === "cabCard") setCabCardEvidenceId(pendingEvidence.id); else setRegistrationDocumentEvidenceId(pendingEvidence.id)
+    const values = pendingEvidence.values
+    if (typeof values.stateProvince === "string") setStateProvince(values.stateProvince)
+    if (typeof values.plate === "string") setPlate(values.plate)
+    if (typeof values.registrationDate === "string") setRegistrationDate(values.registrationDate)
+    if (typeof values.expiryDate === "string") setExpiryDate(values.expiryDate)
+    clearPendingEvidence()
+  } }, [pendingEvidence, docTarget, clearPendingEvidence])
   const trailer = isTrailer(vehicle.equipmentType)
   useEffect(() => { if (trailer && registrationType !== "Continuous") setRegistrationType("Continuous") }, [trailer])
   const continuous = isContinuousRegistration(vehicle, registrationType)
@@ -1766,6 +2046,251 @@ function PermitForm({ companyId, store, vehicle, initial, pendingEvidenceId, cle
   )
 }
 
+function FindingRow({ companyId, store, finding, onStoreChange, setNotice, setError }: {
+  companyId: string
+  store: VehicleStore
+  finding: InspectionFinding
+  onStoreChange: (store: VehicleStore) => void
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+}) {
+  const [showLink, setShowLink] = useState(false)
+  const refresh = () => onStoreChange(loadVehicleStore(companyId))
+  const allItems = store.maintenanceItems.filter((item) => !item.archived)
+  const links = getLinksForFinding(store, finding.id)
+  const linkedItems = links.map((link) => allItems.find((item) => item.id === link.maintenanceItemId)).filter((item): item is MaintenanceItem => Boolean(item))
+
+  return (
+    <div className="rounded-lg border border-border p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold">{finding.rawDescription}</p>
+          {finding.componentSystem ? <p className="text-[10px] text-muted-foreground mt-0.5">{finding.componentSystem}</p> : null}
+          {finding.affectedEntityRawRef ? <p className="text-[10px] text-muted-foreground">Unresolved unit ref: {finding.affectedEntityRawRef}</p> : null}
+        </div>
+        <StatusPill value={finding.status} />
+      </div>
+      {linkedItems.length > 0 ? (
+        <div className="mt-1.5 space-y-0.5">
+          {linkedItems.map((item) => (
+            <p key={item.id} className="text-[10px] text-muted-foreground">→ Maintenance Item: {item.specificDescription}</p>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <Button variant="ghost" size="sm" onClick={() => setShowLink((value) => !value)}>Link Maintenance Item</Button>
+        {finding.status !== "RESOLVED" ? (
+          <Button variant="ghost" size="sm" onClick={() => { updateInspectionFindingStatus(companyId, finding.id, "RESOLVED"); refresh(); setNotice("Finding marked resolved.") }}>
+            Mark Resolved
+          </Button>
+        ) : null}
+      </div>
+      {showLink ? (
+        <select
+          className={`${selectClass} mt-1.5`}
+          defaultValue=""
+          onChange={(e) => {
+            if (!e.target.value) return
+            linkFindingToMaintenanceItem(companyId, finding.id, e.target.value)
+            refresh()
+            setShowLink(false)
+            setNotice("Finding linked to maintenance item.")
+          }}
+        >
+          <option value="">Select a Maintenance Item…</option>
+          {allItems.map((item) => <option key={item.id} value={item.id}>{item.specificDescription}</option>)}
+        </select>
+      ) : null}
+    </div>
+  )
+}
+
+function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, setNotice, setError }: {
+  companyId: string
+  store: VehicleStore
+  onStoreChange: (store: VehicleStore) => void
+  inspection: VehicleInspectionRecord
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+}) {
+  const findings = getFindingsForInspection(store, inspection.id)
+  const [showAdd, setShowAdd] = useState(false)
+  const [rawDescription, setRawDescription] = useState("")
+  const [componentSystem, setComponentSystem] = useState("")
+  const refresh = () => onStoreChange(loadVehicleStore(companyId))
+
+  const addFinding = () => {
+    if (!rawDescription.trim()) return setError("Finding description is required.")
+    createInspectionFinding(companyId, {
+      inspectionId: inspection.id,
+      rawDescription: rawDescription.trim(),
+      componentSystem: componentSystem.trim() || undefined,
+    })
+    setRawDescription("")
+    setComponentSystem("")
+    setShowAdd(false)
+    refresh()
+    setNotice("Finding added.")
+  }
+
+  return (
+    <div className="border-t border-border px-4 py-3" onClick={(e) => e.stopPropagation()}>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Findings ({findings.length})</p>
+        <Button variant="ghost" size="sm" onClick={() => setShowAdd((value) => !value)}><Plus className="mr-1 size-3" />Add Finding</Button>
+      </div>
+      {findings.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">No findings recorded.</p>
+      ) : (
+        <div className="space-y-2">
+          {findings.map((finding) => (
+            <FindingRow key={finding.id} companyId={companyId} store={store} finding={finding} onStoreChange={onStoreChange} setNotice={setNotice} setError={setError} />
+          ))}
+        </div>
+      )}
+      {showAdd ? (
+        <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
+          <Input placeholder="What did the inspection find? (required)" value={rawDescription} onChange={(e) => setRawDescription(e.target.value)} className={inputClass} />
+          <Input placeholder="Component / system (optional)" value={componentSystem} onChange={(e) => setComponentSystem(e.target.value)} className={inputClass} />
+          <div className="flex gap-2"><Button size="sm" onClick={addFinding}>Save Finding</Button><Button size="sm" variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button></div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function MaintenanceItemsPanel({ companyId, store, onStoreChange, record, setNotice, setError }: {
+  companyId: string
+  store: VehicleStore
+  onStoreChange: (store: VehicleStore) => void
+  record: VehicleMaintenanceRecord
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+}) {
+  const items = getMaintenanceItemsForRecord(store, record.id)
+  const [showAdd, setShowAdd] = useState(false)
+  const [componentSystem, setComponentSystem] = useState("")
+  const [workAction, setWorkAction] = useState("")
+  const [specificDescription, setSpecificDescription] = useState("")
+  const refresh = () => onStoreChange(loadVehicleStore(companyId))
+
+  const addItem = () => {
+    if (!specificDescription.trim()) return setError("Item description is required.")
+    createMaintenanceItem(companyId, {
+      maintenanceRecordId: record.id,
+      componentSystem: componentSystem.trim() || undefined,
+      workAction: workAction.trim() || undefined,
+      specificDescription: specificDescription.trim(),
+    })
+    setComponentSystem("")
+    setWorkAction("")
+    setSpecificDescription("")
+    setShowAdd(false)
+    refresh()
+    setNotice("Maintenance item added.")
+  }
+
+  return (
+    <div className="border-t border-border px-4 py-3" onClick={(e) => e.stopPropagation()}>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Maintenance Items ({items.length})</p>
+        <Button variant="ghost" size="sm" onClick={() => setShowAdd((value) => !value)}><Plus className="mr-1 size-3" />Add Item</Button>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{record.maintenanceType ? `Legacy record: ${record.maintenanceType}` : "No structured items yet."}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {items.map((item) => {
+            const provenance = deriveMaintenanceItemProvenance(store, item)
+            const heading = [item.componentSystem, item.workAction].filter(Boolean).join(" → ")
+            return (
+              <div key={item.id} className="rounded-lg border border-border p-2">
+                <p className="text-xs font-semibold">{heading ? `${heading} — ` : ""}{item.specificDescription}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">Source: {provenance.label}{item.legacyMigrated ? " (migrated from legacy record)" : ""}</p>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {showAdd ? (
+        <div className="mt-2 space-y-2 rounded-lg border border-border p-3">
+          <Input placeholder="Component / system, e.g. Lighting" value={componentSystem} onChange={(e) => setComponentSystem(e.target.value)} className={inputClass} />
+          <Input placeholder="Work action, e.g. Replace" value={workAction} onChange={(e) => setWorkAction(e.target.value)} className={inputClass} />
+          <Input placeholder="Specific description (required)" value={specificDescription} onChange={(e) => setSpecificDescription(e.target.value)} className={inputClass} />
+          <div className="flex gap-2"><Button size="sm" onClick={addItem}>Save Item</Button><Button size="sm" variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button></div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Read-only reference to canonical Roadside/CVSA Inspection Performance
+ * Events (EVT-*) that this vehicle actually participated in, as either the
+ * resolved Power Unit or a resolved Towed Unit. Nothing here is copied or
+ * editable — PerformanceEventRecord in the Driver store remains the sole
+ * canonical record; edit it from Driver Performance. An unrelated vehicle
+ * that never participated in any event correctly renders nothing.
+ */
+function RoadsideInspectionsPanel({ companyId, vehicleId }: { companyId: string; vehicleId: string }) {
+  const [matches, setMatches] = useState<RoadsideEventForVehicle[]>([])
+
+  useEffect(() => {
+    try {
+      setMatches(getRoadsideEventsForVehicle(companyId, vehicleId))
+    } catch {
+      setMatches([])
+    }
+  }, [companyId, vehicleId])
+
+  if (matches.length === 0) return null
+
+  return (
+    <Card className="mb-2">
+      <SectionTitle
+        title="Roadside / CVSA Inspections"
+        description="Canonical Driver Performance events this unit participated in — read-only here, edit in Driver Performance."
+      />
+      <div className="space-y-2 p-3">
+        {matches.map(({ event, matchedRole, resolution }) => {
+          const violations = getRoadsideViolationCollection(event)?.items || []
+          return (
+            <div key={`${event.id}:${resolution.relationshipKey}`} className="rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold">{event.summary || "Roadside Inspection"}</h4>
+                    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{event.id}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">{event.eventDate}</p>
+                  <p className="text-[10px] text-muted-foreground">{resolution.resolvedEntitySummary ? "Matched" : resolution.state}</p>
+                </div>
+              </div>
+              {violations.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {violations.map((item) => (
+                    <p key={item.itemId} className="text-[11px] text-muted-foreground">
+                      • {String(item.facts.description || item.facts.ruleRegulationCode || "Violation")}
+                      {item.facts.oosState === "YES" ? <span className="ml-1 font-semibold text-destructive">OOS</span> : null}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-[11px] text-muted-foreground">No violations recorded.</p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
+}
+
 function MaintenanceTab({ companyId, store, vehicle, inspections, maintenance, evidence, onStoreChange, onStartOCR, pendingInspectionEvidenceId, pendingMaintenanceEvidenceId, clearInspectionEvidence, clearMaintenanceEvidence, setError, setNotice, onRecordClick }: {
   companyId: string
   store: VehicleStore
@@ -1881,6 +2406,10 @@ function MaintenanceTab({ companyId, store, vehicle, inspections, maintenance, e
       ) : null}
 
       {view === "inspections" ? (
+        <RoadsideInspectionsPanel companyId={companyId} vehicleId={vehicle.id} />
+      ) : null}
+
+      {view === "inspections" ? (
         activeInspections.length === 0 ? (
           <EmptyState title="No inspection records" description="Upload an inspection document or add an inspection manually." action={<Button onClick={() => setShowInspection(true)}><Plus className="mr-1.5 size-4" />Add Inspection</Button>} />
         ) : (
@@ -1901,6 +2430,7 @@ function MaintenanceTab({ companyId, store, vehicle, inspections, maintenance, e
                   <ReadOnlyField label="Defects Found" value={record.defectsFound} />
                   <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
                 </div>
+                <InspectionFindingsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} inspection={record} setNotice={setNotice} setError={setError} />
               </Card>
             ))}
           </div>
@@ -1928,6 +2458,7 @@ function MaintenanceTab({ companyId, store, vehicle, inspections, maintenance, e
                   <ReadOnlyField label="Next Service Due" value={record.nextServiceDueDate || "—"} />
                   <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
                 </div>
+                <MaintenanceItemsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} record={record} setNotice={setNotice} setError={setError} />
               </Card>
             ))}
           </div>
@@ -1940,6 +2471,7 @@ function MaintenanceTab({ companyId, store, vehicle, inspections, maintenance, e
         <RepairBillForm
           companyId={companyId}
           vehicle={vehicle}
+          store={store}
           onClose={() => setShowRepairBill(false)}
           onSaved={() => {
             setShowRepairBill(false)
@@ -2053,7 +2585,7 @@ function RepairBillsView({
                       <StatusPill value={invoice.status === "auto_approved" ? "Verified" : "Pending"} />
                       <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground capitalize">{invoice.entrySource}</span>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">{invoice.invoiceDate || "—"}{invoice.vendorName ? ` · ${invoice.vendorName}` : ""}</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{invoice.invoiceDate || "—"}{invoice.vendorName ? ` · ${invoice.vendorName}` : ""}{invoice.maintenanceEventId ? ` · Linked to Maintenance Event ${invoice.maintenanceEventId}` : ""}</p>
                   </div>
                   <p className="text-sm font-bold tabular-nums">{currency(invoice.totalDue)}</p>
                 </div>
@@ -2168,12 +2700,14 @@ function RepairBillLineRow({
 function RepairBillForm({
   companyId,
   vehicle,
+  store,
   onClose,
   onSaved,
   setError,
 }: {
   companyId: string
   vehicle: VehicleRecord
+  store?: VehicleStore
   onClose: () => void
   onSaved: () => void
   setError: (value: string | null) => void
@@ -2182,7 +2716,9 @@ function RepairBillForm({
   const [invoiceDate, setInvoiceDate] = useState(todayISO())
   const [totalDue, setTotalDue] = useState("")
   const [vendor, setVendor] = useState<Company | null>(null)
+  const [maintenanceEventId, setMaintenanceEventId] = useState("")
   const [lines, setLines] = useState<RepairLineInput[]>([{ description: "", partNumber: "", quantity: 1, unitPrice: 0 }])
+  const maintenanceRecords = (store?.maintenanceRecords || []).filter((record) => record.vehicleId === vehicle.id && !record.archived)
 
   const searchVendors = (query: string) =>
     readCompanies()
@@ -2239,6 +2775,7 @@ function RepairBillForm({
         invoiceDate,
         totalDue: totalDueNumber,
         lines,
+        maintenanceEventId: maintenanceEventId || undefined,
       })
       if (result.reconciliationWarning) {
         setError(null)
@@ -2273,6 +2810,15 @@ function RepairBillForm({
                 onCreateNew={createNewVendor}
                 createNewButtonLabel="Create New Vendor"
               />
+            </Field>
+            <Field label="Maintenance Event" className="md:col-span-2">
+              <select className={selectClass} value={maintenanceEventId} onChange={(e) => setMaintenanceEventId(e.target.value)}>
+                <option value="">No linked Maintenance Event</option>
+                {maintenanceRecords.map((record) => (
+                  <option key={record.id} value={record.id}>{record.serviceDate || record.id} · {record.maintenanceType || "Maintenance"}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-muted-foreground">Optional — one Maintenance Event can have zero, one, or multiple invoices.</p>
             </Field>
           </div>
 

@@ -30,6 +30,15 @@ export interface RepairInvoiceLine {
   matchedPartId?: string;
   matchConfidence?: number;
   entryMethod: RepairLineEntryMethod;
+  /**
+   * Optional link to a first-class MaintenanceItem (lib/vehicle-data.ts).
+   * NEVER assume 1:1 — lines like "Shop supplies", "Labour", "Environmental
+   * fee", or "Tax" are financial evidence with no corresponding maintenance
+   * work item, and one labour line can relate to multiple items. Only set
+   * this when the relationship is semantically valid; never fabricate an
+   * allocation just so every line has one.
+   */
+  maintenanceItemId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,6 +55,8 @@ export interface RepairInvoice {
   reconciles: boolean;
   status: RepairInvoiceStatus;
   entrySource: RepairLineEntryMethod;
+  /** One Maintenance Event (VehicleMaintenanceRecord) can have zero, one, or multiple invoices; existing invoices remain valid without this. */
+  maintenanceEventId?: string;
   evidenceIds: string[];
   archived: boolean;
   createdAt: string;
@@ -91,6 +102,8 @@ export interface RepairLineInput {
   quantity: number;
   unitPrice: number;
   lineTotal?: number;
+  /** See RepairInvoiceLine.maintenanceItemId — optional, only when the relationship is semantically valid. */
+  maintenanceItemId?: string;
 }
 
 /**
@@ -119,6 +132,7 @@ export function buildRepairInvoiceLines(
       matchedPartId: match?.matchedPartId,
       matchConfidence: match?.confidence,
       entryMethod,
+      maintenanceItemId: line.maintenanceItemId,
       createdAt: now,
       updatedAt: now,
     };
@@ -134,6 +148,8 @@ export interface CreateRepairInvoiceInput {
   totalDue: number;
   lines: RepairLineInput[];
   evidenceIds?: string[];
+  /** One Maintenance Event can have zero, one, or multiple invoices. */
+  maintenanceEventId?: string;
 }
 
 export interface CreateRepairInvoiceResult {
@@ -181,6 +197,7 @@ function createRepairInvoice(
     reconciles,
     status,
     entrySource: entryMethod,
+    maintenanceEventId: input.maintenanceEventId,
     evidenceIds: input.evidenceIds || [],
     archived: false,
     createdAt: now,

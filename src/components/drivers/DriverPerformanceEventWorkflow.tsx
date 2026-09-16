@@ -248,7 +248,15 @@ export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdi
   const sourcePolicy = useMemo(() => definition ? resolvePerformanceSourcePolicy(definition) : { allowedOrigins: ["MANUAL_ENTRY"], defaultOrigin: "MANUAL_ENTRY", authoritativeSourceTypes: [], reporterApplicability: [] }, [definition]);
   const sourceOptions = sourcePolicy.authoritativeSourceTypes;
   const recordableDefinitions = useMemo(() => RECORDABLE_PERFORMANCE_CATEGORIES.map((value) => DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[value]), []);
-  const categoryFields = useMemo(() => definition ? definition.fields.filter((field) => field.key !== "sourceType" && field.key !== "sourceRecordId" && !(category === "Roadside Inspection" && ["jurisdiction","driverStatementStatus","driverStatementDate","driverStatementTime","driverStatementMethod","driverStatementContent"].includes(field.key))) : [], [definition, category]);
+  // NOTE: "jurisdiction" used to be excluded from the rendered Roadside
+  // Inspection fields (and, as a result, from OCR prefill and from the
+  // required-field validator at validateCurrentStep — see the git history
+  // for driver-performance-schema.ts's ROADSIDE_INSPECTION.jurisdiction
+  // field). That silently dropped a schema-required, OCR-derivable field
+  // from the human-review workflow. It is intentionally rendered again so
+  // the OCR-detected Jurisdiction is visible for review/correction and
+  // drives the Inspection Regime auto-select effect above (facts.jurisdiction).
+  const categoryFields = useMemo(() => definition ? definition.fields.filter((field) => field.key !== "sourceType" && field.key !== "sourceRecordId" && !(category === "Roadside Inspection" && ["driverStatementStatus","driverStatementDate","driverStatementTime","driverStatementMethod","driverStatementContent"].includes(field.key))) : [], [definition, category]);
   const applicableRelationships = useMemo(() => definition ? resolveRelationshipApplicability(definition, facts) : [], [definition, facts]);
   const visibleSteps = useMemo(() => definition ? resolvePerformanceSteps(definition, facts) as Array<{ key: StepKey; label: string }> : [{ key: "CATEGORY" as StepKey, label: "Category" }], [definition, facts]);
   const currentStep = visibleSteps[step] || visibleSteps[0];
@@ -416,8 +424,14 @@ export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdi
         country: current.country || resolveCountryForJurisdiction(sourceJurisdiction) || "",
       }));
     }
+    // Previously this loop skipped "jurisdiction" specifically, so the value
+    // resolveRoadsideCanonicalFacts already derived from the OCR'd
+    // state/province was computed and then thrown away instead of shown to
+    // the reviewer. It is now applied like every other canonical fact — the
+    // Inspection Regime auto-select effect (above) reacts to facts.jurisdiction
+    // and will keep it in sync if the reviewer corrects it.
     for (const [key, value] of Object.entries(canonicalFacts)) {
-      if (value && key !== "jurisdiction") setFact(key, value);
+      if (value) setFact(key, value);
     }
 
     // Report / citation / record number. The Roadside Inspection category

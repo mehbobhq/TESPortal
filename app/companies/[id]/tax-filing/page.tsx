@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   Building2,
   CalendarDays,
-  Check,
   ChevronRight,
   FileText,
   Landmark,
@@ -29,6 +28,7 @@ import { UnsavedChangesPrompt } from "@/src/components/shared/UnsavedChangesProm
 import { EmptyState, LoadingState } from "@/src/components/shared/StateDisplays"
 import { FilingRecordForm } from "@/src/components/tax-filing/FilingRecordForm"
 import { TaxProgramList } from "@/src/components/tax-filing/TaxProgramList"
+import { TaxProfileWorkspace } from "@/src/components/tax-filing/TaxProfileWorkspace"
 import type {
   Company,
   RuleValue,
@@ -51,8 +51,6 @@ import type {
   CompanySettings,
 } from "@/src/components/tax-filing/types"
 import { TAX_DEFINITIONS } from "@/src/components/tax-filing/tax-definitions"
-import { TaxProfileForm } from "@/src/components/tax-filing/TaxProfileForm"
-import { FrequencyAssignmentForm } from "@/src/components/tax-filing/FrequencyAssignmentForm"
 import {
   isoNow,
   todayISO,
@@ -1017,303 +1015,65 @@ export default function TaxFilingsPage() {
               }
             />
 
-            {/* DETAIL / EDIT DRAWER */}
-            <div className="xl:sticky xl:top-6">
-              {!profileDraft || !selectedTaxCode ? (
-                <div className="rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center min-h-[500px] flex flex-col items-center justify-center">
-                  <Landmark className="size-10 text-muted-foreground/30" />
-                  <p className="mt-4 text-sm font-semibold text-foreground">Select a tax program</p>
-                  <p className="mt-1 max-w-[280px] text-xs leading-relaxed text-muted-foreground">
-                    Review registered account numbers, effective-dated frequency history, and attached compliance evidence.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
-                  <div className="border-b border-border/60 bg-muted/10 p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-base font-bold text-foreground">
-                          {getDefinition(selectedTaxCode).shortName}
-                        </h3>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {getDefinition(selectedTaxCode).description}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProfileDraft(null)
-                          setSelectedTaxCode(null)
-                          setSelectedProfileId(null)
-                          setIsEditingProfile(false)
-                          setShowFrequencyForm(false)
-                        }}
-                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <X className="size-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-6 p-5">
-                    {isEditingProfile ? (
-                      <TaxProfileForm
-                        profile={profileDraft}
-                        definition={getDefinition(selectedTaxCode)}
-                        onChange={setProfileDraft}
-                      />
-                    ) : (
-                      /* VIEW MODE: CLEAN DOCUMENT-STYLE LABEL/VALUE TILES */
-                      <div className="space-y-5">
-                        <div className="grid gap-3.5 md:grid-cols-2">
-                          <ReadOnlyField
-                            label="Tax Program"
-                            value={getDefinition(selectedTaxCode).name}
-                          />
-                          <ReadOnlyField
-                            label="Jurisdiction"
-                            value={getDefinition(selectedTaxCode).jurisdiction}
-                          />
-                          <ReadOnlyField
-                            label={getDefinition(selectedTaxCode).accountLabel}
-                            value={profileDraft.accountNumber || "Not configured"}
-                            mono
-                            copyable
-                          />
-                          <ReadOnlyField
-                            label="Account Status"
-                            value={profileDraft.accountStatus}
-                          />
-                          <ReadOnlyField
-                            label="Filing Frequency"
-                            value={formatFrequency(profileDraft.filingFrequency)}
-                            subtext="Current active frequency"
-                          />
-                          <ReadOnlyField
-                            label="Effective Date"
-                            value={profileDraft.effectiveDate}
-                          />
-                          <ReadOnlyField
-                            label="Closure Date"
-                            value={profileDraft.closureDate}
-                          />
-                        </div>
-
-                        <div className="border-t border-border/60 pt-4">
-                          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                            Verification Details
-                          </p>
-                          <div className="mt-3 grid gap-3 md:grid-cols-2">
-                            <ReadOnlyField
-                              label="Verification Source"
-                              value={profileDraft.verificationSource}
-                            />
-                            <ReadOnlyField
-                              label="Verification Reference"
-                              value={profileDraft.verificationReference}
-                              mono
-                            />
-                            <ReadOnlyField
-                              label="Last Verified Date"
-                              value={profileDraft.lastVerifiedDate}
-                            />
-                            <ReadOnlyField
-                              label="Last Verified By"
-                              value={profileDraft.lastVerifiedBy}
-                            />
-                          </div>
-                          {profileDraft.notes && (
-                            <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
-                              {profileDraft.notes}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* FREQUENCY HISTORY (LOCKED IMMUTABILITY) */}
-                    <div className="border-t border-border/60 pt-5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                            Filing Frequency History
-                          </p>
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">
-                            Effective-dated frequency assignments. Existing obligations remain immutable.
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsEditingProfile(true)
-                            setShowFrequencyForm(true)
-                          }}
-                          className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                        >
-                          <Plus className="size-3.5" /> Add Change
-                        </button>
-                      </div>
-
-                      {showFrequencyForm && (
-                        <div className="mt-4">
-                          <FrequencyAssignmentForm
-                            definition={getDefinition(selectedTaxCode)}
-                            onSave={addFrequencyAssignment}
-                            onCancel={() => setShowFrequencyForm(false)}
-                          />
-                        </div>
-                      )}
-
-                      <div className="mt-3 space-y-2">
-                        {profileDraft.frequencyHistory.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-                            No frequency changes recorded yet.
-                          </div>
-                        ) : (
-                          [...profileDraft.frequencyHistory]
-                            .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))
-                            .map((assignment) => (
-                              <div key={assignment.id} className="rounded-xl border border-border bg-card p-3 shadow-2xs">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-xs font-bold text-foreground">
-                                      {formatFrequency(assignment.frequency)}
-                                    </p>
-                                    <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">
-                                      {assignment.effectiveFrom}
-                                      {assignment.effectiveTo
-                                        ? ` → ${assignment.effectiveTo}`
-                                        : " → Current"}
-                                    </p>
-                                  </div>
-                                  <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-foreground">
-                                    {assignment.assignmentType}
-                                  </span>
-                                </div>
-
-                                {(assignment.source || assignment.sourceReference) && (
-                                  <p className="mt-2 text-[10px] text-muted-foreground">
-                                    {assignment.source}
-                                    {assignment.sourceReference ? ` · ${assignment.sourceReference}` : ""}
-                                  </p>
-                                )}
-                              </div>
-                            ))
-                        )}
-                      </div>
-                    </div>
-
-                    {/* ACTION CONTROLS */}
-                    <div className="border-t border-border/60 pt-5">
-                      <div className="flex gap-2">
-                        {isEditingProfile ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={saveProfile}
-                              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
-                            >
-                              <Check className="size-4" /> Save Record
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (data.profiles.some((p) => p.id === profileDraft.id)) {
-                                  const stored = data.profiles.find((p) => p.id === profileDraft.id)
-                                  if (stored) setProfileDraft({ ...stored, frequencyHistory: [...stored.frequencyHistory] })
-                                  setIsEditingProfile(false)
-                                  setShowFrequencyForm(false)
-                                }
-                              }}
-                              className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setIsEditingProfile(true)}
-                            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
-                          >
-                            <Pencil className="size-4" /> Edit Profile
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            startUpload({
-                              documentType: "Registration",
-                              taxCode: profileDraft.taxCode,
-                              profileId: profileDraft.id,
-                            })
-                          }
-                          className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                        >
-                          <Upload className="size-4" /> Upload Evidence
-                        </button>
-                      </div>
-
-                      {data.profiles.some((p) => p.id === profileDraft.id) && (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={() => generateObligations(profileDraft, calendarYear)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                          >
-                            <CalendarDays className="size-3.5" /> Generate {calendarYear}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => createManualObligation(profileDraft)}
-                            className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                          >
-                            <Plus className="size-3.5" /> Manual Period
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* ATTACHED EVIDENCE (SHARED VIEWER TRIGGER) */}
-                    <div className="border-t border-border/60 pt-5">
-                      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Attached Tax Evidence
-                      </p>
-                      <div className="mt-3 space-y-2">
-                        {data.documents.filter((doc) => doc.profileId === profileDraft.id).length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-                            No registration evidence attached.
-                          </div>
-                        ) : (
-                          data.documents
-                            .filter((doc) => doc.profileId === profileDraft.id)
-                            .map((doc) => (
-                              <button
-                                key={doc.id}
-                                type="button"
-                                onClick={() => setPreviewDocument(doc)}
-                                className="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/30"
-                              >
-                                <FileText className="mt-0.5 size-4 text-primary shrink-0" />
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-xs font-semibold text-foreground">{doc.fileName}</p>
-                                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                                    {doc.documentType} · {doc.documentDate || doc.uploadedAt.slice(0, 10)}
-                                  </p>
-                                </div>
-                              </button>
-                            ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <TaxProfileWorkspace
+              profile={profileDraft}
+              definition={selectedTaxCode ? getDefinition(selectedTaxCode) : null}
+              isEditing={isEditingProfile}
+              showFrequencyForm={showFrequencyForm}
+              calendarYear={calendarYear}
+              isPersistedProfile={
+                !!profileDraft &&
+                data.profiles.some((profile) => profile.id === profileDraft.id)
+              }
+              documents={
+                profileDraft
+                  ? data.documents.filter((document) => document.profileId === profileDraft.id)
+                  : []
+              }
+              onClose={() => {
+                setProfileDraft(null)
+                setSelectedTaxCode(null)
+                setSelectedProfileId(null)
+                setIsEditingProfile(false)
+                setShowFrequencyForm(false)
+              }}
+              onProfileChange={setProfileDraft}
+              onEdit={() => setIsEditingProfile(true)}
+              onCancelEdit={() => {
+                if (!profileDraft) return
+                const stored = data.profiles.find((profile) => profile.id === profileDraft.id)
+                if (stored) {
+                  setProfileDraft({
+                    ...stored,
+                    frequencyHistory: [...stored.frequencyHistory],
+                  })
+                }
+                setIsEditingProfile(false)
+                setShowFrequencyForm(false)
+              }}
+              onSaveProfile={saveProfile}
+              onBeginFrequencyChange={() => {
+                setIsEditingProfile(true)
+                setShowFrequencyForm(true)
+              }}
+              onCancelFrequencyChange={() => setShowFrequencyForm(false)}
+              onSaveFrequencyAssignment={addFrequencyAssignment}
+              onUploadEvidence={() => {
+                if (!profileDraft) return
+                startUpload({
+                  documentType: "Registration",
+                  taxCode: profileDraft.taxCode,
+                  profileId: profileDraft.id,
+                })
+              }}
+              onGenerateYear={() => {
+                if (profileDraft) generateObligations(profileDraft, calendarYear)
+              }}
+              onCreateManualPeriod={() => {
+                if (profileDraft) createManualObligation(profileDraft)
+              }}
+              onPreviewDocument={setPreviewDocument}
+            />
           </div>
         )}
 

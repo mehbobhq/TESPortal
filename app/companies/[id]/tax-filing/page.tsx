@@ -28,6 +28,7 @@ import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePick
 import { UnsavedChangesPrompt } from "@/src/components/shared/UnsavedChangesPrompt"
 import { EmptyState, LoadingState } from "@/src/components/shared/StateDisplays"
 import { FilingRecordForm } from "@/src/components/tax-filing/FilingRecordForm"
+import { TaxProgramList } from "@/src/components/tax-filing/TaxProgramList"
 import type {
   Company,
   RuleValue,
@@ -897,6 +898,19 @@ export default function TaxFilingsPage() {
     )
   }
 
+  const taxProgramListItems = appliedDefinitions.map(({ definition }) => {
+    const profile = profileByCode(definition.code)
+
+    return {
+      definition,
+      profile,
+      accountDisplayValue:
+        getCompanyAccountNumber(company, definition) ||
+        profile?.accountNumber ||
+        "Not configured",
+    }
+  })
+
   return (
     <>
       <div className="flex flex-col gap-6 pb-12">
@@ -994,79 +1008,14 @@ export default function TaxFilingsPage() {
         {/* TAB 1: TAX PROFILE */}
         {activeTab === "profiles" && (
           <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
-            <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
-              <div className="border-b border-border/60 p-5">
-                <h3 className="text-base font-bold text-foreground">Applicable Tax Programs</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Applicability is managed in Company Settings. Configure company accounts, filing frequencies, and verification details below.
-                </p>
-              </div>
-
-              <div>
-                {appliedDefinitions.length === 0 ? (
-                  <EmptyState
-                    icon={<Landmark className="size-8 text-muted-foreground/50" />}
-                    title="No Applicable Tax Programs"
-                    description="No tax programs are currently marked 'Applies' for this carrier in Company Settings."
-                    action={{
-                      label: "Open Company Settings",
-                      onClick: () => router.push(`/companies/${company.id}/settings`),
-                      icon: <Settings2 className="size-3.5" />,
-                    }}
-                  />
-                ) : (
-                  <div className="divide-y divide-border/60">
-                    {appliedDefinitions.map(({ definition }) => {
-                      const profile = profileByCode(definition.code)
-                      const isSelected = selectedTaxCode === definition.code
-
-                      return (
-                        <button
-                          key={definition.code}
-                          type="button"
-                          onClick={() => openProfile(definition.code)}
-                          className={`grid w-full gap-4 p-4 text-left transition-colors md:grid-cols-12 ${
-                            isSelected ? "bg-primary/[0.04]" : "hover:bg-muted/20"
-                          }`}
-                        >
-                          <div className="md:col-span-4 min-w-0">
-                            <p className="text-sm font-semibold text-foreground">{definition.name}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">{definition.jurisdiction}</p>
-                          </div>
-
-                          <div className="md:col-span-3">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Account</p>
-                            <p className="mt-0.5 font-mono text-xs font-semibold select-text text-foreground">
-                              {getCompanyAccountNumber(company, definition) || profile?.accountNumber || "Not configured"}
-                            </p>
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Frequency</p>
-                            <p className="mt-0.5 text-xs font-medium text-foreground">
-                              {profile
-                                ? formatFrequency(profile.filingFrequency)
-                                : formatFrequency(definition.defaultFrequency)}
-                            </p>
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p>
-                            <p className="mt-0.5 text-xs font-semibold text-foreground">
-                              {profile?.accountStatus || "Needs setup"}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center justify-end md:col-span-1">
-                            <ChevronRight className="size-4 text-muted-foreground" />
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
+            <TaxProgramList
+              items={taxProgramListItems}
+              selectedTaxCode={selectedTaxCode}
+              onSelectTaxCode={openProfile}
+              onOpenCompanySettings={() =>
+                router.push(`/companies/${company.id}/settings`)
+              }
+            />
 
             {/* DETAIL / EDIT DRAWER */}
             <div className="xl:sticky xl:top-6">

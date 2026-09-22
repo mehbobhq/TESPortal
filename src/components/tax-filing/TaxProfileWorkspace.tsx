@@ -9,10 +9,12 @@ import {
   X,
 } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { FrequencyAssignmentForm } from "@/src/components/tax-filing/FrequencyAssignmentForm"
 import { TaxProfileForm } from "@/src/components/tax-filing/TaxProfileForm"
 import { formatFrequency } from "@/src/components/tax-filing/tax-helpers"
+import { TESEvidenceLayout } from "@/src/components/design-system/TESEvidenceLayout"
 import type {
   FrequencyAssignment,
   TaxDefinition,
@@ -27,7 +29,7 @@ type TaxProfileWorkspaceProps = {
   showFrequencyForm: boolean
   calendarYear: number
   isPersistedProfile: boolean
-  documents: TaxDocument[]
+  documents?: TaxDocument[]
   onClose: () => void
   onProfileChange: (profile: TaxProfile) => void
   onEdit: () => void
@@ -49,7 +51,7 @@ function TaxProfileWorkspace({
   showFrequencyForm,
   calendarYear,
   isPersistedProfile,
-  documents,
+  documents = [],
   onClose,
   onProfileChange,
   onEdit,
@@ -86,17 +88,17 @@ function TaxProfileWorkspace({
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              >
+              <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
                 <X className="size-4" />
-              </button>
+              </Button>
             </div>
           </div>
 
-          <div className="space-y-6 p-5">
+          <div className="p-5">
+          <TESEvidenceLayout
+            evidenceLabel="Tax Evidence"
+            record={
+          <div className="space-y-6">
             {isEditing ? (
               <TaxProfileForm
                 profile={profile}
@@ -184,13 +186,9 @@ function TaxProfileWorkspace({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={onBeginFrequencyChange}
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                >
+                <Button type="button" variant="outline" size="sm" onClick={onBeginFrequencyChange}>
                   <Plus className="size-3.5" /> Add Change
-                </button>
+                </Button>
               </div>
 
               {showFrequencyForm && (
@@ -247,93 +245,72 @@ function TaxProfileWorkspace({
               <div className="flex gap-2">
                 {isEditing ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={onSaveProfile}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
-                    >
+                    <Button type="button" onClick={onSaveProfile} className="flex-1">
                       <Check className="size-4" /> Save Record
-                    </button>
+                    </Button>
                     {isPersistedProfile && (
-                      <button
-                        type="button"
-                        onClick={onCancelEdit}
-                        className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
+                      <Button type="button" variant="outline" onClick={onCancelEdit}>
                         Cancel
-                      </button>
+                      </Button>
                     )}
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={onEdit}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
-                  >
+                  <Button type="button" onClick={onEdit} className="flex-1">
                     <Pencil className="size-4" /> Edit Profile
-                  </button>
+                  </Button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={onUploadEvidence}
-                  className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                >
+                <Button type="button" variant="outline" onClick={onUploadEvidence}>
                   <Upload className="size-4" /> Upload Evidence
-                </button>
+                </Button>
               </div>
 
               {isPersistedProfile && (
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={onGenerateYear}
-                    className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                  >
+                  <Button type="button" variant="outline" size="sm" onClick={onGenerateYear}>
                     <CalendarDays className="size-3.5" /> Generate {calendarYear}
-                  </button>
+                  </Button>
 
-                  <button
-                    type="button"
-                    onClick={onCreateManualPeriod}
-                    className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                  >
+                  <Button type="button" variant="outline" size="sm" onClick={onCreateManualPeriod}>
                     <Plus className="size-3.5" /> Manual Period
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
-
-            {/* ATTACHED EVIDENCE (SHARED VIEWER TRIGGER) */}
-            <div className="border-t border-border/60 pt-5">
-              <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Attached Tax Evidence
-              </p>
-              <div className="mt-3 space-y-2">
-                {documents.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-                    No registration evidence attached.
-                  </div>
-                ) : (
-                  documents.map((document) => (
-                    <button
-                      key={document.id}
-                      type="button"
-                      onClick={() => onPreviewDocument(document)}
-                      className="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/30"
-                    >
-                      <FileText className="mt-0.5 size-4 text-primary shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold text-foreground">{document.fileName}</p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          {document.documentType} · {document.documentDate || document.uploadedAt.slice(0, 10)}
-                        </p>
-                      </div>
-                    </button>
-                  ))
-                )}
+          </div>
+            }
+            evidence={
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Attached Tax Evidence
+                </p>
+                <div className="mt-3 space-y-2">
+                  {documents.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                      No registration evidence attached.
+                    </div>
+                  ) : (
+                    documents.map((document) => (
+                      <button
+                        key={document.id}
+                        type="button"
+                        onClick={() => onPreviewDocument(document)}
+                        className="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/30"
+                      >
+                        <FileText className="mt-0.5 size-4 text-primary shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-foreground">{document.fileName}</p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            {document.documentType} · {document.documentDate || document.uploadedAt.slice(0, 10)}
+                          </p>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
+            }
+          />
           </div>
         </div>
       )}

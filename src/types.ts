@@ -163,6 +163,7 @@ export type VehicleRecord = {
   vin: string;
   year: string;
   make: string;
+  manufacturerCode?: string;
   model: string;
   color: string;
   operatingRegion: "Canada Only" | "US Only" | "Cross-Border";
@@ -263,4 +264,5 @@ export * from "../types/ocr";
 export * from "../types/evidence";
 export * from "../types/applicability";
 export * from "../types/permissions";
+export * from "../types/audit-preparedness";
 

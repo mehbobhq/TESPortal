@@ -222,24 +222,24 @@ export function RepairBillLineRow({
   const [overrideTotal, setOverrideTotal] = useState(false)
   const computedTotal = Math.round(line.quantity * line.unitPrice * 100) / 100
   return (
-    <div className="grid grid-cols-12 gap-2 items-start rounded-lg border border-border p-3">
-      <div className="col-span-4">
+    <div className="grid grid-cols-1 items-start gap-2 rounded-lg border border-border p-3 sm:grid-cols-2 min-[1100px]:grid-cols-12">
+      <div className="min-[1100px]:col-span-4">
         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Description<span className="text-destructive ml-0.5">*</span></label>
         <Input className="mt-1" value={line.description} onChange={(e) => onChange({ ...line, description: e.target.value })} />
       </div>
-      <div className="col-span-2">
+      <div className="min-[1100px]:col-span-2">
         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Part #</label>
         <Input className="mt-1" value={line.partNumber || ""} onChange={(e) => onChange({ ...line, partNumber: e.target.value })} />
       </div>
-      <div className="col-span-1">
+      <div className="min-[1100px]:col-span-1">
         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Qty<span className="text-destructive ml-0.5">*</span></label>
         <Input className="mt-1" type="number" min="0" step="any" value={line.quantity} onChange={(e) => onChange({ ...line, quantity: Number(e.target.value) || 0 })} />
       </div>
-      <div className="col-span-2">
+      <div className="min-[1100px]:col-span-2">
         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Unit Price<span className="text-destructive ml-0.5">*</span></label>
         <Input className="mt-1" type="number" min="0" step="any" value={line.unitPrice} onChange={(e) => onChange({ ...line, unitPrice: Number(e.target.value) || 0 })} />
       </div>
-      <div className="col-span-2">
+      <div className="min-[1100px]:col-span-2">
         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Line Total</label>
         <Input
           className="mt-1"
@@ -255,7 +255,7 @@ export function RepairBillLineRow({
           </button>
         ) : null}
       </div>
-      <div className="col-span-1 flex justify-end pt-5">
+      <div className="flex justify-end pt-5 sm:col-span-2 min-[1100px]:col-span-1">
         <Button type="button" variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove}>
           <X className="size-3.5" />
         </Button>
@@ -376,7 +376,7 @@ export function RepairBillForm({
           <button onClick={onClose}><X className="size-4" /></button>
         </div>
         <div className="space-y-4 p-4">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <FieldComponent label="Invoice Number" required><Input className={inputClass} value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></FieldComponent>
             <FieldComponent label="Invoice Date" required><Input className={inputClass} type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} /></FieldComponent>
             <FieldComponent label="Total Due" required><Input className={inputClass} type="number" min="0" step="any" value={totalDue} onChange={(e) => setTotalDue(e.target.value)} /></FieldComponent>

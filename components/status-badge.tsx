@@ -3,8 +3,8 @@ import { cn } from "@/lib/utils"
 type Tone = "ok" | "warn" | "danger" | "neutral" | "info"
 
 const toneClass: Record<Tone, string> = {
-  ok: "bg-chart-3/15 text-chart-3",
-  warn: "bg-chart-4/20 text-chart-4",
+  ok: "bg-emerald-50 text-status-current",
+  warn: "bg-amber-50 text-status-attention",
   danger: "bg-destructive/10 text-destructive",
   neutral: "bg-secondary text-muted-foreground",
   info: "bg-primary/10 text-primary",
@@ -14,11 +14,11 @@ export function StatusBadge({ tone = "neutral", children }: { tone?: Tone; child
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
+        "inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap",
         toneClass[tone],
       )}
     >
-      <span className="size-1.5 rounded-full bg-current" />
+      <span aria-hidden="true" className="size-3 shrink-0 rounded-full border-2 border-current bg-transparent" />
       {children}
     </span>
   )

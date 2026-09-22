@@ -14,6 +14,7 @@ import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions"
 import type { VehicleRecord } from "@/src/types"
 import type { EvidenceRecord } from "@/types/evidence"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
+import { ISODateInput } from "@/src/components/shared/ISODateInput"
 import { TESRecordOverlay } from "@/src/components/shared/TESRecordOverlay"
 
 const REGISTRATION_TYPES = [
@@ -289,6 +290,7 @@ export interface RegistrationTabProps {
   evidence: EvidenceRecord[]
   onStoreChange: (store: VehicleStore) => void
   onStartOCR: (documentType: string) => void
+  onAttachEvidence: (documentType: string) => void
   pendingEvidence: { id: string; documentType: string; values: Record<string, unknown> } | null
   clearPendingEvidence: () => void
   setError: (value: string | null) => void
@@ -312,7 +314,7 @@ export interface RegistrationTabProps {
   addVehicleActivity: (companyId: string, vehicleId: string, entry: { event: string; detail: string; section: string }) => void
 }
 
-export function RegistrationTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, pendingEvidence, clearPendingEvidence, setError, setNotice, onOpenEvidence, FieldComponent, StatusPillComponent, SectionTitleComponent, EmptyStateComponent, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass, selectClass, money, todayISO, addVehicleActivity }: RegistrationTabProps) {
+export function RegistrationTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, onAttachEvidence, pendingEvidence, clearPendingEvidence, setError, setNotice, onOpenEvidence, FieldComponent, StatusPillComponent, SectionTitleComponent, EmptyStateComponent, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass, selectClass, money, todayISO, addVehicleActivity }: RegistrationTabProps) {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<VehicleRegistrationRecord | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<VehicleRegistrationRecord | null>(null)
@@ -360,10 +362,10 @@ export function RegistrationTab({ companyId, store, vehicle, records, evidence, 
       </div>
     </TESRecordOverlay> : null}
     {archiveRecord ? <RegistrationArchiveDialog companyId={companyId} record={archiveRecord} vehicle={vehicle} evidence={evidence} onCancel={() => setArchiveRecord(null)} onArchive={(request, requestEvidence, performedBy, archivedAt) => archive(archiveRecord, request, requestEvidence, performedBy, archivedAt)} FieldComponent={FieldComponent} selectClass={selectClass} todayISO={todayISO} /> : null}
-    {showForm ? <RegistrationForm companyId={companyId} store={store} vehicle={vehicle} initial={editing} pendingEvidence={pendingEvidence} onStartOCR={onStartOCR} clearPendingEvidence={clearPendingEvidence} onClose={() => setShowForm(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
+    {showForm ? <RegistrationForm companyId={companyId} store={store} vehicle={vehicle} initial={editing} pendingEvidence={pendingEvidence} onStartOCR={onStartOCR} onAttachEvidence={onAttachEvidence} clearPendingEvidence={clearPendingEvidence} onClose={() => setShowForm(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
   </div>
 }
-function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleRegistrationRecord | null; pendingEvidence: { id: string; documentType: string; values: Record<string, unknown> } | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: RegistrationModalShellComponent; ModalOCRStripComponent: RegistrationModalOCRStripComponent; ModalSectionLabelComponent: RegistrationModalSectionLabelComponent; ModalFieldGridComponent: RegistrationModalFieldGridComponent; ModalFieldComponent: RegistrationModalFieldComponent; ModalEvidenceCardComponent: RegistrationModalEvidenceCardComponent; ModalFooterComponent: RegistrationModalFooterComponent; modalFieldInputClass: string }) {
+function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence, clearPendingEvidence, onStartOCR, onAttachEvidence, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleRegistrationRecord | null; pendingEvidence: { id: string; documentType: string; values: Record<string, unknown> } | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onAttachEvidence: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: RegistrationModalShellComponent; ModalOCRStripComponent: RegistrationModalOCRStripComponent; ModalSectionLabelComponent: RegistrationModalSectionLabelComponent; ModalFieldGridComponent: RegistrationModalFieldGridComponent; ModalFieldComponent: RegistrationModalFieldComponent; ModalEvidenceCardComponent: RegistrationModalEvidenceCardComponent; ModalFooterComponent: RegistrationModalFooterComponent; modalFieldInputClass: string }) {
   const [registrationType, setRegistrationType] = useState(initial?.registrationType || "Prorate PSV")
   const [stateProvince, setStateProvince] = useState(initial?.stateProvince || "")
   const [plate, setPlate] = useState(initial?.plate || "")
@@ -433,11 +435,11 @@ function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence,
           <Input className={modalFieldInputClass} value={plate} onChange={(e) => setPlate(e.target.value)} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Registration Date" required>
-          <Input className={modalFieldInputClass} type="date" value={registrationDate} onChange={(e) => setRegistrationDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={registrationDate} onValueChange={setRegistrationDate} required />
         </ModalFieldComponent>
         {!trailer ? (
           <ModalFieldComponent label="Expiry Date">
-            <Input className={modalFieldInputClass} type="date" value={continuous ? "" : expiryDate} disabled={continuous} onChange={(e) => setExpiryDate(e.target.value)} />
+            <ISODateInput className={modalFieldInputClass} value={continuous ? "" : expiryDate} disabled={continuous} onValueChange={setExpiryDate} />
           </ModalFieldComponent>
         ) : null}
         <ModalFieldComponent label="Price" className="col-span-2">
@@ -450,13 +452,13 @@ function RegistrationForm({ companyId, store, vehicle, initial, pendingEvidence,
         <ModalEvidenceCardComponent
           label="Registration Document *"
           attached={Boolean(registrationDocumentEvidenceId)}
-          onAttach={() => { setDocTarget("registration"); onStartOCR("Registration Document") }}
+          onAttach={() => { setDocTarget("registration"); onAttachEvidence("Registration Document") }}
         />
         {registrationType === "Prorate PSV" ? (
           <ModalEvidenceCardComponent
             label="Cab Card *"
             attached={Boolean(cabCardEvidenceId)}
-            onAttach={() => { setDocTarget("cabCard"); onStartOCR("Cab Card") }}
+            onAttach={() => { setDocTarget("cabCard"); onAttachEvidence("Cab Card") }}
           />
         ) : null}
       </div>

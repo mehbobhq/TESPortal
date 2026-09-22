@@ -1,76 +1,153 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
+import Link from "next/link"
 import { usePathname } from "next/navigation"
+import {
+  Activity,
+  BarChart3,
+  Briefcase,
+  Building2,
+  Contact,
+  FileText,
+  Gavel,
+  IdCard,
+  KeyRound,
+  Landmark,
+  LayoutDashboard,
+  Lightbulb,
+  Package,
+  Receipt,
+  Route,
+  Settings,
+  ShieldCheck,
+  Truck,
+  User,
+  Users,
+  type LucideIcon,
+} from "lucide-react"
 
-import { navGroups } from "@/lib/nav"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  companyNavigationHref,
+  getCompanyNavigationItems,
+} from "@/lib/company-navigation"
+import { navGroups } from "@/lib/nav"
+
+type StoredCompany = {
+  id: string
+  name?: string
+  kind?: string
+  region?: string
+  status?: string
+}
+
+const PLATFORM_ICONS: Record<string, LucideIcon> = {
+  Dashboard: LayoutDashboard,
+  "Trip Compliance": Route,
+  "Business Intelligence": BarChart3,
+  "Decision Support": Lightbulb,
+  Reports: FileText,
+  Settings,
+  Companies: Building2,
+  Customers: Users,
+}
+
+const COMPANY_ICONS: Record<string, LucideIcon> = {
+  Profile: Building2,
+  Business: Briefcase,
+  Contacts: Contact,
+  Insurance: ShieldCheck,
+  Authorities: Landmark,
+  "Tax Filing": Receipt,
+  Vehicles: Truck,
+  Drivers: User,
+  Citations: Gavel,
+  "Record of Events": Activity,
+  Customs: Package,
+  Programs: IdCard,
+  Credentials: KeyRound,
+  Settings,
+}
 
 export function AppSidebar() {
   const pathname = usePathname()
-
-  // --- CONTEXTUAL STATE ---
-  const [activeCompany, setActiveCompany] = useState<any | null>(null)
-
-  // 1. Identify if we are in a company context
-  const pathSegments = pathname.split('/').filter(Boolean)
-  const isCompanyContext = pathSegments[0] === "companies" && pathSegments[1] && pathSegments[1] !== "new"
+  const pathSegments = pathname.split("/").filter(Boolean)
+  const isCompanyContext =
+    pathSegments[0] === "companies" &&
+    Boolean(pathSegments[1]) &&
+    pathSegments[1] !== "new"
   const companyId = isCompanyContext ? pathSegments[1] : null
+  const [activeCompany, setActiveCompany] = useState<StoredCompany | null>(null)
 
-  // 2. Fetch the full company object securely
   useEffect(() => {
-    if (companyId) {
-      const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-      const found = savedCompanies.find((c: any) => c.id === companyId)
-      setActiveCompany(found || null)
-    } else {
+    if (!companyId) {
+      setActiveCompany(null)
+      return
+    }
+
+    try {
+      const companies = JSON.parse(localStorage.getItem("tes_companies") || "[]") as StoredCompany[]
+      setActiveCompany(companies.find((company) => company.id === companyId) || null)
+    } catch {
       setActiveCompany(null)
     }
   }, [companyId])
 
+  const platformItems = useMemo(
+    () =>
+      navGroups.flatMap((group) =>
+        group.label === "Compliance"
+          ? group.items.filter((item) => item.title === "Customers")
+          : group.items
+      ),
+    []
+  )
+
+  const companyItems = useMemo(
+    () => getCompanyNavigationItems(activeCompany?.kind),
+    [activeCompany?.kind]
+  )
+
   return (
     <Sidebar
-        collapsible="icon"
-        className="border-r border-sidebar-border/60 bg-sidebar shadow-sm"
-      >
-      <SidebarHeader className="border-b border-sidebar-border/60 px-2 pb-2 pt-2">
+      collapsible="icon"
+      className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-none [&_[data-sidebar=sidebar]]:bg-sidebar [&_[data-sidebar=sidebar]]:text-sidebar-foreground"
+    >
+      <SidebarHeader className="border-b border-sidebar-border bg-sidebar px-2.5 py-2.5">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              size="sm"
+              size="lg"
               asChild
-              className="group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0! rounded-xl px-2 hover:bg-sidebar-accent/60"
+              className="rounded-lg px-2 text-foreground hover:bg-accent/60 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!"
             >
               <Link href="/" className="flex items-center gap-3">
-                <div className="flex shrink-0 aspect-square size-8 items-center justify-center rounded-xl bg-primary/10 border border-primary/15 shadow-sm overflow-hidden transition-transform duration-200 group-hover:scale-[1.03]">
-                  <Image 
-                    src="/logo.png" 
-                    alt="TES Logo" 
-                    width={32} 
-                    height={32} 
+                <div className="flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-card shadow-none">
+                  <Image
+                    src="/logo.png"
+                    alt="TES Logo"
+                    width={32}
+                    height={32}
                     className="size-full object-contain p-1"
                   />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-bold tracking-tight text-base text-foreground">
-                    TES
-                  </span>
-                  <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
-                    Operational Intel
+                  <span className="truncate text-sm font-extrabold tracking-[-0.02em] text-foreground">TES</span>
+                  <span className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    Operational Intelligence
                   </span>
                 </div>
               </Link>
@@ -79,93 +156,51 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent className="px-2.5 py-2 scrollbar-hide">
-        <div className="space-y-1">
-        
-        {/* ========================================================= */}
-        {/* SECTION 1: PLATFORM (Global Navigation)                   */}
-        {/* ========================================================= */}
+      <SidebarContent className="scrollbar-hide bg-sidebar px-2 py-3">
         <SidebarGroup className="p-0">
-          <SidebarGroupLabel className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
-            Platform
-          </SidebarGroupLabel>
           <SidebarMenu className="gap-0.5">
-            {navGroups.map((group) => {
-              const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
-              
-              // FIX: If it's the compliance group, ONLY extract 'Customers' to show in the global nav
-              let platformItems = group.items
-              if (isComplianceGroup) {
-                platformItems = group.items.filter(item => item.title === "Customers")
-              }
+            {platformItems.map((item) => {
+              const Icon = PLATFORM_ICONS[item.title] || FileText
+              const active =
+                item.url === "/"
+                  ? pathname === "/"
+                  : item.url === "/companies"
+                    ? pathname === "/companies" || pathname === "/companies/new"
+                    : pathname === item.url || pathname.startsWith(`${item.url}/`)
 
-              return platformItems.map((item) => {
-                let isActive = false
-                if (item.url === "/") {
-                  isActive = pathname === "/"
-                } else if (item.url === "/companies") {
-                  isActive = pathname === "/companies" || pathname === "/companies/new"
-                } else if (item.url === "/customers") {
-                  isActive = pathname === "/customers"
-                } else {
-                  isActive = pathname.startsWith(item.url)
-                }
-
-                // Assume item.icon exists in your navGroups, otherwise fallback to standard text mapping
-                const Icon = item.icon
-
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton 
-                      asChild 
-                      isActive={isActive} 
-                      tooltip={item.title}
-                      className={`
-                        h-8 rounded-lg transition-colors duration-150 group relative
-                        data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
-                        hover:bg-sidebar-accent/70
-                      `}
-                    >
-                      <Link href={item.url} className="flex items-center gap-3">
-                        {/* The Active Left Ribbon Effect */}
-                        {isActive && (
-                          <div className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-r-full bg-primary" />
-                        )}
-                        {Icon && <Icon className={`size-[17px] shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"}`} />}
-                        <span className="truncate">{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })
+              return (
+                <SidebarMenuItem key={`${item.title}-${item.url}`}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={active}
+                    tooltip={item.title}
+                    className="h-9 rounded-lg px-2.5 text-sidebar-foreground transition-colors hover:bg-accent/70 hover:text-foreground data-[active=true]:bg-accent data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:shadow-none"
+                  >
+                    <Link href={item.url} className="flex items-center gap-2.5">
+                      <Icon className="size-4 shrink-0" />
+                      <span className="truncate text-[13px]">{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )
             })}
           </SidebarMenu>
         </SidebarGroup>
 
-        {/* ========================================================= */}
-        {/* SECTION 2: COMPANY WORKSPACE (Contextual Navigation)      */}
-        {/* ========================================================= */}
-        {activeCompany && (
-          <SidebarGroup className="mt-3 pt-3 border-t border-sidebar-border/50">
-            <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 px-3">
-              Workspace Environment
-            </SidebarGroupLabel>
-
-            {/* ⚓ THE BEAUTIFUL CONTEXT ANCHOR CARD ⚓ */}
-            <div className="mb-3 px-1">
-              <div className="relative flex flex-col gap-1.5 overflow-hidden rounded-xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/[0.03] to-transparent p-2.5 shadow-sm">
-                {/* Subtle top-glow effect */}
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-                
-                <span className="font-bold text-primary truncate text-sm leading-tight pr-2">
-                  {activeCompany.name}
-                </span>
-                <div className="flex items-center gap-2 text-[10px] text-foreground font-semibold uppercase tracking-wider">
-                  <span className="truncate">{activeCompany.region}</span>
-                  <span className="size-1 shrink-0 rounded-full bg-border"></span>
-                  <div className="flex items-center gap-1">
-                    <span className={`size-1.5 rounded-full ${activeCompany.status === "Active" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)] animate-pulse"}`}></span>
-                    <span className={activeCompany.status === "Active" ? "text-green-600 dark:text-green-400" : "text-orange-600 dark:text-orange-400"}>
+        {activeCompany && companyId ? (
+          <SidebarGroup className="mt-2 border-t border-sidebar-border p-0 pt-2">
+            <div className="mb-1 px-1 group-data-[collapsible=icon]:hidden">
+              <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 shadow-none">
+                <Building2 className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-foreground">
+                    {activeCompany.name || "Company"}
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <span className="truncate">{activeCompany.region || "Region not recorded"}</span>
+                    <span className="size-1 shrink-0 rounded-full bg-border" />
+                    <span className="inline-flex shrink-0 items-center gap-1.5 text-status-current">
+                      <span className="size-3 shrink-0 rounded-full border-2 border-current bg-transparent" />
                       {activeCompany.status || "Active"}
                     </span>
                   </div>
@@ -173,86 +208,48 @@ export function AppSidebar() {
               </div>
             </div>
 
-            <SidebarMenu className="ml-1 gap-0.5 border-l border-sidebar-border/60 pl-2">
-              {navGroups.map((group) => {
-                const isComplianceGroup = group.items.some(item => ['Profile', 'Business', 'Contacts'].includes(item.title))
-                if (!isComplianceGroup) return null
+            <SidebarMenu className="gap-0.5">
+              {companyItems.map((item) => {
+                const href = companyNavigationHref(companyId, item.segment)
+                const active = pathname === href || pathname.startsWith(`${href}/`)
+                const Icon = COMPANY_ICONS[item.title] || FileText
 
-                // Strip 'Customers' out of the Company Workspace list
-                let processedItems = group.items.filter(item => item.title !== "Customers")
-                
-                const isCustomerOnly = activeCompany.kind === "Customer"
-                const allowedForOthers = ["Profile", "Contacts", "Credentials", "Settings"]
-
-                if (!isCustomerOnly) {
-                  processedItems = processedItems.filter(item => allowedForOthers.includes(item.title))
-                }
-
-                const companySpecificTabs = [
-                  "Profile", "Business", "Contacts", "Insurance", "Authorities", 
-                  "Tax Filing", "Vehicles", "Drivers", "Citations", "Record of Events", 
-                  "Customs", "Programs", "Credentials", "Settings"
-                ]
-
-                return processedItems.map(item => {
-                  let finalUrl = item.url
-                  
-                  if (companySpecificTabs.includes(item.title)) {
-                    const formattedPath = item.title.toLowerCase().replace(/ /g, '-')
-                    finalUrl = `/companies/${companyId}/${formattedPath}`
-                  }
-
-                  const isActive = pathname === finalUrl || pathname.startsWith(finalUrl + "/")
-                  const Icon = item.icon
-
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton 
-                        asChild 
-                        isActive={isActive} 
-                        tooltip={item.title}
-                        className={`
-                          h-8 rounded-lg text-sm transition-colors duration-150 relative
-                          data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-medium
-                          hover:bg-sidebar-accent/70
-                        `}
-                      >
-                        <Link href={finalUrl} className="flex items-center gap-3">
-                          {isActive && (
-                            <div className="absolute -left-[9px] top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-primary ring-2 ring-sidebar" />
-                          )}
-                          {Icon && <Icon className={`size-4 shrink-0 transition-colors ${isActive ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"}`} />}
-                          <span className="truncate">{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })
+                return (
+                  <SidebarMenuItem key={item.segment}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active}
+                      tooltip={item.title}
+                      className="h-9 rounded-lg px-2.5 text-sidebar-foreground transition-colors hover:bg-accent/70 hover:text-foreground data-[active=true]:bg-accent data-[active=true]:font-semibold data-[active=true]:text-primary"
+                    >
+                      <Link href={href} className="flex items-center gap-2.5">
+                        <Icon className="size-4 shrink-0" />
+                        <span className="truncate text-[13px]">{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
               })}
             </SidebarMenu>
           </SidebarGroup>
-        )}
-        </div>
+        ) : null}
       </SidebarContent>
 
-      {/* ========================================================= */}
-      {/* SECTION 3: FOOTER (User Profile)                          */}
-      {/* ========================================================= */}
-      <SidebarFooter className="border-sidebar-border/60 border-t bg-sidebar/95 p-2">
+      <SidebarFooter className="border-t border-sidebar-border bg-sidebar p-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-                size="lg"
-                className="rounded-xl border border-transparent px-2.5 transition-colors hover:border-sidebar-border/60 hover:bg-sidebar-accent/70 group-data-[collapsible=icon]:justify-center"
-              >
-              <Avatar className="size-8 rounded-xl border border-primary/15 shadow-sm">
-                <AvatarFallback className="bg-primary/10 text-primary font-bold rounded-lg text-sm">
+              size="lg"
+              className="rounded-lg px-2 text-sidebar-foreground hover:bg-accent/60 group-data-[collapsible=icon]:justify-center"
+            >
+              <Avatar className="size-8 rounded-lg border border-border bg-card shadow-none">
+                <AvatarFallback className="rounded-lg bg-accent text-sm font-bold text-primary">
                   MB
                 </AvatarFallback>
               </Avatar>
-              <div className="grid flex-1 text-left leading-tight ml-1">
-                <span className="truncate font-bold text-foreground">Mehboob</span>
-                <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
+              <div className="ml-1 grid flex-1 text-left leading-tight">
+                <span className="truncate text-sm font-semibold text-foreground">Mehboob</span>
+                <span className="truncate text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
                   System Admin
                 </span>
               </div>

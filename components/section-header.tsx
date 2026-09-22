@@ -1,0 +1,25 @@
+import type { ReactNode } from "react"
+
+import { cn } from "@/lib/utils"
+
+export function SectionHeader({
+  title,
+  description,
+  actions,
+  className,
+}: {
+  title: ReactNode
+  description?: ReactNode
+  actions?: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}>
+      <div className="min-w-0">
+        <h2 className="text-lg font-bold tracking-[-0.02em] text-foreground">{title}</h2>
+        {description ? <div className="mt-1 text-[13px] leading-5 text-muted-foreground">{description}</div> : null}
+      </div>
+      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+    </div>
+  )
+}

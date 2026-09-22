@@ -1,16 +1,35 @@
 import { ChevronRight, Landmark, Settings2 } from "lucide-react"
 import { EmptyState } from "@/src/components/shared/StateDisplays"
 import { formatFrequency } from "@/src/components/tax-filing/tax-helpers"
+import { TESStatusRing, type TESStatusTone } from "@/src/components/design-system/TESStatusRing"
 import type {
   TaxCode,
   TaxDefinition,
   TaxProfile,
+  TaxProfileStatus,
 } from "@/src/components/tax-filing/types"
 
 type TaxProgramListItem = {
   definition: TaxDefinition
   profile?: TaxProfile
   accountDisplayValue: string
+}
+
+/** Presentational mapping of the existing TaxProfileStatus value to a ring tone. Does not compute status. */
+function accountStatusTone(status: TaxProfileStatus | undefined): TESStatusTone {
+  switch (status) {
+    case "Active":
+      return "current"
+    case "Pending":
+      return "attention"
+    case "Suspended":
+      return "critical"
+    case "Inactive":
+    case "Closed":
+      return "neutral"
+    default:
+      return "attention"
+  }
 }
 
 function TaxProgramList({
@@ -77,9 +96,12 @@ function TaxProgramList({
                   </div>
                   <div className="md:col-span-2">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p>
-                    <p className="mt-0.5 text-xs font-semibold text-foreground">
-                      {profile?.accountStatus || "Needs setup"}
-                    </p>
+                    <div className="mt-1">
+                      <TESStatusRing
+                        tone={accountStatusTone(profile?.accountStatus)}
+                        label={profile?.accountStatus || "Needs setup"}
+                      />
+                    </div>
                   </div>
                   <div className="flex items-center justify-end md:col-span-1">
                     <ChevronRight className="size-4 text-muted-foreground" />

@@ -14,6 +14,7 @@ import { JURISDICTIONS } from "@/lib/jurisdictions"
 import type { VehicleRecord } from "@/src/types"
 import type { EvidenceRecord } from "@/types/evidence"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
+import { ISODateInput } from "@/src/components/shared/ISODateInput"
 
 const PERMIT_TYPES = [
   "Transponder (Annual)",
@@ -69,6 +70,7 @@ export interface PermitTabProps {
   evidence: EvidenceRecord[]
   onStoreChange: (store: VehicleStore) => void
   onStartOCR: (documentType: string) => void
+  onAttachEvidence: (documentType: string) => void
   pendingEvidenceId: string | null
   clearPendingEvidence: () => void
   setError: (value: string | null) => void
@@ -87,7 +89,7 @@ export interface PermitTabProps {
   modalFieldInputClass: string
 }
 
-export function PermitTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, pendingEvidenceId, clearPendingEvidence, setError, setNotice, onRecordClick, StatusPillComponent, SectionTitleComponent, EmptyStateComponent, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: PermitTabProps) {
+export function PermitTab({ companyId, store, vehicle, records, evidence, onStoreChange, onStartOCR, onAttachEvidence, pendingEvidenceId, clearPendingEvidence, setError, setNotice, onRecordClick, StatusPillComponent, SectionTitleComponent, EmptyStateComponent, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: PermitTabProps) {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<VehiclePermitRecord | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -95,11 +97,11 @@ export function PermitTab({ companyId, store, vehicle, records, evidence, onStor
   const archive = (record: VehiclePermitRecord) => { const next = { ...store, permitRecords: store.permitRecords.map((item) => item.id === record.id ? { ...item, archived: true, updatedAt: isoNow() } : item) }; try { saveVehicleStore(companyId, next); onStoreChange(next); recordAuditEvent({ action: "ARCHIVE", entityType: "Vehicle", entityId: record.id, companyId, actor: "", role: "", details: `Archived permit record ${record.id}.` }); setNotice("Permit archived.") } catch (err) { setError(err instanceof Error ? err.message : "Could not archive permit.") } }
   return <div className="space-y-3"><Card><SectionTitleComponent title="Permits" description="Existing permit fields and derived status behavior are preserved." action={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setShowArchived((value) => !value)}>{showArchived ? "Hide History" : "Show History"}</Button><Button size="sm" onClick={() => { setEditing(null); setShowForm(true) }}><Plus className="mr-1.5 size-3.5" />Add Permit</Button></div>} /></Card>
     {visible.length === 0 ? <EmptyStateComponent title="No permit records" description="Begin permit capture with OCR/document source." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-1.5 size-4" />Add Permit</Button>} /> : <div className="space-y-2">{visible.map((record) => <Card key={record.id} className={`${record.archived ? "opacity-70" : ""} cursor-pointer hover:bg-muted/20 transition-colors`} onClick={() => onRecordClick?.(record)}><div className="flex items-center justify-between border-b px-4 py-3"><div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.permitType === "Other" ? record.customPermitType : record.permitType}</h3><StatusPillComponent value={permitDisplayStatus(record)} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div><div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(record); setShowForm(true) }}><Edit3 className="mr-1 size-3" />Edit</Button>{!record.archived ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archive(record) }}><Archive className="mr-1 size-3" />Archive</Button> : null}</div></div><div className="grid gap-3 p-4 md:grid-cols-4"><ReadOnlyField label="Permit #" value={record.permitNumber || "—"} /><ReadOnlyField label="Jurisdiction" value={record.jurisdiction || "—"} /><ReadOnlyField label="Start" value={record.startDate || "—"} /><ReadOnlyField label="Expiry" value={record.expiryDate || "—"} /><ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} /><ReadOnlyField label="Notes" value={record.notes || "—"} /></div></Card>)}</div>}
-    {showForm ? <PermitForm companyId={companyId} store={store} vehicle={vehicle} initial={editing} pendingEvidenceId={pendingEvidenceId} clearPendingEvidence={clearPendingEvidence} onStartOCR={onStartOCR} onClose={() => setShowForm(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
+    {showForm ? <PermitForm companyId={companyId} store={store} vehicle={vehicle} initial={editing} pendingEvidenceId={pendingEvidenceId} clearPendingEvidence={clearPendingEvidence} onStartOCR={onStartOCR} onAttachEvidence={onAttachEvidence} onClose={() => setShowForm(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
   </div>
 }
 
-function PermitForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehiclePermitRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: PermitModalShellComponent; ModalOCRStripComponent: PermitModalOCRStripComponent; ModalSectionLabelComponent: PermitModalSectionLabelComponent; ModalFieldGridComponent: PermitModalFieldGridComponent; ModalFieldComponent: PermitModalFieldComponent; ModalEvidenceCardComponent: PermitModalEvidenceCardComponent; ModalFooterComponent: PermitModalFooterComponent; modalFieldInputClass: string }) {
+function PermitForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onAttachEvidence, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehiclePermitRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: (documentType: string) => void; onAttachEvidence: (documentType: string) => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: PermitModalShellComponent; ModalOCRStripComponent: PermitModalOCRStripComponent; ModalSectionLabelComponent: PermitModalSectionLabelComponent; ModalFieldGridComponent: PermitModalFieldGridComponent; ModalFieldComponent: PermitModalFieldComponent; ModalEvidenceCardComponent: PermitModalEvidenceCardComponent; ModalFooterComponent: PermitModalFooterComponent; modalFieldInputClass: string }) {
   const [permitType, setPermitType] = useState(initial?.permitType || PERMIT_TYPES[0])
   const [customPermitType, setCustomPermitType] = useState(initial?.customPermitType || "")
   const [permitNumber, setPermitNumber] = useState(initial?.permitNumber || "")
@@ -152,10 +154,10 @@ function PermitForm({ companyId, store, vehicle, initial, pendingEvidenceId, cle
           </select>
         </ModalFieldComponent>
         <ModalFieldComponent label="Start Date">
-          <Input className={modalFieldInputClass} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={startDate} onValueChange={setStartDate} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Expiry Date">
-          <Input className={modalFieldInputClass} type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={expiryDate} onValueChange={setExpiryDate} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Notes" className="col-span-2">
           <Textarea rows={3} className={modalFieldInputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -168,7 +170,7 @@ function PermitForm({ companyId, store, vehicle, initial, pendingEvidenceId, cle
           label="Permit Document"
           attached={evidenceIds.length > 0}
           attachedNote={evidenceIds.length ? `${evidenceIds.length} attached` : undefined}
-          onAttach={() => onStartOCR("Permit Document")}
+          onAttach={() => onAttachEvidence("Permit Document")}
         />
       </div>
     </ModalShellComponent>

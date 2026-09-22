@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import type { ComponentType } from "react"
-import { Archive, Edit3, Plus, Upload, Wrench } from "lucide-react"
+import { Archive, Edit3, Plus, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -39,7 +39,15 @@ import { INSPECTION_TYPES, type Company, type VehicleRecord } from "@/src/types"
 import type { VehicleProfileRecord } from "@/src/components/vehicles/profile/VehicleProfileTab"
 import type { EvidenceRecord } from "@/types/evidence"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
+import { ISODateInput } from "@/src/components/shared/ISODateInput"
 import { RepairBillsView, RepairBillForm } from "@/src/components/vehicles/repair/RepairBills"
+import {
+  VehicleInspectionsWorkspace,
+  InspectionBackButton,
+  type InspectionFamilyKey,
+  type InspectionListStatusTone,
+  type VehicleInspectionIndexRecord,
+} from "./VehicleInspectionsWorkspace"
 
 type AnyComponent = ComponentType<any>
 
@@ -52,6 +60,7 @@ export interface MaintenanceTabProps {
   evidence: EvidenceRecord[]
   onStoreChange: (store: VehicleStore) => void
   onStartOCR: (kind: "inspection" | "maintenance", documentType: string) => void
+  onAttachEvidence: (kind: "inspection" | "maintenance", documentType: string) => void
   pendingInspectionEvidenceId: string | null
   pendingMaintenanceEvidenceId: string | null
   clearInspectionEvidence: () => void
@@ -225,76 +234,96 @@ function MaintenanceItemsPanel({ companyId, store, onStoreChange, record, setNot
   )
 }
 
-/**
- * Read-only reference to canonical Roadside/CVSA Inspection Performance
- * Events (EVT-*) that this vehicle actually participated in, as either the
- * resolved Power Unit or a resolved Towed Unit. Nothing here is copied or
- * editable — PerformanceEventRecord in the Driver store remains the sole
- * canonical record; edit it from Driver Performance. An unrelated vehicle
- * that never participated in any event correctly renders nothing.
- */
-function RoadsideInspectionsPanel({ companyId, vehicleId }: { companyId: string; vehicleId: string }) {
-  const [matches, setMatches] = useState<RoadsideEventForVehicle[]>([])
+function inspectionFamily(record: VehicleInspectionRecord): InspectionFamilyKey {
+  const value = `${record.inspectionType} ${record.inspectionSource}`.toLowerCase()
+  if (record.inspectionSource === "Roadside Enforcement" || value.includes("roadside") || value.includes("cvsa")) return "ROADSIDE_CVSA"
+  if (value.includes("pre-trip") || value.includes("pre trip") || value.includes("post-trip") || value.includes("post trip") || value.includes("dvir")) return "PRE_POST_TRIP"
+  if (value.includes("annual") || value.includes("periodic") || value.includes("cvip") || value.includes("396.17")) return "ANNUAL_PERIODIC"
+  return "OTHER"
+}
 
-  useEffect(() => {
-    try {
-      setMatches(getRoadsideEventsForVehicle(companyId, vehicleId))
-    } catch {
-      setMatches([])
-    }
-  }, [companyId, vehicleId])
+function inspectionTone(status: VehicleInspectionRecord["inspectionStatus"]): InspectionListStatusTone {
+  if (status === "Fail" || status === "Out of Service") return "CRITICAL"
+  if (status === "Pass with Defects") return "WARNING"
+  return status === "Pass" ? "GOOD" : "NEUTRAL"
+}
 
-  if (matches.length === 0) return null
-
-  return (
-    <Card className="mb-2">
-      <SectionTitleComponent
-        title="Roadside / CVSA Inspections"
-        description="Canonical Driver Performance events this unit participated in — read-only here, edit in Driver Performance."
-      />
-      <div className="space-y-2 p-3">
-        {matches.map(({ event, matchedRole, resolution }) => {
-          const violations = getRoadsideViolationCollection(event)?.items || []
-          return (
-            <div key={`${event.id}:${resolution.relationshipKey}`} className="rounded-lg border border-border p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold">{event.summary || "Roadside Inspection"}</h4>
-                    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{event.id}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[11px] text-muted-foreground">{event.eventDate}</p>
-                  <p className="text-[10px] text-muted-foreground">{resolution.resolvedEntitySummary ? "Matched" : resolution.state}</p>
-                </div>
-              </div>
-              {violations.length > 0 ? (
-                <div className="mt-2 space-y-1">
-                  {violations.map((item) => (
-                    <p key={item.itemId} className="text-[11px] text-muted-foreground">
-                      • {String(item.facts.description || item.facts.ruleRegulationCode || "Violation")}
-                      {item.facts.oosState === "YES" ? <span className="ml-1 font-semibold text-destructive">OOS</span> : null}
-                    </p>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 text-[11px] text-muted-foreground">No violations recorded.</p>
-              )}
-            </div>
-          )
-        })}
+function InspectionRecordDetail({
+  companyId,
+  store,
+  record,
+  onStoreChange,
+  onBack,
+  onEdit,
+  onArchive,
+  setNotice,
+  setError,
+  StatusPillComponent,
+}: {
+  companyId: string
+  store: VehicleStore
+  record: VehicleInspectionRecord
+  onStoreChange: (store: VehicleStore) => void
+  onBack: () => void
+  onEdit: () => void
+  onArchive: () => void
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+  StatusPillComponent: AnyComponent
+}) {
+  return <div className="space-y-3">
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <div className="mb-3"><InspectionBackButton label="Back to inspection records" onClick={onBack} /></div>
+          <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-bold">{record.inspectionType}</h3><StatusPillComponent value={record.inspectionStatus} /></div>
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">{record.id}</p>
+        </div>
+        <div className="flex gap-1"><Button variant="outline" size="sm" onClick={onEdit}><Edit3 className="mr-1 size-3" />Edit</Button><Button variant="ghost" size="sm" onClick={onArchive}><Archive className="mr-1 size-3" />Archive</Button></div>
       </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2 min-[1500px]:grid-cols-3">
+        <ReadOnlyField label="Inspection Date" value={record.inspectionDate || "—"} />
+        <ReadOnlyField label="Expiry Date" value={record.expiryDate || "—"} />
+        <ReadOnlyField label="Next Due Date" value={record.nextDueDate || "—"} />
+        <ReadOnlyField label="Inspection Source" value={record.inspectionSource || "—"} />
+        <ReadOnlyField label="Inspector / Shop" value={record.inspectorShopName || "—"} />
+        <ReadOnlyField label="Service Facility" value={record.serviceFacility || "—"} />
+        <ReadOnlyField label="Odometer" value={record.odometer || "—"} />
+        <ReadOnlyField label="Engine Hours" value={record.engineHours || "—"} />
+        <ReadOnlyField label="Defects Found" value={record.defectsFound} />
+        <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
+        <ReadOnlyField label="Notes" value={record.notes || "—"} />
+      </div>
+      <InspectionFindingsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} inspection={record} setNotice={setNotice} setError={setError} />
     </Card>
-  )
+  </div>
+}
+
+function RoadsideInspectionDetail({ match, onBack }: { match: RoadsideEventForVehicle; onBack: () => void }) {
+  const { event, matchedRole, resolution } = match
+  const violations = getRoadsideViolationCollection(event)?.items || []
+  return <Card>
+    <div className="border-b border-border px-4 py-3">
+      <div className="mb-3"><InspectionBackButton label="Back to Roadside / CVSA records" onClick={onBack} /></div>
+      <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-bold">{event.summary || "Roadside Inspection"}</h3><span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit"}</span></div>
+      <p className="mt-1 font-mono text-[10px] text-muted-foreground">{event.id}</p>
+    </div>
+    <div className="grid gap-3 p-4 sm:grid-cols-2">
+      <ReadOnlyField label="Event Date" value={event.eventDate || "—"} />
+      <ReadOnlyField label="Vehicle Match" value={resolution.resolvedEntitySummary ? "Matched" : resolution.state} />
+      <ReadOnlyField label="Vehicle Role" value={matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit"} />
+      <ReadOnlyField label="Violations" value={String(violations.length)} />
+    </div>
+    <div className="border-t border-border p-4">
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Violations</p>
+      {violations.length ? <div className="space-y-2">{violations.map((item) => <div className="rounded-lg border border-border p-3" key={item.itemId}><p className="text-xs font-semibold">{String(item.facts.description || item.facts.ruleRegulationCode || "Violation")}</p>{item.facts.oosState === "YES" ? <span className="mt-1 inline-flex rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-bold text-destructive">Out of service</span> : null}</div>)}</div> : <p className="text-xs text-muted-foreground">No violations recorded.</p>}
+    </div>
+  </Card>
 }
 
 export function MaintenanceTab({
   companyId, store, vehicle, inspections, maintenance, evidence, onStoreChange,
-  onStartOCR, pendingInspectionEvidenceId, pendingMaintenanceEvidenceId,
+  onStartOCR, onAttachEvidence, pendingInspectionEvidenceId, pendingMaintenanceEvidenceId,
   clearInspectionEvidence, clearMaintenanceEvidence, setError, setNotice, onRecordClick,
   readCompanies, todayISO, money, inputClass, selectClass,
   SectionTitleComponent, EmptyStateComponent, StatusPillComponent,
@@ -309,7 +338,15 @@ export function MaintenanceTab({
   const [showRepairBill, setShowRepairBill] = useState(false)
   const [editingInspection, setEditingInspection] = useState<VehicleInspectionRecord | null>(null)
   const [editingMaintenance, setEditingMaintenance] = useState<VehicleMaintenanceRecord | null>(null)
+  const [roadsideMatches, setRoadsideMatches] = useState<RoadsideEventForVehicle[]>([])
   const [repairBillRefreshKey, setRepairBillRefreshKey] = useState(0)
+  useEffect(() => {
+    try {
+      setRoadsideMatches(getRoadsideEventsForVehicle(companyId, vehicle.id))
+    } catch {
+      setRoadsideMatches([])
+    }
+  }, [companyId, vehicle.id, store])
   const partCatalog = useMemo(() => loadPartCatalog(), [repairBillRefreshKey])
   const repairInvoices = useMemo(
     () => getVehicleRepairInvoices(companyId, vehicle.id),
@@ -355,6 +392,35 @@ export function MaintenanceTab({
 
   const activeInspections = inspections.filter((item) => !item.archived)
   const activeMaintenance = maintenance.filter((item) => !item.archived)
+  const inspectionIndexRecords: VehicleInspectionIndexRecord[] = (() => {
+    const stored = activeInspections.map((record) => ({
+      id: record.id,
+      family: inspectionFamily(record),
+      title: record.inspectionType,
+      inspectionDateLabel: record.inspectionDate || "Date not recorded",
+      secondaryLabel: record.expiryDate ? `Expires ${record.expiryDate}` : record.nextDueDate ? `Due ${record.nextDueDate}` : record.inspectionSource,
+      statusLabel: record.inspectionStatus,
+      statusTone: inspectionTone(record.inspectionStatus),
+      evidenceLabel: record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing",
+      requiresAttention: ["Fail", "Out of Service", "Pass with Defects"].includes(record.inspectionStatus) || record.evidenceIds.length === 0,
+    }))
+    const canonicalRoadside = roadsideMatches.map((match) => {
+      const violations = getRoadsideViolationCollection(match.event)?.items || []
+      const hasOos = violations.some((item) => item.facts.oosState === "YES")
+      return {
+        id: `roadside:${match.event.id}:${match.resolution.relationshipKey}`,
+        family: "ROADSIDE_CVSA" as const,
+        title: match.event.summary || "Roadside Inspection",
+        inspectionDateLabel: match.event.eventDate || "Date not recorded",
+        secondaryLabel: match.matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit",
+        statusLabel: hasOos ? "Out of Service" : violations.length ? `${violations.length} violation${violations.length === 1 ? "" : "s"}` : "No violations",
+        statusTone: hasOos ? "CRITICAL" as const : violations.length ? "WARNING" as const : "GOOD" as const,
+        evidenceLabel: "Canonical event",
+        requiresAttention: hasOos || violations.length > 0,
+      }
+    })
+    return [...stored, ...canonicalRoadside].sort((a, b) => b.inspectionDateLabel.localeCompare(a.inspectionDateLabel))
+  })()
 
   return (
     <div className="space-y-3">
@@ -363,18 +429,9 @@ export function MaintenanceTab({
           title="Maintenance / Inspections"
           description="OCR-first document entry alongside manual operational records."
           action={
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => onStartOCR(view === "inspections" ? "inspection" : "maintenance", view === "inspections" ? "Inspection Document" : "Maintenance Work Order / Invoice")}>
+            <div>
+              <Button size="sm" onClick={() => view === "repairBills" ? setShowRepairBill(true) : onStartOCR(view === "inspections" ? "inspection" : "maintenance", view === "inspections" ? "Inspection Document" : "Maintenance Work Order / Invoice")}>
                 <Upload className="mr-1.5 size-3.5" />Upload Document / OCR
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => { setEditingInspection(null); setShowInspection(true) }}>
-                <Plus className="mr-1.5 size-3.5" />Add Inspection
-              </Button>
-              <Button size="sm" onClick={() => { setEditingMaintenance(null); setShowMaintenance(true) }}>
-                <Wrench className="mr-1.5 size-3.5" />Add Maintenance Record
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setShowRepairBill(true)}>
-                <Plus className="mr-1.5 size-3.5" />Add Repair Bill
               </Button>
             </div>
           }
@@ -385,6 +442,16 @@ export function MaintenanceTab({
         <button className={`border-b-2 px-3 py-2 text-xs font-semibold ${view === "inspections" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setView("inspections")}>Inspections</button>
         <button className={`border-b-2 px-3 py-2 text-xs font-semibold ${view === "maintenance" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setView("maintenance")}>Maintenance</button>
         <button className={`border-b-2 px-3 py-2 text-xs font-semibold ${view === "repairBills" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setView("repairBills")}>Repair Bills</button>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+        <div>
+          <p className="text-xs font-bold text-foreground">{view === "inspections" ? "Inspection records" : view === "maintenance" ? "Maintenance records" : "Repair bills"}</p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">{view === "inspections" ? "Annual, operational and enforcement inspections for this vehicle." : view === "maintenance" ? "Scheduled service and maintenance work for this vehicle." : "Itemized repair invoices and linked repair work for this vehicle."}</p>
+        </div>
+        {view === "inspections" ? <Button size="sm" onClick={() => { setEditingInspection(null); setShowInspection(true) }}><Plus className="mr-1.5 size-3.5" />Add Inspection</Button> : null}
+        {view === "maintenance" ? <Button size="sm" onClick={() => { setEditingMaintenance(null); setShowMaintenance(true) }}><Plus className="mr-1.5 size-3.5" />Add Maintenance Record</Button> : null}
+        {view === "repairBills" ? <Button size="sm" onClick={() => setShowRepairBill(true)}><Plus className="mr-1.5 size-3.5" />Add Repair Bill</Button> : null}
       </div>
 
       {view === "repairBills" ? (
@@ -404,40 +471,27 @@ export function MaintenanceTab({
       ) : null}
 
       {view === "inspections" ? (
-        <RoadsideInspectionsPanel companyId={companyId} vehicleId={vehicle.id} />
-      ) : null}
-
-      {view === "inspections" ? (
-        activeInspections.length === 0 ? (
-          <EmptyStateComponent title="No inspection records" description="Upload an inspection document or add an inspection manually." action={<Button onClick={() => setShowInspection(true)}><Plus className="mr-1.5 size-4" />Add Inspection</Button>} />
-        ) : (
-          <div className="space-y-2">
-            {activeInspections.map((record) => (
-              <Card key={record.id} className="cursor-pointer hover:bg-muted/20 transition-colors" onClick={() => onRecordClick?.(record)}>
-                <div className="flex items-center justify-between border-b px-4 py-3">
-                  <div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.inspectionType}</h3><StatusPillComponent value={record.inspectionStatus} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div>
-                  <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setEditingInspection(record); setShowInspection(true) }}><Edit3 className="mr-1 size-3" />Edit</Button><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archiveInspection(record) }}><Archive className="mr-1 size-3" />Archive</Button></div>
-                </div>
-                <div className="grid gap-3 p-4 md:grid-cols-4">
-                  <ReadOnlyField label="Inspection Date" value={record.inspectionDate || "—"} />
-                  <ReadOnlyField label="Expiry Date" value={record.expiryDate || "—"} />
-                  <ReadOnlyField label="Next Due Date" value={record.nextDueDate || "—"} />
-                  <ReadOnlyField label="Inspector / Shop" value={record.inspectorShopName || "—"} />
-                  <ReadOnlyField label="Odometer" value={record.odometer || "—"} />
-                  <ReadOnlyField label="Engine Hours" value={record.engineHours || "—"} />
-                  <ReadOnlyField label="Defects Found" value={record.defectsFound} />
-                  <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
-                </div>
-                <InspectionFindingsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} inspection={record} setNotice={setNotice} setError={setError} />
-              </Card>
-            ))}
-          </div>
-        )
+        <VehicleInspectionsWorkspace
+          unitNumber={vehicle.unitNumber}
+          vehicleLabel={[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || vehicle.equipmentType}
+          records={inspectionIndexRecords}
+          inspectionTypes={INSPECTION_TYPES}
+          onOpenRecord={(indexRecord) => {
+            const record = activeInspections.find((item) => item.id === indexRecord.id)
+            if (record) onRecordClick?.(record)
+          }}
+          renderRecord={(indexRecord, { onBackToList }) => {
+            const record = activeInspections.find((item) => item.id === indexRecord.id)
+            if (record) return <InspectionRecordDetail companyId={companyId} store={store} record={record} onStoreChange={onStoreChange} onBack={onBackToList} onEdit={() => { setEditingInspection(record); setShowInspection(true) }} onArchive={() => archiveInspection(record)} setNotice={setNotice} setError={setError} StatusPillComponent={StatusPillComponent} />
+            const roadside = roadsideMatches.find((match) => `roadside:${match.event.id}:${match.resolution.relationshipKey}` === indexRecord.id)
+            return roadside ? <RoadsideInspectionDetail match={roadside} onBack={onBackToList} /> : null
+          }}
+        />
       ) : null}
 
       {view === "maintenance" ? (
         activeMaintenance.length === 0 ? (
-          <EmptyStateComponent title="No maintenance records" description="Upload a work order/invoice or add a maintenance record manually." action={<Button onClick={() => setShowMaintenance(true)}><Plus className="mr-1.5 size-4" />Add Maintenance</Button>} />
+          <EmptyStateComponent title="No maintenance records" description="Upload a work order/invoice or add a maintenance record manually." />
         ) : (
           <div className="space-y-2">
             {activeMaintenance.map((record) => (
@@ -446,7 +500,7 @@ export function MaintenanceTab({
                   <div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.maintenanceType}</h3><StatusPillComponent value={record.maintenanceStatus} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div>
                   <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setEditingMaintenance(record); setShowMaintenance(true) }}><Edit3 className="mr-1 size-3" />Edit</Button><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archiveMaintenance(record) }}><Archive className="mr-1 size-3" />Archive</Button></div>
                 </div>
-                <div className="grid gap-3 p-4 md:grid-cols-4">
+                <div className="grid gap-3 p-4 sm:grid-cols-2 min-[1500px]:grid-cols-3">
                   <ReadOnlyField label="Service Date" value={record.serviceDate || "—"} />
                   <ReadOnlyField label="Odometer" value={record.odometer || "—"} />
                   <ReadOnlyField label="Work Order / Invoice" value={record.workOrderInvoiceNumber || "—"} />
@@ -463,8 +517,8 @@ export function MaintenanceTab({
         )
       ) : null}
 
-      {showInspection ? <InspectionForm companyId={companyId} store={store} vehicle={vehicle} initial={editingInspection} pendingEvidenceId={pendingInspectionEvidenceId} clearPendingEvidence={clearInspectionEvidence} onStartOCR={() => onStartOCR("inspection", "Inspection Document")} onClose={() => setShowInspection(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
-      {showMaintenance ? <MaintenanceForm companyId={companyId} store={store} vehicle={vehicle} initial={editingMaintenance} pendingEvidenceId={pendingMaintenanceEvidenceId} clearPendingEvidence={clearMaintenanceEvidence} onStartOCR={() => onStartOCR("maintenance", "Maintenance Work Order / Invoice")} onClose={() => setShowMaintenance(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
+      {showInspection ? <InspectionForm companyId={companyId} store={store} vehicle={vehicle} initial={editingInspection} pendingEvidenceId={pendingInspectionEvidenceId} clearPendingEvidence={clearInspectionEvidence} onStartOCR={() => onStartOCR("inspection", "Inspection Document")} onAttachEvidence={() => onAttachEvidence("inspection", "Inspection Document")} onClose={() => setShowInspection(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
+      {showMaintenance ? <MaintenanceForm companyId={companyId} store={store} vehicle={vehicle} initial={editingMaintenance} pendingEvidenceId={pendingMaintenanceEvidenceId} clearPendingEvidence={clearMaintenanceEvidence} onStartOCR={() => onStartOCR("maintenance", "Maintenance Work Order / Invoice")} onAttachEvidence={() => onAttachEvidence("maintenance", "Maintenance Work Order / Invoice")} onClose={() => setShowMaintenance(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
       {showRepairBill ? (
         <RepairBillForm
           companyId={companyId}
@@ -490,7 +544,7 @@ export function MaintenanceTab({
   )
 }
 
-function InspectionForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleInspectionRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
+function InspectionForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onAttachEvidence, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleInspectionRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: () => void; onAttachEvidence: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
   const [inspectionType, setInspectionType] = useState(initial?.inspectionType || INSPECTION_TYPES[0])
   const [inspectionSource, setInspectionSource] = useState<VehicleInspectionRecord["inspectionSource"]>(initial?.inspectionSource || "Internal")
   const [inspectionStatus, setInspectionStatus] = useState<VehicleInspectionRecord["inspectionStatus"]>(initial?.inspectionStatus || "Pass")
@@ -543,13 +597,13 @@ function InspectionForm({ companyId, store, vehicle, initial, pendingEvidenceId,
           </select>
         </ModalFieldComponent>
         <ModalFieldComponent label="Inspection Date" required>
-          <Input className={modalFieldInputClass} type="date" value={inspectionDate} onChange={(e) => setInspectionDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={inspectionDate} onValueChange={setInspectionDate} required />
         </ModalFieldComponent>
         <ModalFieldComponent label="Expiry Date">
-          <Input className={modalFieldInputClass} type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={expiryDate} onValueChange={setExpiryDate} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Next Due Date">
-          <Input className={modalFieldInputClass} type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={nextDueDate} onValueChange={setNextDueDate} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Inspector / Shop">
           <Input className={modalFieldInputClass} value={inspectorShopName} onChange={(e) => setInspectorShopName(e.target.value)} />
@@ -576,19 +630,19 @@ function InspectionForm({ companyId, store, vehicle, initial, pendingEvidenceId,
       </ModalFieldGridComponent>
 
       <ModalSectionLabelComponent>Evidence</ModalSectionLabelComponent>
-      <div className="px-6 grid grid-cols-2 gap-3 pb-4">
+      <div className="grid grid-cols-1 gap-3 px-6 pb-4 sm:grid-cols-2">
         <ModalEvidenceCardComponent
           label="Inspection Document"
           attached={evidenceIds.length > 0}
           attachedNote={evidenceIds.length ? `${evidenceIds.length} attached` : undefined}
-          onAttach={onStartOCR}
+          onAttach={onAttachEvidence}
         />
       </div>
     </ModalShellComponent>
   )
 }
 
-function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleMaintenanceRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
+function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onAttachEvidence, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleMaintenanceRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: () => void; onAttachEvidence: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
   const [maintenanceType, setMaintenanceType] = useState(initial?.maintenanceType || MAINTENANCE_TYPES[0])
   const [maintenanceStatus, setMaintenanceStatus] = useState<VehicleMaintenanceRecord["maintenanceStatus"]>(initial?.maintenanceStatus || "Completed")
   const [serviceDate, setServiceDate] = useState(initial?.serviceDate || "")
@@ -629,7 +683,7 @@ function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId
           </select>
         </ModalFieldComponent>
         <ModalFieldComponent label="Service Date" required>
-          <Input className={modalFieldInputClass} type="date" value={serviceDate} onChange={(e) => setServiceDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={serviceDate} onValueChange={setServiceDate} required />
         </ModalFieldComponent>
         <ModalFieldComponent label="Odometer">
           <Input className={modalFieldInputClass} value={odometer} onChange={(e) => setOdometer(e.target.value)} />
@@ -644,7 +698,7 @@ function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId
           <Input className={modalFieldInputClass} value={workOrderInvoiceNumber} onChange={(e) => setWorkOrderInvoiceNumber(e.target.value)} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Next Service Due">
-          <Input className={modalFieldInputClass} type="date" value={nextServiceDueDate} onChange={(e) => setNextServiceDueDate(e.target.value)} />
+          <ISODateInput className={modalFieldInputClass} value={nextServiceDueDate} onValueChange={setNextServiceDueDate} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Parts Cost">
           <Input className={modalFieldInputClass} type="number" min="0" value={partsCost} onChange={(e) => setPartsCost(e.target.value)} />
@@ -658,12 +712,12 @@ function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId
       </ModalFieldGridComponent>
 
       <ModalSectionLabelComponent>Evidence</ModalSectionLabelComponent>
-      <div className="px-6 grid grid-cols-2 gap-3 pb-4">
+      <div className="grid grid-cols-1 gap-3 px-6 pb-4 sm:grid-cols-2">
         <ModalEvidenceCardComponent
           label="Work Order / Invoice Document"
           attached={evidenceIds.length > 0}
           attachedNote={evidenceIds.length ? `${evidenceIds.length} attached` : undefined}
-          onAttach={onStartOCR}
+          onAttach={onAttachEvidence}
         />
       </div>
     </ModalShellComponent>

@@ -4,6 +4,7 @@ import { useEffect, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 interface TESRecordOverlayProps {
   open: boolean
@@ -15,6 +16,13 @@ interface TESRecordOverlayProps {
   children: ReactNode
   closeOnBackdrop?: boolean
   ariaLabel?: string
+  /**
+   * "fixed" (default) preserves the original viewport-percentage height
+   * regardless of content length. "natural" caps height at the same
+   * viewport maximums but lets the overlay shrink to fit shorter content,
+   * with the existing scrollable body handling anything that exceeds the cap.
+   */
+  contentHeight?: "fixed" | "natural"
 }
 
 export function TESRecordOverlay({
@@ -27,6 +35,7 @@ export function TESRecordOverlay({
   children,
   closeOnBackdrop = true,
   ariaLabel = "Opened record",
+  contentHeight = "fixed",
 }: TESRecordOverlayProps) {
   useEffect(() => {
     if (!open) return
@@ -53,7 +62,12 @@ export function TESRecordOverlay({
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
-        className="flex h-[94vh] w-[96vw] max-w-[1440px] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl sm:h-[90vh] sm:w-[92vw] lg:h-[80vh] lg:w-[80vw]"
+        className={cn(
+          "flex w-[96vw] max-w-[1440px] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl sm:w-[92vw] lg:w-[80vw]",
+          contentHeight === "natural"
+            ? "min-h-[320px] max-h-[94vh] sm:max-h-[90vh] lg:max-h-[80vh]"
+            : "h-[94vh] sm:h-[90vh] lg:h-[80vh]"
+        )}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-4 border-b border-primary-foreground/20 bg-primary px-5 py-4 text-primary-foreground sm:flex-row sm:items-start sm:justify-between sm:px-6">

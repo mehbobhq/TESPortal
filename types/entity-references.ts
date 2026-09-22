@@ -12,7 +12,9 @@ export type EntityType =
   | "Broker"
   | "Vendor"
   | "RepairShop"
-  | "Authority";
+  | "Authority"
+  /** Shipment/Load record — e.g. the natural owner of an HM Shipping Paper. No TES shipment/load module exists yet; added so audit evidence scoping can name this domain without misassigning it to Vehicle or Driver. */
+  | "Shipment";
 
 export interface CanonicalEntityReference {
   entityType: EntityType;

@@ -28,14 +28,14 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`bg-background ${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`light bg-background ${geistSans.variable} ${geistMono.variable}`}>
       <body className="font-sans antialiased">
         <TooltipProvider delayDuration={200}>
           <SidebarProvider>
             <AppSidebar />
             <SidebarInset>
               <SiteHeader />
-              <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">{children}</main>
+              <main className="flex flex-1 flex-col gap-5 p-4 md:p-5 xl:p-6">{children}</main>
             </SidebarInset>
           </SidebarProvider>
         </TooltipProvider>

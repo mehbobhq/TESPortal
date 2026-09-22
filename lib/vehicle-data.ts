@@ -1175,7 +1175,14 @@ export function loadVehicleStore(companyId: string): VehicleStore {
 
 export function saveVehicleStore(companyId: string, store: VehicleStore): void {
   if (typeof window === "undefined" || !companyId) throw new Error("Vehicle company context is unavailable.");
-  localStorage.setItem(vehicleStorageKey(companyId), JSON.stringify({ ...store, version: Math.max(3, store.version || 0) }));
+  try {
+    localStorage.setItem(vehicleStorageKey(companyId), JSON.stringify({ ...store, version: Math.max(3, store.version || 0) }));
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")) {
+      throw new Error("Vehicle record storage is full. Evidence files must be stored outside localStorage before this record can be saved.");
+    }
+    throw error;
+  }
 }
 
 export function persistVehicleStore(companyId: string, updater: (current: VehicleStore) => VehicleStore): VehicleStore {

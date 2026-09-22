@@ -1,13 +1,19 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useId, useState } from "react"
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from "react"
-import { Edit3, Upload } from "lucide-react"
+import { Edit3, Search, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { createId, isoNow } from "@/lib/vehicle-data"
 import { normalizeVIN } from "@/lib/identifier-normalization"
+import {
+  findVehicleManufacturer,
+  formatVehicleModel,
+  manufacturersForEquipment,
+  normalizeVehicleManufacturer,
+} from "@/lib/vehicle-manufacturers"
 import type { EquipmentType, VehicleRecord, VehicleStatus } from "@/src/types"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 
@@ -65,14 +71,15 @@ export interface ProfileForm {
 
 export function profileFromVehicle(vehicle: VehicleRecord): ProfileForm {
   const profileVehicle = vehicle as VehicleProfileRecord
+  const manufacturer = normalizeVehicleManufacturer(vehicle.make || "", vehicle.equipmentType)
   return {
     unitNumber: vehicle.unitNumber || "",
     equipmentType: vehicle.equipmentType,
     status: vehicle.status === "Archived" ? "Inactive" : vehicle.status,
     vin: vehicle.vin || "",
     year: vehicle.year || "",
-    make: vehicle.make || "",
-    model: vehicle.model || "",
+    make: manufacturer.name,
+    model: formatVehicleModel(vehicle.model || ""),
     color: vehicle.color || "",
     operatingRegion: vehicle.operatingRegion,
     axles: String(vehicle.axles ?? ""),
@@ -91,6 +98,7 @@ export function buildVehicle(form: ProfileForm, existing?: VehicleRecord): Vehic
   const tareKg = form.tareWeightUnit === "kg" ? Number(form.tareWeight) : Number(form.tareWeight) * 0.45359237
   const lengthFt = form.equipmentLengthUnit === "ft" ? form.equipmentLength : Number.isFinite(Number(form.equipmentLength)) ? String(Number(form.equipmentLength) * 3.280839895) : ""
   const now = isoNow()
+  const manufacturer = normalizeVehicleManufacturer(form.make, form.equipmentType)
   const record: VehicleProfileRecord = {
     id: existing?.id || createId("VEH"),
     unitNumber: form.unitNumber.trim(),
@@ -98,8 +106,8 @@ export function buildVehicle(form: ProfileForm, existing?: VehicleRecord): Vehic
     status: form.status,
     vin: normalizeVIN(form.vin),
     year: form.year.trim(),
-    make: form.make.trim(),
-    model: form.model.trim(),
+    make: manufacturer.name,
+    model: formatVehicleModel(form.model),
     color: form.color.trim(),
     operatingRegion: form.operatingRegion,
     axles: Number(form.axles) || 0,
@@ -112,6 +120,7 @@ export function buildVehicle(form: ProfileForm, existing?: VehicleRecord): Vehic
     fleetEndDate: form.fleetEndDate || undefined,
     tareWeightUnit: form.tareWeightUnit,
     equipmentLengthUnit: form.equipmentLengthUnit,
+    manufacturerCode: manufacturer.code || undefined,
     ownershipType: existing?.ownershipType || "Owned",
     ownerCompanyName: existing?.ownerCompanyName,
     purchaseDate: existing?.purchaseDate,
@@ -133,9 +142,20 @@ export function buildVehicle(form: ProfileForm, existing?: VehicleRecord): Vehic
 export function ProfileTab({ companyId, vehicle, onSave, onStartOCR, ocrValues, FieldComponent, SectionTitleComponent }: { companyId: string; vehicle: VehicleRecord; onSave: (vehicle: VehicleRecord) => void; onStartOCR: () => void; ocrValues: Record<string, unknown> | null; FieldComponent: VehicleProfileFieldComponent; SectionTitleComponent: VehicleProfileSectionTitleComponent }) {
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<ProfileForm>(profileFromVehicle(vehicle))
-  useEffect(() => { setForm({ ...profileFromVehicle(vehicle), ...(ocrValues ? Object.fromEntries(Object.entries(ocrValues).filter(([key]) => key in profileFromVehicle(vehicle))) as Partial<ProfileForm> : {}) }) }, [vehicle, ocrValues])
-  const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => setForm((current) => ({ ...current, [key]: value }))
+  useEffect(() => {
+    const base = profileFromVehicle(vehicle)
+    const extracted = ocrValues
+      ? Object.fromEntries(Object.entries(ocrValues).filter(([key]) => key in base)) as Partial<ProfileForm>
+      : {}
+    const next = { ...base, ...extracted }
+    if (typeof extracted.make === "string") {
+      next.make = normalizeVehicleManufacturer(extracted.make, next.equipmentType).name
+    }
+    if (typeof extracted.model === "string") next.model = formatVehicleModel(extracted.model)
+    setForm(next)
+  }, [vehicle, ocrValues])
   const profileVehicle = vehicle as VehicleProfileRecord
+  const manufacturer = findVehicleManufacturer(vehicle.make, vehicle.equipmentType)
   if (!editing) return <div className="space-y-3">
     <Card>
       <SectionTitleComponent
@@ -152,15 +172,15 @@ export function ProfileTab({ companyId, vehicle, onSave, onStartOCR, ocrValues, 
           </div>
         }
       />
-      <div className="grid gap-3 p-4 md:grid-cols-4">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 min-[1500px]:grid-cols-3">
         <ReadOnlyField label="Record ID" value={vehicle.id} />
         <ReadOnlyField label="Unit Number" value={vehicle.unitNumber} />
         <ReadOnlyField label="Vehicle Type" value={vehicle.equipmentType} />
         <ReadOnlyField label="Status" value={vehicle.status} />
         <ReadOnlyField label="VIN" value={vehicle.vin} />
         <ReadOnlyField label="Year" value={vehicle.year} />
-        <ReadOnlyField label="Make" value={vehicle.make} />
-        <ReadOnlyField label="Model" value={vehicle.model} />
+        <ReadOnlyField label="Make" value={manufacturer?.code ? `${manufacturer.name} · ${manufacturer.code}` : vehicle.make} />
+        <ReadOnlyField label="Model" value={formatVehicleModel(vehicle.model)} />
         <ReadOnlyField label="Color" value={vehicle.color} />
       </div>
     </Card>
@@ -170,7 +190,7 @@ export function ProfileTab({ companyId, vehicle, onSave, onStartOCR, ocrValues, 
         title="Operational Details"
         description="Fleet configuration, compliance program basis, and service dates."
       />
-      <div className="grid gap-3 p-4 md:grid-cols-4">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 min-[1500px]:grid-cols-3">
         <ReadOnlyField label="Operating Region" value={vehicle.operatingRegion} />
         <ReadOnlyField label="Axles" value={String(vehicle.axles ?? "—")} />
         <div>
@@ -199,18 +219,70 @@ export function ProfileTab({ companyId, vehicle, onSave, onStartOCR, ocrValues, 
   return <Card><SectionTitleComponent title="Edit Vehicle Profile" description="Review extracted values before saving." /><div className="p-4"><VehicleProfileForm companyId={companyId} vehicle={vehicle} form={form} FieldComponent={FieldComponent} setForm={setForm} onCancel={() => { setEditing(false); setForm(profileFromVehicle(vehicle)) }} onSave={() => { onSave(buildVehicle(form, vehicle)); setEditing(false) }} onStartOCR={onStartOCR} /></div></Card>
 }
 
+function ManufacturerCombobox({
+  equipmentType,
+  value,
+  onChange,
+}: {
+  equipmentType: EquipmentType
+  value: string
+  onChange: (value: string) => void
+}) {
+  const listId = useId()
+  const options = manufacturersForEquipment(equipmentType)
+  const match = findVehicleManufacturer(value, equipmentType)
+
+  return (
+    <div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className={`${inputClass} pl-9`}
+          list={listId}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={() => {
+            const selected = findVehicleManufacturer(value, equipmentType)
+            if (selected) onChange(selected.name)
+          }}
+          placeholder="Search official manufacturers…"
+          autoComplete="off"
+        />
+        <datalist id={listId}>
+          {options.map((manufacturer) => (
+            <option
+              key={`${manufacturer.category}-${manufacturer.name}`}
+              value={manufacturer.name}
+              label={manufacturer.isOther ? "Other / Unlisted" : manufacturer.code || manufacturer.name}
+            />
+          ))}
+        </datalist>
+      </div>
+      <p className={`mt-1 text-[10px] ${value && !match ? "text-amber-700" : "text-muted-foreground"}`}>
+        {!value
+          ? `Search the official ${equipmentType.startsWith("Trailer") || equipmentType === "Converter Dolly" ? "trailer" : "truck/tractor"} list.`
+          : match
+            ? match.code
+              ? `Official code: ${match.code}`
+              : "Other / Unlisted — no official code assigned."
+            : "Not found in the official list. Review the spelling before saving."}
+      </p>
+    </div>
+  )
+}
+
 export function VehicleProfileForm({ companyId, vehicle, form, setForm, onCancel, onSave, onStartOCR, forceOCRPrompt = false, FieldComponent }: { companyId: string; vehicle: VehicleRecord | null; form: ProfileForm; setForm: Dispatch<SetStateAction<ProfileForm>>; onCancel: () => void; onSave: () => void; onStartOCR: () => void; forceOCRPrompt?: boolean; FieldComponent: VehicleProfileFieldComponent }) {
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => setForm((current) => ({ ...current, [key]: value }))
   return <div className="space-y-4">
     <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 p-3"><div><p className="text-xs font-bold">OCR-first source capture</p><p className="text-[11px] text-muted-foreground">Upload the source document, review extracted values, then save the structured Vehicle record.</p></div><Button variant="outline" size="sm" onClick={onStartOCR}><Upload className="mr-1.5 size-3.5" />Start with Document</Button></div>
-    <div className="grid gap-3 md:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 min-[1500px]:grid-cols-3">
       <FieldComponent label="Record ID"><Input className={inputClass} value={vehicle?.id || "Generated on save"} disabled /></FieldComponent>
       <FieldComponent label="Equipment Number" required><Input className={inputClass} value={form.unitNumber} onChange={(e) => set("unitNumber", e.target.value)} /></FieldComponent>
-      <FieldComponent label="Vehicle Type" required><select className={selectClass} value={form.equipmentType} onChange={(e) => set("equipmentType", e.target.value as EquipmentType)}>{VEHICLE_TYPES.map((item) => <option key={item}>{item}</option>)}</select></FieldComponent>
+      <FieldComponent label="Vehicle Type" required><select className={selectClass} value={form.equipmentType} onChange={(e) => { const nextType = e.target.value as EquipmentType; setForm((current) => ({ ...current, equipmentType: nextType, make: findVehicleManufacturer(current.make, nextType)?.name || "" })) }}>{VEHICLE_TYPES.map((item) => <option key={item}>{item}</option>)}</select></FieldComponent>
       <FieldComponent label="Status"><select className={selectClass} value={form.status} onChange={(e) => set("status", e.target.value as VehicleStatus)}>{VEHICLE_STATUSES.map((item) => <option key={item}>{item}</option>)}</select></FieldComponent>
       <FieldComponent label="VIN" required><Input className={inputClass} value={form.vin} onChange={(e) => set("vin", normalizeVIN(e.target.value))} maxLength={17} /></FieldComponent>
       <FieldComponent label="Year"><Input className={inputClass} value={form.year} onChange={(e) => set("year", e.target.value)} /></FieldComponent>
-      <FieldComponent label="Make"><Input className={inputClass} value={form.make} onChange={(e) => set("make", e.target.value)} /></FieldComponent>
+      <FieldComponent label="Make"><ManufacturerCombobox equipmentType={form.equipmentType} value={form.make} onChange={(value) => set("make", value)} /></FieldComponent>
       <FieldComponent label="Model"><Input className={inputClass} value={form.model} onChange={(e) => set("model", e.target.value)} /></FieldComponent>
       <FieldComponent label="Color"><Input className={inputClass} value={form.color} onChange={(e) => set("color", e.target.value)} /></FieldComponent>
       <FieldComponent label="Operating Region"><select className={selectClass} value={form.operatingRegion} onChange={(e) => set("operatingRegion", e.target.value as ProfileForm["operatingRegion"])}><option>Canada Only</option><option>US Only</option><option>Cross-Border</option></select></FieldComponent>
@@ -225,4 +297,3 @@ export function VehicleProfileForm({ companyId, vehicle, form, setForm, onCancel
     <div className="flex justify-end gap-2 border-t pt-3"><Button variant="outline" onClick={onCancel}>Cancel</Button><Button onClick={onSave}>Save Vehicle</Button></div>
   </div>
 }
-

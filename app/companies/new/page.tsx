@@ -958,7 +958,7 @@ function SmartAddressBlock({
           />
 
           <Select
-            value={region || undefined}
+            value={region}
             onValueChange={handleRegionChange}
           >
             <SelectTrigger
@@ -1650,8 +1650,8 @@ export default function NewCompanyPage() {
               />
 
               <Select
-                value={selectedType || undefined}
-                onValueChange={setSelectedType}
+              value={selectedType}
+              onValueChange={setSelectedType}
               >
                 <SelectTrigger className="border-primary/30">
                   <SelectValue placeholder="Select entity type..." />
@@ -1697,7 +1697,7 @@ export default function NewCompanyPage() {
               <Input
                 id="companyName"
                 name="companyName"
-                placeholder="e.g. Power Way Logistics Inc"
+                placeholder="e.g. ACME Inc"
                 value={companyName}
                 onChange={(event) =>
                   setCompanyName(event.target.value)
@@ -1863,7 +1863,7 @@ export default function NewCompanyPage() {
               />
 
               <Select
-                value={businessRegion || undefined}
+                value={businessRegion}
                 onValueChange={handleBusinessRegionChange}
               >
                 <SelectTrigger>
@@ -2159,33 +2159,33 @@ export default function NewCompanyPage() {
 
                       <div className="space-y-1">
                         {CARGO_OPTIONS.map((option) => {
-                          const checked =
-                            selectedCargo.includes(option)
+                        const checked =
+                         selectedCargo.includes(option)
 
                           return (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() =>
-                                setSelectedCargo((current) =>
-                                  checked
-                                    ? current.filter(
-                                        (item) =>
-                                          item !== option
-                                      )
-                                    : [...current, option]
-                                )
-                              }
-                              className="flex w-full items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50"
-                            >
+                            <label
+                             key={option}
+                              className="flex w-full cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50"
+                           >
                               <Checkbox
-                                checked={checked}
-                              />
+                              checked={checked}
+                              onCheckedChange={(nextChecked) =>
+                              setSelectedCargo((current) =>
+                             nextChecked === true
+                             ? current.includes(option)
+                ? current
+                : [...current, option]
+              : current.filter(
+                  (item) => item !== option
+                )
+          )
+        }
+      />
 
-                              <span>{option}</span>
-                            </button>
-                          )
-                        })}
+      <span>{option}</span>
+    </label>
+  )
+})}
                       </div>
                     </PopoverContent>
                   </Popover>

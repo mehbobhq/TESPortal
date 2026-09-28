@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   createId,
   isoNow,
+  loadVehicleStore,
   saveVehicleStore,
   createInspectionFinding,
   updateInspectionFindingStatus,
@@ -30,8 +31,11 @@ import {
   getVehicleSpendSummary,
   getVehicleSpendByCategory,
   getVehicleRecurringIssues,
+  verifyRepairInvoice,
+  type RepairInvoice,
+  type RepairInvoiceLine,
 } from "@/lib/repair-invoice-data"
-import { loadPartCatalog } from "@/lib/part-catalog-data"
+import { loadRepairComponentCatalog } from "@/lib/repair-component-catalog"
 import { getRoadsideEventsForVehicle, type RoadsideEventForVehicle } from "@/lib/driver-data"
 import { getRoadsideViolationCollection } from "@/lib/driver-performance-child-facts"
 import { recordAuditEvent } from "@/lib/audit-logger"
@@ -40,6 +44,18 @@ import type { VehicleProfileRecord } from "@/src/components/vehicles/profile/Veh
 import type { EvidenceRecord } from "@/types/evidence"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { ISODateInput } from "@/src/components/shared/ISODateInput"
+import {
+  PREVENTIVE_MAINTENANCE_PROGRAM_TYPES,
+  addDaysISO,
+  deriveScheduledMaintenanceOutcome,
+  isValidISODateStrict,
+  type MaintenanceChecklistStatus,
+  type MaintenancePerformedBy,
+  type ScheduledMaintenanceBasis,
+  type ScheduledMaintenanceOutcome,
+  type ScheduledMaintenanceServiceAction,
+  type ScheduledMaintenanceStatus,
+} from "@/lib/scheduled-maintenance-data"
 import { RepairBillsView, RepairBillForm } from "@/src/components/vehicles/repair/RepairBills"
 import {
   VehicleInspectionsWorkspace,
@@ -59,15 +75,22 @@ export interface MaintenanceTabProps {
   maintenance: VehicleMaintenanceRecord[]
   evidence: EvidenceRecord[]
   onStoreChange: (store: VehicleStore) => void
-  onStartOCR: (kind: "inspection" | "maintenance", documentType: string) => void
-  onAttachEvidence: (kind: "inspection" | "maintenance", documentType: string) => void
+  onStartOCR: (kind: "inspection" | "maintenance" | "repairBill", documentType: string) => void
+  onAttachEvidence: (kind: "inspection" | "maintenance" | "repairBill", documentType: string) => void
   pendingInspectionEvidenceId: string | null
   pendingMaintenanceEvidenceId: string | null
+  pendingRepairEvidenceId: string | null
+  pendingMaintenanceOCRValues: Record<string, unknown> | null
+  pendingRepairOCRValues: Record<string, unknown> | null
   clearInspectionEvidence: () => void
   clearMaintenanceEvidence: () => void
+  clearMaintenanceOCRValues: () => void
+  clearRepairEvidence: () => void
+  clearRepairOCRValues: () => void
   setError: (value: string | null) => void
   setNotice: (value: string | null) => void
   onRecordClick?: (record: VehicleInspectionRecord | VehicleMaintenanceRecord) => void
+  onRepairRecordClick?: (invoice: RepairInvoice, lines: RepairInvoiceLine[]) => void
   readCompanies: () => Company[]
   todayISO: () => string
   money: (value: string) => string
@@ -90,30 +113,75 @@ export interface MaintenanceTabProps {
 
 const INSPECTION_SOURCES = ["Internal", "Third-Party Shop", "Roadside Enforcement"] as const
 const INSPECTION_STATUSES = ["Pass", "Pass with Defects", "Fail", "Out of Service"] as const
-const MAINTENANCE_TYPES = [
-  "Preventive Maintenance / Scheduled Service",
-  "Oil and Filter Change",
-  "Lubrication Service",
-  "Brake Repair",
-  "Tire Service / Replacement",
-  "Wheel Alignment",
-  "Suspension Repair",
-  "Engine Repair",
-  "Transmission / Driveline Repair",
-  "Electrical / Lighting Repair",
-  "HVAC Repair",
-  "Cooling System Repair",
-  "Exhaust / Emissions Repair",
-  "Fuel System Repair",
-  "Trailer Repair",
-  "Reefer Unit Service",
-  "Defect Repair",
-  "Accident Repair",
-  "Recall Repair",
-  "Emergency / Roadside Repair",
-  "Other",
-]
+const MAINTENANCE_TYPES = [...PREVENTIVE_MAINTENANCE_PROGRAM_TYPES]
 const MAINTENANCE_STATUSES = ["Scheduled", "In Progress", "Completed", "Cancelled"] as const
+const MAINTENANCE_BASIS_OPTIONS: { value: ScheduledMaintenanceBasis; label: string }[] = [
+  { value: "CALENDAR", label: "Calendar interval" },
+  { value: "ODOMETER", label: "Odometer interval" },
+  { value: "ENGINE_HOURS", label: "Engine hours interval" },
+  { value: "COMBINED", label: "Date / odometer / hours combined" },
+  { value: "CONDITION_TRIGGERED", label: "Condition triggered" },
+]
+const PERFORMED_BY_OPTIONS: { value: MaintenancePerformedBy; label: string }[] = [
+  { value: "IN_HOUSE", label: "In-house maintenance" },
+  { value: "EXTERNAL_REPAIR_SHOP", label: "External repair shop" },
+  { value: "MOBILE_MECHANIC", label: "Mobile mechanic" },
+  { value: "DEALER_OEM", label: "Dealer / OEM" },
+  { value: "ROADSIDE_SERVICE", label: "Roadside service" },
+  { value: "OTHER", label: "Other" },
+]
+const CHECKLIST_STATUS_OPTIONS: { value: MaintenanceChecklistStatus; label: string }[] = [
+  { value: "OK", label: "OK" },
+  { value: "SERVICED", label: "Serviced" },
+  { value: "ATTENTION_REQUIRED", label: "Attention required" },
+  { value: "REPAIR_REQUIRED", label: "Repair required" },
+  { value: "NOT_APPLICABLE", label: "N/A" },
+]
+const DEFAULT_FORM_CHECKLIST = [
+  "Engine / fuel / exhaust",
+  "Fluids",
+  "Electrical / lighting",
+  "Wheels / tires",
+  "Brakes",
+  "Steering / suspension",
+  "Body / frame / fifth wheel",
+  "Cab / visibility",
+] as const
+
+type ScheduledMaintenanceExtra = {
+  scheduledMaintenanceBasis?: ScheduledMaintenanceBasis
+  maintenanceOutcome?: ScheduledMaintenanceOutcome
+  submittedStatus?: ScheduledMaintenanceStatus
+  clientSubmitted?: boolean
+  lockedAfterClientSubmission?: boolean
+  submittedByName?: string
+  submittedAt?: string
+  lockedAt?: string
+  performedBy?: MaintenancePerformedBy
+  facilityAddress?: string
+  technicianName?: string
+  dueDate?: string
+  dueOdometer?: string
+  dueEngineHours?: string
+  nextServiceDueEngineHours?: string
+  checklistSummary?: { label: string; status: MaintenanceChecklistStatus; notes?: string }[]
+  serviceActions?: ScheduledMaintenanceServiceAction[]
+}
+
+function maintenanceExtra(record: VehicleMaintenanceRecord): ScheduledMaintenanceExtra {
+  return record as VehicleMaintenanceRecord & ScheduledMaintenanceExtra
+}
+
+function isLockedMaintenanceRecord(record: VehicleMaintenanceRecord): boolean {
+  const extra = maintenanceExtra(record)
+  return extra.lockedAfterClientSubmission === true || extra.submittedStatus === "SUBMITTED_LOCKED"
+}
+
+function outcomeLabel(value?: ScheduledMaintenanceOutcome): string {
+  if (value === "COMPLETED_REPAIR_REQUIRED") return "Completed - Repair Required"
+  if (value === "COMPLETED_ATTENTION_REQUIRED") return "Completed - Attention Required"
+  return "Completed - No Defect Found"
+}
 
 function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, setNotice, setError }: {
   companyId: string
@@ -323,8 +391,8 @@ function RoadsideInspectionDetail({ match, onBack }: { match: RoadsideEventForVe
 
 export function MaintenanceTab({
   companyId, store, vehicle, inspections, maintenance, evidence, onStoreChange,
-  onStartOCR, onAttachEvidence, pendingInspectionEvidenceId, pendingMaintenanceEvidenceId,
-  clearInspectionEvidence, clearMaintenanceEvidence, setError, setNotice, onRecordClick,
+  onStartOCR, onAttachEvidence, pendingInspectionEvidenceId, pendingMaintenanceEvidenceId, pendingRepairEvidenceId, pendingMaintenanceOCRValues, pendingRepairOCRValues,
+  clearInspectionEvidence, clearMaintenanceEvidence, clearMaintenanceOCRValues, clearRepairEvidence, clearRepairOCRValues, setError, setNotice, onRecordClick, onRepairRecordClick,
   readCompanies, todayISO, money, inputClass, selectClass,
   SectionTitleComponent, EmptyStateComponent, StatusPillComponent,
   FieldComponent, DividerComponent,
@@ -341,13 +409,21 @@ export function MaintenanceTab({
   const [roadsideMatches, setRoadsideMatches] = useState<RoadsideEventForVehicle[]>([])
   const [repairBillRefreshKey, setRepairBillRefreshKey] = useState(0)
   useEffect(() => {
+    if (pendingMaintenanceEvidenceId || pendingMaintenanceOCRValues) {
+      setView("maintenance")
+      setEditingMaintenance(null)
+      setShowMaintenance(true)
+    }
+  }, [pendingMaintenanceEvidenceId, pendingMaintenanceOCRValues])
+  useEffect(() => { if (pendingRepairOCRValues) { setView("repairBills"); setShowRepairBill(true) } }, [pendingRepairOCRValues])
+  useEffect(() => {
     try {
       setRoadsideMatches(getRoadsideEventsForVehicle(companyId, vehicle.id))
     } catch {
       setRoadsideMatches([])
     }
   }, [companyId, vehicle.id, store])
-  const partCatalog = useMemo(() => loadPartCatalog(), [repairBillRefreshKey])
+  const partCatalog = useMemo(() => loadRepairComponentCatalog(companyId), [companyId, repairBillRefreshKey])
   const repairInvoices = useMemo(
     () => getVehicleRepairInvoices(companyId, vehicle.id),
     [companyId, vehicle.id, repairBillRefreshKey]
@@ -430,7 +506,7 @@ export function MaintenanceTab({
           description="OCR-first document entry alongside manual operational records."
           action={
             <div>
-              <Button size="sm" onClick={() => view === "repairBills" ? setShowRepairBill(true) : onStartOCR(view === "inspections" ? "inspection" : "maintenance", view === "inspections" ? "Inspection Document" : "Maintenance Work Order / Invoice")}>
+              <Button size="sm" onClick={() => onStartOCR(view === "inspections" ? "inspection" : view === "repairBills" ? "repairBill" : "maintenance", view === "inspections" ? "Inspection Document" : view === "repairBills" ? "Repair Invoice / Work Order" : "Maintenance Work Order / Invoice")}>
                 <Upload className="mr-1.5 size-3.5" />Upload Document / OCR
               </Button>
             </div>
@@ -444,17 +520,16 @@ export function MaintenanceTab({
         <button className={`border-b-2 px-3 py-2 text-xs font-semibold ${view === "repairBills" ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`} onClick={() => setView("repairBills")}>Repair Bills</button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+      {view !== "repairBills" ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
         <div>
           <p className="text-xs font-bold text-foreground">{view === "inspections" ? "Inspection records" : view === "maintenance" ? "Maintenance records" : "Repair bills"}</p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">{view === "inspections" ? "Annual, operational and enforcement inspections for this vehicle." : view === "maintenance" ? "Scheduled service and maintenance work for this vehicle." : "Itemized repair invoices and linked repair work for this vehicle."}</p>
         </div>
         {view === "inspections" ? <Button size="sm" onClick={() => { setEditingInspection(null); setShowInspection(true) }}><Plus className="mr-1.5 size-3.5" />Add Inspection</Button> : null}
         {view === "maintenance" ? <Button size="sm" onClick={() => { setEditingMaintenance(null); setShowMaintenance(true) }}><Plus className="mr-1.5 size-3.5" />Add Maintenance Record</Button> : null}
-        {view === "repairBills" ? <Button size="sm" onClick={() => setShowRepairBill(true)}><Plus className="mr-1.5 size-3.5" />Add Repair Bill</Button> : null}
-      </div>
+      </div> : null}
 
-      {view === "repairBills" ? (
+      {view === "repairBills" && !showRepairBill ? (
         <RepairBillsView
           companyId={companyId}
           vehicle={vehicle}
@@ -464,9 +539,48 @@ export function MaintenanceTab({
           spendByCategory={spendByCategory}
           recurringIssues={recurringIssues}
           onAddRepairBill={() => setShowRepairBill(true)}
+          onVerifyRepairBill={(invoiceId) => { try { verifyRepairInvoice(companyId, invoiceId, { reason: "Reviewed against attached evidence." }); setRepairBillRefreshKey((key) => key + 1); setNotice("Repair invoice verified and included in confirmed expenditure BI.") } catch (error) { setError(error instanceof Error ? error.message : "Repair invoice could not be verified.") } }}
+          onSelectRepairBill={onRepairRecordClick}
           EmptyStateComponent={EmptyStateComponent}
           SectionTitleComponent={SectionTitleComponent}
           StatusPillComponent={StatusPillComponent}
+        />
+      ) : null}
+
+      {view === "repairBills" && showRepairBill ? (
+        <RepairBillForm
+          companyId={companyId}
+          vehicle={vehicle}
+          store={store}
+          roadsideOptions={roadsideMatches.map((match) => ({
+            eventId: match.event.id,
+            label: `${match.event.eventDate || "Date not recorded"} · ${match.event.summary || "Roadside inspection"}`,
+            equipmentLabel: match.matchedRole === "POWER_UNIT" ? "Power Unit" : "Towed Unit",
+            findings: (getRoadsideViolationCollection(match.event)?.items || []).map((item) => ({
+              id: item.itemId,
+              label: String(item.facts.description || item.facts.ruleRegulationCode || "Roadside finding"),
+              outOfService: item.facts.oosState === "YES",
+            })),
+          }))}
+          pendingEvidenceId={pendingRepairEvidenceId}
+          initialOCRValues={pendingRepairOCRValues}
+          onAttachEvidence={() => onAttachEvidence("repairBill", "Repair Invoice / Work Order")}
+          clearPendingEvidence={clearRepairEvidence}
+          onClose={() => setShowRepairBill(false)}
+          onSaved={() => {
+            setShowRepairBill(false)
+            setView("repairBills")
+            setRepairBillRefreshKey((k) => k + 1)
+            clearRepairOCRValues()
+            setNotice("Repair bill saved.")
+          }}
+          setError={setError}
+          readCompanies={readCompanies}
+          FieldComponent={FieldComponent}
+          DividerComponent={DividerComponent}
+          inputClass={inputClass}
+          selectClass={selectClass}
+          todayISO={todayISO}
         />
       ) : null}
 
@@ -497,17 +611,22 @@ export function MaintenanceTab({
             {activeMaintenance.map((record) => (
               <Card key={record.id} className="cursor-pointer hover:bg-muted/20 transition-colors" onClick={() => onRecordClick?.(record)}>
                 <div className="flex items-center justify-between border-b px-4 py-3">
-                  <div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.maintenanceType}</h3><StatusPillComponent value={record.maintenanceStatus} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div>
-                  <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setEditingMaintenance(record); setShowMaintenance(true) }}><Edit3 className="mr-1 size-3" />Edit</Button><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archiveMaintenance(record) }}><Archive className="mr-1 size-3" />Archive</Button></div>
+                  <div><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-bold">{record.maintenanceType}</h3><StatusPillComponent value={record.maintenanceStatus} />{isLockedMaintenanceRecord(record) ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Client submitted · locked</span> : null}</div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div>
+                  <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); if (isLockedMaintenanceRecord(record)) { setNotice("Client-submitted maintenance records are locked. Attach evidence or create an addendum instead of editing the original."); return } setEditingMaintenance(record); setShowMaintenance(true) }}><Edit3 className="mr-1 size-3" />Edit</Button><Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); archiveMaintenance(record) }}><Archive className="mr-1 size-3" />Archive</Button></div>
                 </div>
                 <div className="grid gap-3 p-4 sm:grid-cols-2 min-[1500px]:grid-cols-3">
                   <ReadOnlyField label="Service Date" value={record.serviceDate || "—"} />
                   <ReadOnlyField label="Odometer" value={record.odometer || "—"} />
+                  <ReadOnlyField label="Due Date" value={maintenanceExtra(record).dueDate || "—"} />
+                  <ReadOnlyField label="Due Odometer" value={maintenanceExtra(record).dueOdometer || "—"} />
+                  <ReadOnlyField label="Outcome" value={outcomeLabel(maintenanceExtra(record).maintenanceOutcome)} />
+                  <ReadOnlyField label="Performed By" value={maintenanceExtra(record).performedBy?.replaceAll("_", " ").toLowerCase() || "—"} />
                   <ReadOnlyField label="Work Order / Invoice" value={record.workOrderInvoiceNumber || "—"} />
-                  <ReadOnlyField label="Vendor" value={record.vendor || "—"} />
+                  <ReadOnlyField label="Facility / Provider" value={record.vendor || "—"} />
                   <ReadOnlyField label="Parts Cost" value={money(record.partsCost)} />
                   <ReadOnlyField label="Total Cost" value={money(record.totalCost)} />
                   <ReadOnlyField label="Next Service Due" value={record.nextServiceDueDate || "—"} />
+                  <ReadOnlyField label="Next Due Odometer" value={record.nextServiceDueOdometer || "—"} />
                   <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
                 </div>
                 <MaintenanceItemsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} record={record} setNotice={setNotice} setError={setError} />
@@ -518,28 +637,7 @@ export function MaintenanceTab({
       ) : null}
 
       {showInspection ? <InspectionForm companyId={companyId} store={store} vehicle={vehicle} initial={editingInspection} pendingEvidenceId={pendingInspectionEvidenceId} clearPendingEvidence={clearInspectionEvidence} onStartOCR={() => onStartOCR("inspection", "Inspection Document")} onAttachEvidence={() => onAttachEvidence("inspection", "Inspection Document")} onClose={() => setShowInspection(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
-      {showMaintenance ? <MaintenanceForm companyId={companyId} store={store} vehicle={vehicle} initial={editingMaintenance} pendingEvidenceId={pendingMaintenanceEvidenceId} clearPendingEvidence={clearMaintenanceEvidence} onStartOCR={() => onStartOCR("maintenance", "Maintenance Work Order / Invoice")} onAttachEvidence={() => onAttachEvidence("maintenance", "Maintenance Work Order / Invoice")} onClose={() => setShowMaintenance(false)} onStoreChange={onStoreChange} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
-      {showRepairBill ? (
-        <RepairBillForm
-          companyId={companyId}
-          vehicle={vehicle}
-          store={store}
-          onClose={() => setShowRepairBill(false)}
-          onSaved={() => {
-            setShowRepairBill(false)
-            setView("repairBills")
-            setRepairBillRefreshKey((k) => k + 1)
-            setNotice("Repair bill saved.")
-          }}
-          setError={setError}
-          readCompanies={readCompanies}
-          FieldComponent={FieldComponent}
-          DividerComponent={DividerComponent}
-          inputClass={inputClass}
-          selectClass={selectClass}
-          todayISO={todayISO}
-        />
-      ) : null}
+      {showMaintenance ? <MaintenanceForm companyId={companyId} store={store} vehicle={vehicle} initial={editingMaintenance} pendingEvidenceId={pendingMaintenanceEvidenceId} pendingOCRValues={pendingMaintenanceOCRValues} clearPendingEvidence={clearMaintenanceEvidence} clearPendingOCRValues={clearMaintenanceOCRValues} onStartOCR={() => onStartOCR("maintenance", "Preventive / Scheduled Maintenance Document")} onAttachEvidence={() => onAttachEvidence("maintenance", "Preventive / Scheduled Maintenance Document")} onClose={() => setShowMaintenance(false)} onStoreChange={onStoreChange} onRecordSaved={(record) => onRecordClick?.(record)} setError={setError} setNotice={setNotice} ModalShellComponent={ModalShellComponent} ModalOCRStripComponent={ModalOCRStripComponent} ModalSectionLabelComponent={ModalSectionLabelComponent} ModalFieldGridComponent={ModalFieldGridComponent} ModalFieldComponent={ModalFieldComponent} ModalEvidenceCardComponent={ModalEvidenceCardComponent} ModalFooterComponent={ModalFooterComponent} modalFieldInputClass={modalFieldInputClass} /> : null}
     </div>
   )
 }
@@ -642,79 +740,247 @@ function InspectionForm({ companyId, store, vehicle, initial, pendingEvidenceId,
   )
 }
 
-function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId, clearPendingEvidence, onStartOCR, onAttachEvidence, onClose, onStoreChange, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleMaintenanceRecord | null; pendingEvidenceId: string | null; clearPendingEvidence: () => void; onStartOCR: () => void; onAttachEvidence: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
+function MaintenanceForm({ companyId, store, vehicle, initial, pendingEvidenceId, pendingOCRValues, clearPendingEvidence, clearPendingOCRValues, onStartOCR, onAttachEvidence, onClose, onStoreChange, onRecordSaved, setError, setNotice, ModalShellComponent, ModalOCRStripComponent, ModalSectionLabelComponent, ModalFieldGridComponent, ModalFieldComponent, ModalEvidenceCardComponent, ModalFooterComponent, modalFieldInputClass }: { companyId: string; store: VehicleStore; vehicle: VehicleRecord; initial: VehicleMaintenanceRecord | null; pendingEvidenceId: string | null; pendingOCRValues: Record<string, unknown> | null; clearPendingEvidence: () => void; clearPendingOCRValues: () => void; onStartOCR: () => void; onAttachEvidence: () => void; onClose: () => void; onStoreChange: (store: VehicleStore) => void; onRecordSaved?: (record: VehicleMaintenanceRecord) => void; setError: (value: string | null) => void; setNotice: (value: string | null) => void; ModalShellComponent: AnyComponent; ModalOCRStripComponent: AnyComponent; ModalSectionLabelComponent: AnyComponent; ModalFieldGridComponent: AnyComponent; ModalFieldComponent: AnyComponent; ModalEvidenceCardComponent: AnyComponent; ModalFooterComponent: AnyComponent; modalFieldInputClass: string }) {
+  const initialExtra = initial ? maintenanceExtra(initial) : {}
+  const locked = initial ? isLockedMaintenanceRecord(initial) : false
   const [maintenanceType, setMaintenanceType] = useState(initial?.maintenanceType || MAINTENANCE_TYPES[0])
   const [maintenanceStatus, setMaintenanceStatus] = useState<VehicleMaintenanceRecord["maintenanceStatus"]>(initial?.maintenanceStatus || "Completed")
+  const [basis, setBasis] = useState<ScheduledMaintenanceBasis>(initialExtra.scheduledMaintenanceBasis || "COMBINED")
   const [serviceDate, setServiceDate] = useState(initial?.serviceDate || "")
+  const [dueDate, setDueDate] = useState(initialExtra.dueDate || "")
   const [odometer, setOdometer] = useState(initial?.odometer || "")
+  const [dueOdometer, setDueOdometer] = useState(initialExtra.dueOdometer || "")
   const [engineHours, setEngineHours] = useState(initial?.engineHours || "")
+  const [dueEngineHours, setDueEngineHours] = useState(initialExtra.dueEngineHours || "")
+  const [performedBy, setPerformedBy] = useState<MaintenancePerformedBy>(initialExtra.performedBy || "IN_HOUSE")
   const [vendor, setVendor] = useState(initial?.vendor || "")
+  const [facilityAddress, setFacilityAddress] = useState(initialExtra.facilityAddress || "")
+  const [technicianName, setTechnicianName] = useState(initialExtra.technicianName || "")
+  const [submittedByName, setSubmittedByName] = useState(initialExtra.submittedByName || "")
   const [workOrderInvoiceNumber, setWorkOrderInvoiceNumber] = useState(initial?.workOrderInvoiceNumber || initial?.workOrderNumber || initial?.invoiceNumber || "")
   const [partsCost, setPartsCost] = useState(initial?.partsCost || "")
   const [totalCost, setTotalCost] = useState(initial?.totalCost || "")
   const [nextServiceDueDate, setNextServiceDueDate] = useState(initial?.nextServiceDueDate || "")
+  const [nextServiceDueOdometer, setNextServiceDueOdometer] = useState(initial?.nextServiceDueOdometer || "")
+  const [nextServiceDueEngineHours, setNextServiceDueEngineHours] = useState(initialExtra.nextServiceDueEngineHours || "")
+  const [checklist, setChecklist] = useState<{ label: string; status: MaintenanceChecklistStatus; notes?: string }[]>(initialExtra.checklistSummary?.length ? initialExtra.checklistSummary : DEFAULT_FORM_CHECKLIST.map((label) => ({ label, status: "OK" as const, notes: "" })))
+  const [lockAsClientSubmission, setLockAsClientSubmission] = useState(initialExtra.clientSubmitted ?? !initial)
   const [notes, setNotes] = useState(initial?.notes || "")
   const [evidenceIds, setEvidenceIds] = useState<string[]>(initial?.evidenceIds || [])
+  const [localError, setLocalError] = useState<string | null>(null)
   useEffect(() => { if (pendingEvidenceId) { setEvidenceIds((current) => Array.from(new Set([...current, pendingEvidenceId]))); clearPendingEvidence() } }, [pendingEvidenceId, clearPendingEvidence])
-  const save = () => { const now = isoNow(); const record: VehicleMaintenanceRecord = { id: initial?.id || createId("MNT"), vehicleId: vehicle.id, maintenanceType, maintenanceStatus, serviceDate, odometer, engineHours, vendor, workOrderInvoiceNumber, partsCost, totalCost, nextServiceDueDate, evidenceIds, notes, archived: initial?.archived || false, createdAt: initial?.createdAt || now, updatedAt: now, workOrderNumber: initial?.workOrderNumber, invoiceNumber: initial?.invoiceNumber, labourCost: initial?.labourCost, nextServiceDueOdometer: initial?.nextServiceDueOdometer }; const next = { ...store, maintenanceRecords: initial ? store.maintenanceRecords.map((item) => item.id === initial.id ? record : item) : [record, ...store.maintenanceRecords] }; try { saveVehicleStore(companyId, next); onStoreChange(next); recordAuditEvent({ action: initial ? "UPDATE" : "CREATE", entityType: "Vehicle", entityId: record.id, companyId, actor: "", role: "", details: `${initial ? "Updated" : "Created"} maintenance record ${record.id}.` }); setNotice("Maintenance record saved."); onClose() } catch (err) { setError(err instanceof Error ? err.message : "Maintenance record could not be saved.") } }
+  useEffect(() => {
+    if (!pendingOCRValues) return
+    const read = (key: string) => String(pendingOCRValues[key] ?? "").trim()
+    const sourceDate = read("serviceDate") || read("documentDate")
+    if (sourceDate) setServiceDate(sourceDate)
+    const sourceOdometer = read("odometer")
+    if (sourceOdometer) setOdometer(sourceOdometer)
+    const sourceUnit = read("unitNumber")
+    const sourceVin = read("vin")
+    const sourceVendor = read("facilityName") || read("providerName")
+    const sourceInvoice = read("workOrderInvoiceNumber") || read("referenceNumber")
+    if (sourceVendor) setVendor(sourceVendor)
+    if (sourceInvoice) setWorkOrderInvoiceNumber(sourceInvoice)
+    const sourceSubmittedBy = read("submittedByName")
+    if (sourceSubmittedBy) setSubmittedByName(sourceSubmittedBy)
+    const sourceNotes = [read("notes"), sourceUnit ? `OCR unit: ${sourceUnit}` : "", sourceVin ? `OCR VIN: ${sourceVin}` : ""].filter(Boolean).join("\n")
+    if (sourceNotes) setNotes((current) => current ? `${current}\n${sourceNotes}` : sourceNotes)
+    clearPendingOCRValues()
+  }, [pendingOCRValues, clearPendingOCRValues])
+  const computedOutcome = deriveScheduledMaintenanceOutcome(checklist)
+  const fail = (message: string) => {
+    setLocalError(message)
+    setError(message)
+  }
+  const save = () => {
+    setLocalError(null)
+    if (locked) return fail("Client-submitted scheduled maintenance records are locked. Create an addendum instead of editing the original.")
+    if (!serviceDate || !isValidISODateStrict(serviceDate)) return fail("Service date must be a real date in YYYY-MM-DD format.")
+    if (dueDate && !isValidISODateStrict(dueDate)) return fail("Due date must be a real date in YYYY-MM-DD format.")
+    if (nextServiceDueDate && !isValidISODateStrict(nextServiceDueDate)) return fail("Next service due date must be a real date in YYYY-MM-DD format.")
+    if (!odometer || Number(odometer) < 0) return fail("Odometer is required for scheduled maintenance.")
+    if (lockAsClientSubmission && !submittedByName.trim()) return fail("Submitted by is required for a client-submitted maintenance form.")
+    const now = isoNow()
+    const record = {
+      id: initial?.id || createId("MNT"),
+      vehicleId: vehicle.id,
+      maintenanceType,
+      maintenanceStatus,
+      serviceDate,
+      odometer,
+      engineHours,
+      vendor,
+      workOrderInvoiceNumber,
+      partsCost,
+      totalCost,
+      nextServiceDueDate,
+      evidenceIds,
+      notes,
+      archived: initial?.archived || false,
+      createdAt: initial?.createdAt || now,
+      updatedAt: now,
+      workOrderNumber: initial?.workOrderNumber || workOrderInvoiceNumber,
+      invoiceNumber: initial?.invoiceNumber,
+      labourCost: initial?.labourCost,
+      nextServiceDueOdometer,
+      scheduledMaintenanceBasis: basis,
+      maintenanceOutcome: computedOutcome,
+      submittedStatus: lockAsClientSubmission ? "SUBMITTED_LOCKED" : "INTERNAL_REVIEW",
+      clientSubmitted: lockAsClientSubmission,
+      lockedAfterClientSubmission: lockAsClientSubmission,
+      submittedByName,
+      submittedAt: initialExtra.submittedAt || now,
+      lockedAt: lockAsClientSubmission ? (initialExtra.lockedAt || now) : undefined,
+      performedBy,
+      facilityAddress,
+      technicianName,
+      dueDate,
+      dueOdometer,
+      dueEngineHours,
+      nextServiceDueEngineHours,
+      checklistSummary: checklist,
+      serviceActions: [
+        { id: "oil", action: "Oil change", performed: maintenanceType.includes("Oil") || notes.toLowerCase().includes("oil") },
+        { id: "filter", action: "Filter service", performed: maintenanceType.includes("Filter") || notes.toLowerCase().includes("filter") },
+        { id: "lube", action: "Lubrication / greasing", performed: maintenanceType.includes("Lubrication") || notes.toLowerCase().includes("greas") },
+        { id: "tire", action: "Tire service / rotation", performed: maintenanceType.includes("Tire") },
+        { id: "alignment", action: "Wheel alignment", performed: maintenanceType.includes("Alignment") },
+      ],
+    } as VehicleMaintenanceRecord & ScheduledMaintenanceExtra
+    const next = { ...store, maintenanceRecords: initial ? store.maintenanceRecords.map((item) => item.id === initial.id ? record : item) : [record, ...store.maintenanceRecords] }
+    try {
+      saveVehicleStore(companyId, next)
+      onStoreChange(next)
+      recordAuditEvent({ action: initial ? "UPDATE" : "CREATE", entityType: "Vehicle", entityId: record.id, companyId, actor: "", role: "", details: `${initial ? "Updated" : "Created"} scheduled maintenance record ${record.id}; outcome=${computedOutcome}; locked=${lockAsClientSubmission}.` })
+      setNotice(lockAsClientSubmission ? "Scheduled maintenance submitted and locked." : "Maintenance record saved.")
+      onRecordSaved?.(record)
+      onClose()
+    } catch (err) {
+      fail(err instanceof Error ? err.message : "Maintenance record could not be saved.")
+    }
+  }
+  const applyNinetyDayDefault = () => {
+    if (serviceDate && !nextServiceDueDate) setNextServiceDueDate(addDaysISO(serviceDate, 90))
+    if (odometer && !nextServiceDueOdometer) setNextServiceDueOdometer(String(Number(odometer) + 30000))
+  }
   return (
     <ModalShellComponent
-      title={`${initial ? "Edit" : "Add"} Maintenance Record`}
-      subtitle="One Work Order / Invoice Number. Parts Cost and Total Cost are independently stored."
+      title={`${initial ? locked ? "View" : "Edit" : "Add"} Preventive / Scheduled Maintenance`}
+      subtitle="Client-submitted maintenance becomes a locked PDF-backed record. Repairs stay separate and linked only when required."
       onClose={onClose}
-      footer={<ModalFooterComponent note="Attach work order, invoice, or service record." onCancel={onClose} onSave={save} saveLabel="Save Maintenance" />}
+      footer={<ModalFooterComponent note={locked ? "Locked client submission. Create an addendum for corrections." : "Attach work order, worksheet, invoice, or generated PDF evidence."} onCancel={onClose} onSave={save} saveLabel={lockAsClientSubmission ? "Submit & Lock Maintenance" : "Save Maintenance"} />}
     >
       <ModalOCRStripComponent
-        title="Work Order / Invoice Document"
-        description="Start with the source document and review it before saving."
+        title="Maintenance Source Document"
+        description="Upload a worksheet, work order, invoice or client-submitted PDF. OCR review stays separate from manual evidence attachment."
         onStartOCR={onStartOCR}
       />
+      {localError ? <div className="mx-6 mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">{localError}</div> : null}
+      {locked ? <div className="mx-6 mt-4 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">This record was client-submitted and locked at submission. TES should attach evidence or create an addendum instead of changing original values.</div> : null}
 
       <ModalSectionLabelComponent>Maintenance Details</ModalSectionLabelComponent>
       <ModalFieldGridComponent>
         <ModalFieldComponent label="Maintenance Type" required>
-          <select className={modalFieldInputClass} value={maintenanceType} onChange={(e) => setMaintenanceType(e.target.value)}>
+          <select className={modalFieldInputClass} value={maintenanceType} onChange={(e) => setMaintenanceType(e.target.value)} disabled={locked}>
             {MAINTENANCE_TYPES.map((item) => <option key={item}>{item}</option>)}
           </select>
         </ModalFieldComponent>
         <ModalFieldComponent label="Maintenance Status" required>
-          <select className={modalFieldInputClass} value={maintenanceStatus} onChange={(e) => setMaintenanceStatus(e.target.value as VehicleMaintenanceRecord["maintenanceStatus"])}>
+          <select className={modalFieldInputClass} value={maintenanceStatus} onChange={(e) => setMaintenanceStatus(e.target.value as VehicleMaintenanceRecord["maintenanceStatus"])} disabled={locked}>
             {MAINTENANCE_STATUSES.map((item) => <option key={item}>{item}</option>)}
           </select>
         </ModalFieldComponent>
-        <ModalFieldComponent label="Service Date" required>
-          <ISODateInput className={modalFieldInputClass} value={serviceDate} onValueChange={setServiceDate} required />
+        <ModalFieldComponent label="Schedule Basis" required>
+          <select className={modalFieldInputClass} value={basis} onChange={(e) => setBasis(e.target.value as ScheduledMaintenanceBasis)} disabled={locked}>
+            {MAINTENANCE_BASIS_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
         </ModalFieldComponent>
-        <ModalFieldComponent label="Odometer">
-          <Input className={modalFieldInputClass} value={odometer} onChange={(e) => setOdometer(e.target.value)} />
+        <ModalFieldComponent label="Service Date" required>
+          <ISODateInput className={modalFieldInputClass} value={serviceDate} onValueChange={setServiceDate} required disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Due Date">
+          <ISODateInput className={modalFieldInputClass} value={dueDate} onValueChange={setDueDate} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Odometer" required>
+          <Input className={modalFieldInputClass} type="number" min="0" value={odometer} onChange={(e) => setOdometer(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Due Odometer">
+          <Input className={modalFieldInputClass} type="number" min="0" value={dueOdometer} onChange={(e) => setDueOdometer(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Engine Hours">
-          <Input className={modalFieldInputClass} value={engineHours} onChange={(e) => setEngineHours(e.target.value)} />
+          <Input className={modalFieldInputClass} type="number" min="0" value={engineHours} onChange={(e) => setEngineHours(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
-        <ModalFieldComponent label="Vendor">
-          <Input className={modalFieldInputClass} value={vendor} onChange={(e) => setVendor(e.target.value)} />
+        <ModalFieldComponent label="Due Engine Hours">
+          <Input className={modalFieldInputClass} type="number" min="0" value={dueEngineHours} onChange={(e) => setDueEngineHours(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Performed By" required>
+          <select className={modalFieldInputClass} value={performedBy} onChange={(e) => setPerformedBy(e.target.value as MaintenancePerformedBy)} disabled={locked}>
+            {PERFORMED_BY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Facility / Provider">
+          <Input className={modalFieldInputClass} value={vendor} onChange={(e) => setVendor(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Facility Address">
+          <Input className={modalFieldInputClass} value={facilityAddress} onChange={(e) => setFacilityAddress(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Technician / Contact">
+          <Input className={modalFieldInputClass} value={technicianName} onChange={(e) => setTechnicianName(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Submitted By" required={lockAsClientSubmission}>
+          <Input className={modalFieldInputClass} value={submittedByName} onChange={(e) => setSubmittedByName(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Work Order / Invoice #">
-          <Input className={modalFieldInputClass} value={workOrderInvoiceNumber} onChange={(e) => setWorkOrderInvoiceNumber(e.target.value)} />
+          <Input className={modalFieldInputClass} value={workOrderInvoiceNumber} onChange={(e) => setWorkOrderInvoiceNumber(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Next Service Due">
-          <ISODateInput className={modalFieldInputClass} value={nextServiceDueDate} onValueChange={setNextServiceDueDate} />
+          <ISODateInput className={modalFieldInputClass} value={nextServiceDueDate} onValueChange={setNextServiceDueDate} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Next Due Odometer">
+          <Input className={modalFieldInputClass} type="number" min="0" value={nextServiceDueOdometer} onChange={(e) => setNextServiceDueOdometer(e.target.value)} disabled={locked} />
+        </ModalFieldComponent>
+        <ModalFieldComponent label="Next Due Engine Hours">
+          <Input className={modalFieldInputClass} type="number" min="0" value={nextServiceDueEngineHours} onChange={(e) => setNextServiceDueEngineHours(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Parts Cost">
-          <Input className={modalFieldInputClass} type="number" min="0" value={partsCost} onChange={(e) => setPartsCost(e.target.value)} />
+          <Input className={modalFieldInputClass} type="number" min="0" value={partsCost} onChange={(e) => setPartsCost(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
         <ModalFieldComponent label="Total Cost">
-          <Input className={modalFieldInputClass} type="number" min="0" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} />
+          <Input className={modalFieldInputClass} type="number" min="0" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
+        <div className="col-span-2 flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={applyNinetyDayDefault} disabled={locked}>Apply 90 days / 30,000 km default</Button>
+          <label className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+            <input type="checkbox" checked={lockAsClientSubmission} onChange={(event) => setLockAsClientSubmission(event.target.checked)} disabled={locked} />
+            Client-submitted form: lock after save
+          </label>
+        </div>
         <ModalFieldComponent label="Notes" className="col-span-2">
-          <Textarea rows={3} className={modalFieldInputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <Textarea rows={3} className={modalFieldInputClass} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={locked} />
         </ModalFieldComponent>
       </ModalFieldGridComponent>
+
+      <ModalSectionLabelComponent>Checklist Outcome</ModalSectionLabelComponent>
+      <div className="space-y-2 px-6 pb-4">
+        <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs">
+          Current outcome: <span className="font-semibold">{outcomeLabel(computedOutcome)}</span>
+        </div>
+        {checklist.map((item, index) => (
+          <div key={item.label} className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-[minmax(180px,1fr)_190px_minmax(180px,1fr)]">
+            <p className="text-xs font-semibold">{item.label}</p>
+            <select className={modalFieldInputClass} value={item.status} onChange={(event) => setChecklist((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, status: event.target.value as MaintenanceChecklistStatus } : row))} disabled={locked}>
+              {CHECKLIST_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <Input className={modalFieldInputClass} value={item.notes || ""} placeholder="Measurement or note" onChange={(event) => setChecklist((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, notes: event.target.value } : row))} disabled={locked} />
+          </div>
+        ))}
+      </div>
 
       <ModalSectionLabelComponent>Evidence</ModalSectionLabelComponent>
       <div className="grid grid-cols-1 gap-3 px-6 pb-4 sm:grid-cols-2">
         <ModalEvidenceCardComponent
-          label="Work Order / Invoice Document"
+          label="Worksheet / Generated PDF / Invoice"
           attached={evidenceIds.length > 0}
           attachedNote={evidenceIds.length ? `${evidenceIds.length} attached` : undefined}
           onAttach={onAttachEvidence}

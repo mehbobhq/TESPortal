@@ -22,11 +22,12 @@ import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DriverProfileTab } from "./DriverProfileTab";
 import { DriverQualificationsTab } from "./DriverQualificationsTab";
 import { DriverDocumentsTab } from "./DriverDocumentsTab";
+import { DriverEvaluationTab } from "./DriverEvaluationTab";
 import { DriverScreeningTab } from "./DriverScreeningTab";
 import { DriverTrainingTab } from "./DriverTrainingTab";
 import { DriverPerformanceTab } from "./DriverPerformanceTab";
 import { receivePerformanceSourceForMachineProcessing } from "@/lib/driver-performance-ingestion";
-import { loadCompanyDriverStore } from "@/lib/driver-data";
+import { ingestApplicantSubmissionSnapshot, loadCompanyDriverStore, type ApplicantSubmissionHandoff } from "@/lib/driver-data";
 import { SecureDocumentViewer } from "../shared/SecureDocumentViewer";
 import { DocumentSourcePicker } from "../shared/DocumentSourcePicker";
 import { OCRReview } from "../shared/OCRReview";
@@ -38,6 +39,7 @@ import {
   addDriverAddress,
   addLicence,
   addDriverApplication,
+  updateDriverApplication,
   addHiringPackage,
   addDriverTaxDoc,
   addScreeningRecord,
@@ -53,6 +55,7 @@ import {
   addHOSReview,
   addCompanyAction,
   addCompanyDetermination,
+  assessDriverHiringFile,
 } from "@/lib/driver-data";
 import { reevaluatePerformanceRelationshipsAfterSourceMutation } from "@/lib/driver-performance-relationship-resolution";
 import { getEvidencePayloads, migrateLegacyDriverEvidencePayloads, putEvidencePayload } from "@/lib/evidence-payload-store";
@@ -111,6 +114,63 @@ export function DriverWorkspace({
 
   const [activeTab, setActiveTab] = useState<DriverTab>(resolveDriverTab);
 
+  const submissionReconciliationRan = useRef(false)
+  // `applications` is recomputed with a fresh `.filter()` on every render of the
+  // parent page, so a plain array/object dependency here would be a *new*
+  // reference on effectively every render even when the set of application ids
+  // hasn't actually changed. Depending on a primitive string key instead means
+  // React's dependency comparison (which compares primitives by value) only
+  // reruns this effect when the actual set of ids changes.
+  const applicationIdsKey = applications.map((application) => application.id).filter(Boolean).join(",")
+
+  useEffect(() => {
+    if (submissionReconciliationRan.current) return
+    submissionReconciliationRan.current = true
+
+    const applicationIds = applicationIdsKey.split(",").filter(Boolean)
+    if (applicationIds.length === 0) return
+
+    const reconcileSubmittedApplications = async () => {
+      try {
+        const response = await fetch(
+          `/api/driver-applications/submissions?applicationIds=${encodeURIComponent(applicationIds.join(","))}`,
+          { cache: "no-store" },
+        )
+        if (!response.ok) return
+
+        const body = await response.json() as { submissions?: ApplicantSubmissionHandoff[] }
+        let applied = false
+
+        for (const snapshot of body.submissions ?? []) {
+          const result = ingestApplicantSubmissionSnapshot(company.id, snapshot)
+          applied = result.applied || applied
+        }
+
+        // `ingestApplicantSubmissionSnapshot` above has already durably written
+        // the reconciled state to the shared store by this point, unconditionally.
+        // Root cause of the "stuck on Application Pending" bug: this call used to
+        // be guarded by a `cancelled` flag flipped in this effect's cleanup, on
+        // the theory that the effect (and this Driver Workspace) might have
+        // unmounted while the fetch was in flight. In practice React's
+        // development-only Strict Mode deliberately mounts -> cleans up ->
+        // remounts every effect once, which set that flag *before* this fetch
+        // resolved on effectively every real page load - the store update above
+        // still happened correctly, but the `onRefresh()` notification that would
+        // have told this open workspace to re-render was silently skipped, and
+        // because `submissionReconciliationRan` never resets, no later render
+        // ever retried it. Notifying the parent to re-read the store is safe and
+        // idempotent to do here regardless of that theoretical unmount, so it is
+        // no longer gated on it.
+        if (applied) onRefresh()
+      } catch {
+        // Keep the current TES record visible. Submission reconciliation will retry
+        // the next time this workspace is opened/refreshed.
+      }
+    }
+
+    void reconcileSubmittedApplications()
+  }, [applicationIdsKey, company.id, onRefresh])
+
   useEffect(() => {
     const syncDriverRoute = () => setActiveTab(resolveDriverTab());
     syncDriverRoute();
@@ -129,6 +189,7 @@ export function DriverWorkspace({
         screening: ["MEDICAL_CERT", "DRUG_TEST", "MEDICAL_EXPIRY"],
         qualifications: ["LICENCE_NUMBER", "LICENCE_CLASS"],
         documents: ["DRIVER_APPLICATION", "HIRING_PACKAGE"],
+        evaluation: ["DRIVER_APPLICATION", "PREVIOUS_EMPLOYER_VERIFICATION", "QUALIFICATION_ASSESSMENT"],
         performance: ["ROADSIDE_FINDINGS", "VIOLATIONS"],
         profile: [],
         training: [],
@@ -145,6 +206,8 @@ export function DriverWorkspace({
   const [isAddTaxDocOpen, setIsAddTaxDocOpen] = useState(false);
   const [applicationType, setApplicationType] = useState<DriverApplicationRecord["applicationType"]>("Full Driver Employment");
   const [applicationRegion, setApplicationRegion] = useState<DriverApplicationRecord["operatingRegion"]>(relationship.operatingRegion);
+  const [applicationRecipientEmail, setApplicationRecipientEmail] = useState(master.identity.email || "");
+  const [isSendingApplication, setIsSendingApplication] = useState(false);
   const [packageVersion, setPackageVersion] = useState("");
   const [packageNotes, setPackageNotes] = useState("");
   const [taxFormType, setTaxFormType] = useState<DriverTaxDocRecord["formType"]>("TD1 Federal");
@@ -209,7 +272,40 @@ export function DriverWorkspace({
   const [triggerAddScreening, setTriggerAddScreening] = useState(false);
   const [triggerAddTraining, setTriggerAddTraining] = useState(false);
 
+  useEffect(() => {
+    setApplicationRecipientEmail(master.identity.email || "");
+  }, [master.identity.email]);
+
   const openReviewsCount = master.jurisdictionReviews?.filter((r) => r.status === "OPEN").length || 0;
+
+  const hiringAssessment = assessDriverHiringFile(company.id, master.id, company);
+
+  const handleHiringWorkflowAction = () => {
+    switch (hiringAssessment.nextAction) {
+      case "SEND_APPLICATION":
+      case "CONTINUE_APPLICATION":
+        setActiveTab("documents");
+        pushHistoryQueryParams({ driverTab: "documents", performanceView: null });
+        if (hiringAssessment.nextAction === "SEND_APPLICATION") {
+          setCreationError(null);
+          setIsAddApplicationOpen(true);
+        }
+        return;
+      case "COMPLETE_REFERENCE_CHECKS":
+        setActiveTab("screening");
+        pushHistoryQueryParams({ driverTab: "screening", performanceView: null });
+        setTriggerAddScreening(true);
+        return;
+      case "COMPLETE_HIRING_PACKAGE":
+        setActiveTab("documents");
+        pushHistoryQueryParams({ driverTab: "documents", performanceView: null });
+        setCreationError(null);
+        setIsAddHiringPackageOpen(true);
+        return;
+      default:
+        return;
+    }
+  };
 
   const handleOpenEvidenceById = (evidenceId: string) => {
     const item = evidenceWithPayloads.find((candidate) => candidate.id === evidenceId);
@@ -256,16 +352,76 @@ export function DriverWorkspace({
     setViewingDoc(hydrated);
   };
 
-  const handleCreateApplication = () => {
+  const handleCreateApplication = async () => {
     setCreationError(null);
+    const recipientEmail = applicationRecipientEmail.trim().toLowerCase();
+    if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+      setCreationError("A valid Driver email address is required before TES can send the application.");
+      return;
+    }
+
+    setIsSendingApplication(true);
+    let application: DriverApplicationRecord | undefined;
     try {
-      addDriverApplication(company.id, master.id, {
+      // Create an auditable Invitation Ready record first. It is NOT marked sent until Resend accepts the message.
+      application = addDriverApplication(company.id, master.id, {
         companyDriverRelationshipId: relationship.id,
         applicationType,
-        status: "Draft",
+        status: "Invitation Ready",
+        applicationContext: hiringAssessment.isInheritedDriver ? "Existing Driver File Completion" : "Prospective Hire",
+        tesServiceStartDateAtCreation: hiringAssessment.tesServiceStartDate,
+        employmentStartDateAtCreation: hiringAssessment.employmentStartDate,
+        source: "TES Workflow",
+        invitationRecipientEmail: recipientEmail,
+        invitationDeliveryMethod: "Email",
+        invitationProvider: "Resend",
         operatingRegion: applicationRegion,
         createdDate: new Date().toISOString().slice(0, 10),
         evidenceIds: [],
+      });
+
+      // Keep the canonical Driver email current only after the operator explicitly confirms this recipient.
+      if (recipientEmail !== (master.identity.email || "").trim().toLowerCase()) {
+        updateDriverMasterIdentity(master.id, { email: recipientEmail });
+      }
+
+      const response = await fetch("/api/driver-applications/send-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId: company.id,
+          companyName: company.name,
+          companyAddress: {
+            street: String(company.reg_street || company.regStreet || company.registeredStreet || company.addressLine1 || "").trim(),
+            city: String(company.reg_city || company.regCity || company.registeredCity || company.city || "").trim(),
+            stateProvince: String(company.reg_state || company.regState || company.registeredState || company.regCorpState || company.stateProvince || "").trim(),
+            postalCode: String(company.reg_zip || company.regZip || company.registeredPostalCode || company.postalZip || "").trim(),
+            country: String(company.reg_country || company.regCountry || company.registeredCountry || company.regCorpCountry || company.country || "").trim(),
+          },
+          companyPhone: String(company.phone || company.contactNumber || company.phoneNumber || "").trim(),
+          companyEmail: String(company.email || company.accountEmail || "").trim(),
+          driverMasterId: master.id,
+          applicationId: application.id,
+          recipientEmail,
+          driverName: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
+          applicationType,
+          operatingRegion: applicationRegion,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.messageId) {
+        throw new Error(result?.error || "Resend did not accept the Driver Application invitation.");
+      }
+
+      updateDriverApplication(company.id, application.id, {
+        status: "Invited",
+        invitationSentAt: result.sentAt,
+        invitationRecipientEmail: recipientEmail,
+        invitationDeliveryMethod: "Email",
+        invitationProvider: "Resend",
+        invitationProviderMessageId: result.messageId,
+        invitationExpiresAt: result.expiresAt,
+        invitationLastError: undefined,
       });
       logAuditEvent({
         e: "RECORD_CREATED",
@@ -273,12 +429,22 @@ export function DriverWorkspace({
         cn: company.name,
         eid: master.id,
         el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
-        det: `Created Driver Application (${applicationType}).`,
+        det: `Sent Driver Application ${application.id} by email to ${recipientEmail} through Resend (message ${result.messageId}).`,
       });
       setIsAddApplicationOpen(false);
       onRefresh();
     } catch (error) {
-      setCreationError(error instanceof Error ? error.message : "Unable to create the Driver Application record.");
+      const message = error instanceof Error ? error.message : "Unable to send the Driver Application invitation.";
+      if (application?.id) {
+        updateDriverApplication(company.id, application.id, {
+          status: "Invitation Ready",
+          invitationLastError: message,
+        });
+      }
+      setCreationError(message);
+      onRefresh();
+    } finally {
+      setIsSendingApplication(false);
     }
   };
 
@@ -747,6 +913,30 @@ export function DriverWorkspace({
         openReviewsCount={openReviewsCount}
       />
 
+      {hiringAssessment.nextAction !== "NONE" && (
+        <div className="rounded-2xl border border-border bg-card px-5 py-4 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Driver Hiring Workflow</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">{hiringAssessment.nextActionLabel}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {hiringAssessment.isInheritedDriver
+                  ? `Existing driver file · TES-managed period begins ${hiringAssessment.tesServiceStartDate || "on the recorded service start date"}. Historical source records remain unchanged.`
+                  : "Next required hiring workflow action based on the records currently established in TES."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleHiringWorkflowAction}
+              disabled={hiringAssessment.nextAction === "CONTINUE_APPLICATION"}
+              className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {hiringAssessment.nextActionLabel}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Tab Content */}
       <div className="min-h-[450px]">
         {activeTab === "profile" && (
@@ -786,6 +976,10 @@ export function DriverWorkspace({
             onOpenEvidence={handleOpenEvidenceItem}
             onRefresh={onRefresh}
           />
+        )}
+
+        {activeTab === "evaluation" && (
+          <DriverEvaluationTab companyId={company.id} applications={applications} />
         )}
 
         {activeTab === "screening" && (
@@ -867,7 +1061,7 @@ export function DriverWorkspace({
         <div className="fixed inset-0 z-[155] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-border pb-3">
-              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Creates a Draft application without applicant claims.</p></div>
+              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Creates and records a TES application invitation without inventing applicant claims.</p></div>
               <button type="button" onClick={() => setIsAddApplicationOpen(false)} className="text-muted-foreground">✕</button>
             </div>
             <div className="space-y-3 text-xs">
@@ -877,8 +1071,9 @@ export function DriverWorkspace({
               <label className="block"><span className="font-bold text-muted-foreground">Operating Region</span><select value={applicationRegion} onChange={(e) => setApplicationRegion(e.target.value as DriverApplicationRecord["operatingRegion"])} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3">
                 <option>Canada</option><option>United States</option><option>Cross-Border</option>
               </select></label>
+              <label className="block"><span className="font-bold text-muted-foreground">Driver Email *</span><input type="email" value={applicationRecipientEmail} onChange={(e) => setApplicationRecipientEmail(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" placeholder="driver@example.com" autoComplete="email" /><span className="mt-1 block text-[11px] text-muted-foreground">Confirm this address before sending. It becomes the Driver Master email when the invitation is sent.</span></label>
             </div>
-            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" onClick={handleCreateApplication} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground">Create Draft Application</button></div>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" disabled={isSendingApplication} onClick={handleCreateApplication} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">{isSendingApplication ? "Sending…" : "Send Application"}</button></div>
           </div>
         </div>
       )}

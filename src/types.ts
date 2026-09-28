@@ -77,19 +77,14 @@ export type PermitType =
  * is stored as a plain string, but new records must use one of these.
  */
 export const INSPECTION_TYPES = [
-  "Annual / Periodic Vehicle Inspection",
-  "Provincial / State Safety Inspection",
+  "Annual / Periodic Commercial Vehicle Inspection",
+  "Provincial or State Safety Inspection",
+  "Pre-Trip / Post-Trip Inspection",
+  "Roadside / CVSA Inspection",
   "Emissions Test",
-  "Pre-Trip Inspection",
-  "Post-Trip Inspection / DVIR",
-  "Scheduled Internal Inspection",
-  "Brake Inspection",
-  "Trailer Inspection",
-  "Reefer / Temperature-Control Unit Inspection",
-  "CVSA / Roadside Inspection",
-  "Special Inspection",
-  "Other",
-] as const;
+  "Post-Incident Mechanical Inspection",
+  "Reefer Unit Operational Check",
+] as const
 
 export type InspectionType = (typeof INSPECTION_TYPES)[number];
 

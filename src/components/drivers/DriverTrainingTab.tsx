@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { DriverDateInput } from "./DriverDateInput";
 import {
   GraduationCap,
   Award,
@@ -14,6 +15,7 @@ import { DriverMaster, TrainingRecord, TrainingStatus, TrainingType } from "@/ty
 import { getTrainingCourseCatalog } from "@/lib/driver-data";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { getDeadlineStatus, getDeadlineClasses } from "@/lib/deadline-engine";
+import { driverDateInputValue } from "@/lib/driver-date";
 
 export interface DriverTrainingTabProps {
   master: DriverMaster;
@@ -97,10 +99,10 @@ export function DriverTrainingTab({
       trainingType: form.trainingType,
       provider: form.provider.trim(),
       status: form.status,
-      assignedDate: form.assignedDate || undefined,
-      startDate: form.startDate || undefined,
-      completionDate: form.status === "Completed" ? (form.completionDate || undefined) : undefined,
-      expiryDate: form.expiryDate || undefined,
+      assignedDate: driverDateInputValue(form.assignedDate) || undefined,
+      startDate: driverDateInputValue(form.startDate) || undefined,
+      completionDate: form.status === "Completed" ? (driverDateInputValue(form.completionDate) || undefined) : undefined,
+      expiryDate: driverDateInputValue(form.expiryDate) || undefined,
       scoreOrResult: form.scoreOrResult.trim() || undefined,
       certificateNumber: form.certificateNumber.trim() || undefined,
       evidenceIds: [],
@@ -217,12 +219,12 @@ export function DriverTrainingTab({
                           </span>
                         )}
                       </td>
-                      <td className="px-5 py-3 font-mono text-muted-foreground">{item.completionDate || "—"}</td>
+                      <td className="px-5 py-3 font-mono text-muted-foreground">{driverDateInputValue(item.completionDate) || "—"}</td>
                       <td className="px-5 py-3">
                         {item.expiryDate ? (
                           <span className={`inline-flex items-center gap-1 font-mono text-[11px] font-semibold ${deadlineStyle.text}`}>
                             <Calendar className="size-3" />
-                            {item.expiryDate}
+                            {driverDateInputValue(item.expiryDate)}
                           </span>
                         ) : (
                           <span className="text-muted-foreground font-mono text-[11px]">Permanent</span>
@@ -334,7 +336,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.provider}
-                    onChange={(e) => setForm({ ...form, provider: e.target.value })}
+                    onChange={(value) => setForm({ ...form, provider: value })}
                     required
                     placeholder="e.g. Internal Safety Dept or Vendor Name"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
@@ -364,10 +366,9 @@ export function DriverTrainingTab({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Completion Date (if completed)
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.completionDate}
-                    onChange={(e) => setForm({ ...form, completionDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, completionDate: value })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
                 </div>
@@ -379,7 +380,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.certificateNumber}
-                    onChange={(e) => setForm({ ...form, certificateNumber: e.target.value })}
+                    onChange={(value) => setForm({ ...form, certificateNumber: value })}
                     placeholder="Optional certificate/ID"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
@@ -389,10 +390,9 @@ export function DriverTrainingTab({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Expiry Date
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.expiryDate}
-                    onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, expiryDate: value })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
                 </div>
@@ -404,7 +404,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.scoreOrResult}
-                    onChange={(e) => setForm({ ...form, scoreOrResult: e.target.value })}
+                    onChange={(value) => setForm({ ...form, scoreOrResult: value })}
                     placeholder="e.g. Passed, 96%, or Grade"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />

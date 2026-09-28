@@ -1,4 +1,6 @@
 import type { ReactNode } from "react"
+import { useEffect, useState } from "react"
+
 import { CalendarDays, ChevronRight, RefreshCcw, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -38,6 +40,16 @@ function FilingCalendarWorkspace({
   onSelectObligation,
   renderStatus,
 }: FilingCalendarWorkspaceProps) {
+  const [yearDraft, setYearDraft] = useState(String(calendarYear))
+  useEffect(() => setYearDraft(String(calendarYear)), [calendarYear])
+  const commitYear = () => {
+    if (/^\d{4}$/.test(yearDraft) && Number(yearDraft) >= 1900) {
+      onCalendarYearChange(Number(yearDraft))
+    } else {
+      setYearDraft(String(calendarYear))
+    }
+  }
+
   const programOrder = [
     "ifta",
     "ny_hut",
@@ -92,12 +104,15 @@ function FilingCalendarWorkspace({
 
             <div className="flex items-center gap-2">
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                aria-label="Calendar year"
                 className="w-28 rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                value={calendarYear}
-                onChange={(event) =>
-                  onCalendarYearChange(Number(event.target.value) || new Date().getFullYear())
-                }
+                value={yearDraft}
+                onChange={(event) => setYearDraft(event.target.value)}
+                onBlur={commitYear}
+                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }}
               />
 
               <Button type="button" size="sm" onClick={onUpload}>

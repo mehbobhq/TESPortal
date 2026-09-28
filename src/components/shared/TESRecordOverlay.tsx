@@ -23,6 +23,7 @@ interface TESRecordOverlayProps {
    * with the existing scrollable body handling anything that exceeds the cap.
    */
   contentHeight?: "fixed" | "natural"
+  headerTone?: "primary" | "neutral"
 }
 
 export function TESRecordOverlay({
@@ -36,6 +37,7 @@ export function TESRecordOverlay({
   closeOnBackdrop = true,
   ariaLabel = "Opened record",
   contentHeight = "fixed",
+  headerTone = "primary",
 }: TESRecordOverlayProps) {
   useEffect(() => {
     if (!open) return
@@ -70,20 +72,37 @@ export function TESRecordOverlay({
         )}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-4 border-b border-primary-foreground/20 bg-primary px-5 py-4 text-primary-foreground sm:flex-row sm:items-start sm:justify-between sm:px-6">
+        <header
+          className={cn(
+            "sticky top-0 z-10 flex shrink-0 flex-col gap-4 border-b px-5 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6",
+            headerTone === "neutral"
+              ? "border-border bg-card text-foreground"
+              : "border-primary-foreground/20 bg-primary text-primary-foreground"
+          )}
+        >
           <div className="min-w-0">
             <div className="text-lg font-semibold leading-tight sm:text-xl">
               {title}
             </div>
 
             {subtitle ? (
-              <div className="mt-1 text-sm font-medium text-primary-foreground/95">
+              <div
+                className={cn(
+                  "mt-1 text-sm font-medium",
+                  headerTone === "neutral" ? "text-foreground" : "text-primary-foreground/95"
+                )}
+              >
                 {subtitle}
               </div>
             ) : null}
 
             {context ? (
-              <div className="mt-1 text-xs text-primary-foreground/75">
+              <div
+                className={cn(
+                  "mt-1 text-xs",
+                  headerTone === "neutral" ? "text-muted-foreground" : "text-primary-foreground/75"
+                )}
+              >
                 {context}
               </div>
             ) : null}
@@ -96,7 +115,12 @@ export function TESRecordOverlay({
               type="button"
               variant="outline"
               onClick={onClose}
-              className="border-primary-foreground/55 bg-transparent font-semibold text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
+              className={cn(
+                "font-semibold",
+                headerTone === "neutral"
+                  ? "border-border bg-background text-foreground hover:bg-muted hover:text-foreground"
+                  : "border-primary-foreground/55 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
+              )}
               aria-label="Close opened record"
             >
               <X className="mr-1.5 size-4" />

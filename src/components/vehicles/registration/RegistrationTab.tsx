@@ -16,6 +16,7 @@ import type { EvidenceRecord } from "@/types/evidence"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { ISODateInput } from "@/src/components/shared/ISODateInput"
 import { TESRecordOverlay } from "@/src/components/shared/TESRecordOverlay"
+import { TESEvidenceLayout } from "@/src/components/design-system/TESEvidenceLayout"
 
 const REGISTRATION_TYPES = [
   "Prorate PSV",
@@ -355,10 +356,53 @@ export function RegistrationTab({ companyId, store, vehicle, records, evidence, 
   return <div className="space-y-3">
     <Card><SectionTitleComponent title="Registration" description="Historical registrations; current plate comes from the active registration." action={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setShowArchived((value) => !value)}>{showArchived ? "Hide History" : "Show History"}</Button><Button size="sm" onClick={() => { setEditing(null); setShowForm(true) }}><Plus className="mr-1.5 size-3.5" />Add Registration</Button></div>} /></Card>
     {visible.length === 0 ? <EmptyStateComponent title="No registration records" description="Registration Document is mandatory for every registration. Prorate PSV additionally requires a Cab Card." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-1.5 size-4" />Add Registration</Button>} /> : <div className="space-y-2">{visible.map((record) => <Card key={record.id} className={`${record.archived ? "opacity-70" : ""} cursor-pointer hover:bg-muted/20 transition-colors`} onClick={() => setSelectedRecord(record)}><div className="flex items-center justify-between border-b px-4 py-3"><div><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{record.registrationType}</h3><StatusPillComponent value={registrationStatus(record)} /></div><p className="font-mono text-[10px] text-muted-foreground">{record.id}</p></div><ChevronRight className="size-4 text-muted-foreground" /></div><div className="grid gap-3 p-4 md:grid-cols-4"><ReadOnlyField label="State / Province" value={`${getJurisdictionLabel(record.stateProvince)} (${record.stateProvince})`} /><ReadOnlyField label="Plate" value={record.plate || "—"} /><ReadOnlyField label="Registration Date" value={record.registrationDate || "—"} /><ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, record.registrationType) ? "Continuous" : record.expiryDate || "—"} /><ReadOnlyField label="Registration Document" value={record.registrationDocumentEvidenceId ? "Attached" : "Missing"} /><ReadOnlyField label="Cab Card" value={record.cabCardEvidenceId ? "Attached" : record.registrationType === "Prorate PSV" ? "Missing" : "Not required by rule"} /></div></Card>)}</div>}
-    {selectedRecord ? <TESRecordOverlay open title={selectedRecord.registrationType} subtitle="Registration" context={`Unit ${vehicle.unitNumber || "—"} · ${getJurisdictionLabel(selectedRecord.stateProvince)} · ${registrationStatus(selectedRecord)}`} onClose={() => { if (!archiveRecord) setSelectedRecord(null) }} ariaLabel={`Registration record ${selectedRecord.id}`} actions={<><Button variant="outline" onClick={() => { setEditing(selectedRecord); setSelectedRecord(null); setShowForm(true) }} className="border-primary-foreground/55 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"><Edit3 className="mr-1.5 size-3.5" />Edit</Button>{!selectedRecord.archived ? <button type="button" title="Archive record" aria-label="Archive record" onClick={() => setArchiveRecord(selectedRecord)} className="flex size-9 items-center justify-center rounded-md border border-primary-foreground/35 text-primary-foreground/80 hover:bg-primary-foreground/10 hover:text-primary-foreground"><Archive className="size-4" /></button> : null}</>}>
-      <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
-        <section className="rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3 sm:px-5"><h3 className="text-sm font-semibold">Registration Information</h3><p className="mt-0.5 text-xs text-muted-foreground">Read-only structured record.</p></div><div className="grid gap-x-6 gap-y-5 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-4"><ReadOnlyField label="Registration Type" value={selectedRecord.registrationType} /><ReadOnlyField label="Jurisdiction" value={`${getJurisdictionLabel(selectedRecord.stateProvince)} (${selectedRecord.stateProvince})`} /><ReadOnlyField label="Plate" value={selectedRecord.plate || "—"} /><ReadOnlyField label="Registration Date" value={selectedRecord.registrationDate || "—"} /><ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, selectedRecord.registrationType) ? "Continuous" : selectedRecord.expiryDate || "—"} />{selectedRecord.price ? <ReadOnlyField label="Price" value={money(selectedRecord.price)} /> : null}<div><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p><div className="mt-1"><StatusPillComponent value={registrationStatus(selectedRecord)} /></div></div><ReadOnlyField label="Record ID" value={selectedRecord.id} /></div></section>
-        <section className="rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3 sm:px-5"><h3 className="text-sm font-semibold">Evidence</h3><p className="mt-0.5 text-xs text-muted-foreground">Source documents linked to this Registration record.</p></div><div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">{evidenceItem("Registration Document", selectedRecord.registrationDocumentEvidenceId, true)}{evidenceItem("Cab Card", selectedRecord.cabCardEvidenceId, selectedRecord.registrationType === "Prorate PSV")}</div></section>
+    {selectedRecord ? <TESRecordOverlay open title="Vehicle Registration" subtitle={`Unit ${vehicle.unitNumber || "—"}`} context={`Plate: ${selectedRecord.plate || "—"} · Jurisdiction: ${getJurisdictionLabel(selectedRecord.stateProvince)} · Expiry Date: ${isContinuousRegistration(vehicle, selectedRecord.registrationType) ? "Continuous" : selectedRecord.expiryDate || "—"}`} onClose={() => { if (!archiveRecord) setSelectedRecord(null) }} ariaLabel={`Registration record ${selectedRecord.id}`} headerTone="neutral" actions={<><Button variant="outline" onClick={() => { setEditing(selectedRecord); setSelectedRecord(null); setShowForm(true) }}><Edit3 className="mr-1.5 size-3.5" />Edit</Button>{!selectedRecord.archived ? <button type="button" title="Archive record" aria-label="Archive record" onClick={() => setArchiveRecord(selectedRecord)} className="flex size-9 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted hover:text-foreground"><Archive className="size-4" /></button> : null}</>}>
+      <div className="p-4 sm:p-6">
+        <TESEvidenceLayout
+          evidenceLabel="Registration Evidence"
+          record={
+            <div className="space-y-5">
+              <section className="rounded-xl border border-border bg-card">
+                <div className="border-b border-border px-4 py-3 sm:px-5">
+                  <h3 className="text-sm font-semibold">Registration Information</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Read-only structured record.</p>
+                </div>
+                <div className="grid gap-x-6 gap-y-5 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-4">
+                  <ReadOnlyField label="Registration Type" value={selectedRecord.registrationType} />
+                  <ReadOnlyField label="Jurisdiction" value={`${getJurisdictionLabel(selectedRecord.stateProvince)} (${selectedRecord.stateProvince})`} />
+                  <ReadOnlyField label="Plate" value={selectedRecord.plate || "—"} />
+                  <ReadOnlyField label="Registration Date" value={selectedRecord.registrationDate || "—"} />
+                  <ReadOnlyField label="Expiry Date" value={isContinuousRegistration(vehicle, selectedRecord.registrationType) ? "Continuous" : selectedRecord.expiryDate || "—"} />
+                  {selectedRecord.price ? <ReadOnlyField label="Price" value={money(selectedRecord.price)} /> : null}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p>
+                    <div className="mt-1"><StatusPillComponent value={registrationStatus(selectedRecord)} /></div>
+                  </div>
+                  <ReadOnlyField label="Record ID" value={selectedRecord.id} />
+                </div>
+              </section>
+            </div>
+          }
+          evidence={
+            <div className="space-y-4">
+              <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-primary">
+                  Registration Evidence
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Source documents linked to this registration record.
+                </p>
+              </div>
+              <p className="text-xs font-bold uppercase tracking-wider text-foreground">
+                Attached Registration Evidence
+              </p>
+              <div className="space-y-3">
+                {evidenceItem("Registration Document", selectedRecord.registrationDocumentEvidenceId, true)}
+                {evidenceItem("Cab Card", selectedRecord.cabCardEvidenceId, selectedRecord.registrationType === "Prorate PSV")}
+              </div>
+            </div>
+          }
+        />
       </div>
     </TESRecordOverlay> : null}
     {archiveRecord ? <RegistrationArchiveDialog companyId={companyId} record={archiveRecord} vehicle={vehicle} evidence={evidence} onCancel={() => setArchiveRecord(null)} onArchive={(request, requestEvidence, performedBy, archivedAt) => archive(archiveRecord, request, requestEvidence, performedBy, archivedAt)} FieldComponent={FieldComponent} selectClass={selectClass} todayISO={todayISO} /> : null}

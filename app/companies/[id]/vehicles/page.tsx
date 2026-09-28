@@ -29,6 +29,8 @@ import {
 import { is17CharVIN } from "@/lib/identifier-normalization"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { logAuditEvent } from "@/lib/audit-log"
+import { attachEvidenceToRepairInvoice } from "@/lib/repair-invoice-data"
+import { registerRepairSourceFile } from "@/lib/repair-document-intake"
 import type { Company, EquipmentType, VehicleRecord, VehicleStatus } from "@/src/types"
 import type { EvidenceRecord } from "@/types/evidence"
 import type { OCRDocumentResult } from "@/types/ocr"
@@ -182,6 +184,7 @@ type OCRContext =
   | { kind: "permit"; recordId?: string; documentType: string }
   | { kind: "inspection"; recordId?: string; documentType: string }
   | { kind: "maintenance"; recordId?: string; documentType: string }
+  | { kind: "repairBill"; recordId?: string; documentType: string }
 
 type EvidenceAttachmentReview = {
   context: OCRContext
@@ -542,7 +545,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
   const [selectedRecordEvidence, setSelectedRecordEvidence] = useState<{
     recordLabel: string
     evidenceIds: string[]
-    kind?: "inspection" | "maintenance" | "permit"
+    kind?: "inspection" | "maintenance" | "permit" | "repairBill"
     recordId?: string
     details?: Array<{ label: string; value: string }>
     activity?: Array<{ title: string; description: string; date: string }>
@@ -683,6 +686,11 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
           next = { ...next, maintenanceRecords: next.maintenanceRecords.map((record) => record.id === context.recordId ? { ...record, evidenceIds: Array.from(new Set([...record.evidenceIds, evidenceRecord.id])), updatedAt: now } : record) }
           setSelectedRecordEvidence((current) => current?.recordId === context.recordId ? { ...current, evidenceIds: Array.from(new Set([...current.evidenceIds, evidenceRecord.id])) } : current)
         } else setPendingMaintenanceEvidenceId(evidenceRecord.id)
+      } else if (context.kind === "repairBill") {
+        if (context.recordId) {
+          const invoice = attachEvidenceToRepairInvoice(companyId, context.recordId, evidenceRecord.id)
+          setSelectedRecordEvidence((current) => current?.recordId === context.recordId ? { ...current, evidenceIds: invoice.evidenceIds, activity: [...(current.activity || []), { title: "Evidence attached", description: evidenceRecord.fileName, date: now.split("T")[0] }] } : current)
+        } else setPendingRepairEvidenceId(evidenceRecord.id)
       }
 
       saveVehicleStore(companyId, next)
@@ -698,6 +706,9 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
     if (!ocrContext || !ocrFile) return
     try {
       const now = isoNow()
+      const repairSource = ocrContext.kind === "repairBill" ? await registerRepairSourceFile({ file: ocrFile }) : null
+      if (repairSource?.duplicateDecision === "EXACT_DUPLICATE") throw new Error(`This exact repair-invoice file was already uploaded as ${repairSource.existingSourceFileId}. Open the existing source instead of processing it twice.`)
+      const reviewedValues = repairSource ? { ...values, __sourceDocumentId: repairSource.sourceFile.id, __sourceDocumentHash: repairSource.sourceFile.sha256, __uploadBatchId: repairSource.sourceFile.uploadBatchId, __idempotencyKey: `ocr:${repairSource.sourceFile.sha256}` } : values
       const evidenceId = attachment.fileRef || createId("DOC")
       const fileReference = await saveEvidenceFile(evidenceId, ocrFile, attachment.fileName, ocrFile.type)
       const evidenceRecord: EvidenceRecord = {
@@ -705,7 +716,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
       companyId,
       entityType: "Vehicle",
       entityId: vehicle.id,
-      documentType: ocrContext.kind === "ownership" ? ocrContext.documentType : ocrContext.kind === "registration" ? ocrContext.documentType : ocrContext.kind === "permit" ? ocrContext.documentType : ocrContext.kind === "inspection" ? ocrContext.documentType : ocrContext.kind === "maintenance" ? ocrContext.documentType : "Vehicle Profile Document",
+      documentType: ocrContext.kind === "profile" ? "Vehicle Profile Document" : ocrContext.documentType,
       fileName: attachment.fileName,
       mimeType: ocrFile.type || "application/octet-stream",
       fileReference,
@@ -715,7 +726,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
       uploadedBy: "",
       source: "upload",
       verificationState: "verified",
-      ocrMetadata: { overallConfidence: attachment.ocrConfidence, extractedFieldKeys: Object.keys(values), processedAt: now },
+      ocrMetadata: { overallConfidence: attachment.ocrConfidence, extractedFieldKeys: Object.keys(values).filter((key) => !key.startsWith("__")), processedAt: now },
       }
       let next: VehicleStore = { ...store, evidence: [evidenceRecord, ...store.evidence] }
     let nextTab = tab
@@ -751,7 +762,12 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
         setSelectedRecordEvidence((current) => current?.recordId === ocrContext.recordId ? { ...current, evidenceIds: Array.from(new Set([...current.evidenceIds, evidenceRecord.id])) } : current)
       } else {
         setPendingMaintenanceEvidenceId(evidenceRecord.id)
+        setPendingMaintenanceOCRValues(values)
       }
+      nextTab = "maintenance"
+    } else if (ocrContext.kind === "repairBill") {
+      setPendingRepairEvidenceId(evidenceRecord.id)
+      setPendingRepairOCRValues(reviewedValues)
       nextTab = "maintenance"
     }
       saveVehicleStore(companyId, next)
@@ -773,6 +789,9 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
   const [pendingPermitEvidenceId, setPendingPermitEvidenceId] = useState<string | null>(null)
   const [pendingInspectionEvidenceId, setPendingInspectionEvidenceId] = useState<string | null>(null)
   const [pendingMaintenanceEvidenceId, setPendingMaintenanceEvidenceId] = useState<string | null>(null)
+  const [pendingMaintenanceOCRValues, setPendingMaintenanceOCRValues] = useState<Record<string, unknown> | null>(null)
+  const [pendingRepairEvidenceId, setPendingRepairEvidenceId] = useState<string | null>(null)
+  const [pendingRepairOCRValues, setPendingRepairOCRValues] = useState<Record<string, unknown> | null>(null)
 
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
 
@@ -895,7 +914,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
           {tab === "ownership" ? <OwnershipTab companyId={companyId} store={store} vehicle={vehicle} records={ownershipRecords} evidence={evidence} FieldComponent={Field} DividerComponent={Divider} SectionTitleComponent={SectionTitle} EmptyStateComponent={EmptyState} StatusPillComponent={StatusPill} readCompanies={readCompanies} money={money} addMonthsISO={addMonthsISO} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "ownership", documentType })} onAttachEvidence={(documentType) => openAttachmentPicker({ kind: "ownership", documentType })} pendingEvidenceId={pendingOwnershipEvidenceId} clearPendingEvidence={() => setPendingOwnershipEvidenceId(null)} setError={setError} setNotice={setNotice} /> : null}
           {tab === "registrations" ? <RegistrationTab companyId={companyId} store={store} vehicle={vehicle} records={registrationRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "registration", documentType })} onAttachEvidence={(documentType) => openAttachmentPicker({ kind: "registration", documentType })} pendingEvidence={pendingRegistrationEvidence} clearPendingEvidence={() => setPendingRegistrationEvidence(null)} setError={setError} setNotice={setNotice} onOpenEvidence={openEvidence} FieldComponent={Field} StatusPillComponent={StatusPill} SectionTitleComponent={SectionTitle} EmptyStateComponent={EmptyState} ModalShellComponent={ModalShell} ModalOCRStripComponent={ModalOCRStrip} ModalSectionLabelComponent={ModalSectionLabel} ModalFieldGridComponent={ModalFieldGrid} ModalFieldComponent={ModalField} ModalEvidenceCardComponent={ModalEvidenceCard} ModalFooterComponent={ModalFooter} modalFieldInputClass={modalFieldInputClass} selectClass={selectClass} money={money} todayISO={todayISO} addVehicleActivity={addVehicleActivity} /> : null}
           {tab === "permits" ? <PermitTab companyId={companyId} store={store} vehicle={vehicle} records={permitRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(documentType) => openSourcePicker({ kind: "permit", documentType })} onAttachEvidence={(documentType) => openAttachmentPicker({ kind: "permit", documentType })} pendingEvidenceId={pendingPermitEvidenceId} clearPendingEvidence={() => setPendingPermitEvidenceId(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: `${record.permitType === "Other" ? record.customPermitType : record.permitType} · ${record.jurisdiction ?? ""}`, evidenceIds: record.evidenceIds ?? [] })} StatusPillComponent={StatusPill} SectionTitleComponent={SectionTitle} EmptyStateComponent={EmptyState} ModalShellComponent={ModalShell} ModalOCRStripComponent={ModalOCRStrip} ModalSectionLabelComponent={ModalSectionLabel} ModalFieldGridComponent={ModalFieldGrid} ModalFieldComponent={ModalField} ModalEvidenceCardComponent={ModalEvidenceCard} ModalFooterComponent={ModalFooter} modalFieldInputClass={modalFieldInputClass} /> : null}
-          {tab === "maintenance" ? <MaintenanceTab companyId={companyId} store={store} vehicle={vehicle} inspections={inspectionRecords} maintenance={maintenanceRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(kind, documentType) => openSourcePicker({ kind, documentType })} onAttachEvidence={(kind, documentType) => openAttachmentPicker({ kind, documentType })} pendingInspectionEvidenceId={pendingInspectionEvidenceId} pendingMaintenanceEvidenceId={pendingMaintenanceEvidenceId} clearInspectionEvidence={() => setPendingInspectionEvidenceId(null)} clearMaintenanceEvidence={() => setPendingMaintenanceEvidenceId(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: "inspectionType" in record ? record.inspectionType : record.maintenanceType, evidenceIds: record.evidenceIds ?? [], kind: "inspectionType" in record ? "inspection" : "maintenance", recordId: record.id, details: "inspectionType" in record ? [{ label: "Inspection date", value: record.inspectionDate }, { label: "Expiry date", value: record.expiryDate }, { label: "Status", value: record.inspectionStatus }, { label: "Inspector / shop", value: record.inspectorShopName }, { label: "Service facility", value: record.serviceFacility }, { label: "Odometer", value: record.odometer }] : [{ label: "Service date", value: record.serviceDate }, { label: "Status", value: record.maintenanceStatus }, { label: "Vendor", value: record.vendor }, { label: "Work order / invoice", value: record.workOrderInvoiceNumber }, { label: "Total cost", value: money(record.totalCost) }], activity: [{ title: "Record created", description: "This record was added to the vehicle workspace.", date: record.createdAt?.split("T")[0] || "Date unavailable" }, { title: "Last updated", description: "Most recent saved change to this record.", date: record.updatedAt?.split("T")[0] || "Date unavailable" }] })} readCompanies={readCompanies} todayISO={todayISO} money={money} inputClass={inputClass} selectClass={selectClass} SectionTitleComponent={SectionTitle} EmptyStateComponent={EmptyState} StatusPillComponent={StatusPill} FieldComponent={Field} DividerComponent={Divider} ModalShellComponent={ModalShell} ModalOCRStripComponent={ModalOCRStrip} ModalSectionLabelComponent={ModalSectionLabel} ModalFieldGridComponent={ModalFieldGrid} ModalFieldComponent={ModalField} ModalEvidenceCardComponent={ModalEvidenceCard} ModalFooterComponent={ModalFooter} modalFieldInputClass={modalFieldInputClass} /> : null}
+          {tab === "maintenance" ? <MaintenanceTab companyId={companyId} store={store} vehicle={vehicle} inspections={inspectionRecords} maintenance={maintenanceRecords} evidence={evidence} onStoreChange={onStoreChange} onStartOCR={(kind, documentType) => openSourcePicker({ kind, documentType })} onAttachEvidence={(kind, documentType) => openAttachmentPicker({ kind, documentType })} pendingInspectionEvidenceId={pendingInspectionEvidenceId} pendingMaintenanceEvidenceId={pendingMaintenanceEvidenceId} pendingRepairEvidenceId={pendingRepairEvidenceId} pendingMaintenanceOCRValues={pendingMaintenanceOCRValues} pendingRepairOCRValues={pendingRepairOCRValues} clearInspectionEvidence={() => setPendingInspectionEvidenceId(null)} clearMaintenanceEvidence={() => setPendingMaintenanceEvidenceId(null)} clearMaintenanceOCRValues={() => setPendingMaintenanceOCRValues(null)} clearRepairEvidence={() => setPendingRepairEvidenceId(null)} clearRepairOCRValues={() => setPendingRepairOCRValues(null)} setError={setError} setNotice={setNotice} onRecordClick={(record) => setSelectedRecordEvidence({ recordLabel: "inspectionType" in record ? record.inspectionType : record.maintenanceType, evidenceIds: record.evidenceIds ?? [], kind: "inspectionType" in record ? "inspection" : "maintenance", recordId: record.id, details: "inspectionType" in record ? [{ label: "Inspection date", value: record.inspectionDate }, { label: "Expiry date", value: record.expiryDate }, { label: "Status", value: record.inspectionStatus }, { label: "Inspector / shop", value: record.inspectorShopName }, { label: "Service facility", value: record.serviceFacility }, { label: "Odometer", value: record.odometer }] : [{ label: "Service date", value: record.serviceDate }, { label: "Status", value: record.maintenanceStatus }, { label: "Vendor", value: record.vendor }, { label: "Work order / invoice", value: record.workOrderInvoiceNumber }, { label: "Total cost", value: money(record.totalCost) }], activity: [{ title: "Record created", description: "This record was added to the vehicle workspace.", date: record.createdAt?.split("T")[0] || "Date unavailable" }, { title: "Last updated", description: "Most recent saved change to this record.", date: record.updatedAt?.split("T")[0] || "Date unavailable" }] })} onRepairRecordClick={(invoice, lines) => setSelectedRecordEvidence({ recordLabel: `${invoice.invoiceNumber} · ${invoice.vendorName || "Repair provider"}`, evidenceIds: invoice.evidenceIds, kind: "repairBill", recordId: invoice.id, details: [{ label: "Service completion", value: invoice.serviceCompletionDate }, { label: "Invoice date", value: invoice.invoiceDate }, { label: "Status", value: invoice.status.replaceAll("_", " ") }, { label: "Provider", value: invoice.vendorName || "—" }, { label: "Document total", value: `${invoice.currency} ${invoice.totalDue.toFixed(2)}` }, { label: "Calculated rows", value: `${invoice.currency} ${invoice.subtotal.toFixed(2)}` }, { label: "Reconciliation", value: invoice.reconciliationState.replaceAll("_", " ") }, { label: "Rows", value: String(lines.length) }], activity: [{ title: "Repair invoice created", description: `Created through ${invoice.entrySource}.`, date: invoice.createdAt.split("T")[0] }, { title: "Last updated", description: "Most recent saved repair-invoice state.", date: invoice.updatedAt.split("T")[0] }] })} readCompanies={readCompanies} todayISO={todayISO} money={money} inputClass={inputClass} selectClass={selectClass} SectionTitleComponent={SectionTitle} EmptyStateComponent={EmptyState} StatusPillComponent={StatusPill} FieldComponent={Field} DividerComponent={Divider} ModalShellComponent={ModalShell} ModalOCRStripComponent={ModalOCRStrip} ModalSectionLabelComponent={ModalSectionLabel} ModalFieldGridComponent={ModalFieldGrid} ModalFieldComponent={ModalField} ModalEvidenceCardComponent={ModalEvidenceCard} ModalFooterComponent={ModalFooter} modalFieldInputClass={modalFieldInputClass} /> : null}
           {tab === "activity" ? (
             <div className="space-y-0">
               <div className="flex items-center justify-between px-1 py-3 border-b border-border">
@@ -934,7 +953,7 @@ function VehicleWorkspace({ companyId, store, vehicle, onStoreChange, onSaveVehi
           selectionRequired={!selectedRecordEvidence}
           onOpen={openEvidence}
           onUpload={() => selectedRecordEvidence?.kind && selectedRecordEvidence.recordId
-            ? openAttachmentPicker({ kind: selectedRecordEvidence.kind, recordId: selectedRecordEvidence.recordId, documentType: selectedRecordEvidence.kind === "inspection" ? "Inspection Document" : "Maintenance Work Order / Invoice" })
+            ? openAttachmentPicker({ kind: selectedRecordEvidence.kind, recordId: selectedRecordEvidence.recordId, documentType: selectedRecordEvidence.kind === "inspection" ? "Inspection Document" : selectedRecordEvidence.kind === "repairBill" ? "Repair Invoice / Work Order" : "Maintenance Work Order / Invoice" })
             : undefined}
           onClearSelection={selectedRecordEvidence ? () => setSelectedRecordEvidence(null) : undefined}
           details={selectedRecordEvidence?.details}
@@ -999,6 +1018,33 @@ function VehicleOCRReview({ result, dataUrl, context, onCancel, onConfirm }: { r
       { key: "engineHours", label: "Engine Hours" },
       { key: "defectsFound", label: "Defects Found" },
       { key: "notes", label: "Notes" },
+    ]
+    if (context?.kind === "maintenance") return [
+      { key: "serviceDate", label: "Service Date", type: "date" as const, required: true },
+      { key: "unitNumber", label: "Unit Number" },
+      { key: "vin", label: "VIN" },
+      { key: "odometer", label: "Odometer", type: "number" as const },
+      { key: "engineHours", label: "Engine Hours", type: "number" as const },
+      { key: "facilityName", label: "Facility / Provider" },
+      { key: "workOrderInvoiceNumber", label: "WO / Invoice Number" },
+      { key: "submittedByName", label: "Submitted By" },
+      { key: "notes", label: "Review Notes" },
+    ]
+    if (context?.kind === "repairBill") return [
+      { key: "providerName", label: "Service Provider / Repair Shop", required: true },
+      { key: "invoiceNumber", label: "Invoice Number", required: true },
+      { key: "invoiceDate", label: "Invoice Date", type: "date" as const, required: true },
+      { key: "serviceCompletionDate", label: "Service Completion Date", type: "date" as const, required: true },
+      { key: "documentTotal", label: "Document Invoice Total", type: "number" as const, required: true },
+      { key: "currency", label: "Currency" },
+      { key: "unitNumber", label: "Unit Number" },
+      { key: "vin", label: "VIN" },
+      { key: "plateNumber", label: "Plate Number" },
+      { key: "odometer", label: "Odometer", type: "number" as const },
+      { key: "lineDescription", label: "First Invoice Row Description" },
+      { key: "lineQuantity", label: "First Row Quantity", type: "number" as const },
+      { key: "lineUnitPrice", label: "First Row Unit Price", type: "number" as const },
+      { key: "lineTotal", label: "First Row Amount", type: "number" as const },
     ]
     return [
       { key: "documentDate", label: "Document Date", type: "date" as const },

@@ -1,0 +1,66 @@
+{
+  "title": "Preventive / Scheduled Maintenance Report",
+  "subtitle": "Client-submitted locked maintenance record",
+  "company": {
+    "id": "COMP-11362429",
+    "name": "11362429 Canada Inc"
+  },
+  "vehicle": {
+    "unitNumber": "105",
+    "vin": "1XPBD49X1MD123456",
+    "plate": "AB A12345",
+    "yearMakeModel": "2023 Peterbilt 579",
+    "tireSize": "11R22.5",
+    "ownershipProviderName": "11362429 Canada Inc"
+  },
+  "service": {
+    "programName": "Preventive / Scheduled Maintenance",
+    "basis": "COMBINED",
+    "triggerSource": "SCHEDULED",
+    "serviceDate": "2026-09-23",
+    "serviceCompletionDate": "2026-09-23",
+    "odometer": "183,420 KM",
+    "engineHours": 6240,
+    "dueDate": "2026-09-22",
+    "dueOdometer": 183000,
+    "dueEngineHours": 6200,
+    "nextDueDate": "2026-12-22",
+    "nextDueOdometer": 213420,
+    "nextDueEngineHours": 6740,
+    "outcome": "COMPLETED_ATTENTION_REQUIRED"
+  },
+  "provider": {
+    "performedBy": "IN_HOUSE",
+    "facilityName": "Client yard maintenance bay",
+    "facilityAddress": "Calgary, AB",
+    "technicianName": "John Maintenance",
+    "workOrderNumber": "PM-105-2026-09",
+    "invoiceNumber": ""
+  },
+  "serviceActions": [
+    { "id": "oil", "action": "Oil change", "performed": true, "notes": "" },
+    { "id": "filter", "action": "Filter service", "performed": true, "notes": "Oil and fuel filters replaced" },
+    { "id": "lube", "action": "Lubrication / greasing", "performed": true, "notes": "" },
+    { "id": "tire", "action": "Tire service / rotation", "performed": false, "notes": "" },
+    { "id": "alignment", "action": "Wheel alignment", "performed": false, "notes": "" }
+  ],
+  "checklist": [
+    { "id": "1", "system": "Engine / Fuel / Exhaust", "component": "Engine, fuel system, exhaust, belts, leaks", "status": "OK", "notes": "" },
+    { "id": "2", "system": "Fluids", "component": "Engine oil, coolant, washer fluid, power steering, brake reservoir", "status": "SERVICED", "notes": "Washer fluid topped up" },
+    { "id": "3", "system": "Electrical / Lighting", "component": "Lamps, reflectors, wiring, charging system", "status": "ATTENTION_REQUIRED", "notes": "Right marker light weak; monitor and repair if repeated" },
+    { "id": "4", "system": "Wheels / Tires", "component": "Tire condition, tread depth, wheels, fasteners", "status": "OK", "notes": "Tread FL 12/32, FR 12/32" },
+    { "id": "5", "system": "Brakes", "component": "Friction components, air brake system, park brake, brake adjustment", "status": "OK", "notes": "No leak heard, visual check passed" },
+    { "id": "6", "system": "Steering / Suspension", "component": "Steering linkage, suspension, shocks, alignment condition", "status": "OK", "notes": "" },
+    { "id": "7", "system": "Body / Frame", "component": "Body, chassis frame, fifth wheel, hitch, rear impact guard", "status": "OK", "notes": "" },
+    { "id": "8", "system": "Cab / Visibility", "component": "Windshield, mirrors, wipers, washers, heater/defroster", "status": "OK", "notes": "" },
+    { "id": "9", "system": "Safety Equipment", "component": "Fire extinguisher, warning devices, emergency equipment", "status": "OK", "notes": "" },
+    { "id": "10", "system": "Reefer / Auxiliary Unit", "component": "Reefer or auxiliary equipment, if applicable", "status": "NOT_APPLICABLE", "notes": "" }
+  ],
+  "remarks": "Preventive maintenance completed. One attention item noted; no repair record required at submission.",
+  "submitted": {
+    "submittedByName": "Client Maintenance Manager",
+    "submittedByRole": "Operations",
+    "submittedAt": "2026-09-23T18:30:00.000Z",
+    "lockedAt": "2026-09-23T18:30:00.000Z"
+  }
+}

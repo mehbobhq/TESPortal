@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { DriverDateInput } from "./DriverDateInput";
 import {
   ShieldCheck,
   Stethoscope,
@@ -15,6 +16,7 @@ import {
 import { DriverMaster, ScreeningRecord, ScreeningCategory } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { getDeadlineStatus, getDeadlineClasses, getDaysRemaining } from "@/lib/deadline-engine";
+import { driverDateInputValue } from "@/lib/driver-date";
 
 export interface DriverScreeningTabProps {
   master: DriverMaster;
@@ -169,19 +171,21 @@ export function DriverScreeningTab({
       return;
     }
 
+    const d = (value: string) => driverDateInputValue(value);
+
     onAddScreening({
       category: form.category,
-      recordDate: form.recordDate,
-      expiryDate: form.expiryDate || undefined,
+      recordDate: d(form.recordDate),
+      expiryDate: d(form.expiryDate) || undefined,
       status: form.status,
       resultSummary: form.resultSummary.trim(),
       providerOrAuthority: form.providerOrAuthority.trim(),
       medicalCardDetails:
         form.category === "Medical Card / DOT Physical"
           ? {
-              examinationDate: form.recordDate,
-              certificateIssueDate: form.recordDate,
-              expiryDate: form.expiryDate || undefined,
+              examinationDate: d(form.recordDate),
+              certificateIssueDate: d(form.recordDate),
+              expiryDate: d(form.expiryDate) || undefined,
               nationalRegistryNumber: form.cmeNumber || undefined,
               examinerName: form.examinerName || undefined,
               medicalQualificationStatus: form.medicalQualificationStatus || undefined,
@@ -193,8 +197,8 @@ export function DriverScreeningTab({
           ? {
               testType: form.testType || "Pre-Employment",
               testCategory: form.testCategory || "Combined Drug & Alcohol",
-              specimenCollectionDate: form.specimenCollectionDate || form.recordDate,
-              mroVerifiedDate: form.mroVerifiedDate || undefined,
+              specimenCollectionDate: d(form.specimenCollectionDate || form.recordDate),
+              mroVerifiedDate: d(form.mroVerifiedDate) || undefined,
               mroName: form.mroName || undefined,
               laboratoryName: form.laboratoryName || undefined,
               result: form.drugAlcoholResult || "Pending Verification",
@@ -204,8 +208,8 @@ export function DriverScreeningTab({
         form.category === "Previous Employer Verification"
           ? {
               employerName: form.employerName.trim(),
-              verificationRequestedDate: form.verificationRequestedDate || undefined,
-              verificationReceivedDate: form.verificationReceivedDate || undefined,
+              verificationRequestedDate: d(form.verificationRequestedDate) || undefined,
+              verificationReceivedDate: d(form.verificationReceivedDate) || undefined,
               verificationMethod: form.verificationMethod || undefined,
               verificationOutcome: form.verificationOutcome || undefined,
               eligibleForRehire: form.eligibleForRehire || undefined,
@@ -215,10 +219,10 @@ export function DriverScreeningTab({
         form.category === "FMCSA Clearinghouse Query" || form.category === "Annual Clearinghouse Query"
           ? {
               queryPurpose: form.clearinghousePurpose || (form.category === "Annual Clearinghouse Query" ? "Annual" : "Pre-Employment"),
-              submittedDate: form.clearinghouseSubmittedDate || form.recordDate,
-              completedDate: form.clearinghouseCompletedDate || undefined,
+              submittedDate: d(form.clearinghouseSubmittedDate || form.recordDate),
+              completedDate: d(form.clearinghouseCompletedDate) || undefined,
               consentObtained: form.clearinghouseConsentObtained,
-              consentDate: form.clearinghouseConsentDate || undefined,
+              consentDate: d(form.clearinghouseConsentDate) || undefined,
               queryResult: form.clearinghouseResult || "Pending Results",
               queryReferenceNumber: form.clearinghouseReference || undefined,
             }
@@ -226,17 +230,17 @@ export function DriverScreeningTab({
       pspDetails:
         form.category === "Pre-Employment Screening Program (PSP)"
           ? {
-              requestDate: form.pspRequestDate || form.recordDate,
+              requestDate: d(form.pspRequestDate || form.recordDate),
               consentObtained: form.pspConsentObtained,
-              resultReceivedDate: form.pspResultReceivedDate || undefined,
-              reviewDate: form.pspReviewDate || undefined,
+              resultReceivedDate: d(form.pspResultReceivedDate) || undefined,
+              reviewDate: d(form.pspReviewDate) || undefined,
               reviewStatus: form.pspReviewStatus || "Under Review",
             }
           : undefined,
       roadTestDetails:
         form.category === "Road Test Evaluation"
           ? {
-              testDate: form.roadTestDate || form.recordDate,
+              testDate: d(form.roadTestDate || form.recordDate),
               examinerName: form.roadTestExaminer.trim(),
               vehicleUnitNumber: form.roadTestVehicleUnit || undefined,
               vehicleType: form.roadTestVehicleType || undefined,
@@ -543,10 +547,9 @@ export function DriverScreeningTab({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Record / Exam Date *
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.recordDate}
-                    onChange={(e) => setForm({ ...form, recordDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, recordDate: value })}
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
@@ -556,10 +559,9 @@ export function DriverScreeningTab({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Expiry Date (If applicable)
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.expiryDate}
-                    onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, expiryDate: value })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
                 </div>
@@ -587,7 +589,7 @@ export function DriverScreeningTab({
                   <input
                     type="text"
                     value={form.providerOrAuthority}
-                    onChange={(e) => setForm({ ...form, providerOrAuthority: e.target.value })}
+                    onChange={(value) => setForm({ ...form, providerOrAuthority: value })}
                     placeholder="e.g. Dynacare / Dr. Angela Foster, MD"
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
@@ -598,11 +600,11 @@ export function DriverScreeningTab({
                   <>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">National Registry CME #</label>
-                      <input value={form.cmeNumber} onChange={(e) => setForm({ ...form, cmeNumber: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" />
+                      <input value={form.cmeNumber} onChange={(value) => setForm({ ...form, cmeNumber: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name</label>
-                      <input value={form.examinerName} onChange={(e) => setForm({ ...form, examinerName: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" />
+                      <input value={form.examinerName} onChange={(value) => setForm({ ...form, examinerName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Medical Qualification</label>
@@ -623,19 +625,19 @@ export function DriverScreeningTab({
                   <>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Type</label><select value={form.testType} onChange={(e) => setForm({ ...form, testType: e.target.value as typeof form.testType })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Pre-Employment</option><option>Random</option><option>Post-Accident</option><option>Reasonable Suspicion</option><option>Return-to-Duty</option><option>Follow-Up</option></select></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Category</label><select value={form.testCategory} onChange={(e) => setForm({ ...form, testCategory: e.target.value as typeof form.testCategory })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Drug (5-Panel)</option><option>Alcohol (Breathalyzer)</option><option>Combined Drug &amp; Alcohol</option></select></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Specimen Collection Date</label><input type="date" value={form.specimenCollectionDate} onChange={(e) => setForm({ ...form, specimenCollectionDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Specimen Collection Date</label><DriverDateInput value={form.specimenCollectionDate} onChange={(value) => setForm({ ...form, specimenCollectionDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Drug / Alcohol Result</label><select value={form.drugAlcoholResult} onChange={(e) => setForm({ ...form, drugAlcoholResult: e.target.value as typeof form.drugAlcoholResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Negative</option><option>Positive</option><option>Refusal to Test</option><option>Cancelled / Invalid</option><option>Pending Verification</option></select></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Verified Date</label><input type="date" value={form.mroVerifiedDate} onChange={(e) => setForm({ ...form, mroVerifiedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Name</label><input value={form.mroName} onChange={(e) => setForm({ ...form, mroName: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Laboratory Name</label><input value={form.laboratoryName} onChange={(e) => setForm({ ...form, laboratoryName: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Verified Date</label><DriverDateInput value={form.mroVerifiedDate} onChange={(value) => setForm({ ...form, mroVerifiedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Name</label><input value={form.mroName} onChange={(value) => setForm({ ...form, mroName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Laboratory Name</label><input value={form.laboratoryName} onChange={(value) => setForm({ ...form, laboratoryName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
                   </>
                 )}
 
                 {form.category === "Previous Employer Verification" && (
                   <>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Previous Employer *</label><input value={form.employerName} onChange={(e) => setForm({ ...form, employerName: e.target.value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Requested</label><input type="date" value={form.verificationRequestedDate} onChange={(e) => setForm({ ...form, verificationRequestedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Received</label><input type="date" value={form.verificationReceivedDate} onChange={(e) => setForm({ ...form, verificationReceivedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Previous Employer *</label><input value={form.employerName} onChange={(value) => setForm({ ...form, employerName: value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Requested</label><DriverDateInput value={form.verificationRequestedDate} onChange={(value) => setForm({ ...form, verificationRequestedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Received</label><DriverDateInput value={form.verificationReceivedDate} onChange={(value) => setForm({ ...form, verificationReceivedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Method</label><select value={form.verificationMethod} onChange={(e) => setForm({ ...form, verificationMethod: e.target.value as typeof form.verificationMethod })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Not recorded</option><option>Email</option><option>Fax</option><option>Phone</option><option>Third-Party Service</option></select></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Outcome</label><select value={form.verificationOutcome} onChange={(e) => setForm({ ...form, verificationOutcome: e.target.value as typeof form.verificationOutcome })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Not recorded</option><option>Verified as Claimed</option><option>Discrepancy Found</option><option>No Record / Unable to Verify</option></select></div>
                     <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Eligible for Rehire</label><select value={form.eligibleForRehire} onChange={(e) => setForm({ ...form, eligibleForRehire: e.target.value as typeof form.eligibleForRehire })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Not recorded</option><option>Yes</option><option>No</option><option>Ineligible</option><option>Unknown</option></select></div>
@@ -645,19 +647,19 @@ export function DriverScreeningTab({
                 {(form.category === "FMCSA Clearinghouse Query" || form.category === "Annual Clearinghouse Query") && (
                   <>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Purpose</label><select value={form.clearinghousePurpose} onChange={(e) => setForm({ ...form, clearinghousePurpose: e.target.value as typeof form.clearinghousePurpose })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Pre-Employment</option><option>Annual</option><option>Follow-Up</option><option>Other</option></select></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Submitted Date</label><input type="date" value={form.clearinghouseSubmittedDate} onChange={(e) => setForm({ ...form, clearinghouseSubmittedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Completed Date</label><input type="date" value={form.clearinghouseCompletedDate} onChange={(e) => setForm({ ...form, clearinghouseCompletedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Submitted Date</label><DriverDateInput value={form.clearinghouseSubmittedDate} onChange={(value) => setForm({ ...form, clearinghouseSubmittedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Completed Date</label><DriverDateInput value={form.clearinghouseCompletedDate} onChange={(value) => setForm({ ...form, clearinghouseCompletedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Result</label><select value={form.clearinghouseResult} onChange={(e) => setForm({ ...form, clearinghouseResult: e.target.value as typeof form.clearinghouseResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Driver Not Prohibited</option><option>Driver Prohibited</option><option>Pending Consent</option><option>Pending Results</option></select></div>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Reference Number</label><input value={form.clearinghouseReference} onChange={(e) => setForm({ ...form, clearinghouseReference: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Reference Number</label><input value={form.clearinghouseReference} onChange={(value) => setForm({ ...form, clearinghouseReference: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <label className="col-span-2 flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={form.clearinghouseConsentObtained} onChange={(e) => setForm({ ...form, clearinghouseConsentObtained: e.target.checked })} /> Consent obtained</label>
                   </>
                 )}
 
                 {form.category === "Pre-Employment Screening Program (PSP)" && (
                   <>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Request Date</label><input type="date" value={form.pspRequestDate} onChange={(e) => setForm({ ...form, pspRequestDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Result Received</label><input type="date" value={form.pspResultReceivedDate} onChange={(e) => setForm({ ...form, pspResultReceivedDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Review Date</label><input type="date" value={form.pspReviewDate} onChange={(e) => setForm({ ...form, pspReviewDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Request Date</label><DriverDateInput value={form.pspRequestDate} onChange={(value) => setForm({ ...form, pspRequestDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Result Received</label><DriverDateInput value={form.pspResultReceivedDate} onChange={(value) => setForm({ ...form, pspResultReceivedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Review Date</label><DriverDateInput value={form.pspReviewDate} onChange={(value) => setForm({ ...form, pspReviewDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Review Status</label><select value={form.pspReviewStatus} onChange={(e) => setForm({ ...form, pspReviewStatus: e.target.value as typeof form.pspReviewStatus })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Clean Record</option><option>Violations Noted</option><option>Under Review</option></select></div>
                     <label className="col-span-2 flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={form.pspConsentObtained} onChange={(e) => setForm({ ...form, pspConsentObtained: e.target.checked })} /> Consent obtained</label>
                   </>
@@ -665,10 +667,10 @@ export function DriverScreeningTab({
 
                 {form.category === "Road Test Evaluation" && (
                   <>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Date</label><input type="date" value={form.roadTestDate} onChange={(e) => setForm({ ...form, roadTestDate: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name *</label><input value={form.roadTestExaminer} onChange={(e) => setForm({ ...form, roadTestExaminer: e.target.value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Unit</label><input value={form.roadTestVehicleUnit} onChange={(e) => setForm({ ...form, roadTestVehicleUnit: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Type</label><input value={form.roadTestVehicleType} onChange={(e) => setForm({ ...form, roadTestVehicleType: e.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Date</label><DriverDateInput value={form.roadTestDate} onChange={(value) => setForm({ ...form, roadTestDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name *</label><input value={form.roadTestExaminer} onChange={(value) => setForm({ ...form, roadTestExaminer: value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Unit</label><input value={form.roadTestVehicleUnit} onChange={(value) => setForm({ ...form, roadTestVehicleUnit: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Type</label><input value={form.roadTestVehicleType} onChange={(value) => setForm({ ...form, roadTestVehicleType: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Type</label><select value={form.roadTestType} onChange={(e) => setForm({ ...form, roadTestType: e.target.value as typeof form.roadTestType })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Pre-Trip &amp; Road Test</option><option>Manoeuvring &amp; Backing</option><option>Coupling / Uncoupling</option><option>Full Evaluation</option></select></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Result</label><select value={form.roadTestResult} onChange={(e) => setForm({ ...form, roadTestResult: e.target.value as typeof form.roadTestResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Passed</option><option>Failed</option><option>Retest Required</option></select></div>
                   </>
@@ -681,7 +683,7 @@ export function DriverScreeningTab({
                   <input
                     type="text"
                     value={form.resultSummary}
-                    onChange={(e) => setForm({ ...form, resultSummary: e.target.value })}
+                    onChange={(value) => setForm({ ...form, resultSummary: value })}
                     placeholder="e.g. Clean MVR - 0 Points, 2-Year Medical Cert Issued"
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1 font-semibold"
@@ -695,7 +697,7 @@ export function DriverScreeningTab({
                   <textarea
                     rows={2}
                     value={form.notes}
-                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                    onChange={(value) => setForm({ ...form, notes: value })}
                     placeholder="e.g. Annual clearinghouse pre-employment consent on file."
                     className="w-full rounded-xl border border-border bg-background p-2.5 mt-1"
                   />

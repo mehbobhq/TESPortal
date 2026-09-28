@@ -1394,6 +1394,14 @@ export default function NewCompanyPage() {
       return
     }
 
+    if (isCustomer) {
+      const serviceStartDate = String(new FormData(form).get("startDate") || "").trim()
+      if (!serviceStartDate) {
+        window.alert("TES Service Start Date is required for a Customer record.")
+        return
+      }
+    }
+
     setSubmitting(true)
 
     try {
@@ -2066,12 +2074,17 @@ export default function NewCompanyPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Start Date</Label>
+                  <Label>TES Service Start Date *</Label>
 
                   <Input
                     name="startDate"
                     type="date"
+                    required
                   />
+
+                  <p className="text-[11px] text-muted-foreground">
+                    Date TES began providing services for this customer.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

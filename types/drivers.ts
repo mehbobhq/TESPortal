@@ -219,7 +219,8 @@ export type DriverApplicationStatus =
   | "Rejected"
   | "Withdrawn"
   | "Expired"
-  | "Invitation Cancelled";
+  | "Invitation Cancelled"
+  | "Superseded";
 
 export interface ApplicationClaimedAddress {
   addressLine1: string;
@@ -268,17 +269,159 @@ export interface ApplicationClaimedCitation {
   penalty: string;
 }
 
+
+export type DriverApplicationContext =
+  | "Prospective Hire"
+  | "Existing Driver File Completion"
+  | "Remediation"
+  | "Imported Historical Record";
+
+export type HiringWorkflowAction =
+  | "SEND_APPLICATION"
+  | "CONTINUE_APPLICATION"
+  | "COMPLETE_REFERENCE_CHECKS"
+  | "COMPLETE_HIRING_PACKAGE"
+  | "REMEDIATE_HIRING_FILE"
+  | "NONE";
+
+export type HiringRequirementAssessmentStatus =
+  | "SATISFIED"
+  | "MISSING"
+  | "PENDING"
+  | "INSUFFICIENT_EVIDENCE"
+  | "REMEDIATED"
+  | "NOT_APPLICABLE";
+
+export interface HiringRequirementAssessment {
+  id: string;
+  label: string;
+  status: HiringRequirementAssessmentStatus;
+  requiredAt?: string;
+  dueBy?: string;
+  evidenceIds: string[];
+  notes?: string;
+}
+
+export interface DriverHiringFileAssessment {
+  driverMasterId: string;
+  companyId: string;
+  tesServiceStartDate?: string;
+  employmentStartDate?: string;
+  isInheritedDriver: boolean;
+  applicationStatus: HiringRequirementAssessmentStatus;
+  referenceCheckStatus: HiringRequirementAssessmentStatus;
+  hiringPackageStatus: HiringRequirementAssessmentStatus;
+  nextAction: HiringWorkflowAction;
+  nextActionLabel?: string;
+  requirements: HiringRequirementAssessment[];
+  assessedAt: string;
+}
+
+export type DriverApplicationProcessingStatus =
+  | "Not Started"
+  | "Queued"
+  | "Processing"
+  | "Review Required"
+  | "Processed"
+  | "Failed";
+
+export type DriverApplicationFindingStatus =
+  | "Open"
+  | "Clarification Requested"
+  | "Resolved"
+  | "New Application Required";
+
+export type DriverApplicationFindingType =
+  | "MATCH"
+  | "MISMATCH"
+  | "MISSING_INFORMATION"
+  | "UNABLE_TO_VERIFY"
+  | "ADDITIONAL_INFORMATION_REQUIRED";
+
+export interface DriverApplicationFinding {
+  id: string;
+  type: DriverApplicationFindingType;
+  status: DriverApplicationFindingStatus;
+  subject:
+    | "Identity"
+    | "Licence"
+    | "Employment"
+    | "Collision"
+    | "Citation / Violation"
+    | "Medical"
+    | "Training"
+    | "Operating Scope"
+    | "Authorization"
+    | "Document"
+    | "Other";
+  label: string;
+  applicantStatement?: string;
+  evidenceStatement?: string;
+  evidenceIds: string[];
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+}
+
+export interface DriverApplicationProcessingRecord {
+  status: DriverApplicationProcessingStatus;
+  queuedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastError?: string;
+  findingIds: string[];
+  fileCompleteness:
+    | "Not Assessed"
+    | "Incomplete"
+    | "Review Required"
+    | "Complete";
+  qualificationAssessment:
+    | "Not Assessed"
+    | "Pending"
+    | "Review Required"
+    | "Assessed";
+  updatedAt: string;
+}
+
 export interface DriverApplicationRecord {
   id: string; // e.g. APP-000102
   companyId: string;
   companyDriverRelationshipId?: string;
   driverMasterId: string;
+  applicationContext?: DriverApplicationContext;
+  tesServiceStartDateAtCreation?: string;
+  employmentStartDateAtCreation?: string;
+  remediatesApplicationId?: string;
+  replacesApplicationId?: string;
+  supersededByApplicationId?: string;
+  processing?: DriverApplicationProcessingRecord;
+  findings?: DriverApplicationFinding[];
+  source?: "TES Workflow" | "Carrier Supplied" | "Driver Supplied" | "Imported";
+  invitationSentAt?: string;
+  invitationRecipientEmail?: string;
+  invitationDeliveryMethod?: "Email";
+  invitationProvider?: "Resend";
+  invitationProviderMessageId?: string;
+  invitationExpiresAt?: string;
+  invitationLastError?: string;
   applicationType: "Full Driver Employment" | "Owner-Operator Lease" | "Temporary / Seasonal";
   status: DriverApplicationStatus;
   operatingRegion: OperatingRegion;
   createdDate: string;
   startedDate?: string;
   submittedDate?: string;
+  /** Receipt id handed to the applicant at submission time (TES-APP-...). */
+  applicantSubmissionReceiptId?: string;
+  /** Immutable applicant-submitted snapshot ingested from the shared submission boundary. */
+  applicantSubmittedSnapshot?: {
+    applicationId: string;
+    submittedAt: string;
+    receiptId: string;
+    completedSteps: string[];
+    draft: unknown;
+  };
   reviewedDate?: string;
   reviewedBy?: string;
   companyDetermination?: "Approved" | "Rejected" | "Withdrawn" | "Pending";
@@ -399,8 +542,18 @@ export type ScreeningCategory =
   | "Return-to-Duty Test"
   | "Follow-up Testing";
 
+export interface PreviousEmployerVerificationAttempt {
+  id: string;
+  attemptedAt: string;
+  method: "Email" | "Fax" | "Phone" | "Third-Party Service";
+  outcome: "Sent" | "Delivered" | "Opened" | "Response Received" | "No Response" | "Failed";
+  notes?: string;
+  evidenceId?: string;
+}
+
 export interface PreviousEmployerVerificationDetails {
   employerName: string;
+  attempts?: PreviousEmployerVerificationAttempt[];
   claimedStartDate?: string;
   claimedEndDate?: string;
   claimedPosition?: string;

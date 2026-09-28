@@ -63,6 +63,7 @@ import {
   todayISO,
   createId,
   formatFrequency,
+  isValidISODate,
 } from "@/src/components/tax-filing/tax-helpers"
 
 
@@ -429,6 +430,18 @@ export default function TaxFilingsPage() {
     const definition = getDefinition(profileDraft.taxCode)
 
     // 1. Validate required fields
+    if (
+      (profileDraft.effectiveDate && !isValidISODate(profileDraft.effectiveDate)) ||
+      (profileDraft.closureDate && !isValidISODate(profileDraft.closureDate)) ||
+      (profileDraft.lastVerifiedDate && !isValidISODate(profileDraft.lastVerifiedDate))
+    ) {
+      window.alert("Enter valid profile dates in YYYY-MM-DD format.")
+      return
+    }
+    if (profileDraft.effectiveDate && profileDraft.closureDate && profileDraft.closureDate < profileDraft.effectiveDate) {
+      window.alert("Closure Date cannot be earlier than Effective Date.")
+      return
+    }
     if (definition.accountRequired && !profileDraft.accountNumber?.trim()) {
       window.alert(`Account Number is required for ${definition.name}.`)
       return
@@ -682,6 +695,10 @@ export default function TaxFilingsPage() {
     if (!end) return
     const due = window.prompt("Due date (YYYY-MM-DD):")
     if (!due) return
+    if (![start, end, due].every(isValidISODate) || end < start) {
+      window.alert("Enter valid YYYY-MM-DD dates, with the period end on or after its start.")
+      return
+    }
     const label = window.prompt("Reporting period label:", `${start} – ${end}`) || `${start} – ${end}`
 
     const now = isoNow()
@@ -730,6 +747,10 @@ export default function TaxFilingsPage() {
 
   // Save / Update Submission (Persist First)
   const saveSubmission = (submission: FilingSubmission) => {
+    if (submission.filingDate && !isValidISODate(submission.filingDate)) {
+      window.alert("Enter a valid Filing Date in YYYY-MM-DD format.")
+      return
+    }
     const currentTaxData = loadTaxData(companyId)
     const isNew = !currentTaxData.submissions.some((item) => item.id === submission.id)
     const previousSubmission = currentTaxData.submissions.find((item) => item.id === submission.id)
@@ -1142,7 +1163,7 @@ export default function TaxFilingsPage() {
               onCalendarYearChange={setCalendarYear}
               onUpload={() =>
                 startUpload({
-                  documentType: "Return",
+                  documentType: "Tax Return",
                 })
               }
               onGenerateActive={() =>
@@ -1167,7 +1188,7 @@ export default function TaxFilingsPage() {
                 open={true}
                 title={getDefinition(selectedObligation.taxCode).name}
                 subtitle={company.name}
-                context={`${selectedObligation.reportingPeriodLabel} · Due ${selectedObligation.dueDate} · ${formatFrequency(selectedObligation.frequencySnapshot)}`}
+                context={`${selectedObligation.reportingPeriodLabel} · Due Date: ${selectedObligation.dueDate} · Frequency: ${formatFrequency(selectedObligation.frequencySnapshot)}`}
                 onClose={() => {
                   setSelectedObligationId(null)
                   setShowFilingForm(false)
@@ -1176,6 +1197,7 @@ export default function TaxFilingsPage() {
                 closeOnBackdrop={!showFilingForm}
                 ariaLabel="Tax filing period record"
                 contentHeight="natural"
+                headerTone="neutral"
               >
                 <div className="p-5 sm:p-6">
                 <TESEvidenceLayout
@@ -1206,76 +1228,22 @@ export default function TaxFilingsPage() {
                     Frequency snapshot: <span className="font-semibold text-foreground">{formatFrequency(selectedObligation.frequencySnapshot)}</span>. Historical reporting requirements remain permanently preserved.
                   </div>
 
-                  {data.documents.filter(
-                    (document) => document.obligationId === selectedObligation.id
-                  ).length === 0 ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                            Filing Evidence Required
-                          </p>
-                          <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-300/80">
-                            Attach the filed return or other filing evidence to complete this tax filing record.
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            startUpload({
-                              taxProfileId: selectedObligation.taxProfileId,
-                              obligationId: selectedObligation.id,
-                              documentType: "Return",
-                            })
-                          }
-                          className="shrink-0 border-amber-300 hover:bg-amber-100/60 dark:border-amber-700 dark:hover:bg-amber-950/60"
-                        >
-                          <Upload className="size-3.5" /> Upload Evidence
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
-                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                        Filing Evidence Attached
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="flex flex-wrap gap-2">
-                    {submissionsForObligation(selectedObligation.id).length === 0 && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => {
-                          setEditingSubmission(undefined)
-                          setShowFilingForm(true)
-                        }}
-                      >
-                        <Plus className="size-3.5" /> Record Filing Submission
-                      </Button>
-                    )}
-
+                  {submissionsForObligation(selectedObligation.id).length === 0 && (
                     <Button
                       type="button"
-                      variant="outline"
                       size="sm"
-                      onClick={() =>
-                        startUpload({
-                          documentType: "Supporting Document",
-                          taxCode: selectedObligation.taxCode,
-                          obligationId: selectedObligation.id,
-                        })
-                      }
+                      onClick={() => {
+                        setEditingSubmission(undefined)
+                        setShowFilingForm(true)
+                      }}
                     >
-                      <Upload className="size-3.5" /> Attach Evidence
+                      <Plus className="size-3.5" /> Record Filing Submission
                     </Button>
-                  </div>
+                  )}
 
                   {showFilingForm && (
                     <FilingRecordForm
+                      key={`${selectedObligation.id}:${editingSubmission?.id || "new"}`}
                       obligation={selectedObligation}
                       existingSubmission={editingSubmission}
                       onSave={saveSubmission}
@@ -1308,9 +1276,10 @@ export default function TaxFilingsPage() {
                               </div>
 
                               <div className="flex items-center gap-2">
-                                <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-foreground">
-                                  {submission.paymentStatus}
-                                </span>
+                                <TESStatusRing
+                                  tone={submission.paymentStatus === "Paid" ? "current" : submission.paymentStatus === "Unpaid" ? "critical" : submission.paymentStatus === "Not Applicable" || submission.paymentStatus === "Refund" ? "neutral" : "attention"}
+                                  label={submission.paymentStatus}
+                                />
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -1384,11 +1353,58 @@ export default function TaxFilingsPage() {
                 </div>
                   }
                   evidence={
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2">
+                        <p className="text-xs font-bold uppercase tracking-wider text-primary">
+                          Period Evidence
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Filed return and supporting documents for this reporting period.
+                        </p>
+                      </div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-foreground">
                         Attached Period Evidence
                       </p>
-                      <div className="mt-3 space-y-2">
+                      {data.documents.some((doc) => doc.obligationId === selectedObligation.id) ? (
+                        <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+                          Filing Evidence Attached
+                        </p>
+                      ) : (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+                          <p className="text-xs font-bold text-amber-900 dark:text-amber-200">Filing Evidence Required</p>
+                          <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                            Attach the filed return or other filing evidence to complete this record.
+                          </p>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => startUpload({
+                            profileId: selectedObligation.taxProfileId,
+                            taxCode: selectedObligation.taxCode,
+                            obligationId: selectedObligation.id,
+                            documentType: "Tax Return",
+                          })}
+                        >
+                          <Upload className="size-3.5" /> Upload Filed Return
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => startUpload({
+                            profileId: selectedObligation.taxProfileId,
+                            taxCode: selectedObligation.taxCode,
+                            obligationId: selectedObligation.id,
+                            documentType: "Supporting Document",
+                          })}
+                        >
+                          <Upload className="size-3.5" /> Add Supporting Document
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
                         {data.documents.filter((doc) => doc.obligationId === selectedObligation.id).length === 0 ? (
                           <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
                             No documents attached to this reporting period.

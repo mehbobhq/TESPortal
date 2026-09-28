@@ -77,7 +77,10 @@ function TaxProfileForm({
       <div className="space-y-1.5">
         <label className="text-xs font-semibold text-foreground">Effective Date</label>
         <input
-          type="date"
+          type="text"
+          inputMode="numeric"
+          maxLength={10}
+          placeholder="YYYY-MM-DD"
           value={profile.effectiveDate || ""}
           onChange={(event) => patch({ effectiveDate: event.target.value })}
           className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
@@ -87,7 +90,10 @@ function TaxProfileForm({
       <div className="space-y-1.5">
         <label className="text-xs font-semibold text-foreground">Closure Date</label>
         <input
-          type="date"
+          type="text"
+          inputMode="numeric"
+          maxLength={10}
+          placeholder="YYYY-MM-DD"
           value={profile.closureDate || ""}
           onChange={(event) => patch({ closureDate: event.target.value })}
           className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
@@ -125,7 +131,10 @@ function TaxProfileForm({
       <div className="space-y-1.5">
         <label className="text-xs font-semibold text-foreground">Last Verified Date</label>
         <input
-          type="date"
+          type="text"
+          inputMode="numeric"
+          maxLength={10}
+          placeholder="YYYY-MM-DD"
           value={profile.lastVerifiedDate || ""}
           onChange={(event) => patch({ lastVerifiedDate: event.target.value })}
           className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"

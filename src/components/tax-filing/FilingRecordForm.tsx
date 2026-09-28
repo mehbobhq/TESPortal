@@ -5,6 +5,7 @@ import {
   isoNow,
   todayISO,
   createId,
+  isValidISODate,
 } from "@/src/components/tax-filing/tax-helpers"
 
 import type {
@@ -59,6 +60,10 @@ function FilingRecordForm({
   )
 
   const save = () => {
+    if (filingDate && !isValidISODate(filingDate)) {
+      window.alert("Enter a valid Filing Date in YYYY-MM-DD format, or leave it blank.")
+      return
+    }
     const now = isoNow()
 
     onSave({
@@ -139,7 +144,10 @@ function FilingRecordForm({
           </label>
 
           <input
-            type="date"
+            type="text"
+            inputMode="numeric"
+            maxLength={10}
+            placeholder="YYYY-MM-DD"
             value={filingDate}
             onChange={(event) => setFilingDate(event.target.value)}
             className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"

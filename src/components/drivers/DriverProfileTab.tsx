@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { DriverDateInput } from "@/src/components/drivers/DriverDateInput";
 import {
   User,
   Building2,
@@ -13,6 +14,7 @@ import {
 import { DriverMaster, CompanyDriverRelationship, CanonicalCompany, RecordType, OperatingRegion, DriverStatus } from "@/types/drivers";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { fullLegalName, currentAddress, calculateAge } from "@/lib/driver-data";
+import { driverDateInputValue } from "@/lib/driver-date";
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverProfileTabProps {
@@ -72,17 +74,17 @@ export function DriverProfileTab({
     legalMiddleName: master.identity.legalMiddleName || "",
     legalLastName: master.identity.legalLastName,
     preferredName: master.identity.preferredName || "",
-    dateOfBirth: master.identity.dateOfBirth,
+    dateOfBirth: driverDateInputValue(master.identity.dateOfBirth),
     phone: master.identity.phone || "",
-    email: master.identity.email || "",
+    email: typeof master.identity.email === "string" ? master.identity.email : "",
   });
 
   const [relDraft, setRelDraft] = useState({
     recordType: relationship.recordType,
     operatingRegion: relationship.operatingRegion,
     driverStatus: relationship.driverStatus,
-    startDate: relationship.startDate,
-    endDate: relationship.endDate || "",
+    startDate: driverDateInputValue(relationship.startDate),
+    endDate: driverDateInputValue(relationship.endDate),
   });
 
   const [addressDraft, setAddressDraft] = useState({
@@ -92,7 +94,7 @@ export function DriverProfileTab({
     stateProvince: address?.stateProvince || "",
     postalZip: address?.postalZip || "",
     country: address?.country || ("Canada" as "Canada" | "United States"),
-    effectiveFrom: address?.effectiveFrom || new Date().toISOString().slice(0, 10),
+    effectiveFrom: driverDateInputValue(address?.effectiveFrom) || new Date().toISOString().slice(0, 10),
   });
 
   const [formError, setFormError] = useState<string | null>(null);
@@ -122,8 +124,24 @@ export function DriverProfileTab({
     // Save Company Relationship
     onSaveRelationship(relDraft);
 
-    // Save Address
-    onSaveAddress(addressDraft);
+    // Address history is effective-dated. Saving unrelated profile edits must not
+    // create a duplicate address-history record. Only create a new address when
+    // the address facts actually changed.
+    const addressChanged = !address ||
+      addressDraft.addressLine1.trim() !== address.addressLine1.trim() ||
+      (addressDraft.addressLine2 || "").trim() !== (address.addressLine2 || "").trim() ||
+      addressDraft.city.trim() !== address.city.trim() ||
+      addressDraft.stateProvince.trim() !== address.stateProvince.trim() ||
+      addressDraft.postalZip.trim() !== address.postalZip.trim() ||
+      addressDraft.country !== address.country;
+
+    if (addressChanged) {
+      if (address && addressDraft.effectiveFrom <= address.effectiveFrom) {
+        setFormError("A changed residential address requires an Effective From date after the current address effective date.");
+        return;
+      }
+      onSaveAddress({ ...addressDraft, effectiveFrom: driverDateInputValue(addressDraft.effectiveFrom) });
+    }
   };
 
   return (
@@ -203,10 +221,9 @@ export function DriverProfileTab({
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Date of Birth (YYYY-MM-DD) *
                 </label>
-                <input
-                  type="date"
+                <DriverDateInput
                   value={identityDraft.dateOfBirth}
-                  onChange={(e) => setIdentityDraft({ ...identityDraft, dateOfBirth: e.target.value })}
+                  onChange={(value) => setIdentityDraft({ ...identityDraft, dateOfBirth: value })}
                   required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -305,10 +322,9 @@ export function DriverProfileTab({
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Relationship Start Date *
                 </label>
-                <input
-                  type="date"
+                <DriverDateInput
                   value={relDraft.startDate}
-                  onChange={(e) => setRelDraft({ ...relDraft, startDate: e.target.value })}
+                  onChange={(value) => setRelDraft({ ...relDraft, startDate: value })}
                   required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -318,10 +334,9 @@ export function DriverProfileTab({
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Relationship End Date (Optional)
                 </label>
-                <input
-                  type="date"
+                <DriverDateInput
                   value={relDraft.endDate}
-                  onChange={(e) => setRelDraft({ ...relDraft, endDate: e.target.value })}
+                  onChange={(value) => setRelDraft({ ...relDraft, endDate: value })}
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>
@@ -345,7 +360,7 @@ export function DriverProfileTab({
                 <input
                   type="text"
                   value={addressDraft.addressLine1}
-                  onChange={(e) => setAddressDraft({ ...addressDraft, addressLine1: e.target.value })}
+                  onChange={(value) => setAddressDraft({ ...addressDraft, addressLine1: value })}
                   required
                   placeholder="Street address or P.O. Box"
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
@@ -359,7 +374,7 @@ export function DriverProfileTab({
                 <input
                   type="text"
                   value={addressDraft.addressLine2}
-                  onChange={(e) => setAddressDraft({ ...addressDraft, addressLine2: e.target.value })}
+                  onChange={(value) => setAddressDraft({ ...addressDraft, addressLine2: value })}
                   placeholder="Apt, Suite, Unit"
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -370,7 +385,7 @@ export function DriverProfileTab({
                 <input
                   type="text"
                   value={addressDraft.city}
-                  onChange={(e) => setAddressDraft({ ...addressDraft, city: e.target.value })}
+                  onChange={(value) => setAddressDraft({ ...addressDraft, city: value })}
                   required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -428,10 +443,9 @@ export function DriverProfileTab({
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Effective From *
                 </label>
-                <input
-                  type="date"
+                <DriverDateInput
                   value={addressDraft.effectiveFrom}
-                  onChange={(e) => setAddressDraft({ ...addressDraft, effectiveFrom: e.target.value })}
+                  onChange={(value) => setAddressDraft({ ...addressDraft, effectiveFrom: value })}
                   required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />

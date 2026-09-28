@@ -5,6 +5,7 @@ import {
   isoNow,
   todayISO,
   createId,
+  isValidISODate,
   formatFrequency,
 } from "@/src/components/tax-filing/tax-helpers"
 
@@ -33,7 +34,10 @@ function FrequencyAssignmentForm({
   const [notes, setNotes] = useState("")
 
   const save = () => {
-    if (!effectiveFrom) return
+    if (!isValidISODate(effectiveFrom)) {
+      window.alert("Enter a valid Effective From date in YYYY-MM-DD format.")
+      return
+    }
 
     onSave({
       id: createId("FREQ"),
@@ -76,7 +80,10 @@ function FrequencyAssignmentForm({
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-foreground">Effective From *</label>
           <input
-            type="date"
+            type="text"
+            inputMode="numeric"
+            maxLength={10}
+            placeholder="YYYY-MM-DD"
             value={effectiveFrom}
             onChange={(event) => setEffectiveFrom(event.target.value)}
             className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background focus:outline-none focus:ring-1 focus:ring-primary text-foreground"

@@ -41,6 +41,7 @@ export const DRIVER_TABS: DriverTabItem[] = [
   { id: "profile", label: "Profile" },
   { id: "qualifications", label: "Qualifications & Licensing" },
   { id: "documents", label: "Documents" },
+  { id: "evaluation", label: "Hiring Evaluation" },
   { id: "screening", label: "Screening & Medical" },
   { id: "training", label: "Training" },
   { id: "performance", label: "Performance & Events", isFlagship: true },

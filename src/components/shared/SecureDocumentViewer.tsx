@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Loader2,
   AlertTriangle,
+  FileX,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import {
@@ -62,7 +63,10 @@ if (typeof window !== "undefined") {
 export interface SecureDocumentViewerProps {
   fileName: string;
   mimeType: string;
-  dataUrl: string;
+  /** May be empty/undefined while the payload is still loading or confirmed missing - see `loading`. */
+  dataUrl: string | null | undefined;
+  /** Caller-controlled: payload is being fetched (e.g. from IndexedDB) and is not yet known to be missing. */
+  loading?: boolean;
   documentTitle?: string;
   documentDate?: string;
   ocrConfidence?: number;
@@ -98,6 +102,7 @@ export function SecureDocumentViewer({
   fileName,
   mimeType,
   dataUrl,
+  loading = false,
   documentTitle = "Secure Compliance Document",
   documentDate,
   ocrConfidence,
@@ -206,6 +211,30 @@ export function SecureDocumentViewer({
 
   const [zoom, setZoom] = useState(1.0);
 
+  /*
+   * "smart" is the default review mode.
+   * "fit" is explicit whole-document containment requested by the Fit control.
+   *
+   * Smart mode only changes the initial/readability scale for unusually tall,
+   * narrow raster evidence. It never crops or mutates the source document.
+   */
+  const [viewMode, setViewMode] =
+    useState<"smart" | "fit">("smart");
+
+  // Smart raster review may create a temporary in-memory crop of the meaningful
+  // document region. The original evidence dataUrl is never changed or replaced.
+  const [smartRasterCrop, setSmartRasterCrop] = useState<{
+    dataUrl: string;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  // Bug fix (B2): caches the ORIGINAL raster image's natural dimensions the
+  // first time it loads, so leaving smart mode can restore docSize to the
+  // original immediately - fitScale/panBounds must never keep computing
+  // geometry from a stale cropped docSize while the original is reloading.
+  const originalDocSizeRef = useRef<{ width: number; height: number } | null>(null);
+
   const [rotation, setRotation] =
     useState<0 | 90 | 180 | 270>(0);
 
@@ -223,9 +252,11 @@ export function SecureDocumentViewer({
    * -------------------------------------------------------------
    */
 
+  const hasPayload = typeof dataUrl === "string" && dataUrl.length > 0;
+
   const isPdf =
     mimeType === "application/pdf" ||
-    dataUrl.includes("application/pdf") ||
+    (hasPayload && dataUrl.includes("application/pdf")) ||
     fileName.toLowerCase().endsWith(".pdf");
 
   const [pdfDocument, setPdfDocument] =
@@ -248,6 +279,16 @@ export function SecureDocumentViewer({
 
   const [pdfRenderError, setPdfRenderError] =
     useState<string | null>(null);
+
+  // Raster-image equivalent of pdfError: set only on a genuine <img> load
+  // failure (a real dataUrl that the browser could not decode/fetch), never
+  // conflated with "still loading" or "confirmed missing" (handled by the
+  // `loading` prop / `hasPayload` below).
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [dataUrl]);
 
   /*
    * -------------------------------------------------------------
@@ -375,6 +416,12 @@ export function SecureDocumentViewer({
     if (!isPdf) {
       return;
     }
+    if (loading || !hasPayload) {
+      // Payload is still loading or confirmed missing - the controlled
+      // loading/unavailable state below handles presentation; don't ask
+      // pdf.js to load an empty/absent URL.
+      return;
+    }
 
     let cancelled = false;
 
@@ -431,6 +478,7 @@ export function SecureDocumentViewer({
     });
 
     setZoom(1);
+    setViewMode("smart");
 
     setPan({
       x: 0,
@@ -634,6 +682,7 @@ export function SecureDocumentViewer({
     });
 
     setZoom(1);
+    setViewMode("smart");
 
     setRotation(0);
 
@@ -727,27 +776,114 @@ export function SecureDocumentViewer({
    */
 
   const handleImageLoad = useCallback(
-    (
-      e: React.SyntheticEvent<HTMLImageElement>,
-    ) => {
-      if (isPdf) {
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      if (isPdf) return;
+
+      const img = e.currentTarget;
+      if (img.naturalWidth <= 0 || img.naturalHeight <= 0) return;
+
+      // When the temporary smart crop itself loads, use its intrinsic geometry
+      // directly and do not recursively analyse/crop it again.
+      if (smartRasterCrop && img.src === smartRasterCrop.dataUrl) {
+        setDocSize({ width: smartRasterCrop.width, height: smartRasterCrop.height });
         return;
       }
 
-      const img =
-        e.currentTarget;
+      setDocSize({ width: img.naturalWidth, height: img.naturalHeight });
+      originalDocSizeRef.current = { width: img.naturalWidth, height: img.naturalHeight };
 
-      if (
-        img.naturalWidth > 0 &&
-        img.naturalHeight > 0
-      ) {
-        setDocSize({
-          width: img.naturalWidth,
-          height: img.naturalHeight,
+      if (viewMode !== "smart") return;
+
+      // Detect a visually meaningful colour-rich region (typical licence / ID
+      // card) inside oversized scanner/camera canvases. Analysis is performed on
+      // a small offscreen copy; the original evidence remains untouched.
+      try {
+        const maxAnalysisSide = 700;
+        const analysisScale = Math.min(
+          1,
+          maxAnalysisSide / Math.max(img.naturalWidth, img.naturalHeight),
+        );
+        const aw = Math.max(1, Math.round(img.naturalWidth * analysisScale));
+        const ah = Math.max(1, Math.round(img.naturalHeight * analysisScale));
+        const canvas = document.createElement("canvas");
+        canvas.width = aw;
+        canvas.height = ah;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, aw, ah);
+        const pixels = ctx.getImageData(0, 0, aw, ah).data;
+
+        let minX = aw, minY = ah, maxX = -1, maxY = -1, hits = 0;
+        for (let y = 0; y < ah; y += 2) {
+          for (let x = 0; x < aw; x += 2) {
+            const i = (y * aw + x) * 4;
+            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
+            if (a < 180) continue;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const saturation = max === 0 ? 0 : (max - min) / max;
+            const brightness = (r + g + b) / 3;
+            // Ignore neutral paper, gray text and TES watermarks. ID cards usually
+            // contain sustained colour variation even when the portrait is gray.
+            if (saturation >= 0.16 && brightness > 35 && brightness < 245) {
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+              hits++;
+            }
+          }
+        }
+
+        if (hits < 40 || maxX <= minX || maxY <= minY) return;
+
+        const rawW = maxX - minX + 1;
+        const rawH = maxY - minY + 1;
+        const regionArea = rawW * rawH;
+        const imageArea = aw * ah;
+        if (regionArea < imageArea * 0.01 || regionArea > imageArea * 0.72) return;
+
+        const padX = Math.max(8, Math.round(rawW * 0.16));
+        const padY = Math.max(8, Math.round(rawH * 0.16));
+        minX = Math.max(0, minX - padX);
+        minY = Math.max(0, minY - padY);
+        maxX = Math.min(aw - 1, maxX + padX);
+        maxY = Math.min(ah - 1, maxY + padY);
+
+        const sourceX = Math.round(minX / analysisScale);
+        const sourceY = Math.round(minY / analysisScale);
+        const sourceW = Math.min(
+          img.naturalWidth - sourceX,
+          Math.max(1, Math.round((maxX - minX + 1) / analysisScale)),
+        );
+        const sourceH = Math.min(
+          img.naturalHeight - sourceY,
+          Math.max(1, Math.round((maxY - minY + 1) / analysisScale)),
+        );
+
+        const cropCanvas = document.createElement("canvas");
+        cropCanvas.width = sourceW;
+        cropCanvas.height = sourceH;
+        const cropCtx = cropCanvas.getContext("2d");
+        if (!cropCtx) return;
+        cropCtx.drawImage(
+          img,
+          sourceX, sourceY, sourceW, sourceH,
+          0, 0, sourceW, sourceH,
+        );
+
+        setSmartRasterCrop({
+          dataUrl: cropCanvas.toDataURL("image/png"),
+          width: sourceW,
+          height: sourceH,
         });
+        setDocSize({ width: sourceW, height: sourceH });
+        setPan({ x: 0, y: 0 });
+        setZoom(1);
+      } catch (error) {
+        // A failed smart analysis must never block evidence viewing.
+        console.warn("Smart raster framing unavailable; using original evidence.", error);
       }
     },
-    [isPdf],
+    [isPdf, smartRasterCrop, viewMode],
   );
 
   /*
@@ -780,24 +916,18 @@ export function SecureDocumentViewer({
       return 1;
     }
 
-    /*
-     * Preserve generous margins without shrinking narrow scanned pages into
-     * unreadable slivers. This is a review surface, not a decorative preview.
-     */
     const padding = 24;
 
     const availableWidth =
       Math.max(
         100,
-        viewportSize.width -
-          padding,
+        viewportSize.width - padding,
       );
 
     const availableHeight =
       Math.max(
         100,
-        viewportSize.height -
-          padding,
+        viewportSize.height - padding,
       );
 
     const scaleX =
@@ -808,15 +938,52 @@ export function SecureDocumentViewer({
       availableHeight /
       effectiveHeight;
 
-    return Math.min(
-      2,
-      scaleX,
-      scaleY,
-    );
+    /*
+     * Explicit Fit always means: show the complete source.
+     */
+    const containmentScale =
+      Math.min(
+        2,
+        scaleX,
+        scaleY,
+      );
+
+    /*
+     * Smart review mode:
+     * Extremely tall/narrow raster scans often contain a small ID/card inside
+     * a much larger camera/scanner canvas. Pure containment makes the useful
+     * evidence unreadably tiny.
+     *
+     * For those raster sources only, prefer a width-readable initial scale.
+     * The full source remains available by panning, and Fit restores complete
+     * containment instantly.
+     */
+    const aspectRatio =
+      effectiveHeight /
+      effectiveWidth;
+
+    const isTallNarrowRaster =
+      !isPdf &&
+      aspectRatio >= 1.8 &&
+      scaleX > containmentScale * 1.35;
+
+    if (
+      viewMode === "smart" &&
+      isTallNarrowRaster
+    ) {
+      return Math.min(
+        2,
+        scaleX,
+      );
+    }
+
+    return containmentScale;
   }, [
     viewportSize,
     docSize,
     rotation,
+    isPdf,
+    viewMode,
   ]);
 
   /*
@@ -1140,6 +1307,11 @@ export function SecureDocumentViewer({
    */
 
   const handleResetFit = () => {
+    setSmartRasterCrop(null);
+    if (!isPdf && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
     setZoom(1.0);
 
     setPan({
@@ -1151,6 +1323,10 @@ export function SecureDocumentViewer({
   };
 
   const handleZoomIn = () => {
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
     setZoom((current) =>
       Math.min(
         5.0,
@@ -1162,6 +1338,10 @@ export function SecureDocumentViewer({
   };
 
   const handleZoomOut = () => {
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
     setZoom((current) =>
       Math.max(
         0.25,
@@ -1335,6 +1515,10 @@ export function SecureDocumentViewer({
     }
 
     e.preventDefault();
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
 
     const delta =
       e.deltaY < 0
@@ -1511,6 +1695,11 @@ export function SecureDocumentViewer({
           <span
             className="w-12 text-center text-[10px] font-mono font-bold text-foreground tabular-nums cursor-pointer hover:underline"
             onClick={() => {
+              setSmartRasterCrop(null);
+              if (!isPdf && originalDocSizeRef.current) {
+                setDocSize(originalDocSizeRef.current);
+              }
+              setViewMode("fit");
               setZoom(1.0);
 
               setPan({
@@ -1641,7 +1830,26 @@ export function SecureDocumentViewer({
           {/* PDF.JS CONTROLLED PDF RENDERING                     */}
           {/* --------------------------------------------------- */}
 
-          {isPdf ? (
+          {loading ? (
+            <div className="flex h-full w-full items-center justify-center bg-white">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-lg">
+                <Loader2 className="size-4 animate-spin" />
+                Loading evidence…
+              </div>
+            </div>
+          ) : !hasPayload || imgError ? (
+            <div className="flex h-full w-full items-center justify-center bg-white">
+              <div className="mx-6 max-w-md rounded-xl border border-border bg-muted/30 p-5 text-center">
+                <FileX className="mx-auto mb-3 size-7 text-muted-foreground" />
+                <p className="text-sm font-semibold text-foreground">Evidence unavailable</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {imgError
+                    ? "This document could not be displayed."
+                    : "The evidence metadata exists, but its stored file could not be found."}
+                </p>
+              </div>
+            </div>
+          ) : isPdf ? (
             <div className="relative h-full w-full bg-white flex items-center justify-center overflow-visible">
               {pdfPage && (
                 <canvas
@@ -1707,12 +1915,13 @@ export function SecureDocumentViewer({
             /* ------------------------------------------------- */
 
             <img
-              src={dataUrl}
+              src={viewMode === "smart" && smartRasterCrop ? smartRasterCrop.dataUrl : (dataUrl as string)}
               alt={fileName}
               draggable={false}
               onLoad={
                 handleImageLoad
               }
+              onError={() => setImgError(true)}
               className="h-full w-full object-contain select-none pointer-events-none"
             />
           )}

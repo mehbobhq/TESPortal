@@ -1,4 +1,5 @@
 import { normalizeName } from "@/lib/identifier-normalization"
+import { normalizeDriverDate, requireDriverDate } from "@/lib/driver-date"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
@@ -38,7 +39,8 @@ import type {
   TrainingRequirement,
   TrainingType,
   VerificationState,
-} from "@/types/drivers"
+  DriverApplicationFinding,
+  DriverApplicationProcessingRecord,} from "@/types/drivers"
 
 export type {
   AddressRecord,
@@ -132,7 +134,7 @@ function normalizeMaster(raw: Partial<DriverMaster> & { id?: string }): DriverMa
       legalMiddleName: clean(identity.legalMiddleName) || undefined,
       legalLastName: clean(identity.legalLastName),
       preferredName: clean(identity.preferredName) || undefined,
-      dateOfBirth: clean(identity.dateOfBirth),
+      dateOfBirth: normalizeDriverDate(identity.dateOfBirth),
       phone: clean(identity.phone) || undefined,
       email: clean(identity.email) || undefined,
     },
@@ -163,7 +165,8 @@ function normalizeRelationship(raw: Partial<CompanyDriverRelationship> & { id?: 
     recordType: raw.recordType as RecordType,
     operatingRegion: raw.operatingRegion as OperatingRegion,
     driverStatus: raw.driverStatus as DriverStatus,
-    startDate: raw.startDate || "",
+    startDate: normalizeDriverDate(raw.startDate),
+    endDate: normalizeDriverDate(raw.endDate) || undefined,
     statusHistory: Array.isArray(raw.statusHistory) ? raw.statusHistory : [],
     createdAt: raw.createdAt || new Date().toISOString(),
     updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
@@ -462,16 +465,193 @@ export const loadDriverMasterStore = (): DriverMasterStore => {
 
 export const saveDriverMasterStore = (store: DriverMasterStore) => write(DRIVER_MASTER_STORAGE_KEY, { ...store, version: 2 })
 
+
+// Extracts the small set of applicant-declared summary facts that the internal
+// Documents tab displays (Declared Commercial Experience, equipment types).
+// Root cause of a "Not recorded" display bug: these fields are declared
+// directly on DriverApplicationRecord (experienceYears, equipmentExperience),
+// but neither reconciliation path below ever populated them from the
+// applicant's submitted draft, so they stayed undefined even after a real
+// declared value (including an honest "0") was submitted. Traffic-conviction
+// and collision counts are deliberately NOT derived here: the internal label
+// reads "3-Year", but the applicant form collects a 5-year lookback
+// (`convictionsLast5Years`/`collisionsLast5Years`), and mapping one onto the
+// other would misrepresent the review period rather than merely display it.
+function extractApplicationSummaryFromDraft(draft: unknown): { experienceYears?: number; equipmentExperience?: string[] } {
+  if (!draft || typeof draft !== "object") return {}
+  const safety = (draft as { experienceSafety?: unknown }).experienceSafety
+  if (!safety || typeof safety !== "object") return {}
+  const years = (safety as { commercialDrivingYears?: unknown }).commercialDrivingYears
+  const equipmentTypes = (safety as { equipmentTypes?: unknown }).equipmentTypes
+  const parsedYears = typeof years === "string" && years.trim() !== "" ? Number(years) : undefined
+  return {
+    experienceYears: parsedYears !== undefined && !Number.isNaN(parsedYears) ? parsedYears : undefined,
+    equipmentExperience: Array.isArray(equipmentTypes) ? equipmentTypes.filter((item): item is string => typeof item === "string") : undefined,
+  }
+}
+
+function reconcileApplicantSubmissionHandoffs(store: CompanyDriverStore): CompanyDriverStore {
+  if (typeof window === "undefined" || store.applications.length === 0) return store
+
+  let changed = false
+  const applications = store.applications.map((application) => {
+    const pendingKey = `tes_pending_driver_application_handoff_${application.id}`
+    const submittedKey = `tes_applicant_application_submitted_${application.id}`
+    const raw = localStorage.getItem(pendingKey) || localStorage.getItem(submittedKey)
+    if (!raw) return application
+
+    try {
+      const snapshot = JSON.parse(raw) as {
+        applicationId?: string
+        submittedAt?: string
+        receiptId?: string
+        completedSteps?: string[]
+        draft?: unknown
+      }
+      if (snapshot.applicationId !== application.id || !snapshot.submittedAt) return application
+
+      const existingSnapshot = application.applicantSubmittedSnapshot
+      if (existingSnapshot) {
+        localStorage.removeItem(pendingKey)
+        // Idempotent backfill: an application already ingested by an earlier
+        // version of this reconciliation may be missing `submittedDate` (a
+        // prior defect wrote the undeclared `submittedAt` field instead), or
+        // missing `experienceYears`/`equipmentExperience` (a prior defect never
+        // populated them at all). Fix those in place without re-running any
+        // other part of ingestion.
+        const missingSubmittedDate = !application.submittedDate
+        const missingSummary = application.experienceYears === undefined && application.equipmentExperience === undefined
+        if (missingSubmittedDate || missingSummary) {
+          changed = true
+          const summary = missingSummary ? extractApplicationSummaryFromDraft(existingSnapshot.draft) : {}
+          return {
+            ...application,
+            submittedDate: application.submittedDate || existingSnapshot.submittedAt,
+            experienceYears: application.experienceYears ?? summary.experienceYears,
+            equipmentExperience: application.equipmentExperience ?? summary.equipmentExperience,
+          }
+        }
+        return application
+      }
+
+      const laterStatus = ["Submitted", "Under Review", "Approved", "Rejected", "Superseded"].includes(application.status)
+      changed = true
+      localStorage.removeItem(pendingKey)
+      const summary = extractApplicationSummaryFromDraft(snapshot.draft)
+
+      return {
+        ...application,
+        status: laterStatus ? application.status : "Submitted",
+        // Root-cause fix: DriverApplicationRecord's declared field is `submittedDate`,
+        // not `submittedAt` - writing the wrong field name left "Submitted Date" stuck
+        // on its "Draft In Progress" fallback even after Lifecycle Status correctly
+        // became "Submitted".
+        submittedDate: application.submittedDate || snapshot.submittedAt,
+        updatedAt: snapshot.submittedAt,
+        applicantSubmissionReceiptId: application.applicantSubmissionReceiptId || snapshot.receiptId,
+        applicantSubmittedSnapshot: snapshot as ApplicantSubmissionHandoff,
+        experienceYears: application.experienceYears ?? summary.experienceYears,
+        equipmentExperience: application.equipmentExperience ?? summary.equipmentExperience,
+        processing: {
+          ...(application.processing ?? {}),
+          status: application.processing?.status ?? "Not Started",
+          fileCompleteness: application.processing?.fileCompleteness ?? "Not Assessed",
+          qualificationAssessment: application.processing?.qualificationAssessment ?? "Not Assessed",
+          findingIds: application.processing?.findingIds ?? [],
+          updatedAt: application.processing?.updatedAt ?? snapshot.submittedAt,
+        },
+      }
+    } catch {
+      return application
+    }
+  })
+
+  return changed ? { ...store, applications } : store
+}
+
+
+export type ApplicantSubmissionHandoff = {
+  applicationId: string
+  submittedAt: string
+  receiptId: string
+  completedSteps: string[]
+  draft: unknown
+}
+
+export function ingestApplicantSubmissionSnapshot(
+  companyId: string,
+  snapshot: ApplicantSubmissionHandoff,
+): { applied: boolean; store: CompanyDriverStore } {
+  const store = loadCompanyDriverStore(companyId)
+  const index = store.applications.findIndex((application) => application.id === snapshot.applicationId)
+  if (index < 0) return { applied: false, store }
+
+  const application = store.applications[index]
+  const existingSnapshot = application.applicantSubmittedSnapshot
+  if (existingSnapshot) {
+    // Idempotent backfill: same defect/fix as reconcileApplicantSubmissionHandoffs
+    // above - an application ingested before the submittedDate fix (or the
+    // experienceYears/equipmentExperience fix) existed can be missing them even
+    // though it already carries a snapshot.
+    const missingSubmittedDate = !application.submittedDate
+    const missingSummary = application.experienceYears === undefined && application.equipmentExperience === undefined
+    if (missingSubmittedDate || missingSummary) {
+      const summary = missingSummary ? extractApplicationSummaryFromDraft(existingSnapshot.draft) : {}
+      const applications = [...store.applications]
+      applications[index] = {
+        ...application,
+        submittedDate: application.submittedDate || existingSnapshot.submittedAt,
+        experienceYears: application.experienceYears ?? summary.experienceYears,
+        equipmentExperience: application.equipmentExperience ?? summary.equipmentExperience,
+      }
+      const nextStore = { ...store, applications }
+      saveCompanyDriverStore(nextStore)
+      return { applied: true, store: nextStore }
+    }
+    return { applied: false, store }
+  }
+
+  const laterStatus = ["Submitted", "Under Review", "Approved", "Rejected", "Superseded"].includes(application.status)
+  const summary = extractApplicationSummaryFromDraft(snapshot.draft)
+  const updatedApplication = {
+    ...application,
+    status: laterStatus ? application.status : "Submitted",
+    // Root-cause fix: write the type's declared `submittedDate` field, not the
+    // undeclared `submittedAt` shadow field the UI never actually read.
+    submittedDate: application.submittedDate || snapshot.submittedAt,
+    updatedAt: snapshot.submittedAt,
+    applicantSubmissionReceiptId: application.applicantSubmissionReceiptId || snapshot.receiptId,
+    applicantSubmittedSnapshot: snapshot,
+    experienceYears: application.experienceYears ?? summary.experienceYears,
+    equipmentExperience: application.equipmentExperience ?? summary.equipmentExperience,
+    processing: {
+      ...(application.processing ?? {}),
+      status: application.processing?.status ?? "Not Started",
+      fileCompleteness: application.processing?.fileCompleteness ?? "Not Assessed",
+      qualificationAssessment: application.processing?.qualificationAssessment ?? "Not Assessed",
+      findingIds: application.processing?.findingIds ?? [],
+      updatedAt: application.processing?.updatedAt ?? snapshot.submittedAt,
+    },
+  }
+
+  const applications = [...store.applications]
+  applications[index] = updatedApplication
+  const nextStore = { ...store, applications }
+  saveCompanyDriverStore(nextStore)
+  return { applied: true, store: nextStore }
+}
+
 export const loadCompanyDriverStore = (companyId: string): CompanyDriverStore => {
   const raw = read<any>(companyDriverStorageKey(companyId), null)
   const migrated = migrateCompanyStore(raw, companyId, getTrainingCourseCatalog())
-  const shouldPersist = !raw || raw.version !== 2 || !Array.isArray(raw.trainingRecords) || !Array.isArray(raw.relationships) ||
-    migrated.trainingRecords.some((record) => !record.id || !record.courseMappingState) ||
-    migrated.relationships.some((relationship) => !relationship.companyDriverRecordId)
+  const reconciled = reconcileApplicantSubmissionHandoffs(migrated)
+  const shouldPersist = reconciled !== migrated || !raw || raw.version !== 2 || !Array.isArray(raw.trainingRecords) || !Array.isArray(raw.relationships) ||
+    reconciled.trainingRecords.some((record) => !record.id || !record.courseMappingState) ||
+    reconciled.relationships.some((relationship) => !relationship.companyDriverRecordId)
   if (shouldPersist) {
-    try { write(companyDriverStorageKey(companyId), migrated) } catch { /* keep migrated in memory */ }
+    try { write(companyDriverStorageKey(companyId), reconciled) } catch { /* keep reconciled in memory */ }
   }
-  return migrated
+  return reconciled
 }
 
 export const saveCompanyDriverStore = (store: CompanyDriverStore) => {
@@ -571,6 +751,11 @@ export function validateDriverInput(x: DriverInput) {
   ]
   const missing = required.filter(([, value]) => !clean(value)).map(([label]) => label)
   if (missing.length) throw new Error(`Required: ${missing.join(", ")}.`)
+  requireDriverDate(x.dateOfBirth, "Date of Birth")
+  requireDriverDate(x.relationshipStartDate, "Relationship Start Date")
+  if (x.relationshipEndDate) requireDriverDate(x.relationshipEndDate, "Relationship End Date")
+  requireDriverDate(x.addressEffectiveFrom, "Address Effective From")
+  requireDriverDate(x.licenceEffectiveFrom, "Licence Effective From")
   if (!validatePostalZip(x.country, x.postalZip)) throw new Error(x.country === "Canada" ? "Enter a valid Canadian postal code." : "Enter a valid U.S. ZIP or ZIP+4.")
   if (!normalizeLicenceNumber(x.licenceNumber)) throw new Error("Licence number is required.")
 }
@@ -616,10 +801,10 @@ export function createDriver(companyId: string, input: DriverInput, options?: { 
       identity: {
         legalFirstName: normalizeName(input.legalFirstName), legalMiddleName: normalizeName(input.legalMiddleName) || undefined,
         legalLastName: normalizeName(input.legalLastName), preferredName: normalizeName(input.preferredName) || undefined,
-        dateOfBirth: input.dateOfBirth, phone: clean(input.phone) || undefined, email: clean(input.email) || undefined,
+        dateOfBirth: requireDriverDate(input.dateOfBirth, "Date of Birth"), phone: clean(input.phone) || undefined, email: clean(input.email) || undefined,
       },
       identityReferences: [{ id: uid("IDR"), type: "DRIVER_LICENCE", value: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, createdAt: now, source: "Driver onboarding" }],
-      licenceHistory: [{ id: uid("LIC"), licenceNumber: normalizeLicenceNumber(input.licenceNumber), licenceNumberRaw: input.licenceNumber.trim(), licenceNumberNormalized: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, class: clean(input.licenceClass) || undefined, endorsements: input.endorsements, airBrakeQualified: input.airBrakeQualified, effectiveFrom: input.licenceEffectiveFrom, effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, verificationState: input.verificationState || "Unverified" }],
+      licenceHistory: [{ id: uid("LIC"), licenceNumber: normalizeLicenceNumber(input.licenceNumber), licenceNumberRaw: input.licenceNumber.trim(), licenceNumberNormalized: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, class: clean(input.licenceClass) || undefined, endorsements: input.endorsements, airBrakeQualified: input.airBrakeQualified, effectiveFrom: requireDriverDate(input.licenceEffectiveFrom, "Licence Effective From"), effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, verificationState: input.verificationState || "Unverified" }],
       addressHistory: [{ id: uid("ADR"), addressLine1: clean(input.addressLine1), addressLine2: clean(input.addressLine2) || undefined, city: clean(input.city), stateProvince: input.stateProvince, postalZip: input.postalZip.trim().toUpperCase(), country: input.country, effectiveFrom: input.addressEffectiveFrom, effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now }],
       identityResolution: { status: input.stateProvince === input.licenceJurisdiction ? "CLEAR" : "REVIEW" },
       jurisdictionReviews: input.stateProvince !== input.licenceJurisdiction ? [{ id: uid("JUR"), status: "OPEN", reason: input.jurisdictionReview?.reason || "Residence and licence jurisdictions differ", explanation: input.jurisdictionReview?.explanation || "", expectedResolutionDate: input.jurisdictionReview?.expectedResolutionDate, createdAt: now }] : [],
@@ -694,6 +879,12 @@ export function addLicence(companyId: string, driverId: string, input: { licence
   const driver = store.drivers.find((d) => d.id === driverId)
   if (!driver) throw new Error("Driver not found.")
   if (!input.effectiveFrom || !input.licenceNumberRaw || !input.jurisdiction) throw new Error("Licence number, jurisdiction and effective date are required.")
+  input = {
+    ...input,
+    effectiveFrom: requireDriverDate(input.effectiveFrom, "Licence Effective From"),
+    issueDate: input.issueDate ? requireDriverDate(input.issueDate, "Licence Issue Date") : undefined,
+    expiryDate: input.expiryDate ? requireDriverDate(input.expiryDate, "Licence Expiry Date") : undefined,
+  }
   if (input.issueDate && input.expiryDate && input.issueDate > input.expiryDate) throw new Error("Licence issue date cannot be after expiry date.")
   const current = currentLicence(driver)
   if (current && input.effectiveFrom <= current.effectiveFrom) throw new Error("New licence effective date must be after the current licence effective date.")
@@ -717,7 +908,16 @@ export function updateDriverMasterIdentity(driverId: string, patch: Partial<Driv
   const store = loadDriverMasterStore()
   const driver = store.drivers.find((d) => d.id === driverId)
   if (!driver) throw new Error("Driver not found.")
-  const identity = { ...driver.identity, ...patch, legalFirstName: normalizeName(patch.legalFirstName ?? driver.identity.legalFirstName), legalLastName: normalizeName(patch.legalLastName ?? driver.identity.legalLastName) }
+  const identity = {
+    ...driver.identity,
+    ...patch,
+    legalFirstName: normalizeName(patch.legalFirstName ?? driver.identity.legalFirstName),
+    legalLastName: normalizeName(patch.legalLastName ?? driver.identity.legalLastName),
+    dateOfBirth: patch.dateOfBirth !== undefined
+      ? requireDriverDate(patch.dateOfBirth, "Date of Birth")
+      : normalizeDriverDate(driver.identity.dateOfBirth),
+    email: patch.email !== undefined ? clean(patch.email).toLowerCase() || undefined : driver.identity.email,
+  }
   const updated = { ...driver, identity, updatedAt: new Date().toISOString() }
   saveDriverMasterStore({ version: 2, drivers: store.drivers.map((d) => d.id === driverId ? updated : d) })
   auditDriverMutation("", driverId, "UPDATE", "Updated canonical Driver Master identity.")
@@ -728,7 +928,17 @@ export function updateCompanyDriverRelationship(companyId: string, relationshipI
   const store = loadCompanyDriverStore(companyId)
   const current = store.relationships.find((r) => r.id === relationshipId)
   if (!current) throw new Error("Company Driver relationship not found.")
-  const updated = { ...current, ...patch, id: current.id, companyDriverRecordId: current.companyDriverRecordId, companyId: current.companyId, driverMasterId: current.driverMasterId, updatedAt: new Date().toISOString() }
+  const updated = {
+    ...current,
+    ...patch,
+    startDate: patch.startDate !== undefined ? requireDriverDate(patch.startDate, "Relationship Start Date") : current.startDate,
+    endDate: patch.endDate !== undefined ? (patch.endDate ? requireDriverDate(patch.endDate, "Relationship End Date") : undefined) : current.endDate,
+    id: current.id,
+    companyDriverRecordId: current.companyDriverRecordId,
+    companyId: current.companyId,
+    driverMasterId: current.driverMasterId,
+    updatedAt: new Date().toISOString(),
+  }
   saveCompanyDriverStore({ ...store, relationships: store.relationships.map((r) => r.id === relationshipId ? updated : r) })
   auditDriverMutation(companyId, relationshipId, "UPDATE", "Updated company Driver relationship.")
   return updated
@@ -739,6 +949,8 @@ export function addDriverAddress(driverId: string, address: Omit<AddressRecord, 
   const driver = store.drivers.find((d) => d.id === driverId)
   if (!driver) throw new Error("Driver not found.")
   if (!validatePostalZip(address.country, address.postalZip)) throw new Error("Postal / ZIP format is invalid.")
+  const effectiveFrom = requireDriverDate(address.effectiveFrom, "Address Effective From")
+  address = { ...address, effectiveFrom }
   const current = currentAddress(driver)
   if (current && address.effectiveFrom <= current.effectiveFrom) throw new Error("New address effective date must be after the current address effective date.")
   const now = new Date().toISOString()
@@ -1581,4 +1793,575 @@ export const makeInternalId = uid
 export function createRecord<T extends object>(companyId: string, code: string, collection: Array<{ id?: string; recordId?: string }>, data: T) {
   const now = new Date().toISOString()
   return { id: uid(code), recordId: allocateSubRecordId(companyId, code, collection), ...data, createdAt: now, updatedAt: now }
+}
+// =========================================================
+// DRIVER HIRING WORKFLOW ASSESSMENT
+// =========================================================
+
+export function updateDriverApplication(
+  companyId: string,
+  applicationId: string,
+  patch: Partial<DriverApplicationRecord>
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const now = new Date().toISOString()
+  const applications = store.applications.map((application) =>
+    application.id === applicationId
+      ? { ...application, ...patch, id: application.id, companyId: application.companyId, driverMasterId: application.driverMasterId, updatedAt: now }
+      : application
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, applicationId, "UPDATE", "Updated Driver Application workflow state without rewriting source evidence.")
+  return applications.find((application) => application.id === applicationId)
+}
+
+
+type DriverApplicationComparisonInput = {
+  subject: DriverApplicationFinding["subject"]
+  label: string
+  applicantStatement?: string
+  evidenceStatement?: string
+  evidenceIds?: string[]
+  normalize?: (value: string) => string
+  required?: boolean
+}
+
+const normalizeComparisonText = (value: string) =>
+  clean(value).toLowerCase().replace(/\s+/g, " ")
+
+const normalizeComparisonIdentifier = (value: string) =>
+  clean(value).toUpperCase().replace(/[^A-Z0-9]/g, "")
+
+const normalizeComparisonDate = (value: string) => {
+  const raw = clean(value)
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : raw
+}
+
+/**
+ * Creates a factual comparison result without changing either source.
+ * This is deliberately source-neutral: applicant claim and evidence remain separate.
+ */
+export function compareDriverApplicationFact(input: DriverApplicationComparisonInput) {
+  const normalize = input.normalize || normalizeComparisonText
+  const applicantRaw = clean(input.applicantStatement)
+  const evidenceRaw = clean(input.evidenceStatement)
+
+  if (!applicantRaw && !evidenceRaw) {
+    return input.required
+      ? {
+          type: "MISSING_INFORMATION" as const,
+          status: "Open" as const,
+          subject: input.subject,
+          label: input.label,
+          applicantStatement: undefined,
+          evidenceStatement: undefined,
+          evidenceIds: input.evidenceIds || [],
+          notes: "Required information is not available from either source.",
+        }
+      : null
+  }
+
+  if (!applicantRaw) {
+    return {
+      type: "MISSING_INFORMATION" as const,
+      status: "Open" as const,
+      subject: input.subject,
+      label: input.label,
+      applicantStatement: undefined,
+      evidenceStatement: evidenceRaw || undefined,
+      evidenceIds: input.evidenceIds || [],
+      notes: "Supporting information exists, but the submitted application does not contain the corresponding fact.",
+    }
+  }
+
+  if (!evidenceRaw) {
+    return {
+      type: "UNABLE_TO_VERIFY" as const,
+      status: "Open" as const,
+      subject: input.subject,
+      label: input.label,
+      applicantStatement: applicantRaw,
+      evidenceStatement: undefined,
+      evidenceIds: input.evidenceIds || [],
+      notes: "The submitted fact is present, but no supporting extracted fact is currently available for comparison.",
+    }
+  }
+
+  if (normalize(applicantRaw) === normalize(evidenceRaw)) {
+    return {
+      type: "MATCH" as const,
+      status: "Resolved" as const,
+      subject: input.subject,
+      label: input.label,
+      applicantStatement: applicantRaw,
+      evidenceStatement: evidenceRaw,
+      evidenceIds: input.evidenceIds || [],
+      notes: "Applicant statement and supporting extracted fact agree after normalization.",
+    }
+  }
+
+  return {
+    type: "MISMATCH" as const,
+    status: "Open" as const,
+    subject: input.subject,
+    label: input.label,
+    applicantStatement: applicantRaw,
+    evidenceStatement: evidenceRaw,
+    evidenceIds: input.evidenceIds || [],
+    notes: "The submitted application and supporting extracted fact contain different values.",
+  }
+}
+
+export type DriverApplicationEvidenceFacts = {
+  evidenceIds?: string[]
+  legalFirstName?: string
+  legalLastName?: string
+  dateOfBirth?: string
+  licenceNumber?: string
+  licenceJurisdiction?: string
+  licenceClass?: string
+  licenceExpiryDate?: string
+}
+
+/**
+ * Phase 9 reconciliation boundary.
+ * OCR/classification providers should map their output into DriverApplicationEvidenceFacts first.
+ * This function never reads provider-specific OCR payloads and never overwrites application claims.
+ */
+export function reconcileDriverApplicationEvidence(
+  companyId: string,
+  applicationId: string,
+  evidenceFacts: DriverApplicationEvidenceFacts
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const application = store.applications.find((item) => item.id === applicationId)
+  if (!application) throw new Error("Driver Application not found.")
+  if (!["Submitted", "Under Review", "Additional Information Requested"].includes(application.status)) {
+    throw new Error("Only an immutable submitted application can be reconciled against evidence.")
+  }
+
+  const claimed = application.claimed || {}
+  const claimedLicence = claimed.licences?.[0]
+  const comparisons = [
+    compareDriverApplicationFact({
+      subject: "Identity",
+      label: "Legal first name",
+      applicantStatement: claimed.personal?.firstName,
+      evidenceStatement: evidenceFacts.legalFirstName,
+      evidenceIds: evidenceFacts.evidenceIds,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Identity",
+      label: "Legal last name",
+      applicantStatement: claimed.personal?.lastName,
+      evidenceStatement: evidenceFacts.legalLastName,
+      evidenceIds: evidenceFacts.evidenceIds,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Identity",
+      label: "Date of birth",
+      applicantStatement: claimed.personal?.dateOfBirth,
+      evidenceStatement: evidenceFacts.dateOfBirth,
+      evidenceIds: evidenceFacts.evidenceIds,
+      normalize: normalizeComparisonDate,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Licence",
+      label: "Driver licence number",
+      applicantStatement: claimedLicence?.licenceNumber,
+      evidenceStatement: evidenceFacts.licenceNumber,
+      evidenceIds: evidenceFacts.evidenceIds,
+      normalize: normalizeComparisonIdentifier,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Licence",
+      label: "Licence jurisdiction",
+      applicantStatement: claimedLicence?.jurisdiction,
+      evidenceStatement: evidenceFacts.licenceJurisdiction,
+      evidenceIds: evidenceFacts.evidenceIds,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Licence",
+      label: "Licence class",
+      applicantStatement: claimedLicence?.class,
+      evidenceStatement: evidenceFacts.licenceClass,
+      evidenceIds: evidenceFacts.evidenceIds,
+      required: true,
+    }),
+    compareDriverApplicationFact({
+      subject: "Licence",
+      label: "Licence expiry date",
+      applicantStatement: claimedLicence?.expiryDate,
+      evidenceStatement: evidenceFacts.licenceExpiryDate,
+      evidenceIds: evidenceFacts.evidenceIds,
+      normalize: normalizeComparisonDate,
+      required: true,
+    }),
+  ].filter(Boolean) as Array<Omit<DriverApplicationFinding, "id" | "createdAt" | "updatedAt">>
+
+  const now = new Date().toISOString()
+  const existing = application.findings || []
+
+  // Replace only prior automated findings for the same subject+label+evidence set.
+  // Human-entered findings and unrelated findings are preserved.
+  const evidenceKey = (evidenceFacts.evidenceIds || []).slice().sort().join("|")
+  const comparisonKeys = new Set(comparisons.map((item) => `${item.subject}::${item.label}`))
+  const retained = existing.filter((item) => {
+    const sameComparison = comparisonKeys.has(`${item.subject}::${item.label}`)
+    const sameEvidence = (item.evidenceIds || []).slice().sort().join("|") === evidenceKey
+    return !(sameComparison && sameEvidence && item.notes?.startsWith("[AUTO]"))
+  })
+
+  const generated: DriverApplicationFinding[] = comparisons.map((item) => ({
+    ...item,
+    id: uid("APPF"),
+    notes: `[AUTO] ${item.notes || ""}`.trim(),
+    createdAt: now,
+    updatedAt: now,
+    resolvedAt: item.status === "Resolved" ? now : undefined,
+  }))
+
+  const findings = [...retained, ...generated]
+  const reviewRequired = generated.some((item) => item.type !== "MATCH")
+  const processing: DriverApplicationProcessingRecord = {
+    ...(application.processing || {
+      status: "Processing",
+      findingIds: [],
+      fileCompleteness: "Not Assessed",
+      qualificationAssessment: "Not Assessed",
+      updatedAt: now,
+    }),
+    status: reviewRequired ? "Review Required" : "Processed",
+    findingIds: findings.map((item) => item.id),
+    // This function only reconciles a narrow identity/licence fact set against
+    // extracted evidence. It must never claim "Complete" on that basis alone -
+    // full file completeness depends on every applicable hiring-file requirement
+    // (employment verification, required consents/legal artifacts, etc.), which
+    // is assessed elsewhere. "Incomplete" here means only "no open discrepancy in
+    // the facts this function compares", not "the file is complete".
+    fileCompleteness: reviewRequired ? "Review Required" : "Incomplete",
+    updatedAt: now,
+    completedAt: reviewRequired ? application.processing?.completedAt : now,
+  }
+
+  const applications = store.applications.map((item) =>
+    item.id === applicationId
+      ? { ...item, status: "Under Review" as const, findings, processing, updatedAt: now }
+      : item
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(
+    companyId,
+    applicationId,
+    "UPDATE",
+    "Compared immutable submitted Driver Application claims with normalized evidence facts; source values were preserved."
+  )
+
+  return {
+    applicationId,
+    generatedFindings: generated,
+    reviewRequired,
+    processing,
+  }
+}
+
+export function queueDriverApplicationProcessing(companyId: string, applicationId: string) {
+  const store = loadCompanyDriverStore(companyId)
+  const application = store.applications.find((item) => item.id === applicationId)
+  if (!application) throw new Error("Driver Application not found.")
+  if (!["Submitted", "Under Review"].includes(application.status)) {
+    throw new Error("Only a submitted application can enter TES processing.")
+  }
+
+  const now = new Date().toISOString()
+  const processing: DriverApplicationProcessingRecord = {
+    status: "Queued",
+    queuedAt: application.processing?.queuedAt || now,
+    findingIds: application.findings?.map((finding) => finding.id) || [],
+    fileCompleteness: application.processing?.fileCompleteness || "Not Assessed",
+    qualificationAssessment: application.processing?.qualificationAssessment || "Not Assessed",
+    updatedAt: now,
+  }
+
+  const applications = store.applications.map((item) =>
+    item.id === applicationId
+      ? { ...item, status: "Under Review" as const, processing, updatedAt: now }
+      : item
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, applicationId, "UPDATE", "Queued immutable submitted Driver Application for TES processing.")
+  return applications.find((item) => item.id === applicationId)
+}
+
+export function updateDriverApplicationProcessing(
+  companyId: string,
+  applicationId: string,
+  patch: Partial<DriverApplicationProcessingRecord>
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const application = store.applications.find((item) => item.id === applicationId)
+  if (!application) throw new Error("Driver Application not found.")
+  if (!["Submitted", "Under Review", "Additional Information Requested"].includes(application.status)) {
+    throw new Error("TES processing can only update a submitted application workflow.")
+  }
+
+  const now = new Date().toISOString()
+  const current: DriverApplicationProcessingRecord = application.processing || {
+    status: "Not Started",
+    findingIds: [],
+    fileCompleteness: "Not Assessed",
+    qualificationAssessment: "Not Assessed",
+    updatedAt: now,
+  }
+  const processing: DriverApplicationProcessingRecord = {
+    ...current,
+    ...patch,
+    findingIds: Array.isArray(patch.findingIds) ? patch.findingIds : current.findingIds,
+    updatedAt: now,
+  }
+
+  const applications = store.applications.map((item) =>
+    item.id === applicationId ? { ...item, processing, updatedAt: now } : item
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, applicationId, "UPDATE", "Updated TES processing state without rewriting submitted applicant claims.")
+  return applications.find((item) => item.id === applicationId)
+}
+
+export function addDriverApplicationFinding(
+  companyId: string,
+  applicationId: string,
+  finding: Omit<DriverApplicationFinding, "id" | "createdAt" | "updatedAt">
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const application = store.applications.find((item) => item.id === applicationId)
+  if (!application) throw new Error("Driver Application not found.")
+  if (!["Submitted", "Under Review", "Additional Information Requested"].includes(application.status)) {
+    throw new Error("Findings can only be attached to a submitted application.")
+  }
+
+  const now = new Date().toISOString()
+  const record: DriverApplicationFinding = {
+    ...finding,
+    id: uid("APPF"),
+    evidenceIds: Array.isArray(finding.evidenceIds) ? finding.evidenceIds : [],
+    createdAt: now,
+    updatedAt: now,
+  }
+  const findings = [...(application.findings || []), record]
+  const processing: DriverApplicationProcessingRecord = {
+    ...(application.processing || {
+      status: "Not Started",
+      findingIds: [],
+      fileCompleteness: "Not Assessed",
+      qualificationAssessment: "Not Assessed",
+      updatedAt: now,
+    }),
+    status: record.type === "MATCH" ? (application.processing?.status || "Processing") : "Review Required",
+    findingIds: findings.map((item) => item.id),
+    fileCompleteness:
+      record.type === "MATCH"
+        ? (application.processing?.fileCompleteness || "Not Assessed")
+        : "Review Required",
+    updatedAt: now,
+  }
+
+  const applications = store.applications.map((item) =>
+    item.id === applicationId ? { ...item, status: "Under Review" as const, findings, processing, updatedAt: now } : item
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, record.id, "CREATE", "Recorded a factual Driver Application reconciliation finding without changing source claims.")
+  return record
+}
+
+export function resolveDriverApplicationFinding(
+  companyId: string,
+  applicationId: string,
+  findingId: string,
+  resolution: {
+    status: "Resolved" | "Clarification Requested" | "New Application Required"
+    resolvedBy?: string
+    notes?: string
+  }
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const application = store.applications.find((item) => item.id === applicationId)
+  if (!application) throw new Error("Driver Application not found.")
+  const existing = application.findings?.find((item) => item.id === findingId)
+  if (!existing) throw new Error("Driver Application finding not found.")
+
+  const now = new Date().toISOString()
+  const findings = (application.findings || []).map((item) =>
+    item.id === findingId
+      ? {
+          ...item,
+          status: resolution.status,
+          notes: resolution.notes ?? item.notes,
+          resolvedAt: resolution.status === "Resolved" ? now : item.resolvedAt,
+          resolvedBy: resolution.resolvedBy ?? item.resolvedBy,
+          updatedAt: now,
+        }
+      : item
+  )
+  const hasOpenReview = findings.some((item) => item.type !== "MATCH" && item.status !== "Resolved")
+  const status =
+    resolution.status === "Clarification Requested"
+      ? "Additional Information Requested" as const
+      : "Under Review" as const
+  const processing: DriverApplicationProcessingRecord = {
+    ...(application.processing || {
+      status: "Processing",
+      findingIds: [],
+      fileCompleteness: "Not Assessed",
+      qualificationAssessment: "Not Assessed",
+      updatedAt: now,
+    }),
+    status: hasOpenReview ? "Review Required" : "Processing",
+    findingIds: findings.map((item) => item.id),
+    fileCompleteness: hasOpenReview ? "Review Required" : application.processing?.fileCompleteness || "Not Assessed",
+    updatedAt: now,
+  }
+
+  const applications = store.applications.map((item) =>
+    item.id === applicationId ? { ...item, status, findings, processing, updatedAt: now } : item
+  )
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, findingId, "UPDATE", "Updated factual reconciliation finding status without changing the submitted application.")
+  return findings.find((item) => item.id === findingId)
+}
+
+export function createReplacementDriverApplication(
+  companyId: string,
+  applicationId: string,
+  reason?: string
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const original = store.applications.find((item) => item.id === applicationId)
+  if (!original) throw new Error("Driver Application not found.")
+  if (!["Submitted", "Under Review", "Additional Information Requested"].includes(original.status)) {
+    throw new Error("A replacement can only be created from an immutable submitted application.")
+  }
+  if (original.supersededByApplicationId) {
+    return store.applications.find((item) => item.id === original.supersededByApplicationId)
+  }
+
+  const now = new Date().toISOString()
+  const replacementId = uid("APP")
+  const replacement: DriverApplicationRecord = {
+    id: replacementId,
+    companyId: original.companyId,
+    companyDriverRelationshipId: original.companyDriverRelationshipId,
+    driverMasterId: original.driverMasterId,
+    applicationContext: original.applicationContext,
+    tesServiceStartDateAtCreation: original.tesServiceStartDateAtCreation,
+    employmentStartDateAtCreation: original.employmentStartDateAtCreation,
+    replacesApplicationId: original.id,
+    source: "TES Workflow",
+    applicationType: original.applicationType,
+    status: "Invitation Ready",
+    operatingRegion: original.operatingRegion,
+    createdDate: now.slice(0, 10),
+    companyDetermination: "Pending",
+    determinationNotes: reason,
+    evidenceIds: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const applications = [
+    replacement,
+    ...store.applications.map((item) =>
+      item.id === original.id
+        ? { ...item, status: "Superseded" as const, supersededByApplicationId: replacementId, updatedAt: now }
+        : item
+    ),
+  ]
+  saveCompanyDriverStore({ ...store, applications })
+  auditDriverMutation(companyId, replacement.id, "CREATE", "Created a new replacement Driver Application while preserving the original submitted application unchanged.")
+  return replacement
+}
+
+
+export function assessDriverHiringFile(
+  companyId: string,
+  driverMasterId: string,
+  company?: { startDate?: string },
+) {
+  const store = loadCompanyDriverStore(companyId)
+  const relationship = activeRelationship(store, driverMasterId)
+  const applications = store.applications.filter((item) => item.driverMasterId === driverMasterId)
+  const packages = store.hiringPackages.filter((item) => item.driverMasterId === driverMasterId)
+  const screenings = store.screenings.filter((item) => item.driverMasterId === driverMasterId && !item.isArchived)
+
+  const latestApplication = applications[0]
+  const latestPackage = packages[0]
+  const serviceStartDate = company?.startDate || undefined
+  const employmentStartDate = relationship?.startDate || undefined
+  const isInheritedDriver = Boolean(serviceStartDate && employmentStartDate && employmentStartDate < serviceStartDate)
+
+  const applicationSatisfied = Boolean(
+    latestApplication &&
+      (latestApplication.status === "Submitted" || latestApplication.status === "Under Review" || latestApplication.status === "Approved")
+  )
+  const applicationPending = Boolean(latestApplication && !applicationSatisfied)
+
+  const referenceRecords = screenings.filter((item) => item.category === "Previous Employer Verification")
+  const referenceSatisfied = referenceRecords.length > 0 && referenceRecords.every((item) =>
+    item.status === "Passed" || item.status === "Qualified" ||
+    item.employerVerificationDetails?.verificationOutcome === "Verified as Claimed" ||
+    item.employerVerificationDetails?.verificationOutcome === "No Record / Unable to Verify"
+  )
+
+  const packageRequiredItems = latestPackage?.items.filter((item) => item.required) || []
+  const packageSatisfied = Boolean(
+    latestPackage &&
+      (latestPackage.status === "Completed" ||
+        (packageRequiredItems.length > 0 && packageRequiredItems.every((item) => item.signed)))
+  )
+
+  let nextAction: import("@/types/drivers").HiringWorkflowAction = "NONE"
+  let nextActionLabel: string | undefined
+
+  if (!latestApplication) {
+    nextAction = "SEND_APPLICATION"
+    nextActionLabel = "Send Application"
+  } else if (!applicationSatisfied) {
+    nextAction = "CONTINUE_APPLICATION"
+    nextActionLabel = latestApplication.status === "Invited" ? "Application Pending" : "Continue Application"
+  } else if (!referenceSatisfied) {
+    nextAction = "COMPLETE_REFERENCE_CHECKS"
+    nextActionLabel = "Complete Reference Checks"
+  } else if (!packageSatisfied) {
+    nextAction = "COMPLETE_HIRING_PACKAGE"
+    nextActionLabel = "Complete Hiring Package"
+  }
+
+  const applicationStatus = !latestApplication ? "MISSING" : applicationSatisfied ? "SATISFIED" : "PENDING"
+  const referenceCheckStatus = referenceSatisfied ? "SATISFIED" : applicationSatisfied ? "MISSING" : "PENDING"
+  const hiringPackageStatus = packageSatisfied ? "SATISFIED" : referenceSatisfied ? "MISSING" : "PENDING"
+
+  return {
+    driverMasterId,
+    companyId,
+    tesServiceStartDate: serviceStartDate,
+    employmentStartDate,
+    isInheritedDriver,
+    applicationStatus,
+    referenceCheckStatus,
+    hiringPackageStatus,
+    nextAction,
+    nextActionLabel,
+    requirements: [
+      { id: "HIRING_APPLICATION", label: "Driver hiring application", status: applicationStatus, evidenceIds: latestApplication?.evidenceIds || [] },
+      { id: "REFERENCE_CHECKS", label: "Previous employer / reference checks", status: referenceCheckStatus, evidenceIds: referenceRecords.flatMap((item) => item.evidenceIds || []) },
+      { id: "HIRING_PACKAGE", label: "Hiring / onboarding package", status: hiringPackageStatus, evidenceIds: latestPackage?.evidenceIds || [] },
+    ],
+    assessedAt: new Date().toISOString(),
+  } satisfies import("@/types/drivers").DriverHiringFileAssessment
 }

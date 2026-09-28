@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { DriverDateInput } from "./DriverDateInput";
 import {
   CreditCard,
   ShieldCheck,
@@ -20,6 +21,7 @@ import {
   normalizeLicenceNumber,
 } from "@/lib/driver-data";
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
+import { driverDateInputValue } from "@/lib/driver-date";
 
 export interface DriverQualificationsTabProps {
   master: DriverMaster;
@@ -107,9 +109,9 @@ const syntaxCheck = {
       endorsements: endorsementsList,
       restrictions: restrictionsList,
       airBrakeQualified: form.airBrakeQualified,
-      issueDate: form.issueDate || undefined,
-      expiryDate: form.expiryDate || undefined,
-      effectiveFrom: form.effectiveFrom,
+      issueDate: driverDateInputValue(form.issueDate) || undefined,
+      expiryDate: driverDateInputValue(form.expiryDate) || undefined,
+      effectiveFrom: driverDateInputValue(form.effectiveFrom),
       verificationState: form.verificationState,
       notes: form.notes || undefined,
       source: "Driver Qualifications Workspace",
@@ -197,9 +199,9 @@ const syntaxCheck = {
                   ) : undefined
                 }
               />
-              <ReadOnlyField label="Issue Date" value={licence.issueDate || "—"} mono />
-              <ReadOnlyField label="Expiry Date" value={licence.expiryDate || "—"} mono />
-              <ReadOnlyField label="Effective From" value={licence.effectiveFrom} mono />
+              <ReadOnlyField label="Issue Date" value={driverDateInputValue(licence.issueDate) || "—"} mono />
+              <ReadOnlyField label="Expiry Date" value={driverDateInputValue(licence.expiryDate) || "—"} mono />
+              <ReadOnlyField label="Effective From" value={driverDateInputValue(licence.effectiveFrom) || "—"} mono />
               <ReadOnlyField
                 label="Verification Status"
                 value={licence.verificationState || "—"}
@@ -346,7 +348,7 @@ const syntaxCheck = {
                   </td>
                   <td className="px-5 py-2.5 font-semibold text-foreground">{item.class || "—"}</td>
                   <td className="px-5 py-2.5 font-mono text-[11px] text-muted-foreground">
-                    {item.effectiveFrom} → {item.effectiveTo || "Current"}
+                    {driverDateInputValue(item.effectiveFrom) || "—"} → {driverDateInputValue(item.effectiveTo) || "Current"}
                   </td>
                   <td className="px-5 py-2.5">
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-foreground">
@@ -401,7 +403,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.licenceNumber}
-                    onChange={(e) => setForm({ ...form, licenceNumber: e.target.value })}
+                    onChange={(value) => setForm({ ...form, licenceNumber: value })}
                     required
                     placeholder="e.g. D1234-56789-01234"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono font-bold mt-1"
@@ -442,7 +444,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.class}
-                    onChange={(e) => setForm({ ...form, class: e.target.value })}
+                    onChange={(value) => setForm({ ...form, class: value })}
                     placeholder="e.g. Class A / AZ"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />
@@ -466,10 +468,9 @@ const syntaxCheck = {
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Issue Date
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.issueDate}
-                    onChange={(e) => setForm({ ...form, issueDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, issueDate: value })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1 font-mono"
                   />
                 </div>
@@ -478,10 +479,9 @@ const syntaxCheck = {
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Expiry Date
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.expiryDate}
-                    onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+                    onChange={(value) => setForm({ ...form, expiryDate: value })}
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1 font-mono"
                   />
                 </div>
@@ -490,10 +490,9 @@ const syntaxCheck = {
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Effective From *
                   </label>
-                  <input
-                    type="date"
+                  <DriverDateInput
                     value={form.effectiveFrom}
-                    onChange={(e) => setForm({ ...form, effectiveFrom: e.target.value })}
+                    onChange={(value) => setForm({ ...form, effectiveFrom: value })}
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1 font-mono"
                   />
@@ -528,7 +527,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.endorsements}
-                    onChange={(e) => setForm({ ...form, endorsements: e.target.value })}
+                    onChange={(value) => setForm({ ...form, endorsements: value })}
                     placeholder="e.g. Air Brake (Z), Tanker (N), Hazmat (H)"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />
@@ -541,7 +540,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.restrictions}
-                    onChange={(e) => setForm({ ...form, restrictions: e.target.value })}
+                    onChange={(value) => setForm({ ...form, restrictions: value })}
                     placeholder="e.g. Corrective Lenses (01)"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />

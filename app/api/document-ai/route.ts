@@ -1,122 +1,10 @@
-import { randomUUID, createSign } from "crypto"
+import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { PDFDocument } from "pdf-lib"
 import { GoogleDocumentAIAcquisitionProvider } from "@/lib/google-document-ai-provider"
 import type { TESMachineDocumentResult } from "@/lib/machine-acquisition"
-
-interface ServiceAccountCredentials {
-  client_email: string
-  private_key: string
-}
-
-function base64url(input: Buffer | string): string {
-  return (Buffer.isBuffer(input) ? input : Buffer.from(input)).toString("base64url")
-}
-
-function parseServiceAccountCredentials(raw: string): ServiceAccountCredentials {
-  const trimmed = raw.trim()
-  const decoded = trimmed.startsWith("ey") ? Buffer.from(trimmed, "base64").toString("utf8") : trimmed
-
-  try {
-    const credentials = JSON.parse(decoded) as Partial<ServiceAccountCredentials>
-    if (!credentials.client_email || !credentials.private_key) {
-      throw new Error("service account JSON is missing client_email or private_key")
-    }
-    return {
-      client_email: credentials.client_email,
-      private_key: credentials.private_key.replace(/\\n/g, "\n"),
-    }
-  } catch (error) {
-    throw new Error(
-      `Invalid GOOGLE_APPLICATION_CREDENTIALS_JSON. Paste the service-account JSON as one quoted .env.local value, or base64-encode it. Parser detail: ${
-        error instanceof Error ? error.message : "Unknown JSON parse error"
-      }`
-    )
-  }
-}
-
-// Module-level token cache. Google access tokens minted via the JWT-bearer
-// flow below are valid for a full hour (see `exp: nowSeconds + 3600`), but
-// prior to this fix every single document upload minted a brand new one —
-// an RSA sign plus a full network round trip to oauth2.googleapis.com —
-// even when a perfectly valid token already existed. That was pure latency
-// on every OCR request for no reason. Caching it here (keyed by service
-// account, in case that ever changes) cuts one full network round trip off
-// every upload after the first, and the in-flight promise dedup below
-// collapses concurrent uploads (e.g. a bulk/batch upload firing several
-// documents at once) onto a single token mint instead of one each.
-// NOTE: this cache lives in the Node process's memory. It survives across
-// requests as long as this server process stays warm (true for `next start`
-// / a long-running Node server); on a cold-starting serverless platform
-// each new instance re-mints once, same as before, but still avoids
-// re-minting per request within a warm instance.
-let cachedToken: { accessToken: string; expiresAtMs: number; clientEmail: string } | null = null
-let inFlightTokenRequest: Promise<string> | null = null
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // refresh 5 min before actual expiry
-
-async function getCachedGoogleAccessToken(credentials: ServiceAccountCredentials): Promise<string> {
-  const now = Date.now()
-  if (cachedToken && cachedToken.clientEmail === credentials.client_email && cachedToken.expiresAtMs - TOKEN_REFRESH_BUFFER_MS > now) {
-    return cachedToken.accessToken
-  }
-  if (inFlightTokenRequest) return inFlightTokenRequest
-
-  inFlightTokenRequest = (async () => {
-    const mintedAt = Date.now()
-    const accessToken = await getGoogleAccessToken(credentials)
-    cachedToken = { accessToken, expiresAtMs: mintedAt + 3600 * 1000, clientEmail: credentials.client_email }
-    return accessToken
-  })()
-
-  try {
-    return await inFlightTokenRequest
-  } finally {
-    inFlightTokenRequest = null
-  }
-}
-
-// GoogleDocumentAIAcquisitionProvider expects a bearer access token string
-// (GoogleDocumentAIProviderConfig.accessToken: string), not the raw service
-// account credentials JSON. This mints one via the standard JWT-bearer OAuth2
-// flow so the provider itself never has to know about credential parsing.
-async function getGoogleAccessToken(credentials: ServiceAccountCredentials): Promise<string> {
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  const header = { alg: "RS256", typ: "JWT" }
-  const claimSet = {
-    iss: credentials.client_email,
-    scope: "https://www.googleapis.com/auth/cloud-platform",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: nowSeconds,
-    exp: nowSeconds + 3600,
-  }
-
-  const unsignedToken = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claimSet))}`
-  const signer = createSign("RSA-SHA256")
-  signer.update(unsignedToken)
-  signer.end()
-  const signature = base64url(signer.sign(credentials.private_key))
-  const assertion = `${unsignedToken}.${signature}`
-
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }),
-  })
-
-  if (!tokenResponse.ok) {
-    const detail = await tokenResponse.text()
-    throw new Error(`Failed to obtain Google access token (${tokenResponse.status}): ${detail.slice(0, 500)}`)
-  }
-
-  const tokenData = (await tokenResponse.json()) as { access_token?: string }
-  if (!tokenData.access_token) {
-    throw new Error("Google token response did not include an access_token")
-  }
-  return tokenData.access_token
-}
+import { getGoogleAccessToken } from "@/lib/google/auth"
+import { documentAiLocation, googleProjectId, roadsideDocumentAiProcessorId } from "@/lib/google/config"
 
 // ---------------------------------------------------------------------------
 // Large-PDF chunking (interim, no-Cloud-Storage workaround)
@@ -136,9 +24,11 @@ async function getGoogleAccessToken(credentials: ServiceAccountCredentials): Pro
 // Until then, this is a stopgap that unblocks testing OCR against real
 // large documents with zero new infrastructure: split the PDF locally into
 // <=15-page chunks, run each chunk through the existing synchronous call
-// (now cheap thanks to the cached OAuth token above — no extra round trip
-// per chunk), and stitch the results back into a single TESMachineDocumentResult
-// with page numbers remapped to the original document.
+// (the Google access token used for every chunk is minted once per request
+// via lib/google/auth.ts, which itself caches internally — no extra token
+// round trip per chunk), and stitch the results back into a single
+// TESMachineDocumentResult with page numbers remapped to the original
+// document.
 //
 // IMPORTANT LIMITATION — this does NOT do document-type segregation. Every
 // chunk is run through the same processor (currently tuned for Roadside
@@ -220,17 +110,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
 
-    const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID
-    const processorId = process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID
-    const location = process.env.GOOGLE_DOCUMENT_AI_LOCATION ?? "us"
-
-    if (!credentialsJson || !projectId || !processorId) {
-      return NextResponse.json({ error: "Document AI not configured" }, { status: 500 })
-    }
-
-    const credentials = parseServiceAccountCredentials(credentialsJson)
-    const accessToken = await getCachedGoogleAccessToken(credentials)
+    const projectId = googleProjectId()
+    const processorId = roadsideDocumentAiProcessorId()
+    const location = documentAiLocation()
+    const accessToken = await getGoogleAccessToken()
 
     const provider = new GoogleDocumentAIAcquisitionProvider({
       projectId,
@@ -274,8 +157,16 @@ export async function POST(req: NextRequest) {
     const result = mergeChunkResults(evidenceId, chunkResults)
     return NextResponse.json({ result })
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Document AI processing failed"
+    // Server-side only: the full error (which may include upstream Google
+    // response text, e.g. from lib/google-document-ai-provider.ts) is logged
+    // here for operators, but never contains credentials or tokens - Google's
+    // error response bodies describe the request that failed, not the
+    // Authorization header used to make it. The client below always gets a
+    // stable, generic message instead of this detail, regardless of what
+    // actually failed (missing configuration, a Google API error, an auth
+    // failure, or a parsing error), so upstream response text, auth details,
+    // tokens, and internal configuration state can never reach the client.
     console.error("Document AI API error:", error)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: "Document AI processing failed. Please try again." }, { status: 500 })
   }
 }

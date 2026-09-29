@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { logger } from "./logger.js";
 import type { ScanOutcome } from "./types.js";
 
 /**
@@ -56,6 +57,67 @@ export function mapExitCodeToResult(exitCode: number | undefined, stdout: string
   return { outcome: "SCAN_ERROR", rawExitCode: exitCode };
 }
 
+const DIAGNOSTIC_TEXT_MAX_LENGTH = 200;
+
+/**
+ * Redacts anything that looks like a filesystem path from ClamAV's stderr
+ * before it is ever logged, and truncates the remainder to a small fixed
+ * length. The only paths that can ever appear in this scanner's own
+ * `clamscan` invocation are container-internal (e.g. /var/lib/clamav/...,
+ * or this service's own per-invocation temp file path under /tmp) - never a
+ * customer filename, a GCS object name, or anything request-derived - but
+ * this errs on the side of never logging a path at all regardless, since
+ * doing so costs nothing here. Exported for testing.
+ */
+export function sanitizeClamavDiagnosticText(text: string): string {
+  const withoutPaths = text.replace(/\/[^\s:]+/g, "<path>");
+  return withoutPaths.replace(/\s+/g, " ").trim().slice(0, DIAGNOSTIC_TEXT_MAX_LENGTH);
+}
+
+export type ClamavFailureClassification = "EXIT_CODE" | "TIMEOUT_OR_SIGNAL" | "SPAWN_FAILURE";
+
+export interface ExecFileFailureInfo {
+  code?: unknown;
+  signal?: unknown;
+}
+
+/**
+ * Pure classification of an execFile failure into one of three mutually
+ * exclusive categories - used only to decide what diagnostic detail to log;
+ * it never influences the returned ClamAvResult/ScanOutcome, which continues
+ * to come exclusively from mapExitCodeToResult, unchanged. A signal (set by
+ * execFile's own `timeout` kill, which defaults to SIGTERM) always indicates
+ * a timeout/signal termination even if a numeric code is also present, since
+ * a signal-killed process's "exit code" is not a real ClamAV result. A
+ * genuine numeric code with no signal is a real ClamAV process exit (e.g. 2
+ * for an internal error). Anything else (e.g. a string errno code such as
+ * "ENOENT") is a spawn failure - clamscan never started at all. Exported for
+ * testing.
+ */
+export function classifyExecFileFailure(info: ExecFileFailureInfo): ClamavFailureClassification {
+  if (info.signal) return "TIMEOUT_OR_SIGNAL";
+  if (typeof info.code === "number") return "EXIT_CODE";
+  return "SPAWN_FAILURE";
+}
+
+/**
+ * Logs sanitized diagnostic metadata for a SCAN_ERROR outcome only - never
+ * for CLEAN or THREAT_DETECTED. Deliberately logs ONLY: the failure
+ * classification, the raw code/signal values (small fixed enums/integers,
+ * not sensitive), and a path-redacted, truncated stderr excerpt. Never logs
+ * the scanned file's path, document contents, GCS object information,
+ * credentials, tokens, environment variables, or any other request/customer-
+ * controlled text - none of those are ever read by this function in the
+ * first place, so none can leak through it.
+ */
+function logScanErrorDiagnostic(info: ExecFileFailureInfo, stderr: string): void {
+  const classification = classifyExecFileFailure(info);
+  const sanitizedStderr = sanitizeClamavDiagnosticText(stderr);
+  logger.error({
+    message: `clamscan SCAN_ERROR classification=${classification} code=${String(info.code ?? "none")} signal=${String(info.signal ?? "none")} stderr="${sanitizedStderr}"`,
+  });
+}
+
 /**
  * Scans a single file already on local disk. Never treats a spawn failure,
  * timeout, or unexpected exit code as CLEAN - fail closed. Does not throw;
@@ -68,16 +130,25 @@ export async function scanFile(filePath: string, timeoutMs: number): Promise<Cla
       "clamscan",
       ["--no-summary", filePath],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         // execFile's `error` carries a numeric `code` for a normal non-zero
         // exit; a killed-by-timeout or spawn failure has no meaningful exit
         // code at all - mapExitCodeToResult treats undefined as SCAN_ERROR.
-        const exitCode = error && typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number"
-          ? (error as unknown as { code: number }).code
+        // This derivation, and the ClamAvResult it produces, are completely
+        // unchanged from before this diagnostic logging was added.
+        const failureInfo: ExecFileFailureInfo = { code: (error as ExecFileFailureInfo | null)?.code, signal: (error as ExecFileFailureInfo | null)?.signal };
+        const exitCode = error && typeof failureInfo.code === "number"
+          ? failureInfo.code
           : error
             ? undefined
             : 0;
-        resolve(mapExitCodeToResult(exitCode, stdout ?? ""));
+        const result = mapExitCodeToResult(exitCode, stdout ?? "");
+
+        if (result.outcome === "SCAN_ERROR") {
+          logScanErrorDiagnostic(failureInfo, stderr ?? "");
+        }
+
+        resolve(result);
       },
     );
   });

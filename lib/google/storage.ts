@@ -48,16 +48,23 @@ function evidenceBucket() {
   return storageClient().bucket(evidenceBucketName())
 }
 
-/** Uploads raw bytes to the temporary intake bucket. Returns the object name. */
+/**
+ * Uploads raw bytes to the temporary intake bucket. Returns the object name.
+ *
+ * `options.metadata` is stored as GCS custom object metadata (safe tracing
+ * identifiers only - e.g. batch/source-file ids and original filename, never
+ * secrets or extracted document contents; callers are responsible for that).
+ */
 export async function uploadIntakeObject(
   objectName: string,
   data: Buffer | Uint8Array,
-  options?: { contentType?: string },
+  options?: { contentType?: string; metadata?: Record<string, string> },
 ): Promise<{ bucket: string; objectName: string }> {
   const file = intakeBucket().file(objectName)
   await file.save(Buffer.isBuffer(data) ? data : Buffer.from(data), {
     resumable: false,
     contentType: options?.contentType,
+    metadata: options?.metadata ? { metadata: options.metadata } : undefined,
   })
   return { bucket: intakeBucketName(), objectName }
 }

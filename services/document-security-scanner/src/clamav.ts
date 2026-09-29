@@ -160,6 +160,24 @@ export interface ScannerReadinessResult {
 }
 
 /**
+ * Standalone `clamscan` (as opposed to a warm `clamdscan` client talking to
+ * a long-running `clamd` daemon - see this file's header comment for why
+ * that migration is deliberately out of scope here) reloads all three
+ * signature databases (main/daily/bytecode) from disk into memory on every
+ * single invocation, including this readiness check's own trivial scan.
+ * Cloud Run production testing (revision document-security-scanner-00003-95v)
+ * proved this taking longer than 10 seconds under real Cloud Run resource
+ * allocation - the diagnostic logging added in ca54efa captured the proof
+ * directly: `classification=TIMEOUT_OR_SIGNAL code=none signal=SIGTERM`,
+ * meaning execFile's own `timeout` killed a `clamscan` process that had not
+ * yet finished loading the databases, not a process that had finished and
+ * failed. 30 seconds is not a guess - it matches the budget already given to
+ * `freshclam` at container startup in entrypoint.sh for a comparable
+ * database-loading operation.
+ */
+export const READINESS_SCAN_TIMEOUT_MS = 30_000;
+
+/**
  * Readiness check for the scanner engine itself (distinct from the HTTP
  * process being alive, which the plain /health endpoint already covers).
  *
@@ -187,7 +205,7 @@ export async function scannerReadiness(): Promise<ScannerReadinessResult> {
   const tempFilePath = join(tempDir, "readiness-check.bin");
   try {
     await writeFile(tempFilePath, "TES scanner readiness check - not a real document.");
-    const result = await scanFile(tempFilePath, 10_000);
+    const result = await scanFile(tempFilePath, READINESS_SCAN_TIMEOUT_MS);
     return result.outcome === "SCAN_ERROR" ? { ready: false, reason: "SCANNER_SIGNATURES_UNAVAILABLE" } : { ready: true };
   } catch {
     return { ready: false, reason: "SCANNER_SIGNATURES_UNAVAILABLE" };

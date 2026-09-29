@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { classifyExecFileFailure, mapExitCodeToResult, sanitizeClamavDiagnosticText } from "../src/clamav.js";
+import { READINESS_SCAN_TIMEOUT_MS, classifyExecFileFailure, mapExitCodeToResult, sanitizeClamavDiagnosticText } from "../src/clamav.js";
+
+test("readiness scan timeout is 30 seconds, not the previous, proven-insufficient 10 seconds", () => {
+  // Cloud Run production evidence (revision document-security-scanner-00003-95v)
+  // proved a standalone clamscan invocation - which reloads all three
+  // signature databases from disk on every call - can exceed 10 seconds
+  // under real Cloud Run resource allocation. scannerReadiness() passes this
+  // exact constant to scanFile() as its timeout, so asserting its value here
+  // directly proves the corrected budget is what readiness actually uses.
+  assert.equal(READINESS_SCAN_TIMEOUT_MS, 30_000);
+});
 
 test("exit code 0 maps to CLEAN", () => {
   const result = mapExitCodeToResult(0, "");

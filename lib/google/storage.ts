@@ -98,39 +98,6 @@ export async function downloadEvidenceObject(objectName: string): Promise<Buffer
   return content
 }
 
-const VERIFICATION_NAMESPACE_PREFIX = "_system/verification/"
-
-/**
- * Deletes an object from the evidence bucket - but ONLY if its name falls
- * under the isolated `_system/verification/` namespace. This exists solely
- * so the temporary production GCS verification route can clean up after
- * itself; it is not a general evidence-delete operation and cannot become
- * one by construction, since it throws immediately for any other path. Real
- * TES evidence has no delete function anywhere in this module - see the
- * module-level comment above.
- */
-export async function deleteVerificationEvidenceObject(objectName: string): Promise<void> {
-  if (!objectName.startsWith(VERIFICATION_NAMESPACE_PREFIX)) {
-    throw new Error(`Refusing to delete an evidence object outside the verification namespace: ${objectName}`)
-  }
-  await evidenceBucket().file(objectName).delete()
-}
-
-/**
- * Deletes an object from the intake bucket - but ONLY if its name falls
- * under the isolated `_system/verification/` namespace, for exactly the same
- * reason and with exactly the same guard as deleteVerificationEvidenceObject
- * above. Intake is already "temporary/raw processing uploads" by design, but
- * this still refuses to touch anything outside the verification namespace so
- * it can never be repurposed into a general intake-delete operation.
- */
-export async function deleteVerificationIntakeObject(objectName: string): Promise<void> {
-  if (!objectName.startsWith(VERIFICATION_NAMESPACE_PREFIX)) {
-    throw new Error(`Refusing to delete an intake object outside the verification namespace: ${objectName}`)
-  }
-  await intakeBucket().file(objectName).delete()
-}
-
 /**
  * Promotes a validated intake object to permanent evidence storage under its
  * canonical filename, then removes the source from intake only.

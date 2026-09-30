@@ -163,9 +163,13 @@ were not independently re-verified by execution in this session.
 ## ClamAV version (1.4.6, official Cisco Talos package - not Debian's)
 
 This image installs ClamAV **1.4.6**, pinned explicitly, from the **official
-Cisco Talos Linux x86_64 `.deb`** published at clamav.net/downloads - not
-Debian's own `clamav`/`clamav-daemon`/`clamdscan`/`clamav-freshclam`
-packages, which this image no longer installs at all.
+Cisco Talos Linux x86_64 `.deb`**, published as a GitHub release asset at
+`github.com/Cisco-Talos/clamav/releases` - not Debian's own
+`clamav`/`clamav-daemon`/`clamdscan`/`clamav-freshclam` packages, which this
+image no longer installs at all. The identical artifact is also published at
+clamav.net/downloads, but Cloud Build's requests to that specific host were
+observed returning HTTP 403 (that host's own bot/automation protection) -
+the GitHub release asset is used instead for reliable automated builds.
 
 **Why not Debian's packages**: this image's base (`node:20-slim`, currently
 Debian 12 "bookworm") resolves Debian's own `clamav` package to
@@ -176,11 +180,14 @@ installs the vendor's own pre-built binary directly.
 
 **Package integrity**: the official `.deb` has no separately published
 checksum file - the strongest verification mechanism ClamAV actually
-publishes for it is a detached GPG signature (`clamav-1.4.6.linux.x86_64.deb.sig`),
-signed with Cisco Talos's own release-signing key, both hosted alongside the
-package on clamav.net/downloads. The Dockerfile downloads the `.deb`, its
-`.sig`, and the public key itself, asserts the key's fingerprint against a
-pinned value before trusting it (so a compromised mirror serving a
+publishes for it is a detached GPG signature
+(`clamav-1.4.6.linux.x86_64.deb.sig`), signed with Cisco Talos's own
+release-signing key. The `.sig` is published as a GitHub release asset
+alongside the `.deb` (the same official release, the same host), so both are
+fetched from GitHub together. The public key itself is still fetched from
+clamav.net/downloads/gpg_public_key (that specific path was not observed to
+fail under Cloud Build). The Dockerfile asserts the key's fingerprint
+against a pinned value before trusting it (so a compromised mirror serving a
 substituted key would fail the build), imports it, and verifies the
 signature - all before `dpkg -i` ever runs. No checksum was invented or
 substituted for this verification; a GPG signature is the strongest

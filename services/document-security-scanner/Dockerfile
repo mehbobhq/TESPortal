@@ -40,12 +40,26 @@ WORKDIR /app
 # omitted there).
 #
 # Verified via the official Cisco Talos GPG signature published alongside
-# this exact artifact on clamav.net/downloads - the strongest verification
-# mechanism actually published for this release (no separate checksum file
-# is published for it). The signing key's fingerprint is asserted explicitly
-# below, fetched from clamav.net's own download infrastructure, so a
+# this exact artifact - the strongest verification mechanism actually
+# published for this release (no separate checksum file is published for
+# it). The signing key's fingerprint is asserted explicitly below, so a
 # compromised mirror serving a substituted key would fail this build rather
 # than silently succeed.
+#
+# The .deb and .sig are fetched from the official Cisco-Talos GitHub release
+# (github.com/Cisco-Talos/clamav/releases), not clamav.net/downloads: Cloud
+# Build's requests to clamav.net/downloads/production/... were observed
+# returning HTTP 403 (that host's own bot/automation protection, not a
+# TES-side misconfiguration), while the identical artifacts published as
+# GitHub release assets for this exact tagged release are reachable. Both
+# files come from the same official release and the same host now, rather
+# than splitting verification across two different external hosts. The
+# public key is still fetched from clamav.net/downloads/gpg_public_key -
+# that specific path was not observed to fail, and moving it without
+# evidence would be an unnecessary, unverified change; if it is later found
+# to also fail under Cloud Build, ClamAV's own documentation independently
+# links an official GitHub-hosted mirror of the identical key (confirmed in
+# this investigation to carry the exact same fingerprint asserted below).
 ARG CLAMAV_VERSION=1.4.6
 ARG CLAMAV_GPG_FINGERPRINT=5BADCA2665EF59DCF8A23D8B707F0DB480836771
 
@@ -56,8 +70,8 @@ RUN apt-get update \
 
 RUN set -eu; \
   cd /tmp; \
-  curl -fsSL -o clamav.deb "https://www.clamav.net/downloads/production/clamav-${CLAMAV_VERSION}.linux.x86_64.deb"; \
-  curl -fsSL -o clamav.deb.sig "https://www.clamav.net/downloads/production/clamav-${CLAMAV_VERSION}.linux.x86_64.deb.sig"; \
+  curl -fsSL -o clamav.deb "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.linux.x86_64.deb"; \
+  curl -fsSL -o clamav.deb.sig "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.linux.x86_64.deb.sig"; \
   curl -fsSL -o talos.gpg "https://www.clamav.net/downloads/gpg_public_key"; \
   ACTUAL_FINGERPRINT=$(gpg --show-keys --with-colons --with-fingerprint talos.gpg | awk -F: '$1=="fpr"{print $10; exit}'); \
   [ "$ACTUAL_FINGERPRINT" = "$CLAMAV_GPG_FINGERPRINT" ] || { echo "ClamAV GPG key fingerprint mismatch - refusing to install"; exit 1; }; \

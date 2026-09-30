@@ -23,38 +23,60 @@ RUN npm ci --omit=dev
 FROM node:20-slim AS runtime
 WORKDIR /app
 
-# ClamAV (clamscan + freshclam + the signature-database tooling). No other
-# scanning engine, no archive/executable-format tooling is installed.
-#
-# Debian's clamav-freshclam package ships /etc/clamav/freshclam.conf with a
-# packager-inserted "Example" guard line that makes freshclam refuse to run
-# at all until it is removed - this is a known, universal Debian/Ubuntu
-# ClamAV packaging behavior, not something specific to this image. Without
-# removing it, freshclam fails immediately (before any network activity),
-# both here at build time and in entrypoint.sh at container startup, and no
-# signature database is ever written.
+# ClamAV components:
+#   clamav          - clamscan (still the application's scan engine in
+#                      Phase 1 - see src/clamav.ts; unchanged this phase)
+#   clamav-daemon   - clamd + clamdscan (the persistent-daemon foundation
+#                      being established in this phase; not yet wired into
+#                      the application's scanFile())
+#   clamav-freshclam - freshclam (signature updates)
+# No other scanning engine, no archive/executable-format tooling is
+# installed. Package names are standard, long-established Debian ClamAV
+# source-package siblings (clamav-daemon ships alongside the already-proven-
+# working clamav/clamav-freshclam packages from the identical upstream
+# source) - not independently re-verified via a live `apt-cache` query in
+# this session (no Docker/apt execution available here); the Docker build
+# itself is the actual verification, and could not be run in this session -
+# see the Phase 1 report's "Docker/package changes" section.
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends clamav clamav-freshclam ca-certificates \
-  && rm -rf /var/lib/apt/lists/* \
-  && sed -i '/^Example/d' /etc/clamav/freshclam.conf
+  && apt-get install -y --no-install-recommends clamav clamav-daemon clamav-freshclam ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# Explicit, TES-controlled configuration - entirely replaces both packages'
+# own template files (each ships with a packager-inserted "Example" guard
+# line requiring explicit review before use; see clamd.conf/freshclam.conf's
+# own header comments for the full rationale). Overwriting after install, so
+# these authored files win over the packages' defaults.
+COPY clamd.conf /etc/clamav/clamd.conf
+COPY freshclam.conf /etc/clamav/freshclam.conf
 
 # Seed the signature database at build time so the image is usable
 # immediately, without depending on outbound network access at first
 # container start (see README.md "Signature update strategy" for why a
 # best-effort startup refresh is layered on top of this, not a replacement
 # for it). This step is NOT allowed to fail silently: an image built without
-# a real, non-empty signature database must never be produced. `freshclam`'s
-# own exit code already fails this RUN on a genuine download failure; the
+# a real, non-empty signature database must never be produced - this RUN
+# uses plain `freshclam` with no `|| true` fallback, so `freshclam`'s own
+# exit code already fails the build on a genuine download failure; the
 # explicit directory-emptiness check afterward is defense in depth against
 # any edge case where freshclam could otherwise exit 0 without having
-# actually written database files.
+# actually written database files. No clamd is running yet at this point in
+# the build, so freshclam.conf's NotifyClamd attempt is expected to log a
+# harmless "could not connect" warning here, per ClamAV's documented
+# behavior (not independently verified in this session - see
+# freshclam.conf's own note).
 RUN freshclam \
   && test -n "$(ls -A /var/lib/clamav)"
 
-# Non-root runtime. ClamAV's signature directory, its log directory (written
-# by the startup freshclam refresh in entrypoint.sh, which runs as this
-# non-root user), and /tmp (used for the scanner's per-invocation temp
-# files, see src/assessment.ts) must be writable by this user.
+# Non-root runtime. ClamAV's signature directory and its log directory
+# (written by the startup freshclam refresh in entrypoint.sh, which runs as
+# this non-root user) must be writable by this user. clamd's own Unix socket
+# directory (/tmp/tes-clamd, see clamd.conf) and the scanner's per-invocation
+# scan temp files (src/assessment.ts) do NOT need a chown here: both live
+# under /tmp, which is world-writable (mode 1777) by standard Debian
+# convention, so tesscan can create its own entries there at container
+# runtime without any pre-existing ownership grant.
 RUN groupadd --system tesscan && useradd --system --gid tesscan --home /app tesscan \
   && chown -R tesscan:tesscan /var/lib/clamav /var/log/clamav /app
 

@@ -83,6 +83,83 @@ GCS error, for example), the outcome is `PromotionStatus: "FAILED"` /
 promotion is never silently reported as successful when its integrity
 could not actually be confirmed.
 
+## Persistent clamd daemon foundation (Phase 1 of a two-phase migration)
+
+A scalability architecture review determined that standalone `clamscan`
+reloading the full signature database on every single scan (proven in
+production to take ~23 seconds per invocation) is a structural bottleneck
+that should be fixed now, not deferred. The chosen long-term architecture is
+a persistent `clamd` daemon (database loaded once per Cloud Run instance)
+with `clamdscan` as the client, in the same container.
+
+**This is being introduced in two phases**:
+- **Phase 1 (this state)**: the daemon foundation itself - `clamd`/`clamdscan`
+  installed, an explicit `clamd.conf`/`freshclam.conf`, and `entrypoint.sh`
+  startup/shutdown lifecycle management. **The application's `scanFile()`
+  (`src/clamav.ts`) still uses standalone `clamscan` in this phase, unchanged
+  - production scanning behavior is not affected by Phase 1.**
+- **Phase 2 (not yet implemented)**: switch `scanFile()`'s internals to
+  invoke `clamdscan` against the daemon, preserving its existing public
+  contract (`ClamAvResult`) so nothing downstream (`assessment.ts`,
+  `scannerReadiness()`) needs to change.
+
+### clamd.conf / freshclam.conf
+
+Both files are fully authored by TES (see `clamd.conf`/`freshclam.conf` in
+this directory) and entirely replace the Debian packages' own template
+files - not patched defaults. Key decisions:
+- Unix domain socket only (`/tmp/tes-clamd/clamd.sock`) - no TCP listener.
+  The socket lives under `/tmp` rather than `/run` specifically because
+  `/run` is typically root-owned at container start and the non-root
+  `tesscan` user cannot create a new directory there; `/tmp` is
+  world-writable by Debian convention and is the same path family this
+  codebase's own scan temp files already rely on.
+- `Foreground yes` - clamd never self-detaches; `entrypoint.sh` tracks its
+  PID directly for readiness-gating and shutdown.
+- `clamd` runs as the same non-root `tesscan` user as everything else in
+  this container - no privilege-separation `User` directive is needed since
+  it's never started as root.
+- `freshclam.conf`'s `NotifyClamd /etc/clamav/clamd.conf` establishes the
+  real reload path a persistent daemon needs: a successful signature update
+  now triggers clamd to reload its in-memory database, resolving the
+  previously-harmless-but-unresolved "NotifyClamd: Can't find or parse
+  configuration file /etc/clamav/clamd.conf" warning that had no daemon to
+  point at before this phase.
+- `MaxFileSize`/`MaxScanSize`/`MaxThreads`/`StreamMaxLength` are deliberately
+  left at ClamAV's compiled-in defaults - not benchmarked yet. The
+  application's own `SCANNER_MAX_OBJECT_BYTES` (25 MiB) already enforces a
+  hard cap before any file reaches ClamAV at all.
+
+### Startup/shutdown lifecycle
+
+`entrypoint.sh` remains PID 1 for the container's life (it no longer `exec`s
+away to Node) so it can manage two cooperating processes: it starts `clamd`,
+gates Node's start on a real `clamdscan --ping` (PING/PONG) success - never
+on the clamd process or socket file merely existing - with a 60-second
+bounded budget, and **fails the container's startup outright if clamd
+cannot become ready in that budget** (fail closed - Node is never started in
+a degraded mode). On `SIGTERM`/`SIGINT`, it forwards the signal to Node
+first, then clamd, waiting for each to exit cleanly rather than relying on
+Cloud Run's eventual `SIGKILL`.
+
+### What Phase 1 does NOT change
+
+Application-level scanning behavior, the `CLEAN`/`THREAT_DETECTED`/
+`SCAN_ERROR` contract, promotion/integrity logic, and every existing
+security decision are all completely unaffected - `scanFile()` was not
+touched. See this service's Phase 1 report for the full verification.
+
+### What could not be verified in this phase
+
+No Docker/container runtime was available in the environment where Phase 1
+was implemented - the actual image could not be built, and the daemon
+itself was never started or exercised. `test/manual/verify-clamd-daemon.sh`
+is provided for exactly this purpose once Docker is available; the exact
+Debian package names (`clamav-daemon` alongside the already-proven
+`clamav`/`clamav-freshclam`) and the `clamdscan --ping`/`--config-file`
+flag syntax follow standard, well-documented ClamAV/Debian conventions but
+were not independently re-verified by execution in this session.
+
 ## Signature update strategy (Phase 1 simplification - documented limitation)
 
 - The Docker image runs `freshclam` once at **build time**, so the image

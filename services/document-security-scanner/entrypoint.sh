@@ -46,6 +46,22 @@ CLAMD_STARTUP_TIMEOUT_SECONDS=60
 
 mkdir -p "$SOCKET_DIR"
 
+# Verify the readiness client exists BEFORE starting clamd at all - real
+# runtime validation of an earlier build proved `clamd` can start, load all
+# 3.6M+ signatures, and open its Unix socket successfully while `clamdscan`
+# is nonetheless completely absent from the image ("clamdscan: not found",
+# exit 127) - the readiness poll below would then wait the full 60-second
+# budget every single time, correctly failing closed but only after
+# uselessly burning that entire budget and reporting a generic "no PONG"
+# that gives no hint the actual problem is a missing client binary, not a
+# slow or broken daemon. Checking this upfront makes that exact class of
+# problem impossible to hide behind the timeout again: it fails in
+# milliseconds with an unambiguous message, and clamd is never even started.
+if ! command -v clamdscan >/dev/null 2>&1; then
+  echo "[entrypoint] clamdscan is not installed or not on PATH - cannot verify clamd readiness. Failing container startup (fail closed, not starting clamd or Node)."
+  exit 1
+fi
+
 # Best-effort signature refresh - unchanged behavior/budget from before this
 # phase. A successful update now also triggers a real reload of the running
 # clamd via freshclam.conf's NotifyClamd directive (see freshclam.conf) -
@@ -81,6 +97,14 @@ trap 'echo "[entrypoint] received termination signal during clamd startup"; kill
 # If clamd cannot become ready within the budget, or exits on its own during
 # startup, THIS CONTAINER'S STARTUP FAILS OUTRIGHT (fail closed) - Node is
 # never started in a degraded/unproven mode.
+#
+# The exact `--config-file=.../--ping 1` flag syntax below has NOT yet been
+# validated against a real clamdscan invocation: the prior runtime test that
+# would have exercised it failed earlier, at "clamdscan: not found" (exit
+# 127), before this syntax was ever reached. It is left unchanged here since
+# there is no evidence it is wrong - only evidence the binary itself was
+# absent - and should be re-confirmed on the next real container run, now
+# that clamdscan is installed.
 elapsed=0
 until clamdscan --config-file="$CLAMD_CONFIG" --ping 1 >/dev/null 2>&1; do
   if ! kill -0 "$CLAMD_PID" 2>/dev/null; then

@@ -57,6 +57,31 @@ test("entrypoint.sh tails clamd's log file to stdout at the exact same path clam
   assert.match(entrypoint, /tail -F "\$CLAMD_LOG_FILE"/);
 });
 
+test("Dockerfile explicitly installs the clamdscan package, not merely assumed via clamav-daemon (regression guard: real runtime validation proved clamd-daemon does NOT bring in clamdscan on this base image - \"clamdscan: not found\", exit 127)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  const installLine = dockerfile
+    .split("\n")
+    .find((line) => line.includes("apt-get install") && line.includes("clamav-daemon"));
+  assert.ok(installLine, "expected to find the apt-get install line for clamav-daemon");
+  assert.match(installLine as string, /\bclamdscan\b/);
+});
+
+test("entrypoint.sh verifies clamdscan is available BEFORE starting clamd, failing fast rather than burning the full startup timeout on a missing client", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  const clamdscanCheckIndex = entrypoint.indexOf("command -v clamdscan");
+  const clamdStartIndex = entrypoint.indexOf("clamd &");
+  assert.notEqual(clamdscanCheckIndex, -1, "expected an explicit clamdscan availability check");
+  assert.notEqual(clamdStartIndex, -1, "expected clamd to still be started in the background");
+  assert.ok(clamdscanCheckIndex < clamdStartIndex, "the clamdscan availability check must run before clamd is started");
+});
+
+test("entrypoint.sh's clamdscan availability check fails closed (exits) rather than continuing to start Node", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  const checkBlockMatch = entrypoint.match(/if ! command -v clamdscan[\s\S]*?\nfi\n/);
+  assert.ok(checkBlockMatch, "expected a complete if/fi block for the clamdscan check");
+  assert.match(checkBlockMatch![0], /exit 1/);
+});
+
 test("freshclam.conf establishes a real clamd reload path via NotifyClamd", () => {
   assert.match(readConfig("freshclam.conf"), /^NotifyClamd\s+\/etc\/clamav\/clamd\.conf$/m);
 });

@@ -26,21 +26,30 @@ WORKDIR /app
 # ClamAV components:
 #   clamav          - clamscan (still the application's scan engine in
 #                      Phase 1 - see src/clamav.ts; unchanged this phase)
-#   clamav-daemon   - clamd + clamdscan (the persistent-daemon foundation
-#                      being established in this phase; not yet wired into
-#                      the application's scanFile())
+#   clamav-daemon   - clamd (the persistent-daemon foundation being
+#                      established in this phase; not yet wired into the
+#                      application's scanFile())
+#   clamdscan       - the clamdscan CLIENT used to talk to clamd (PING and,
+#                      in Phase 2, real scans). REAL RUNTIME VALIDATION of an
+#                      earlier build of this image proved clamd-daemon does
+#                      NOT bring this in on this base image/Debian version -
+#                      `clamdscan: not found` at runtime, even with clamd
+#                      itself running correctly and its socket present. The
+#                      most likely explanation is that clamdscan is packaged
+#                      separately from clamav-daemon in this Debian release,
+#                      and/or is only a Recommends (not a hard Depends) of
+#                      clamav-daemon, which --no-install-recommends below
+#                      would skip either way. Do not assume clamav-daemon
+#                      provides this client - it is listed explicitly here so
+#                      apt fails the build immediately if it is genuinely
+#                      unavailable, rather than silently producing an image
+#                      that starts clamd but can never prove it is ready.
 #   clamav-freshclam - freshclam (signature updates)
 # No other scanning engine, no archive/executable-format tooling is
-# installed. Package names are standard, long-established Debian ClamAV
-# source-package siblings (clamav-daemon ships alongside the already-proven-
-# working clamav/clamav-freshclam packages from the identical upstream
-# source) - not independently re-verified via a live `apt-cache` query in
-# this session (no Docker/apt execution available here); the Docker build
-# itself is the actual verification, and could not be run in this session -
-# see the Phase 1 report's "Docker/package changes" section.
+# installed.
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends clamav clamav-daemon clamav-freshclam ca-certificates \
+  && apt-get install -y --no-install-recommends clamav clamav-daemon clamdscan clamav-freshclam ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 # Explicit, TES-controlled configuration - entirely replaces both packages'

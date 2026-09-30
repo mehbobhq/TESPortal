@@ -160,6 +160,67 @@ Debian package names (`clamav-daemon` alongside the already-proven
 flag syntax follow standard, well-documented ClamAV/Debian conventions but
 were not independently re-verified by execution in this session.
 
+## ClamAV version (1.4.6, official Cisco Talos package - not Debian's)
+
+This image installs ClamAV **1.4.6**, pinned explicitly, from the **official
+Cisco Talos Linux x86_64 `.deb`** published at clamav.net/downloads - not
+Debian's own `clamav`/`clamav-daemon`/`clamdscan`/`clamav-freshclam`
+packages, which this image no longer installs at all.
+
+**Why not Debian's packages**: this image's base (`node:20-slim`, currently
+Debian 12 "bookworm") resolves Debian's own `clamav` package to
+`1.4.3+dfsg-1~deb12u2` - an older patch release. Debian had not yet absorbed
+the 1.4.6 point release at the time this upgrade was made. Rather than wait
+on Debian's own packaging cadence for a security-patch release, this image
+installs the vendor's own pre-built binary directly.
+
+**Package integrity**: the official `.deb` has no separately published
+checksum file - the strongest verification mechanism ClamAV actually
+publishes for it is a detached GPG signature (`clamav-1.4.6.linux.x86_64.deb.sig`),
+signed with Cisco Talos's own release-signing key, both hosted alongside the
+package on clamav.net/downloads. The Dockerfile downloads the `.deb`, its
+`.sig`, and the public key itself, asserts the key's fingerprint against a
+pinned value before trusting it (so a compromised mirror serving a
+substituted key would fail the build), imports it, and verifies the
+signature - all before `dpkg -i` ever runs. No checksum was invented or
+substituted for this verification; a GPG signature is the strongest
+mechanism ClamAV publishes for this specific artifact.
+
+**Compatibility changes this required** (the official package is not a
+drop-in replacement for Debian's packaging layout - it has no declared
+`Depends`/`Recommends` and ships no maintainer install scripts):
+- Binaries land under `/usr/local` (`/usr/local/sbin/clamd`,
+  `/usr/local/bin/clamdscan`, `/usr/local/bin/freshclam`), not `/usr`.
+  `entrypoint.sh` and `src/clamav.ts` were updated to reference these via
+  explicit absolute-path constants/variables rather than bare command
+  names - executable resolution never depends on `PATH` contents or
+  ordering. `entrypoint.sh`'s variables (`CLAMD_BIN`/`CLAMDSCAN_BIN`/
+  `FRESHCLAM_BIN`) are overridable via environment variable specifically so
+  `test/lifecycle/run-scenario.sh` can still redirect them to controlled
+  stub executables for testing; production always uses the real absolute
+  paths.
+- `/var/lib/clamav`, `/var/log/clamav`, and `/etc/clamav` are no longer
+  created automatically by any package post-install step - the Dockerfile
+  creates them explicitly before they are used.
+- No `clamav` system user is created by the package, and none was ever
+  required by this architecture - `clamd` already ran as this image's own
+  non-root `tesscan` user before this change (see `clamd.conf`'s own note on
+  why the `User` directive is omitted).
+- A build-time version assertion (`clamd --version` / `clamdscan --version`
+  / `freshclam --version`, each checked against the pinned version string)
+  fails the build outright if the installed binaries do not actually report
+  1.4.6 - this also serves as the practical proof that the binaries execute
+  correctly at all under this base image's shared libraries, since the
+  official package's exact runtime library requirements were not otherwise
+  independently verified before a real build.
+
+**Unchanged by this upgrade**: `clamd.conf`, `freshclam.conf` (ClamAV's
+configuration directive set has not changed across the 1.4.x patch line),
+the Unix socket path, the PING/PONG startup gate, lifecycle supervision,
+fail-closed behavior, graceful SIGTERM handling, and the single-path clamd
+logging fix - none of these depend on which ClamAV distribution channel
+provided the binaries.
+
 ## Signature update strategy (Phase 1 simplification - documented limitation)
 
 - The Docker image runs `freshclam` once at **build time**, so the image

@@ -62,33 +62,60 @@ test("clamd's own stdio is discarded, so its log content reaches Cloud Run throu
   // Anchored to the exact clamd invocation line, not an arbitrary/incidental
   // string elsewhere in the file - this is the specific architectural
   // property (clamd's stdio is redirected away) the fix depends on.
-  assert.match(entrypoint, /^clamd >\/dev\/null 2>&1 &$/m);
-  // Regression guard against reverting to the exact prior (buggy) form.
+  assert.match(entrypoint, /^"\$CLAMD_BIN" >\/dev\/null 2>&1 &$/m);
+  // Regression guard against reverting to a bare, unredirected invocation
+  // under either the old Debian-package name or the current variable.
   assert.doesNotMatch(entrypoint, /^clamd &$/m);
+  assert.doesNotMatch(entrypoint, /^"\$CLAMD_BIN" &$/m);
 });
 
 test("the log tail is started before clamd, so tail -F is already attached when clamd's first line is written (no race window for an early line to be missed or double-counted)", () => {
   const entrypoint = readConfig("entrypoint.sh");
   const tailIndex = entrypoint.search(/^tail -F "\$CLAMD_LOG_FILE"/m);
-  const clamdStartIndex = entrypoint.search(/^clamd >\/dev\/null 2>&1 &$/m);
+  const clamdStartIndex = entrypoint.search(/^"\$CLAMD_BIN" >\/dev\/null 2>&1 &$/m);
   assert.notEqual(tailIndex, -1, "expected to find the tail invocation");
   assert.notEqual(clamdStartIndex, -1, "expected to find the redirected clamd invocation");
   assert.ok(tailIndex < clamdStartIndex, "tail -F must start before clamd itself");
 });
 
-test("Dockerfile explicitly installs the clamdscan package, not merely assumed via clamav-daemon (regression guard: real runtime validation proved clamd-daemon does NOT bring in clamdscan on this base image - \"clamdscan: not found\", exit 127)", () => {
+test("entrypoint.sh resolves clamd/clamdscan/freshclam via explicit, overridable absolute-path variables, never a bare command name (deterministic executable resolution, no PATH-ordering dependency)", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  assert.match(entrypoint, /^CLAMD_BIN="\$\{CLAMD_BIN:-\/usr\/local\/sbin\/clamd\}"$/m);
+  assert.match(entrypoint, /^CLAMDSCAN_BIN="\$\{CLAMDSCAN_BIN:-\/usr\/local\/bin\/clamdscan\}"$/m);
+  assert.match(entrypoint, /^FRESHCLAM_BIN="\$\{FRESHCLAM_BIN:-\/usr\/local\/bin\/freshclam\}"$/m);
+});
+
+test("Dockerfile installs the official pinned ClamAV 1.4.6 package, not Debian's clamav/clamav-daemon/clamdscan/clamav-freshclam packages (regression guard: real runtime validation proved this base image's Debian repository only supplies 1.4.3)", () => {
   const dockerfile = readConfig("Dockerfile");
-  const installLine = dockerfile
+  assert.match(dockerfile, /^ARG CLAMAV_VERSION=1\.4\.6$/m);
+  const aptInstallLine = dockerfile
     .split("\n")
-    .find((line) => line.includes("apt-get install") && line.includes("clamav-daemon"));
-  assert.ok(installLine, "expected to find the apt-get install line for clamav-daemon");
-  assert.match(installLine as string, /\bclamdscan\b/);
+    .find((line) => line.includes("apt-get install") && /\bclamav\b/.test(line));
+  assert.equal(aptInstallLine, undefined, "no apt-get install line should reference the Debian clamav package family anymore");
+});
+
+test("Dockerfile downloads the exact pinned ClamAV version and verifies it via the official Cisco Talos GPG signature before installing", () => {
+  const dockerfile = readConfig("Dockerfile");
+  assert.match(dockerfile, /clamav-\$\{CLAMAV_VERSION\}\.linux\.x86_64\.deb/);
+  assert.match(dockerfile, /clamav-\$\{CLAMAV_VERSION\}\.linux\.x86_64\.deb\.sig/);
+  assert.match(dockerfile, /gpg --batch --verify clamav\.deb\.sig clamav\.deb/);
+  // The signing key's fingerprint must be asserted, not merely imported
+  // blindly - a substituted key from a compromised mirror must fail the
+  // build rather than be silently trusted.
+  assert.match(dockerfile, /ACTUAL_FINGERPRINT.*CLAMAV_GPG_FINGERPRINT/s);
+});
+
+test("Dockerfile asserts the installed binaries actually report ClamAV 1.4.6 for clamd, clamdscan, and freshclam (build fails otherwise)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  assert.match(dockerfile, /\/usr\/local\/sbin\/clamd --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+  assert.match(dockerfile, /\/usr\/local\/bin\/clamdscan --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+  assert.match(dockerfile, /\/usr\/local\/bin\/freshclam --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
 });
 
 test("entrypoint.sh verifies clamdscan is available BEFORE starting clamd, failing fast rather than burning the full startup timeout on a missing client", () => {
   const entrypoint = readConfig("entrypoint.sh");
-  const clamdscanCheckIndex = entrypoint.indexOf("command -v clamdscan");
-  const clamdStartIndex = entrypoint.search(/^clamd >\/dev\/null 2>&1 &$/m);
+  const clamdscanCheckIndex = entrypoint.indexOf('command -v "$CLAMDSCAN_BIN"');
+  const clamdStartIndex = entrypoint.search(/^"\$CLAMD_BIN" >\/dev\/null 2>&1 &$/m);
   assert.notEqual(clamdscanCheckIndex, -1, "expected an explicit clamdscan availability check");
   assert.notEqual(clamdStartIndex, -1, "expected clamd to still be started in the background");
   assert.ok(clamdscanCheckIndex < clamdStartIndex, "the clamdscan availability check must run before clamd is started");
@@ -96,7 +123,7 @@ test("entrypoint.sh verifies clamdscan is available BEFORE starting clamd, faili
 
 test("entrypoint.sh's clamdscan availability check fails closed (exits) rather than continuing to start Node", () => {
   const entrypoint = readConfig("entrypoint.sh");
-  const checkBlockMatch = entrypoint.match(/if ! command -v clamdscan[\s\S]*?\nfi\n/);
+  const checkBlockMatch = entrypoint.match(/if ! command -v "\$CLAMDSCAN_BIN"[\s\S]*?\nfi\n/);
   assert.ok(checkBlockMatch, "expected a complete if/fi block for the clamdscan check");
   assert.match(checkBlockMatch![0], /exit 1/);
 });

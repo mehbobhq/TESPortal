@@ -49,6 +49,16 @@ set -u
 
 SOCKET_DIR=/tmp/tes-clamd
 CLAMD_CONFIG=/etc/clamav/clamd.conf
+# Absolute paths to the ClamAV 1.4.6 binaries (the official Cisco Talos
+# package installs under /usr/local, not /usr - see Dockerfile). These are
+# never resolved via a bare command name/PATH lookup, so executable
+# resolution is fully explicit and deterministic regardless of what PATH
+# contains. Overridable via environment variable so test/lifecycle/
+# run-scenario.sh can point these at controlled stub executables instead of
+# the real binaries; production always uses the defaults below.
+CLAMD_BIN="${CLAMD_BIN:-/usr/local/sbin/clamd}"
+CLAMDSCAN_BIN="${CLAMDSCAN_BIN:-/usr/local/bin/clamdscan}"
+FRESHCLAM_BIN="${FRESHCLAM_BIN:-/usr/local/bin/freshclam}"
 # Must match clamd.conf's LogFile (clamd cannot log to /dev/stdout directly
 # in this runtime - see clamd.conf). `tail -F` below is the ONLY path this
 # content takes to reach the container's own stdout; clamd's own stdio is
@@ -114,8 +124,8 @@ mkdir -p "$SOCKET_DIR"
 # slow or broken daemon. Checking this upfront makes that exact class of
 # problem impossible to hide behind the timeout again: it fails in
 # milliseconds with an unambiguous message, and clamd is never even started.
-if ! command -v clamdscan >/dev/null 2>&1; then
-  echo "[entrypoint] clamdscan is not installed or not on PATH - cannot verify clamd readiness. Failing container startup (fail closed, not starting clamd or Node)."
+if ! command -v "$CLAMDSCAN_BIN" >/dev/null 2>&1; then
+  echo "[entrypoint] clamdscan (${CLAMDSCAN_BIN}) is not installed or not executable - cannot verify clamd readiness. Failing container startup (fail closed, not starting clamd or Node)."
   exit 1
 fi
 
@@ -126,7 +136,7 @@ fi
 # invocation's NotifyClamd attempt has nothing to notify yet; that is
 # expected and harmless, matching the same non-fatal-warning behavior noted
 # in the Dockerfile's build-time freshclam step.
-timeout 30s freshclam || echo "[entrypoint] freshclam did not refresh signatures within 30s (see freshclam output above, if any); continuing with the database already present in this image."
+timeout 30s "$FRESHCLAM_BIN" || echo "[entrypoint] freshclam did not refresh signatures within 30s (see freshclam output above, if any); continuing with the database already present in this image."
 
 # Start the log tail before clamd so it is already attached when clamd's
 # first line is written (`-F` retries opening by name, so a not-yet-existing
@@ -138,7 +148,7 @@ TAIL_PID=$!
 # clamd's own stdio is discarded: it already writes everything to
 # CLAMD_LOG_FILE regardless, and leaving its stdio connected here duplicated
 # every line in Cloud Run logs (once directly, once via the tail above).
-clamd >/dev/null 2>&1 &
+"$CLAMD_BIN" >/dev/null 2>&1 &
 CLAMD_PID=$!
 
 # Startup gate: Node must NOT start merely because the clamd PROCESS exists
@@ -149,7 +159,7 @@ CLAMD_PID=$!
 # startup, THIS CONTAINER'S STARTUP FAILS OUTRIGHT (fail closed) - Node is
 # never started in a degraded/unproven mode.
 elapsed=0
-until clamdscan --config-file="$CLAMD_CONFIG" --ping 1 >/dev/null 2>&1; do
+until "$CLAMDSCAN_BIN" --config-file="$CLAMD_CONFIG" --ping 1 >/dev/null 2>&1; do
   if ! kill -0 "$CLAMD_PID" 2>/dev/null; then
     echo "[entrypoint] clamd exited unexpectedly during startup - failing container startup."
     cleanup

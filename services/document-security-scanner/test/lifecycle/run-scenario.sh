@@ -5,8 +5,11 @@
 #
 # Runs the REAL entrypoint.sh (the exact file this service ships, not a
 # copy or a rewritten excerpt) against stub `clamd`/`clamdscan`/`freshclam`/
-# `node` executables placed first on PATH - never a real ClamAV
-# installation or real Node server. This proves actual process-supervision
+# `node` executables - `node` via PATH, and clamd/clamdscan/freshclam via
+# the same CLAMD_BIN/CLAMDSCAN_BIN/FRESHCLAM_BIN override variables
+# entrypoint.sh itself uses for explicit, PATH-independent executable
+# resolution (see entrypoint.sh) - never a real ClamAV installation or real
+# Node server. This proves actual process-supervision
 # BEHAVIOR (does entrypoint.sh really stop the survivor and exit non-zero
 # when a required process dies unexpectedly, or perform a coordinated
 # shutdown on SIGTERM?) rather than merely asserting that its source text
@@ -102,6 +105,17 @@ chmod +x "$STUBDIR/freshclam" "$STUBDIR/clamd" "$STUBDIR/clamdscan" "$STUBDIR/no
 
 export STUB_STATE_DIR="$WORKDIR"
 export PATH="$STUBDIR:$PATH"
+# entrypoint.sh resolves clamd/clamdscan/freshclam via these explicit
+# absolute-path variables (ClamAV 1.4.6 uses /usr/local, not /usr - see
+# Dockerfile/entrypoint.sh), never a bare command name - PATH-prepending
+# alone is no longer sufficient to redirect it to these stubs, so it is
+# pointed here explicitly instead. "node" is still found via PATH, since
+# entrypoint.sh invokes it as a bare command name (Node itself is not part
+# of the ClamAV version-pinning/explicit-path concern this harness exists
+# to prove).
+export CLAMD_BIN="$STUBDIR/clamd"
+export CLAMDSCAN_BIN="$STUBDIR/clamdscan"
+export FRESHCLAM_BIN="$STUBDIR/freshclam"
 
 cd "$WORKDIR" || exit 1
 sh "$ENTRYPOINT_PATH" >"$ENTRYPOINT_LOG" 2>&1 &

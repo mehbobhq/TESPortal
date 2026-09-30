@@ -44,6 +44,16 @@ import type { ScanOutcome } from "./types.js";
  */
 const CLAMD_CONFIG_FILE = "/etc/clamav/clamd.conf";
 
+/**
+ * Absolute path to the ClamAV 1.4.6 clamdscan binary (the official Cisco
+ * Talos package installs under /usr/local/bin, not /usr/bin - see
+ * Dockerfile). Never resolved via a bare "clamdscan" command name/PATH
+ * lookup, so this never depends on PATH contents or ordering, matching the
+ * same explicit-path approach entrypoint.sh uses for clamd/clamdscan/
+ * freshclam.
+ */
+const CLAMDSCAN_BIN = "/usr/local/bin/clamdscan";
+
 export interface ClamAvResult {
   outcome: ScanOutcome;
   threatName?: string;
@@ -158,7 +168,7 @@ function logScanErrorDiagnostic(info: ExecFileFailureInfo, stderr: string): void
 export async function scanFile(filePath: string, timeoutMs: number): Promise<ClamAvResult> {
   return new Promise((resolve) => {
     execFile(
-      "clamdscan",
+      CLAMDSCAN_BIN,
       [`--config-file=${CLAMD_CONFIG_FILE}`, filePath],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {

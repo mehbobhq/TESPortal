@@ -22,9 +22,13 @@ function readSource(relativePath: string): string {
   return readFileSync(join(serviceRoot, relativePath), "utf8");
 }
 
-test("scanFile() invokes clamdscan, not standalone clamscan", () => {
+test("scanFile() invokes clamdscan via an explicit absolute-path constant, not a bare command name or standalone clamscan", () => {
   const source = readSource("src/clamav.ts");
-  assert.match(source, /execFile\(\s*\n?\s*"clamdscan"/);
+  assert.match(source, /CLAMDSCAN_BIN\s*=\s*"\/usr\/local\/bin\/clamdscan"/);
+  assert.match(source, /execFile\(\s*\n?\s*CLAMDSCAN_BIN/);
+  // Never a bare "clamdscan" string passed directly to execFile (PATH-based
+  // resolution) - only the absolute-path constant above.
+  assert.doesNotMatch(source, /execFile\(\s*\n?\s*"clamdscan"/);
   // Exact-token check (not a substring check): "clamscan" is NOT a substring
   // of "clamdscan" ("clamdscan" has a "d" clamscan doesn't), so this
   // correctly fails if a standalone-clamscan invocation is ever

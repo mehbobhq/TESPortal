@@ -49,12 +49,10 @@ set -u
 
 SOCKET_DIR=/tmp/tes-clamd
 CLAMD_CONFIG=/etc/clamav/clamd.conf
-# Must match clamd.conf's LogFile. clamd's internal logger cannot open
-# /dev/stdout directly in this container runtime (proven by a real runtime
-# validation - see clamd.conf's own note), so clamd logs to this regular
-# file instead; `tail -F` below re-surfaces it into this container's own
-# stdout/stderr so Cloud Run's log capture still sees clamd's own startup/
-# reload/error messages, exactly as it already does for freshclam's output.
+# Must match clamd.conf's LogFile (clamd cannot log to /dev/stdout directly
+# in this runtime - see clamd.conf). `tail -F` below is the ONLY path this
+# content takes to reach the container's own stdout; clamd's own stdio is
+# discarded to avoid logging each line twice.
 CLAMD_LOG_FILE=/var/log/clamav/clamd.log
 
 # Bounded startup budget for clamd to become genuinely usable (PING/PONG).
@@ -130,19 +128,18 @@ fi
 # in the Dockerfile's build-time freshclam step.
 timeout 30s freshclam || echo "[entrypoint] freshclam did not refresh signatures within 30s (see freshclam output above, if any); continuing with the database already present in this image."
 
-clamd &
-CLAMD_PID=$!
-
-# Re-surface clamd's log file to this container's own stdout as it's
-# written. `-F` (not `-f`) retries opening by name, so this works even
-# though the file doesn't exist until clamd itself creates it moments after
-# starting. Purely diagnostic - never gates startup, and its own failure
-# (e.g. if the log file is somehow never created) does not fail the
-# container: clamd startup is still proven solely by the real PING/PONG
-# check below, not by anything this tail process does or doesn't see.
+# Start the log tail before clamd so it is already attached when clamd's
+# first line is written (`-F` retries opening by name, so a not-yet-existing
+# file is fine). Purely diagnostic - never gates startup.
 touch "$CLAMD_LOG_FILE" 2>/dev/null
 tail -F "$CLAMD_LOG_FILE" 2>/dev/null &
 TAIL_PID=$!
+
+# clamd's own stdio is discarded: it already writes everything to
+# CLAMD_LOG_FILE regardless, and leaving its stdio connected here duplicated
+# every line in Cloud Run logs (once directly, once via the tail above).
+clamd >/dev/null 2>&1 &
+CLAMD_PID=$!
 
 # Startup gate: Node must NOT start merely because the clamd PROCESS exists
 # or the socket FILE exists - only a real PING/PONG proves clamd has

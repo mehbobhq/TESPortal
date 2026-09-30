@@ -57,6 +57,25 @@ test("entrypoint.sh tails clamd's log file to stdout at the exact same path clam
   assert.match(entrypoint, /tail -F "\$CLAMD_LOG_FILE"/);
 });
 
+test("clamd's own stdio is discarded, so its log content reaches Cloud Run through the tail only (regression guard: production evidence proved every clamd startup/limits/support line reached Cloud Run logs TWICE before this fix - once via clamd's own direct, unredirected stdio, once via the tail of its log file)", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  // Anchored to the exact clamd invocation line, not an arbitrary/incidental
+  // string elsewhere in the file - this is the specific architectural
+  // property (clamd's stdio is redirected away) the fix depends on.
+  assert.match(entrypoint, /^clamd >\/dev\/null 2>&1 &$/m);
+  // Regression guard against reverting to the exact prior (buggy) form.
+  assert.doesNotMatch(entrypoint, /^clamd &$/m);
+});
+
+test("the log tail is started before clamd, so tail -F is already attached when clamd's first line is written (no race window for an early line to be missed or double-counted)", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  const tailIndex = entrypoint.search(/^tail -F "\$CLAMD_LOG_FILE"/m);
+  const clamdStartIndex = entrypoint.search(/^clamd >\/dev\/null 2>&1 &$/m);
+  assert.notEqual(tailIndex, -1, "expected to find the tail invocation");
+  assert.notEqual(clamdStartIndex, -1, "expected to find the redirected clamd invocation");
+  assert.ok(tailIndex < clamdStartIndex, "tail -F must start before clamd itself");
+});
+
 test("Dockerfile explicitly installs the clamdscan package, not merely assumed via clamav-daemon (regression guard: real runtime validation proved clamd-daemon does NOT bring in clamdscan on this base image - \"clamdscan: not found\", exit 127)", () => {
   const dockerfile = readConfig("Dockerfile");
   const installLine = dockerfile
@@ -69,7 +88,7 @@ test("Dockerfile explicitly installs the clamdscan package, not merely assumed v
 test("entrypoint.sh verifies clamdscan is available BEFORE starting clamd, failing fast rather than burning the full startup timeout on a missing client", () => {
   const entrypoint = readConfig("entrypoint.sh");
   const clamdscanCheckIndex = entrypoint.indexOf("command -v clamdscan");
-  const clamdStartIndex = entrypoint.indexOf("clamd &");
+  const clamdStartIndex = entrypoint.search(/^clamd >\/dev\/null 2>&1 &$/m);
   assert.notEqual(clamdscanCheckIndex, -1, "expected an explicit clamdscan availability check");
   assert.notEqual(clamdStartIndex, -1, "expected clamd to still be started in the background");
   assert.ok(clamdscanCheckIndex < clamdStartIndex, "the clamdscan availability check must run before clamd is started");

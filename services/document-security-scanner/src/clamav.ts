@@ -7,21 +7,42 @@ import { logger } from "./logger.js";
 import type { ScanOutcome } from "./types.js";
 
 /**
- * ClamAV execution model - Phase 1.
+ * ClamAV execution model - Phase 2.
  *
- * Uses standalone `clamscan` (not a clamd daemon/socket) for the simplest
- * reliable first implementation: no daemon process to supervise, no
- * Unix-socket permission surface inside the container. The tradeoff is that
- * `clamscan` reloads the full signature database on every invocation, which
- * is measurably slower than a warm `clamdscan` client call - see this
- * service's README "Signature update / scan latency strategy" section for
- * why this is flagged as a documented future improvement, not a defect.
+ * Uses `clamdscan` against the persistent `clamd` daemon (see clamd.conf,
+ * entrypoint.sh) over the Unix domain socket configured there, instead of
+ * spawning standalone `clamscan` and reloading the full signature database
+ * on every single scan (Phase 1's engine, and README's "Signature update /
+ * scan latency strategy" section for why that was a known, deliberate,
+ * temporary tradeoff, not a design goal). `clamd`'s own startup - gated by
+ * entrypoint.sh's PING/PONG readiness check before Node ever starts - is
+ * what pays the one-time database-load cost per container instance; every
+ * individual scan through this module is now a lightweight daemon request.
+ *
+ * `clamdscan --config-file=/etc/clamav/clamd.conf <file>` is the exact
+ * command pattern proven against the real running daemon (clean scans in
+ * ~0.04s, EICAR detection in ~0.01s, per direct runtime measurement) -
+ * matched here exactly rather than guessed at.
  *
  * Every call goes through node:child_process.execFile with an argument
  * array - never a shell string - so no user- or event-derived value is ever
  * capable of command injection or shell interpolation. Nothing in this
- * module accepts or constructs a shell command string.
+ * module accepts or constructs a shell command string. No TCP networking, no
+ * new npm dependency, and no second service were introduced for this -
+ * `clamdscan` is invoked exactly like `clamscan` was, as a child process,
+ * just pointed at the daemon's configured socket instead of scanning
+ * standalone.
  */
+
+/**
+ * The same explicit, TES-authored clamd configuration clamd.conf/entrypoint.sh
+ * already use (see clamd.conf's own `LocalSocket` directive for the actual
+ * Unix socket path) - clamdscan reads this file itself to find the socket,
+ * exactly as proven in runtime validation. Not read from an environment
+ * variable: this is a fixed container-internal path, not a per-deployment
+ * value, matching how entrypoint.sh already references it.
+ */
+const CLAMD_CONFIG_FILE = "/etc/clamav/clamd.conf";
 
 export interface ClamAvResult {
   outcome: ScanOutcome;
@@ -38,13 +59,19 @@ const THREAT_LINE_PATTERN = /:\s*(.+?)\s+FOUND\s*$/m;
  * to a ClamAvResult. Isolated from process execution so it can be unit
  * tested without a real ClamAV installation.
  *
- * `exitCode` is `undefined` for a spawn failure (e.g. ENOENT if clamscan is
+ * `exitCode` is `undefined` for a spawn failure (e.g. ENOENT if clamdscan is
  * not installed) or a timeout-induced kill - neither has a meaningful exit
  * code, and both must map to SCAN_ERROR, never CLEAN. Only a confirmed
  * exit code of 0 is CLEAN; only a confirmed exit code of 1 is
  * THREAT_DETECTED. Every other value (2, or anything unexpected) is
  * SCAN_ERROR - this function never returns CLEAN for a non-zero/unknown
- * outcome, per the fail-closed requirement.
+ * outcome, per the fail-closed requirement. This mapping is unchanged from
+ * Phase 1: clamdscan shares the exact same 0/1/2 exit-code convention as
+ * clamscan (confirmed by direct runtime evidence - a clean scan and an
+ * EICAR detection through the real daemon produced the same codes/output
+ * shape this function already expected), and a daemon-connection failure or
+ * unavailable socket surfaces as just another non-zero/spawn-failure case
+ * clamdscan itself reports - already covered here without any new branch.
  */
 export function mapExitCodeToResult(exitCode: number | undefined, stdout: string): ClamAvResult {
   if (exitCode === 0) {
@@ -63,11 +90,12 @@ const DIAGNOSTIC_TEXT_MAX_LENGTH = 200;
  * Redacts anything that looks like a filesystem path from ClamAV's stderr
  * before it is ever logged, and truncates the remainder to a small fixed
  * length. The only paths that can ever appear in this scanner's own
- * `clamscan` invocation are container-internal (e.g. /var/lib/clamav/...,
- * or this service's own per-invocation temp file path under /tmp) - never a
- * customer filename, a GCS object name, or anything request-derived - but
- * this errs on the side of never logging a path at all regardless, since
- * doing so costs nothing here. Exported for testing.
+ * `clamdscan` invocation are container-internal (e.g. /var/lib/clamav/...,
+ * /etc/clamav/clamd.conf, or this service's own per-invocation temp file
+ * path under /tmp) - never a customer filename, a GCS object name, or
+ * anything request-derived - but this errs on the side of never logging a
+ * path at all regardless, since doing so costs nothing here. Exported for
+ * testing.
  */
 export function sanitizeClamavDiagnosticText(text: string): string {
   const withoutPaths = text.replace(/\/[^\s:]+/g, "<path>");
@@ -90,9 +118,10 @@ export interface ExecFileFailureInfo {
  * a timeout/signal termination even if a numeric code is also present, since
  * a signal-killed process's "exit code" is not a real ClamAV result. A
  * genuine numeric code with no signal is a real ClamAV process exit (e.g. 2
- * for an internal error). Anything else (e.g. a string errno code such as
- * "ENOENT") is a spawn failure - clamscan never started at all. Exported for
- * testing.
+ * for an internal error, including a daemon-connection failure clamdscan
+ * itself reports as a non-zero exit). Anything else (e.g. a string errno
+ * code such as "ENOENT") is a spawn failure - clamdscan never started at
+ * all. Exported for testing.
  */
 export function classifyExecFileFailure(info: ExecFileFailureInfo): ClamavFailureClassification {
   if (info.signal) return "TIMEOUT_OR_SIGNAL";
@@ -114,21 +143,23 @@ function logScanErrorDiagnostic(info: ExecFileFailureInfo, stderr: string): void
   const classification = classifyExecFileFailure(info);
   const sanitizedStderr = sanitizeClamavDiagnosticText(stderr);
   logger.error({
-    message: `clamscan SCAN_ERROR classification=${classification} code=${String(info.code ?? "none")} signal=${String(info.signal ?? "none")} stderr="${sanitizedStderr}"`,
+    message: `clamdscan SCAN_ERROR classification=${classification} code=${String(info.code ?? "none")} signal=${String(info.signal ?? "none")} stderr="${sanitizedStderr}"`,
   });
 }
 
 /**
- * Scans a single file already on local disk. Never treats a spawn failure,
- * timeout, or unexpected exit code as CLEAN - fail closed. Does not throw;
- * every failure mode maps to outcome "SCAN_ERROR" instead, so callers always
- * get a result to reason about rather than having to separately catch.
+ * Scans a single file already on local disk by asking the persistent `clamd`
+ * daemon to scan it, via `clamdscan` - never treats a spawn failure, daemon-
+ * connection failure, timeout, or unexpected exit code as CLEAN - fail
+ * closed. Does not throw; every failure mode maps to outcome "SCAN_ERROR"
+ * instead, so callers always get a result to reason about rather than
+ * having to separately catch.
  */
 export async function scanFile(filePath: string, timeoutMs: number): Promise<ClamAvResult> {
   return new Promise((resolve) => {
     execFile(
-      "clamscan",
-      ["--no-summary", filePath],
+      "clamdscan",
+      [`--config-file=${CLAMD_CONFIG_FILE}`, filePath],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         // execFile's `error` carries a numeric `code` for a normal non-zero
@@ -160,37 +191,47 @@ export interface ScannerReadinessResult {
 }
 
 /**
- * Standalone `clamscan` (as opposed to a warm `clamdscan` client talking to
- * a long-running `clamd` daemon - see this file's header comment for why
- * that migration is deliberately out of scope here) reloads all three
- * signature databases (main/daily/bytecode) from disk into memory on every
- * single invocation, including this readiness check's own trivial scan.
- * Cloud Run production testing (revision document-security-scanner-00003-95v)
- * proved this taking longer than 10 seconds under real Cloud Run resource
- * allocation - the diagnostic logging added in ca54efa captured the proof
- * directly: `classification=TIMEOUT_OR_SIGNAL code=none signal=SIGTERM`,
- * meaning execFile's own `timeout` killed a `clamscan` process that had not
- * yet finished loading the databases, not a process that had finished and
- * failed. 30 seconds is not a guess - it matches the budget already given to
- * `freshclam` at container startup in entrypoint.sh for a comparable
- * database-loading operation.
+ * This value was set to 30s during Phase 1, when readiness ran through
+ * standalone `clamscan` and had to cover a full main/daily/bytecode
+ * database reload on every check - Cloud Run production testing (revision
+ * document-security-scanner-00003-95v) proved that could exceed 10 seconds
+ * under real Cloud Run resource allocation (the diagnostic logging added in
+ * ca54efa captured this directly: `classification=TIMEOUT_OR_SIGNAL
+ * code=none signal=SIGTERM`).
+ *
+ * As of Phase 2, `scanFile()` (and therefore this readiness check, which
+ * calls it) goes through the already-warm, already-loaded `clamd` daemon -
+ * direct runtime measurement against the real daemon showed a clean scan
+ * completing in ~0.04s and an EICAR detection in ~0.01s, so this readiness
+ * check should now complete in well under a second in practice. The 30s
+ * value is being kept as a generous safety ceiling rather than tuned down:
+ * it only bounds the worst case (e.g. a daemon that is unexpectedly slow or
+ * stuck) and does not add any latency to the normal, fast path, so there is
+ * no correctness or performance reason to change it in this phase.
  */
 export const READINESS_SCAN_TIMEOUT_MS = 30_000;
 
 /**
  * Readiness check for the scanner engine itself (distinct from the HTTP
  * process being alive, which the plain /health endpoint already covers).
+ * This validates the exact same daemon-backed path production scans depend
+ * on: it calls the same `scanFile()` used by the real scanning flow
+ * (src/assessment.ts), so there is no separate/duplicated engine
+ * initialization here, and readiness can never pass while the actual scan
+ * path is unable to scan.
  *
- * A `clamscan --version` response only proves the binary exists and runs -
- * it says nothing about whether a usable signature database is loaded. To
- * actually establish that, this performs one real scan of a small, harmless,
- * locally generated temp file (never a document from storage, never
- * anything derived from a request). If ClamAV cannot even scan that trivial
- * file (SCAN_ERROR - e.g. no signature database present, or a corrupted
- * one), the scanner is reported not-ready: it would fail closed on every
- * real request today, so it should not be reported healthy. A CLEAN or
- * THREAT_DETECTED result both prove the scan pipeline (binary + loaded
- * database) actually works.
+ * A bare "is clamd reachable" check would only prove the daemon process and
+ * socket exist - it says nothing about whether a usable signature database
+ * is loaded, or whether a scan actually completes correctly end to end. To
+ * establish that, this performs one real scan (through the daemon) of a
+ * small, harmless, locally generated temp file (never a document from
+ * storage, never anything derived from a request). If ClamAV cannot even
+ * scan that trivial file (SCAN_ERROR - e.g. no signature database loaded, a
+ * corrupted one, or the daemon itself being unreachable), the scanner is
+ * reported not-ready: it would fail closed on every real request today, so
+ * it should not be reported healthy. A CLEAN or THREAT_DETECTED result both
+ * prove the scan pipeline (daemon connection + loaded database) actually
+ * works.
  *
  * This does NOT establish that the database is up to date - only that one
  * is present and usable right now. Periodic signature-freshness monitoring

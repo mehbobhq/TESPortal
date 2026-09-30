@@ -45,6 +45,18 @@ test("clamd.conf is not the unedited Debian package template (no bare Example gu
   assert.doesNotMatch(readConfig("clamd.conf"), /^Example$/m);
 });
 
+test("clamd.conf logs to a regular writable file, never /dev/stdout (regression guard: clamd's internal logger cannot open /dev/stdout in this container runtime - \"Too many levels of symbolic links\", proven by real runtime validation)", () => {
+  const config = readConfig("clamd.conf");
+  assert.doesNotMatch(config, /^LogFile\s+\/dev\/stdout\s*$/m);
+  assert.match(config, /^LogFile\s+\/var\/log\/clamav\/clamd\.log$/m);
+});
+
+test("entrypoint.sh tails clamd's log file to stdout at the exact same path clamd.conf writes it to (keeps clamd's own startup/error output visible in Cloud Run logs despite no longer using /dev/stdout directly)", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  assert.match(entrypoint, /CLAMD_LOG_FILE=\/var\/log\/clamav\/clamd\.log/);
+  assert.match(entrypoint, /tail -F "\$CLAMD_LOG_FILE"/);
+});
+
 test("freshclam.conf establishes a real clamd reload path via NotifyClamd", () => {
   assert.match(readConfig("freshclam.conf"), /^NotifyClamd\s+\/etc\/clamav\/clamd\.conf$/m);
 });

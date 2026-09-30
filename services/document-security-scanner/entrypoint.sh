@@ -26,6 +26,13 @@ set -u
 
 SOCKET_DIR=/tmp/tes-clamd
 CLAMD_CONFIG=/etc/clamav/clamd.conf
+# Must match clamd.conf's LogFile. clamd's internal logger cannot open
+# /dev/stdout directly in this container runtime (proven by a real runtime
+# validation - see clamd.conf's own note), so clamd logs to this regular
+# file instead; `tail -F` below re-surfaces it into this container's own
+# stdout/stderr so Cloud Run's log capture still sees clamd's own startup/
+# reload/error messages, exactly as it already does for freshclam's output.
+CLAMD_LOG_FILE=/var/log/clamav/clamd.log
 
 # Bounded startup budget for clamd to become genuinely usable (PING/PONG).
 # Standalone clamscan's proven production database-load time was ~23-30s
@@ -51,9 +58,21 @@ timeout 30s freshclam || echo "[entrypoint] freshclam did not refresh signatures
 clamd &
 CLAMD_PID=$!
 
-# Stage 1 trap: only clamd is running yet (Node has not started). Forwards
-# termination to clamd and waits for it before this script exits.
-trap 'echo "[entrypoint] received termination signal during clamd startup"; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; exit 0' TERM INT
+# Re-surface clamd's log file to this container's own stdout as it's
+# written. `-F` (not `-f`) retries opening by name, so this works even
+# though the file doesn't exist until clamd itself creates it moments after
+# starting. Purely diagnostic - never gates startup, and its own failure
+# (e.g. if the log file is somehow never created) does not fail the
+# container: clamd startup is still proven solely by the real PING/PONG
+# check below, not by anything this tail process does or doesn't see.
+touch "$CLAMD_LOG_FILE" 2>/dev/null
+tail -F "$CLAMD_LOG_FILE" 2>/dev/null &
+TAIL_PID=$!
+
+# Stage 1 trap: only clamd (and the log tail) are running yet (Node has not
+# started). Forwards termination to clamd and waits for it before this
+# script exits.
+trap 'echo "[entrypoint] received termination signal during clamd startup"; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; kill -TERM "$TAIL_PID" 2>/dev/null; exit 0' TERM INT
 
 # Startup gate: Node must NOT start merely because the clamd PROCESS exists
 # or the socket FILE exists - only a real PING/PONG proves clamd has
@@ -66,11 +85,13 @@ elapsed=0
 until clamdscan --config-file="$CLAMD_CONFIG" --ping 1 >/dev/null 2>&1; do
   if ! kill -0 "$CLAMD_PID" 2>/dev/null; then
     echo "[entrypoint] clamd exited unexpectedly during startup - failing container startup."
+    kill -TERM "$TAIL_PID" 2>/dev/null
     exit 1
   fi
   if [ "$elapsed" -ge "$CLAMD_STARTUP_TIMEOUT_SECONDS" ]; then
     echo "[entrypoint] clamd did not become ready (no PONG) within ${CLAMD_STARTUP_TIMEOUT_SECONDS}s - failing container startup (fail closed, not starting Node in a degraded mode)."
     kill -TERM "$CLAMD_PID" 2>/dev/null
+    kill -TERM "$TAIL_PID" 2>/dev/null
     exit 1
   fi
   sleep 1
@@ -81,12 +102,14 @@ echo "[entrypoint] clamd is ready (PING/PONG succeeded) after ${elapsed}s."
 node dist/src/server.js &
 NODE_PID=$!
 
-# Stage 2 trap: both processes are running now. On termination, stop Node
-# first (it is the one accepting external/Eventarc traffic), then clamd.
-trap 'echo "[entrypoint] received termination signal, shutting down"; kill -TERM "$NODE_PID" 2>/dev/null; wait "$NODE_PID" 2>/dev/null; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; exit 0' TERM INT
+# Stage 2 trap: all three processes are running now. On termination, stop
+# Node first (it is the one accepting external/Eventarc traffic), then
+# clamd, then the log tail.
+trap 'echo "[entrypoint] received termination signal, shutting down"; kill -TERM "$NODE_PID" 2>/dev/null; wait "$NODE_PID" 2>/dev/null; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; kill -TERM "$TAIL_PID" 2>/dev/null; exit 0' TERM INT
 
 wait "$NODE_PID"
 NODE_EXIT_CODE=$?
 kill -TERM "$CLAMD_PID" 2>/dev/null
 wait "$CLAMD_PID" 2>/dev/null
+kill -TERM "$TAIL_PID" 2>/dev/null
 exit "$NODE_EXIT_CODE"

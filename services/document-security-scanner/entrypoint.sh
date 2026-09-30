@@ -1,27 +1,50 @@
 #!/bin/sh
-# Container entrypoint - Phase 1 persistent clamd foundation.
+# Container entrypoint - Phase 2 persistent clamd + coordinated lifecycle
+# supervision.
 #
-# PID/process model: this script itself remains PID 1 for the life of the
-# container - it never `exec`s away to Node (an earlier version of this
-# script did `exec node ...`, which is no longer correct now that a second
-# long-lived process, clamd, needs its own lifecycle managed from here). It
-# starts `clamd` as a background child, gates Node's start on a real
-# PING/PONG readiness check (never on process/socket existence alone),
-# starts Node as a second background child once that gate passes, and then
-# blocks on Node's own exit. Two `trap` handlers (redefined once clamd is
-# running, then again once Node is also running) forward Cloud Run's
-# SIGTERM/SIGINT to whichever children are still alive and wait for each to
-# exit before this script itself exits.
+# PID/process model: this script remains PID 1 for the life of the
+# container - it never `exec`s away to Node. It starts `clamd`, gates Node's
+# start on a real PING/PONG readiness check (never on process/socket
+# existence alone), and starts Node once that gate passes. After startup,
+# Node and clamd form ONE required service unit: this script polls BOTH
+# every second and reacts to whichever exits first.
 #
-# This is the smallest reliable mechanism for two cooperating processes in
-# one container - no separate init/supervisor binary (e.g. tini) is
-# introduced, since plain POSIX `trap`/`wait`/`kill -0` already give
-# predictable shutdown here without adding image surface.
+# Runtime lifecycle testing of an earlier version of this script found a
+# real supervision defect: after startup it only ever `wait`ed on Node, so
+# killing clamd directly (`pkill -TERM clamd`) left Node running and the
+# container reporting "Up" indefinitely, even though the security engine and
+# its Unix socket were gone - a silent, half-alive failure. That defect is
+# fixed here: an unexpected exit of EITHER required process now stops the
+# other, stops the log tail, reaps children, and exits this script
+# non-zero, so the container itself is reported as failed rather than
+# continuing to run degraded.
 #
-# Phase 1 scope: this establishes the daemon foundation and its lifecycle
-# only. The application's scanFile() (src/clamav.ts) still uses standalone
-# `clamscan` in this phase, not this daemon - see this service's Phase 1
-# report for why, and what Phase 2 changes.
+# Supervision mechanism: POSIX `wait` can only block on one specific PID (or
+# on all children at once) - it cannot report "whichever of these two exits
+# first" the way bash's `wait -n` can, and this script's shebang is
+# `#!/bin/sh` (dash on this image), which does not support `wait -n` at all.
+# A short (1-second) polling loop checking `kill -0` on both required PIDs
+# is the smallest robust, fully POSIX-portable way to detect whichever
+# required process exits first - no bash-only features, no new supervisor
+# binary such as tini.
+#
+# On an external SIGTERM/SIGINT (Cloud Run's own shutdown signal), a single
+# shared `cleanup()` function performs a coordinated, intentional shutdown -
+# Node first (it is the one accepting external/Eventarc traffic), then
+# clamd, then the log tail - and this script exits 0, since that is a normal
+# platform-initiated stop, not a failure. The same `cleanup()` function is
+# reused for the two unexpected-exit cases above; it is guarded so its body
+# only ever runs once, even if invoked more than once (e.g. a second signal
+# arriving mid-shutdown), which avoids recursive trap execution or
+# double-cleanup races. Each already-dead process is simply skipped (its
+# `kill -0` check is false), so the same fixed Node-then-clamd-then-tail
+# order still matches whichever process(es) actually remain alive in each of
+# the three scenarios.
+#
+# Phase 2 scope: the application's scanFile() (src/clamav.ts) now uses
+# clamdscan against this persistent daemon (see this service's Phase 2
+# report) - this script only manages the daemon's process lifecycle, not
+# how the application invokes it.
 set -u
 
 SOCKET_DIR=/tmp/tes-clamd
@@ -38,11 +61,47 @@ CLAMD_LOG_FILE=/var/log/clamav/clamd.log
 # Standalone clamscan's proven production database-load time was ~23-30s
 # (see the Phase 1 scalability architecture review) - clamd's own one-time
 # startup load is the same underlying work (loading main/daily/bytecode
-# CVDs), so 60s gives roughly 2x that as margin. This exact value has NOT
-# been measured against a real clamd startup in this environment (no Docker
-# available in this session) and should be revisited once real container/
-# Cloud Run measurement exists.
+# CVDs), so 60s gives roughly 2x that as margin. Real runtime validation of
+# this exact image measured clamd actually becoming ready in ~16s, well
+# within this budget.
 CLAMD_STARTUP_TIMEOUT_SECONDS=60
+
+CLAMD_PID=""
+NODE_PID=""
+TAIL_PID=""
+CLEANED_UP=0
+
+# Stops whichever of the three tracked processes are still running, in the
+# fixed order Node -> clamd -> tail, waiting for each to actually exit
+# before moving on to the next. Guarded by CLEANED_UP so its body only ever
+# executes once, regardless of how many times or from where it is called.
+cleanup() {
+  if [ "$CLEANED_UP" -eq 1 ]; then
+    return
+  fi
+  CLEANED_UP=1
+  if [ -n "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
+    kill -TERM "$NODE_PID" 2>/dev/null
+    wait "$NODE_PID" 2>/dev/null
+  fi
+  if [ -n "$CLAMD_PID" ] && kill -0 "$CLAMD_PID" 2>/dev/null; then
+    kill -TERM "$CLAMD_PID" 2>/dev/null
+    wait "$CLAMD_PID" 2>/dev/null
+  fi
+  if [ -n "$TAIL_PID" ] && kill -0 "$TAIL_PID" 2>/dev/null; then
+    kill -TERM "$TAIL_PID" 2>/dev/null
+    wait "$TAIL_PID" 2>/dev/null
+  fi
+}
+
+# External SIGTERM/SIGINT: coordinated, intentional shutdown. Exits 0 - this
+# is a normal, platform-initiated stop, not a failure.
+on_terminate() {
+  echo "[entrypoint] received termination signal, shutting down"
+  cleanup
+  exit 0
+}
+trap on_terminate TERM INT
 
 mkdir -p "$SOCKET_DIR"
 
@@ -62,13 +121,13 @@ if ! command -v clamdscan >/dev/null 2>&1; then
   exit 1
 fi
 
-# Best-effort signature refresh - unchanged behavior/budget from before this
-# phase. A successful update now also triggers a real reload of the running
-# clamd via freshclam.conf's NotifyClamd directive (see freshclam.conf) -
-# clamd is not running yet at this specific point (it starts below), so this
-# particular invocation's NotifyClamd attempt has nothing to notify yet;
-# that is expected and harmless, matching the same non-fatal-warning
-# behavior noted in the Dockerfile's build-time freshclam step.
+# Best-effort signature refresh - unchanged behavior/budget. A successful
+# update now also triggers a real reload of the running clamd via
+# freshclam.conf's NotifyClamd directive (see freshclam.conf) - clamd is not
+# running yet at this specific point (it starts below), so this particular
+# invocation's NotifyClamd attempt has nothing to notify yet; that is
+# expected and harmless, matching the same non-fatal-warning behavior noted
+# in the Dockerfile's build-time freshclam step.
 timeout 30s freshclam || echo "[entrypoint] freshclam did not refresh signatures within 30s (see freshclam output above, if any); continuing with the database already present in this image."
 
 clamd &
@@ -85,11 +144,6 @@ touch "$CLAMD_LOG_FILE" 2>/dev/null
 tail -F "$CLAMD_LOG_FILE" 2>/dev/null &
 TAIL_PID=$!
 
-# Stage 1 trap: only clamd (and the log tail) are running yet (Node has not
-# started). Forwards termination to clamd and waits for it before this
-# script exits.
-trap 'echo "[entrypoint] received termination signal during clamd startup"; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; kill -TERM "$TAIL_PID" 2>/dev/null; exit 0' TERM INT
-
 # Startup gate: Node must NOT start merely because the clamd PROCESS exists
 # or the socket FILE exists - only a real PING/PONG proves clamd has
 # actually finished loading its database and is accepting connections
@@ -97,25 +151,16 @@ trap 'echo "[entrypoint] received termination signal during clamd startup"; kill
 # If clamd cannot become ready within the budget, or exits on its own during
 # startup, THIS CONTAINER'S STARTUP FAILS OUTRIGHT (fail closed) - Node is
 # never started in a degraded/unproven mode.
-#
-# The exact `--config-file=.../--ping 1` flag syntax below has NOT yet been
-# validated against a real clamdscan invocation: the prior runtime test that
-# would have exercised it failed earlier, at "clamdscan: not found" (exit
-# 127), before this syntax was ever reached. It is left unchanged here since
-# there is no evidence it is wrong - only evidence the binary itself was
-# absent - and should be re-confirmed on the next real container run, now
-# that clamdscan is installed.
 elapsed=0
 until clamdscan --config-file="$CLAMD_CONFIG" --ping 1 >/dev/null 2>&1; do
   if ! kill -0 "$CLAMD_PID" 2>/dev/null; then
     echo "[entrypoint] clamd exited unexpectedly during startup - failing container startup."
-    kill -TERM "$TAIL_PID" 2>/dev/null
+    cleanup
     exit 1
   fi
   if [ "$elapsed" -ge "$CLAMD_STARTUP_TIMEOUT_SECONDS" ]; then
     echo "[entrypoint] clamd did not become ready (no PONG) within ${CLAMD_STARTUP_TIMEOUT_SECONDS}s - failing container startup (fail closed, not starting Node in a degraded mode)."
-    kill -TERM "$CLAMD_PID" 2>/dev/null
-    kill -TERM "$TAIL_PID" 2>/dev/null
+    cleanup
     exit 1
   fi
   sleep 1
@@ -126,14 +171,31 @@ echo "[entrypoint] clamd is ready (PING/PONG succeeded) after ${elapsed}s."
 node dist/src/server.js &
 NODE_PID=$!
 
-# Stage 2 trap: all three processes are running now. On termination, stop
-# Node first (it is the one accepting external/Eventarc traffic), then
-# clamd, then the log tail.
-trap 'echo "[entrypoint] received termination signal, shutting down"; kill -TERM "$NODE_PID" 2>/dev/null; wait "$NODE_PID" 2>/dev/null; kill -TERM "$CLAMD_PID" 2>/dev/null; wait "$CLAMD_PID" 2>/dev/null; kill -TERM "$TAIL_PID" 2>/dev/null; exit 0' TERM INT
-
-wait "$NODE_PID"
-NODE_EXIT_CODE=$?
-kill -TERM "$CLAMD_PID" 2>/dev/null
-wait "$CLAMD_PID" 2>/dev/null
-kill -TERM "$TAIL_PID" 2>/dev/null
-exit "$NODE_EXIT_CODE"
+# Post-startup supervision: Node and clamd now form one required service
+# unit. Poll both every second; an exit detected here (as opposed to via the
+# on_terminate trap above, which calls cleanup()/exit 0 directly and never
+# reaches this loop again) is by definition an UNEXPECTED exit of a required
+# process, not an intentional shutdown - the survivor is stopped, the log
+# tail is stopped, children are reaped (via cleanup()'s own `wait` calls),
+# and this script exits non-zero so the container is reported as failed.
+while true; do
+  if ! kill -0 "$CLAMD_PID" 2>/dev/null; then
+    echo "[entrypoint] clamd exited unexpectedly - stopping Node and failing the container (fail closed)."
+    cleanup
+    exit 1
+  fi
+  if ! kill -0 "$NODE_PID" 2>/dev/null; then
+    wait "$NODE_PID" 2>/dev/null
+    NODE_EXIT_CODE=$?
+    echo "[entrypoint] Node exited unexpectedly (exit code ${NODE_EXIT_CODE}) - stopping clamd and failing the container."
+    cleanup
+    if [ "$NODE_EXIT_CODE" -eq 0 ]; then
+      # Node is a required long-lived process - it is never expected to
+      # exit on its own during normal operation, so even a reported "0"
+      # here must not be allowed to make the container look successful.
+      exit 1
+    fi
+    exit "$NODE_EXIT_CODE"
+  fi
+  sleep 1
+done

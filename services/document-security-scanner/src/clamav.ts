@@ -45,14 +45,14 @@ import type { ScanOutcome } from "./types.js";
 const CLAMD_CONFIG_FILE = "/etc/clamav/clamd.conf";
 
 /**
- * Absolute path to the ClamAV 1.4.6 clamdscan binary (the official Cisco
- * Talos package installs under /usr/local/bin, not /usr/bin - see
- * Dockerfile). Never resolved via a bare "clamdscan" command name/PATH
+ * Absolute path to the ClamAV 1.4.6 clamdscan binary, copied from the
+ * official Cisco Talos `clamav/clamav-debian` Docker image into /usr/bin -
+ * see Dockerfile. Never resolved via a bare "clamdscan" command name/PATH
  * lookup, so this never depends on PATH contents or ordering, matching the
  * same explicit-path approach entrypoint.sh uses for clamd/clamdscan/
  * freshclam.
  */
-const CLAMDSCAN_BIN = "/usr/local/bin/clamdscan";
+const CLAMDSCAN_BIN = "/usr/bin/clamdscan";
 
 export interface ClamAvResult {
   outcome: ScanOutcome;

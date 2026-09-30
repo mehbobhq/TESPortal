@@ -80,36 +80,91 @@ test("the log tail is started before clamd, so tail -F is already attached when 
 
 test("entrypoint.sh resolves clamd/clamdscan/freshclam via explicit, overridable absolute-path variables, never a bare command name (deterministic executable resolution, no PATH-ordering dependency)", () => {
   const entrypoint = readConfig("entrypoint.sh");
-  assert.match(entrypoint, /^CLAMD_BIN="\$\{CLAMD_BIN:-\/usr\/local\/sbin\/clamd\}"$/m);
-  assert.match(entrypoint, /^CLAMDSCAN_BIN="\$\{CLAMDSCAN_BIN:-\/usr\/local\/bin\/clamdscan\}"$/m);
-  assert.match(entrypoint, /^FRESHCLAM_BIN="\$\{FRESHCLAM_BIN:-\/usr\/local\/bin\/freshclam\}"$/m);
+  assert.match(entrypoint, /^CLAMD_BIN="\$\{CLAMD_BIN:-\/usr\/sbin\/clamd\}"$/m);
+  assert.match(entrypoint, /^CLAMDSCAN_BIN="\$\{CLAMDSCAN_BIN:-\/usr\/bin\/clamdscan\}"$/m);
+  assert.match(entrypoint, /^FRESHCLAM_BIN="\$\{FRESHCLAM_BIN:-\/usr\/bin\/freshclam\}"$/m);
 });
 
-test("Dockerfile installs the official pinned ClamAV 1.4.6 package, not Debian's clamav/clamav-daemon/clamdscan/clamav-freshclam packages (regression guard: real runtime validation proved this base image's Debian repository only supplies 1.4.3)", () => {
+test("Dockerfile sources ClamAV 1.4.6 from the official Cisco Talos Docker image pinned by immutable digest, not Debian's clamav package family, and not a downloaded .deb", () => {
   const dockerfile = readConfig("Dockerfile");
   assert.match(dockerfile, /^ARG CLAMAV_VERSION=1\.4\.6$/m);
+  assert.match(dockerfile, /^FROM clamav\/clamav-debian@sha256:[0-9a-f]{64} AS clamav-source$/m);
   const aptInstallLine = dockerfile
     .split("\n")
     .find((line) => line.includes("apt-get install") && /\bclamav\b/.test(line));
   assert.equal(aptInstallLine, undefined, "no apt-get install line should reference the Debian clamav package family anymore");
+  // Regression guard: the abandoned .deb-download strategy (proven unreliable
+  // under Cloud Build - HTTP 403 on two independent attempts) must be fully
+  // removed, not left dormant alongside the new mechanism.
+  assert.doesNotMatch(dockerfile, /\.deb/);
+  assert.doesNotMatch(dockerfile, /dpkg -i/);
+  assert.doesNotMatch(dockerfile, /gpg --batch/);
+  assert.doesNotMatch(dockerfile, /CLAMAV_GPG_FINGERPRINT/);
 });
 
-test("Dockerfile downloads the exact pinned ClamAV version and verifies it via the official Cisco Talos GPG signature before installing", () => {
+test("Dockerfile copies the exact ClamAV binaries and their shared libraries from the pinned clamav-source stage, not the whole image", () => {
   const dockerfile = readConfig("Dockerfile");
-  assert.match(dockerfile, /clamav-\$\{CLAMAV_VERSION\}\.linux\.x86_64\.deb/);
-  assert.match(dockerfile, /clamav-\$\{CLAMAV_VERSION\}\.linux\.x86_64\.deb\.sig/);
-  assert.match(dockerfile, /gpg --batch --verify clamav\.deb\.sig clamav\.deb/);
-  // The signing key's fingerprint must be asserted, not merely imported
-  // blindly - a substituted key from a compromised mirror must fail the
-  // build rather than be silently trusted.
-  assert.match(dockerfile, /ACTUAL_FINGERPRINT.*CLAMAV_GPG_FINGERPRINT/s);
+  assert.match(dockerfile, /COPY --from=clamav-source \/usr\/sbin\/clamd \/usr\/sbin\/clamd/);
+  assert.match(dockerfile, /COPY --from=clamav-source \/usr\/bin\/clamdscan \/usr\/bin\/clamdscan/);
+  assert.match(dockerfile, /COPY --from=clamav-source \/usr\/bin\/freshclam \/usr\/bin\/freshclam/);
 });
 
-test("Dockerfile asserts the installed binaries actually report ClamAV 1.4.6 for clamd, clamdscan, and freshclam (build fails otherwise)", () => {
+test("Dockerfile asserts the copied binaries actually report ClamAV 1.4.6 for clamd, clamdscan, and freshclam (build fails otherwise)", () => {
   const dockerfile = readConfig("Dockerfile");
-  assert.match(dockerfile, /\/usr\/local\/sbin\/clamd --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
-  assert.match(dockerfile, /\/usr\/local\/bin\/clamdscan --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
-  assert.match(dockerfile, /\/usr\/local\/bin\/freshclam --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+  assert.match(dockerfile, /\/usr\/sbin\/clamd --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+  assert.match(dockerfile, /\/usr\/bin\/clamdscan --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+  assert.match(dockerfile, /\/usr\/bin\/freshclam --version \| grep -qE "ClamAV \$\{CLAMAV_VERSION\}/);
+});
+
+test("Dockerfile verifies every copied binary/library resolves its shared-library dependencies via ldd before the build succeeds (catches an ABI mismatch, not just a missing file)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  assert.match(dockerfile, /ldd "\$bin"/);
+  assert.match(dockerfile, /grep -qi "not found"/);
+});
+
+test("Dockerfile seeds the signature database by copying it from the pinned clamav-source stage, never by running freshclam at build time (build has no dependency on clamav.net or any download endpoint)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  assert.match(dockerfile, /^COPY --from=clamav-source \/var\/lib\/clamav \/var\/lib\/clamav$/m);
+  // Regression guard: freshclam must never be invoked standalone (as its own
+  // command, starting a line) anywhere in the Dockerfile - the only
+  // permitted invocation is as part of the "--version" build-time
+  // assertion. This specifically catches the removed build-time seeding
+  // step (`RUN /usr/bin/freshclam \` on its own line) being reintroduced,
+  // without false-triggering on freshclam merely being named inside a COPY,
+  // a comment, or the ldd for-loop's list of paths to check.
+  assert.doesNotMatch(dockerfile, /^\s*\/usr\/bin\/freshclam\s*(\\)?\s*$/m);
+  assert.doesNotMatch(dockerfile, /^RUN\s+\/usr\/bin\/freshclam\b(?!.*--version)/m);
+  assert.doesNotMatch(dockerfile, /clamav\.net\/(downloads|cgi-bin)/);
+});
+
+test("Dockerfile asserts the copied signature database is non-empty and contains recognized ClamAV database material for both main and daily signature sets", () => {
+  const dockerfile = readConfig("Dockerfile");
+  assert.match(dockerfile, /ls -A \/var\/lib\/clamav/);
+  assert.match(dockerfile, /main\.cvd.*main\.cld|main\.cld.*main\.cvd/);
+  assert.match(dockerfile, /daily\.cvd.*daily\.cld|daily\.cld.*daily\.cvd/);
+});
+
+test("Dockerfile copies the signature database before reassigning ownership to tesscan (the copied files start out owned by the source image's own clamav user)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  const dbCopyIndex = dockerfile.search(/^COPY --from=clamav-source \/var\/lib\/clamav \/var\/lib\/clamav$/m);
+  const chownIndex = dockerfile.search(/chown -R tesscan:tesscan \/var\/lib\/clamav/);
+  assert.notEqual(dbCopyIndex, -1, "expected the database COPY line");
+  assert.notEqual(chownIndex, -1, "expected a chown of /var/lib/clamav to tesscan");
+  assert.ok(dbCopyIndex < chownIndex, "the database must be copied before ownership is reassigned to tesscan");
+});
+
+test("entrypoint.sh's best-effort startup freshclam is unchanged by build-time database seeding (runtime updating and build-time seeding are separate concerns)", () => {
+  const entrypoint = readConfig("entrypoint.sh");
+  assert.match(entrypoint, /timeout 30s "\$FRESHCLAM_BIN"/);
+});
+
+test("runtime and build stages all use the same trixie-based Node image, matching the ClamAV source image's own Debian 13 base (ABI compatibility regression guard)", () => {
+  const dockerfile = readConfig("Dockerfile");
+  const nodeFromLines = dockerfile.split("\n").filter((line) => /^FROM node:/.test(line));
+  assert.ok(nodeFromLines.length >= 3, "expected build, prod-deps, and runtime stages to all declare a node: base image");
+  for (const line of nodeFromLines) {
+    assert.match(line, /^FROM node:20-trixie-slim@sha256:[0-9a-f]{64}/);
+  }
 });
 
 test("entrypoint.sh verifies clamdscan is available BEFORE starting clamd, failing fast rather than burning the full startup timeout on a missing client", () => {

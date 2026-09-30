@@ -106,10 +106,10 @@ chmod +x "$STUBDIR/freshclam" "$STUBDIR/clamd" "$STUBDIR/clamdscan" "$STUBDIR/no
 export STUB_STATE_DIR="$WORKDIR"
 export PATH="$STUBDIR:$PATH"
 # entrypoint.sh resolves clamd/clamdscan/freshclam via these explicit
-# absolute-path variables (ClamAV 1.4.6 uses /usr/local, not /usr - see
-# Dockerfile/entrypoint.sh), never a bare command name - PATH-prepending
-# alone is no longer sufficient to redirect it to these stubs, so it is
-# pointed here explicitly instead. "node" is still found via PATH, since
+# absolute-path variables (see Dockerfile/entrypoint.sh), never a bare
+# command name - PATH-prepending alone is no longer sufficient to redirect
+# it to these stubs, so it is pointed here explicitly instead. "node" is
+# still found via PATH, since
 # entrypoint.sh invokes it as a bare command name (Node itself is not part
 # of the ClamAV version-pinning/explicit-path concern this harness exists
 # to prove).

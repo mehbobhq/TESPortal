@@ -24,7 +24,7 @@ function readSource(relativePath: string): string {
 
 test("scanFile() invokes clamdscan via an explicit absolute-path constant, not a bare command name or standalone clamscan", () => {
   const source = readSource("src/clamav.ts");
-  assert.match(source, /CLAMDSCAN_BIN\s*=\s*"\/usr\/local\/bin\/clamdscan"/);
+  assert.match(source, /CLAMDSCAN_BIN\s*=\s*"\/usr\/bin\/clamdscan"/);
   assert.match(source, /execFile\(\s*\n?\s*CLAMDSCAN_BIN/);
   // Never a bare "clamdscan" string passed directly to execFile (PATH-based
   // resolution) - only the absolute-path constant above.

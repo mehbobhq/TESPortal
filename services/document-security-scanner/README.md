@@ -160,73 +160,131 @@ Debian package names (`clamav-daemon` alongside the already-proven
 flag syntax follow standard, well-documented ClamAV/Debian conventions but
 were not independently re-verified by execution in this session.
 
-## ClamAV version (1.4.6, official Cisco Talos package - not Debian's)
+## ClamAV version (1.4.6, official Cisco Talos Docker distribution)
 
-This image installs ClamAV **1.4.6**, pinned explicitly, from the **official
-Cisco Talos Linux x86_64 `.deb`**, published as a GitHub release asset at
-`github.com/Cisco-Talos/clamav/releases` - not Debian's own
-`clamav`/`clamav-daemon`/`clamdscan`/`clamav-freshclam` packages, which this
-image no longer installs at all. The identical artifact is also published at
-clamav.net/downloads, but Cloud Build's requests to that specific host were
-observed returning HTTP 403 (that host's own bot/automation protection) -
-the GitHub release asset is used instead for reliable automated builds.
+This image sources ClamAV **1.4.6** by copying specific, individually
+verified binaries and shared libraries out of the **official Cisco Talos
+`clamav/clamav-debian` Docker image**
+(`clamav/clamav-debian@sha256:cf5ce46bfc448c98875478941850102f04acac307a8c4816a96a1ee54e502b04`,
+the amd64 platform manifest, matching Cloud Build/Cloud Run's architecture -
+resolved directly from the Docker Registry HTTP API, not a floating tag) via
+a multi-stage Docker build. That image is never run or used as a base - it
+exists in the build only as a `COPY --from=` source.
 
-**Why not Debian's packages**: this image's base (`node:20-slim`, currently
-Debian 12 "bookworm") resolves Debian's own `clamav` package to
-`1.4.3+dfsg-1~deb12u2` - an older patch release. Debian had not yet absorbed
-the 1.4.6 point release at the time this upgrade was made. Rather than wait
-on Debian's own packaging cadence for a security-patch release, this image
-installs the vendor's own pre-built binary directly.
+**History - two abandoned acquisition strategies**: this image previously
+installed Debian's own `clamav`/`clamav-daemon`/`clamdscan`/
+`clamav-freshclam` packages, which only resolve to an older `1.4.3` patch
+release. It then switched to downloading the official Cisco Talos `.deb`
+directly during the Docker build (first from clamav.net/downloads, then from
+a GitHub release asset after clamav.net returned HTTP 403 under Cloud
+Build). That `.deb` download also proved unreliable under Cloud Build on a
+second, independent occasion, so the entire "download an artifact via
+`curl` during the build" approach was abandoned in favor of the official
+Docker distribution below. Both prior mechanisms (Debian packages and the
+`.deb`/`.sig`/GPG-verification pipeline) are fully removed from this
+Dockerfile.
 
-**Package integrity**: the official `.deb` has no separately published
-checksum file - the strongest verification mechanism ClamAV actually
-publishes for it is a detached GPG signature
-(`clamav-1.4.6.linux.x86_64.deb.sig`), signed with Cisco Talos's own
-release-signing key. The `.sig` is published as a GitHub release asset
-alongside the `.deb` (the same official release, the same host), so both are
-fetched from GitHub together. The public key itself is still fetched from
-clamav.net/downloads/gpg_public_key (that specific path was not observed to
-fail under Cloud Build). The Dockerfile asserts the key's fingerprint
-against a pinned value before trusting it (so a compromised mirror serving a
-substituted key would fail the build), imports it, and verifies the
-signature - all before `dpkg -i` ever runs. No checksum was invented or
-substituted for this verification; a GPG signature is the strongest
-mechanism ClamAV publishes for this specific artifact.
+**Base OS compatibility - why the runtime moved from Debian 12 to Debian
+13**: the official `clamav/clamav-debian:1.4.6` image's own manifest
+declares its base as `debian:13-slim` ("trixie") - confirmed directly from
+its OCI manifest annotations via the Docker Registry API, not assumed from
+source. The previous runtime base, `node:20-slim`, resolves to Debian 12
+("bookworm"). Copying dynamically-linked binaries across that boundary is
+not safe in general: glibc is backwards- but not forwards-compatible, so a
+binary built against trixie's newer glibc can fail to run
+(`GLIBC_2.XX not found`) under bookworm's older one. Rather than guess this
+was fine, the entire runtime (and, for consistency, the build/prod-deps
+stages) was moved to the official `node:20-trixie-slim` image - confirmed
+via the same manifest-annotation technique to itself be based on
+`debian:trixie-slim`, and confirmed to exist as an official, upstream-
+supported Node 20 tag before being adopted (no unofficial Node
+distribution). Both `node:20-trixie-slim` and `clamav/clamav-debian:1.4.6`
+are pinned by immutable amd64 manifest digest, not a floating tag.
 
-**Compatibility changes this required** (the official package is not a
-drop-in replacement for Debian's packaging layout - it has no declared
-`Depends`/`Recommends` and ships no maintainer install scripts):
-- Binaries land under `/usr/local` (`/usr/local/sbin/clamd`,
-  `/usr/local/bin/clamdscan`, `/usr/local/bin/freshclam`), not `/usr`.
-  `entrypoint.sh` and `src/clamav.ts` were updated to reference these via
-  explicit absolute-path constants/variables rather than bare command
-  names - executable resolution never depends on `PATH` contents or
+**Binary paths and shared libraries - inspected, not guessed**: the exact
+three binaries this scanner invokes were located by downloading and listing
+the real layer contents of the `clamav-source` image
+(`/usr/sbin/clamd`, `/usr/bin/clamdscan`, `/usr/bin/freshclam` - the
+standard `/usr` prefix, not `/usr/local`). Their actual shared-library
+dependencies were read directly from each binary's own embedded
+NEEDED/version-requirement strings (a real ELF-inspection technique
+substituting for `ldd`, which cannot run cross-platform in the environment
+this investigation was done in), rather than reused from the official
+image's own, broader runtime package list (which also covers
+`clamav-milter` and `clamdtop`/`clamconf` - tools this image never runs).
+That produced a smaller, precise set: `libbz2-1.0`, `libcurl4t64`,
+`libgcc-s1`, `libjson-c5`, `libpcre2-8-0`, `libssl3t64`, `libxml2`,
+`zlib1g` - apt-installed from trixie's own repositories in the runtime
+stage. Two of these package names (`libssl3t64`, `libcurl4t64`) differ from
+the names the official image's own install list uses (`libssl3`,
+`libcurl4`), because those exact names do not exist as trixie packages -
+confirmed directly against Debian's published trixie/amd64 package
+contents, not assumed by reusing the upstream list verbatim. ClamAV's own
+libraries (`libclamav`, `libfreshclam`, `libclammspack`, `libclamunrar`,
+`libclamunrar_iface`) are copied directly from the `clamav-source` image
+alongside the binaries, not reinstalled from any package.
+
+**Build-time verification gates**: beyond the existing version assertion
+(`clamd --version` / `clamdscan --version` / `freshclam --version`, each
+checked against the pinned version string), the Dockerfile now also runs
+`ldd` against every copied binary and library and fails the build if any
+dependency resolves to "not found" - a real, executed check of whether the
+copied binaries actually run correctly under this runtime's shared
+libraries, not merely a text-based check of the Dockerfile itself.
+
+**Signature database - copied from the official image, not downloaded**:
+direct inspection of the `clamav-source` image's layers confirmed it ships a
+real, non-empty, pre-baked signature database (`main.cvd`, `daily.cvd`,
+`bytecode.cvd`) under `/var/lib/clamav`, built alongside these exact 1.4.6
+binaries. The Dockerfile copies that directory directly
+(`COPY --from=clamav-source /var/lib/clamav /var/lib/clamav`) instead of
+running `freshclam` during the build. This was a deliberate correction: an
+earlier version of this migration kept the previous design's independent
+build-time `freshclam` run against clamav.net even after adopting the
+official image, but that meant the build still depended on an external
+network endpoint being reachable - exactly the class of failure (HTTP 403
+under Cloud Build) that motivated abandoning the `.deb` download in the
+first place. **This Docker build now has no dependency on clamav.net or any
+other ClamAV download endpoint at all.** A build-time gate asserts the
+copied directory is non-empty and contains recognized database material for
+both the main and daily signature sets (`main.cvd`/`main.cld` and
+`daily.cvd`/`daily.cld`) before the build can succeed.
+
+Build-time seeding and runtime updating remain separate concerns, as they
+were before this correction: `entrypoint.sh`'s best-effort startup
+`freshclam` (bounded to 30 seconds, non-fatal on failure - see "Signature
+update strategy" below) is unchanged and still attempts to refresh whatever
+this build-time copy seeded.
+
+**Compatibility notes carried over from the earlier `.deb`-based upgrade**:
+- No `clamav` system user is created or needed - `clamd` runs as this
+  image's own non-root `tesscan` user, as it always has (see `clamd.conf`'s
+  own note on why the `User` directive is omitted). The copied database
+  files are owned by the source image's own `clamav` user (uid/gid 1000) at
+  copy time; the Dockerfile's existing `chown -R tesscan:tesscan
+  /var/lib/clamav ...` step (which already ran before this correction, to
+  cover the previous `freshclam`-written files) reassigns ownership to
+  `tesscan` afterward, so this does not depend on the source image's own
+  user model.
+- `/var/log/clamav` and `/etc/clamav` are created explicitly by the
+  Dockerfile, since nothing copied from `clamav-source` creates them as a
+  side effect; `/var/lib/clamav` is created implicitly by the database
+  `COPY` itself.
+- `entrypoint.sh` and `src/clamav.ts` reference `clamd`/`clamdscan`/
+  `freshclam` via explicit absolute-path constants/variables, never a bare
+  command name - executable resolution never depends on `PATH` contents or
   ordering. `entrypoint.sh`'s variables (`CLAMD_BIN`/`CLAMDSCAN_BIN`/
   `FRESHCLAM_BIN`) are overridable via environment variable specifically so
   `test/lifecycle/run-scenario.sh` can still redirect them to controlled
   stub executables for testing; production always uses the real absolute
-  paths.
-- `/var/lib/clamav`, `/var/log/clamav`, and `/etc/clamav` are no longer
-  created automatically by any package post-install step - the Dockerfile
-  creates them explicitly before they are used.
-- No `clamav` system user is created by the package, and none was ever
-  required by this architecture - `clamd` already ran as this image's own
-  non-root `tesscan` user before this change (see `clamd.conf`'s own note on
-  why the `User` directive is omitted).
-- A build-time version assertion (`clamd --version` / `clamdscan --version`
-  / `freshclam --version`, each checked against the pinned version string)
-  fails the build outright if the installed binaries do not actually report
-  1.4.6 - this also serves as the practical proof that the binaries execute
-  correctly at all under this base image's shared libraries, since the
-  official package's exact runtime library requirements were not otherwise
-  independently verified before a real build.
+  paths (now `/usr/sbin/clamd`, `/usr/bin/clamdscan`, `/usr/bin/freshclam`).
 
-**Unchanged by this upgrade**: `clamd.conf`, `freshclam.conf` (ClamAV's
+**Unchanged by this migration**: `clamd.conf`, `freshclam.conf` (ClamAV's
 configuration directive set has not changed across the 1.4.x patch line),
 the Unix socket path, the PING/PONG startup gate, lifecycle supervision,
 fail-closed behavior, graceful SIGTERM handling, and the single-path clamd
-logging fix - none of these depend on which ClamAV distribution channel
-provided the binaries.
+logging fix - none of these depend on which ClamAV distribution channel or
+base OS provided the binaries.
 
 ## Signature update strategy (Phase 1 simplification - documented limitation)
 

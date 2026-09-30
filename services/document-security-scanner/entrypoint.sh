@@ -56,9 +56,9 @@ CLAMD_CONFIG=/etc/clamav/clamd.conf
 # contains. Overridable via environment variable so test/lifecycle/
 # run-scenario.sh can point these at controlled stub executables instead of
 # the real binaries; production always uses the defaults below.
-CLAMD_BIN="${CLAMD_BIN:-/usr/local/sbin/clamd}"
-CLAMDSCAN_BIN="${CLAMDSCAN_BIN:-/usr/local/bin/clamdscan}"
-FRESHCLAM_BIN="${FRESHCLAM_BIN:-/usr/local/bin/freshclam}"
+CLAMD_BIN="${CLAMD_BIN:-/usr/sbin/clamd}"
+CLAMDSCAN_BIN="${CLAMDSCAN_BIN:-/usr/bin/clamdscan}"
+FRESHCLAM_BIN="${FRESHCLAM_BIN:-/usr/bin/freshclam}"
 # Must match clamd.conf's LogFile (clamd cannot log to /dev/stdout directly
 # in this runtime - see clamd.conf). `tail -F` below is the ONLY path this
 # content takes to reach the container's own stdout; clamd's own stdio is

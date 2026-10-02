@@ -94,7 +94,7 @@ export function DriverProfileTab({
     stateProvince: address?.stateProvince || "",
     postalZip: address?.postalZip || "",
     country: address?.country || ("Canada" as "Canada" | "United States"),
-    effectiveFrom: driverDateInputValue(address?.effectiveFrom) || new Date().toISOString().slice(0, 10),
+    effectiveFrom: driverDateInputValue(address?.effectiveFrom),
   });
 
   const [formError, setFormError] = useState<string | null>(null);
@@ -103,18 +103,34 @@ export function DriverProfileTab({
     e.preventDefault();
     setFormError(null);
 
-    if (!identityDraft.legalFirstName.trim() || !identityDraft.legalLastName.trim()) {
-      setFormError("Legal First and Last Name are required.");
+    if (
+      !identityDraft.legalFirstName.trim() ||
+      !identityDraft.legalLastName.trim() ||
+      !identityDraft.phone.trim() ||
+      !identityDraft.email.trim()
+    ) {
+      setFormError("First Name, Last Name, Phone, and Email are required.");
       return;
     }
 
-    if (!identityDraft.dateOfBirth) {
-      setFormError("Date of Birth is required.");
-      return;
-    }
+    const hasAnyAddress = [
+      addressDraft.addressLine1,
+      addressDraft.addressLine2,
+      addressDraft.city,
+      addressDraft.stateProvince,
+      addressDraft.postalZip,
+      addressDraft.effectiveFrom,
+    ].some((value) => value.trim());
 
-    if (!addressDraft.addressLine1.trim() || !addressDraft.city.trim() || !addressDraft.postalZip.trim()) {
-      setFormError("Current residential address fields are required.");
+    if (
+      hasAnyAddress &&
+      (!addressDraft.addressLine1.trim() ||
+        !addressDraft.city.trim() ||
+        !addressDraft.stateProvince.trim() ||
+        !addressDraft.postalZip.trim() ||
+        !addressDraft.effectiveFrom.trim())
+    ) {
+      setFormError("If an address is entered, Address Line 1, City, Province / State, Postal / ZIP Code, and Effective From are required.");
       return;
     }
 
@@ -135,7 +151,7 @@ export function DriverProfileTab({
       addressDraft.postalZip.trim() !== address.postalZip.trim() ||
       addressDraft.country !== address.country;
 
-    if (addressChanged) {
+    if (addressChanged && hasAnyAddress) {
       if (address && addressDraft.effectiveFrom <= address.effectiveFrom) {
         setFormError("A changed residential address requires an Effective From date after the current address effective date.");
         return;
@@ -219,11 +235,24 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Date of Birth (YYYY-MM-DD) *
+                  Date of Birth (YYYY-MM-DD)
                 </label>
                 <DriverDateInput
                   value={identityDraft.dateOfBirth}
                   onChange={(value) => setIdentityDraft({ ...identityDraft, dateOfBirth: value })}
+                  className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Contact Phone *
+                </label>
+                <input
+                  type="tel"
+                  placeholder="(XXX) XXX-XXXX"
+                  value={identityDraft.phone}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, phone: e.target.value })}
                   required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -231,25 +260,13 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Contact Phone
-                </label>
-                <input
-                  type="tel"
-                  placeholder="(XXX) XXX-XXXX"
-                  value={identityDraft.phone}
-                  onChange={(e) => setIdentityDraft({ ...identityDraft, phone: e.target.value })}
-                  className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Email Address
+                  Email Address *
                 </label>
                 <input
                   type="email"
                   value={identityDraft.email}
                   onChange={(e) => setIdentityDraft({ ...identityDraft, email: e.target.value })}
+                  required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>
@@ -269,7 +286,7 @@ export function DriverProfileTab({
             <div className="p-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Record Type *
+                  Record Type
                 </label>
                 <select
                   value={relDraft.recordType}
@@ -286,7 +303,7 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Operating Region *
+                  Operating Region
                 </label>
                 <select
                   value={relDraft.operatingRegion}
@@ -303,7 +320,7 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Driver Status *
+                  Driver Status
                 </label>
                 <select
                   value={relDraft.driverStatus}
@@ -320,12 +337,11 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Relationship Start Date *
+                  Relationship Start Date
                 </label>
                 <DriverDateInput
                   value={relDraft.startDate}
                   onChange={(value) => setRelDraft({ ...relDraft, startDate: value })}
-                  required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>
@@ -355,13 +371,12 @@ export function DriverProfileTab({
             <div className="p-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="sm:col-span-2">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Address Line 1 *
+                  Address Line 1
                 </label>
                 <input
                   type="text"
                   value={addressDraft.addressLine1}
-                  onChange={(value) => setAddressDraft({ ...addressDraft, addressLine1: value })}
-                  required
+                  onChange={(e) => setAddressDraft({ ...addressDraft, addressLine1: e.target.value })}
                   placeholder="Street address or P.O. Box"
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
@@ -374,26 +389,25 @@ export function DriverProfileTab({
                 <input
                   type="text"
                   value={addressDraft.addressLine2}
-                  onChange={(value) => setAddressDraft({ ...addressDraft, addressLine2: value })}
+                  onChange={(e) => setAddressDraft({ ...addressDraft, addressLine2: e.target.value })}
                   placeholder="Apt, Suite, Unit"
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">City *</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">City</label>
                 <input
                   type="text"
                   value={addressDraft.city}
-                  onChange={(value) => setAddressDraft({ ...addressDraft, city: value })}
-                  required
+                  onChange={(e) => setAddressDraft({ ...addressDraft, city: e.target.value })}
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Province / State *
+                  Province / State
                 </label>
                 <select
                   value={addressDraft.stateProvince}
@@ -418,13 +432,12 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Postal / ZIP Code *
+                  Postal / ZIP Code
                 </label>
                 <input
                   type="text"
                   value={addressDraft.postalZip}
                   onChange={(e) => setAddressDraft({ ...addressDraft, postalZip: e.target.value.toUpperCase() })}
-                  required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-mono font-medium mt-1"
                 />
               </div>
@@ -441,12 +454,11 @@ export function DriverProfileTab({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Effective From *
+                  Effective From
                 </label>
                 <DriverDateInput
                   value={addressDraft.effectiveFrom}
                   onChange={(value) => setAddressDraft({ ...addressDraft, effectiveFrom: value })}
-                  required
                   className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium mt-1"
                 />
               </div>

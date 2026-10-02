@@ -2438,7 +2438,7 @@ export default function NewCompanyPage() {
             SAVE
         =================================================== */}
 
-        <div className="sticky bottom-4 z-10 rounded-xl border bg-background/95 p-4 shadow-lg backdrop-blur">
+        <div className="sticky bottom-4 z-10 rounded-xl border border-border bg-card p-4 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               {blockingFindings.length > 0 ? (

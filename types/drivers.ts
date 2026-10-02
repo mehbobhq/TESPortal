@@ -19,14 +19,16 @@ export interface DeadlineRules {
 }
 
 export type RecordType =
+  | "Not Established"
   | "Employee"
   | "Owner-Operator"
   | "Contractor"
   | "Temporary Driver";
 
-export type OperatingRegion = "Canada" | "United States" | "Cross-Border";
+export type OperatingRegion = "Not Established" | "Canada" | "United States" | "Cross-Border";
 
 export type DriverStatus =
+  | "Not Established"
   | "Active"
   | "On Leave"
   | "Suspended"

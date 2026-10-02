@@ -742,22 +742,27 @@ export function validatePostalZip(country: Country, value: string) {
 }
 
 export function validateDriverInput(x: DriverInput) {
-  const required: Array<[string, string]> = [
-    ["Legal First Name", x.legalFirstName], ["Legal Last Name", x.legalLastName], ["Date of Birth", x.dateOfBirth],
-    ["Record Type", String(x.recordType || "")], ["Operating Region", String(x.operatingRegion || "")], ["Driver Status", String(x.driverStatus || "")],
-    ["Relationship Start Date", x.relationshipStartDate], ["Address", x.addressLine1], ["City", x.city], ["State / Province", x.stateProvince],
-    ["Postal / ZIP", x.postalZip], ["Address Effective From", x.addressEffectiveFrom], ["Licence Number", x.licenceNumber],
-    ["Licence Jurisdiction", x.licenceJurisdiction], ["Licence Effective From", x.licenceEffectiveFrom],
-  ]
+  const required: Array<[string, string]> = [["First Name", x.legalFirstName], ["Last Name", x.legalLastName], ["Phone", x.phone || ""], ["Email", x.email || ""]]
   const missing = required.filter(([, value]) => !clean(value)).map(([label]) => label)
   if (missing.length) throw new Error(`Required: ${missing.join(", ")}.`)
-  requireDriverDate(x.dateOfBirth, "Date of Birth")
-  requireDriverDate(x.relationshipStartDate, "Relationship Start Date")
+  if (x.dateOfBirth) requireDriverDate(x.dateOfBirth, "Date of Birth")
+  if (x.relationshipStartDate) requireDriverDate(x.relationshipStartDate, "Relationship Start Date")
   if (x.relationshipEndDate) requireDriverDate(x.relationshipEndDate, "Relationship End Date")
-  requireDriverDate(x.addressEffectiveFrom, "Address Effective From")
-  requireDriverDate(x.licenceEffectiveFrom, "Licence Effective From")
-  if (!validatePostalZip(x.country, x.postalZip)) throw new Error(x.country === "Canada" ? "Enter a valid Canadian postal code." : "Enter a valid U.S. ZIP or ZIP+4.")
-  if (!normalizeLicenceNumber(x.licenceNumber)) throw new Error("Licence number is required.")
+  if (x.addressEffectiveFrom) requireDriverDate(x.addressEffectiveFrom, "Address Effective From")
+  if (x.licenceEffectiveFrom) requireDriverDate(x.licenceEffectiveFrom, "Licence Effective From")
+  const hasAddress = [x.addressLine1, x.city, x.stateProvince, x.postalZip, x.addressEffectiveFrom].some((value) => clean(value))
+  if (hasAddress) {
+    const requiredAddress: Array<[string, string]> = [["Address", x.addressLine1], ["City", x.city], ["State / Province", x.stateProvince], ["Postal / ZIP", x.postalZip], ["Address Effective From", x.addressEffectiveFrom]]
+    const missingAddress = requiredAddress.filter(([, value]) => !clean(value)).map(([label]) => label)
+    if (missingAddress.length) throw new Error(`Complete the address you started: ${missingAddress.join(", ")}.`)
+    if (!validatePostalZip(x.country, x.postalZip)) throw new Error(x.country === "Canada" ? "Enter a valid Canadian postal code." : "Enter a valid U.S. ZIP or ZIP+4.")
+  }
+  const hasLicence = [x.licenceNumber, x.licenceJurisdiction, x.licenceEffectiveFrom].some((value) => clean(value))
+  if (hasLicence) {
+    const requiredLicence: Array<[string, string]> = [["Licence Number", x.licenceNumber], ["Licence Jurisdiction", x.licenceJurisdiction], ["Licence Effective From", x.licenceEffectiveFrom]]
+    const missingLicence = requiredLicence.filter(([, value]) => !clean(value)).map(([label]) => label)
+    if (missingLicence.length) throw new Error(`Complete the licence information you started: ${missingLicence.join(", ")}.`)
+  }
 }
 
 export type IdentityMatch = { kind: "EXACT_LICENCE" | "STRONG" | "POSSIBLE" | "NONE"; master?: DriverMaster; reasons: string[] }
@@ -771,7 +776,7 @@ export function findDriverIdentityMatch(x: Pick<DriverInput, "legalFirstName" | 
     const exactLicence = driver.licenceHistory.some((l) => normalizeLicenceNumber(l.licenceNumber || l.licenceNumberRaw || "") === licence && l.jurisdiction === x.licenceJurisdiction && l.country === x.licenceCountry)
     if (licence && exactLicence) return { kind: "EXACT_LICENCE", master: driver, reasons: ["Same licence number and issuing jurisdiction"] }
     const sameName = person(driver.identity.legalFirstName) === first && person(driver.identity.legalLastName) === last
-    const sameDob = driver.identity.dateOfBirth === x.dateOfBirth
+    const sameDob = Boolean(clean(x.dateOfBirth)) && Boolean(clean(driver.identity.dateOfBirth)) && driver.identity.dateOfBirth === x.dateOfBirth
     if (sameName && sameDob) return { kind: "STRONG", master: driver, reasons: ["Same legal name and date of birth"] }
     if (sameName || sameDob) {
       possible = driver
@@ -781,12 +786,19 @@ export function findDriverIdentityMatch(x: Pick<DriverInput, "legalFirstName" | 
   return possible ? { kind: "POSSIBLE", master: possible, reasons } : { kind: "NONE", reasons: [] }
 }
 
-export function createDriver(companyId: string, input: DriverInput, options?: { reuseDriverMasterId?: string }) {
+/**
+ * `acknowledgeDistinctPerson`: set only after the user completed the mandatory
+ * "Check for Existing Driver" step and explicitly confirmed this is a different
+ * person (or the check found no candidate). It lets creation proceed past a
+ * merely POSSIBLE legacy match (name-only or DOB-only). It never overrides an
+ * EXACT_LICENCE or STRONG match - those still require reusing the existing Driver Master.
+ */
+export function createDriver(companyId: string, input: DriverInput, options?: { reuseDriverMasterId?: string; acknowledgeDistinctPerson?: boolean }) {
   validateDriverInput(input)
   const beforeMaster = loadDriverMasterStore()
   const beforeCompany = loadCompanyDriverStore(companyId)
   const match = findDriverIdentityMatch(input, beforeMaster.drivers)
-  if (match.kind !== "NONE" && !options?.reuseDriverMasterId) throw new Error(`${match.kind === "POSSIBLE" ? "Possible existing Driver match" : "Existing Driver Master found"}: ${match.master?.id}. Review identity before creating a duplicate.`)
+  if (match.kind !== "NONE" && !options?.reuseDriverMasterId && !(match.kind === "POSSIBLE" && options?.acknowledgeDistinctPerson)) throw new Error(`${match.kind === "POSSIBLE" ? "Possible existing Driver match" : "Existing Driver Master found"}: ${match.master?.id}. Review identity before creating a duplicate.`)
 
   const now = new Date().toISOString()
   let master = options?.reuseDriverMasterId ? beforeMaster.drivers.find((d) => d.id === options.reuseDriverMasterId) : undefined
@@ -801,13 +813,13 @@ export function createDriver(companyId: string, input: DriverInput, options?: { 
       identity: {
         legalFirstName: normalizeName(input.legalFirstName), legalMiddleName: normalizeName(input.legalMiddleName) || undefined,
         legalLastName: normalizeName(input.legalLastName), preferredName: normalizeName(input.preferredName) || undefined,
-        dateOfBirth: requireDriverDate(input.dateOfBirth, "Date of Birth"), phone: clean(input.phone) || undefined, email: clean(input.email) || undefined,
+        dateOfBirth: input.dateOfBirth ? requireDriverDate(input.dateOfBirth, "Date of Birth") : "", phone: clean(input.phone) || undefined, email: clean(input.email) || undefined,
       },
-      identityReferences: [{ id: uid("IDR"), type: "DRIVER_LICENCE", value: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, createdAt: now, source: "Driver onboarding" }],
-      licenceHistory: [{ id: uid("LIC"), licenceNumber: normalizeLicenceNumber(input.licenceNumber), licenceNumberRaw: input.licenceNumber.trim(), licenceNumberNormalized: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, class: clean(input.licenceClass) || undefined, endorsements: input.endorsements, airBrakeQualified: input.airBrakeQualified, effectiveFrom: requireDriverDate(input.licenceEffectiveFrom, "Licence Effective From"), effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, verificationState: input.verificationState || "Unverified" }],
-      addressHistory: [{ id: uid("ADR"), addressLine1: clean(input.addressLine1), addressLine2: clean(input.addressLine2) || undefined, city: clean(input.city), stateProvince: input.stateProvince, postalZip: input.postalZip.trim().toUpperCase(), country: input.country, effectiveFrom: input.addressEffectiveFrom, effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now }],
-      identityResolution: { status: input.stateProvince === input.licenceJurisdiction ? "CLEAR" : "REVIEW" },
-      jurisdictionReviews: input.stateProvince !== input.licenceJurisdiction ? [{ id: uid("JUR"), status: "OPEN", reason: input.jurisdictionReview?.reason || "Residence and licence jurisdictions differ", explanation: input.jurisdictionReview?.explanation || "", expectedResolutionDate: input.jurisdictionReview?.expectedResolutionDate, createdAt: now }] : [],
+      identityReferences: input.licenceNumber ? [{ id: uid("IDR"), type: "DRIVER_LICENCE", value: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, createdAt: now, source: "Driver onboarding" }] : [],
+      licenceHistory: input.licenceNumber ? [{ id: uid("LIC"), licenceNumber: normalizeLicenceNumber(input.licenceNumber), licenceNumberRaw: input.licenceNumber.trim(), licenceNumberNormalized: normalizeLicenceNumber(input.licenceNumber), jurisdiction: input.licenceJurisdiction, country: input.licenceCountry, class: clean(input.licenceClass) || undefined, endorsements: input.endorsements, airBrakeQualified: input.airBrakeQualified, effectiveFrom: requireDriverDate(input.licenceEffectiveFrom, "Licence Effective From"), effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, verificationState: input.verificationState || "Unverified" }] : [],
+      addressHistory: input.addressLine1 ? [{ id: uid("ADR"), addressLine1: clean(input.addressLine1), addressLine2: clean(input.addressLine2) || undefined, city: clean(input.city), stateProvince: input.stateProvince, postalZip: input.postalZip.trim().toUpperCase(), country: input.country, effectiveFrom: requireDriverDate(input.addressEffectiveFrom, "Address Effective From"), effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now }] : [],
+      identityResolution: { status: "UNREVIEWED" },
+      jurisdictionReviews: input.stateProvince && input.licenceJurisdiction && input.stateProvince !== input.licenceJurisdiction ? [{ id: uid("JUR"), status: "OPEN", reason: input.jurisdictionReview?.reason || "Residence and licence jurisdictions differ", explanation: input.jurisdictionReview?.explanation || "", expectedResolutionDate: input.jurisdictionReview?.expectedResolutionDate, createdAt: now }] : [],
       archive: { isArchived: false },
     }
   }
@@ -819,7 +831,7 @@ export function createDriver(companyId: string, input: DriverInput, options?: { 
     id: uid("CDR"), companyDriverRecordId: allocateCompanyRecordId(companyId, beforeCompany.relationships), companyId, driverMasterId: masterRecord.id,
     recordType: input.recordType, operatingRegion: input.operatingRegion, driverStatus: input.driverStatus, startDate: input.relationshipStartDate,
     endDate: input.relationshipEndDate || undefined,
-    statusHistory: [{ id: uid("STA"), statusValue: input.driverStatus!, effectiveFrom: input.relationshipStartDate, effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, reason: "Initial company Driver relationship" }],
+    statusHistory: input.driverStatus !== "Not Established" && input.relationshipStartDate ? [{ id: uid("STA"), statusValue: input.driverStatus, effectiveFrom: input.relationshipStartDate, effectiveTo: null, status: "Current", source: "Driver onboarding", createdAt: now, reason: "Initial company Driver relationship" }] : [],
     createdAt: now, updatedAt: now, archive: { isArchived: false },
   }
   const nextMaster: DriverMasterStore = beforeMaster.drivers.some((d) => d.id === masterRecord.id) ? beforeMaster : { version: 2, drivers: [...beforeMaster.drivers, masterRecord] }

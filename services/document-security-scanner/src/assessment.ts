@@ -14,7 +14,9 @@ import {
   downloadIntakeObject,
   downloadQuarantineObject,
   getQuarantineObjectMetadata,
+  isValidGeneration,
   promoteQuarantineObjectToIntake,
+  SourceGenerationUnavailableError,
 } from "./storage.js";
 import type { ReasonCode, SecurityAssessment } from "./types.js";
 
@@ -28,6 +30,32 @@ export interface ScanRequest {
   contentType?: string;
   size?: number;
 }
+
+/**
+ * The I/O and engine calls assessQuarantineObject depends on, as an explicit
+ * seam so every decision/promotion path can be unit tested without GCS or a
+ * real ClamAV. Production always uses defaultScanDependencies (below); this
+ * changes no behavior and no validation.
+ */
+export interface ScanDependencies {
+  getQuarantineObjectMetadata: typeof getQuarantineObjectMetadata;
+  downloadQuarantineObject: typeof downloadQuarantineObject;
+  promoteQuarantineObjectToIntake: typeof promoteQuarantineObjectToIntake;
+  downloadIntakeObject: typeof downloadIntakeObject;
+  scanFile: typeof scanFile;
+  maxObjectBytes: typeof maxObjectBytes;
+  clamScanTimeoutMs: typeof clamScanTimeoutMs;
+}
+
+export const defaultScanDependencies: ScanDependencies = {
+  getQuarantineObjectMetadata,
+  downloadQuarantineObject,
+  promoteQuarantineObjectToIntake,
+  downloadIntakeObject,
+  scanFile,
+  maxObjectBytes,
+  clamScanTimeoutMs,
+};
 
 function buildAssessment(partial: Partial<SecurityAssessment> & Pick<SecurityAssessment, "sourceObjectName" | "securityDecision" | "reasonCodes">): SecurityAssessment {
   return {
@@ -50,7 +78,10 @@ function buildAssessment(partial: Partial<SecurityAssessment> & Pick<SecurityAss
  * service's README "Persistence gap" section. It is returned to the caller
  * for sanitized logging only.
  */
-export async function assessQuarantineObject(request: ScanRequest): Promise<SecurityAssessment> {
+export async function assessQuarantineObject(
+  request: ScanRequest,
+  deps: ScanDependencies = defaultScanDependencies,
+): Promise<SecurityAssessment> {
   const identity = parseQuarantineObjectName(request.objectName);
   if (!identity) {
     return buildAssessment({
@@ -74,20 +105,37 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
     reasonCodes: [],
   });
 
+  // The Eventarc finalize event names the exact object generation that was
+  // just written. That generation is the ONLY source generation this
+  // assessment may read, scan, or promote: every storage call below is pinned
+  // to it, so there is no window in which a different (newer) generation can
+  // be scanned-as-if-it-were-this-one or promoted. A missing/malformed
+  // generation fails closed - it is never replaced by "whatever is current".
+  const sourceGeneration = request.generation;
+  if (!isValidGeneration(sourceGeneration)) {
+    return finalize(assessment, "UNABLE_TO_SCAN", ["SOURCE_GENERATION_MISSING"]);
+  }
+
   // Size is checked from GCS metadata BEFORE any byte download or temp-file
   // allocation, per the "do not consume unbounded resources" requirement.
   let sourceSize: number;
   try {
-    const metadata = await getQuarantineObjectMetadata(request.objectName);
+    const metadata = await deps.getQuarantineObjectMetadata(request.objectName, sourceGeneration);
+    // Defense in depth: the pinned read must report exactly the pinned generation.
+    if (metadata.generation !== sourceGeneration) throw new SourceGenerationUnavailableError();
     sourceSize = metadata.size;
     assessment.sourceSize = metadata.size;
     if (!assessment.claimedMimeType) assessment.claimedMimeType = metadata.contentType;
   } catch (error) {
+    if (error instanceof SourceGenerationUnavailableError) {
+      logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "assessed source generation is no longer available (metadata)" });
+      return finalize(assessment, "UNABLE_TO_SCAN", ["SOURCE_GENERATION_CHANGED"]);
+    }
     logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "failed to read quarantine object metadata" });
     return finalize(assessment, "UNABLE_TO_SCAN", ["SOURCE_DOWNLOAD_FAILED"]);
   }
 
-  const limit = maxObjectBytes();
+  const limit = deps.maxObjectBytes();
   if (sourceSize > limit) {
     return finalize(assessment, "UNABLE_TO_SCAN", ["FILE_TOO_LARGE"]);
   }
@@ -97,8 +145,12 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
 
   let bytes: Buffer;
   try {
-    bytes = await downloadQuarantineObject(request.objectName);
-  } catch {
+    bytes = await deps.downloadQuarantineObject(request.objectName, sourceGeneration);
+  } catch (error) {
+    if (error instanceof SourceGenerationUnavailableError) {
+      logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "assessed source generation is no longer available (download)" });
+      return finalize(assessment, "UNABLE_TO_SCAN", ["SOURCE_GENERATION_CHANGED"]);
+    }
     logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "failed to download quarantine object" });
     return finalize(assessment, "UNABLE_TO_SCAN", ["SOURCE_DOWNLOAD_FAILED"]);
   }
@@ -127,7 +179,7 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
   try {
     await writeFile(tempFilePath, bytes);
 
-    const scanResult = await scanFile(tempFilePath, clamScanTimeoutMs());
+    const scanResult = await deps.scanFile(tempFilePath, deps.clamScanTimeoutMs());
     assessment.scanOutcome = scanResult.outcome;
     assessment.scannerVersion = scanResult.scannerVersion;
     assessment.threatName = scanResult.threatName;
@@ -146,7 +198,7 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
     // AND the detected file family is one of TES's allowed document types.
     const intakeObjectName = deriveIntakeObjectName(identity);
     assessment.intakeObjectName = intakeObjectName;
-    const promotion = await promoteQuarantineObjectToIntake(request.objectName, intakeObjectName);
+    const promotion = await deps.promoteQuarantineObjectToIntake(request.objectName, intakeObjectName, sourceGeneration);
 
     if (promotion.status === "PROMOTED" || promotion.status === "SKIPPED_ALREADY_EXISTS") {
       // Full destination integrity re-verification, now that
@@ -160,7 +212,7 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
       const integrityContext = promotion.status === "PROMOTED" ? "FRESH_COPY" : "EXISTING_DESTINATION";
       let destinationSha256: string;
       try {
-        const destinationBytes = await downloadIntakeObject(intakeObjectName);
+        const destinationBytes = await deps.downloadIntakeObject(intakeObjectName);
         destinationSha256 = computeSha256(destinationBytes);
       } catch {
         logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "failed to download intake object for integrity verification" });
@@ -173,6 +225,14 @@ export async function assessQuarantineObject(request: ScanRequest): Promise<Secu
       return finalize(assessment, integrity.decision, integrity.reasonCodes);
     }
     assessment.promotionStatus = "FAILED";
+    if (promotion.status === "SOURCE_GENERATION_UNAVAILABLE") {
+      // The scanned generation is no longer the one in quarantine. Nothing was
+      // copied (the pinned copy 404s), and a newer generation is never
+      // promoted on the strength of this scan - it will be assessed on its own
+      // finalize event.
+      logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "assessed source generation changed before promotion; nothing promoted" });
+      return finalize(assessment, "REVIEW_REQUIRED", ["SOURCE_GENERATION_CHANGED"]);
+    }
     logger.error({ securityAssessmentId: assessment.securityAssessmentId, sourceObjectName: request.objectName, message: "intake promotion failed" });
     return finalize(assessment, "REVIEW_REQUIRED", ["INTAKE_PROMOTION_FAILED"]);
   } finally {

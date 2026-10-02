@@ -32,6 +32,10 @@ export type ReasonCode =
   | "SOURCE_DOWNLOAD_FAILED"
   | "INTAKE_PROMOTION_FAILED"
   | "INTEGRITY_CHECK_FAILED"
+  /** The Eventarc event carried no usable object generation, so no exact source generation can be assessed or promoted. */
+  | "SOURCE_GENERATION_MISSING"
+  /** The assessed source generation was replaced/removed (or reported a different generation) - it is not promotable and a newer generation is never substituted. */
+  | "SOURCE_GENERATION_CHANGED"
   | "CONFIGURATION_ERROR";
 
 /**

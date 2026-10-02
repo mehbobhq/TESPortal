@@ -1,8 +1,11 @@
 /**
  * TES Canonical Document Intake — Phase 1 server-side foundation types.
  *
- * These describe only the intake stage: an uploaded source file has been
- * received and its original bytes stored in the GCS intake bucket. Nothing
+ * These describe only the upload-acceptance stage: an uploaded source file has
+ * been received and its original, UNTRUSTED bytes placed in the GCS QUARANTINE
+ * bucket. Nothing here means the file is security-cleared - the isolated
+ * document-security-scanner decides that asynchronously and is the only thing
+ * that promotes a file to the intake bucket. Nothing
  * here implies segmentation, classification, OCR, entity resolution, or
  * domain-record creation — those are later, unimplemented pipeline stages
  * (see DocumentProcessingStatus below for the full planned chain).
@@ -12,10 +15,16 @@
  * which is preserved as metadata only.
  */
 
+import type { SecurityState, StorageLocation } from "@/lib/ingestion/state";
+
 /** Where a document upload batch originated. Extend as new intake surfaces are added. */
 export type DocumentIntakeSource = "api_upload";
 
-/** Lifecycle status of an upload batch as a whole. */
+/**
+ * Lifecycle status of an upload batch as a whole. RECEIVED means accepted into
+ * quarantine only - not scanned, not promoted, not processed. STORED is kept
+ * for compatibility and is no longer emitted by the upload route.
+ */
 export type DocumentBatchStatus = "RECEIVED" | "STORED" | "UNABLE_TO_PROCESS";
 
 /**
@@ -44,8 +53,8 @@ export interface DocumentUploadBatch {
 }
 
 /**
- * One originally-uploaded file, stored byte-for-byte in the GCS intake
- * bucket. `documentId` is a distinct identifier from `sourceFileId` so that a
+ * One originally-uploaded file, placed byte-for-byte in the GCS QUARANTINE
+ * bucket (untrusted until the scanner clears and promotes it). `documentId` is a distinct identifier from `sourceFileId` so that a
  * later pipeline stage (segmentation) can split one source file into multiple
  * logical documents without renaming or duplicating the source file record.
  * For Phase 1, exactly one DocumentSourceFile maps to exactly one conceptual
@@ -60,7 +69,12 @@ export interface DocumentSourceFile {
   originalFilename: string;
   mimeType: string;
   byteSize: number;
-  intakeObjectName: string;
+  /** The quarantine object name (quarantine/{companyId}/{batchId}/{sourceFileId}/source). Not an intake path. */
+  quarantineObjectName: string;
+  /** Where the bytes physically are right now. null = the upload failed and nothing was stored. */
+  storageLocation: StorageLocation | null;
+  /** Always UNSCANNED in an upload response - the scanner runs asynchronously after the response is sent. */
+  securityState: SecurityState;
   uploadedAt: string;
   processingStatus: DocumentProcessingStatus;
 }

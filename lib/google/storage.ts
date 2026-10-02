@@ -1,6 +1,7 @@
 import "server-only"
 import { Storage, type StorageOptions } from "@google-cloud/storage"
-import { evidenceBucketName, googleProjectId, intakeBucketName } from "./config"
+import { evidenceBucketName, googleProjectId, intakeBucketName, quarantineBucketName } from "./config"
+import { saveCreateOnly } from "./create-only-write"
 import { getGoogleAuthClient } from "./auth"
 
 // @google-cloud/storage depends on its own google-auth-library instance
@@ -15,13 +16,19 @@ import { getGoogleAuthClient } from "./auth"
 type StorageAuthClient = NonNullable<StorageOptions["authClient"]>
 
 /**
- * TES GCS foundation - intake (temporary/raw processing uploads) and
- * evidence (permanent) buckets, both server-only.
+ * TES GCS foundation - quarantine (raw, untrusted uploads), intake
+ * (scanner-cleared, promoted content only) and evidence (permanent) buckets,
+ * all server-only.
  *
  * This establishes the storage foundation only: it does not implement the
  * full ingestion pipeline (segmentation, classification, canonical records).
  *
  * Security invariants enforced structurally by this module:
+ * - Raw application uploads can only be written to QUARANTINE (create-only,
+ *   see uploadQuarantineObject). There is deliberately no function in this
+ *   module that writes raw bytes to the intake bucket: only the isolated
+ *   document-security-scanner service promotes quarantine -> intake, and only
+ *   for a CLEARED security decision.
  * - No public URLs are ever generated (no getSignedUrl/makePublic calls exist
  *   here at all).
  * - There is no evidence-delete or evidence-overwrite operation. Evidence is
@@ -40,6 +47,10 @@ function storageClient(): Storage {
   return cachedStorage
 }
 
+function quarantineBucket() {
+  return storageClient().bucket(quarantineBucketName())
+}
+
 function intakeBucket() {
   return storageClient().bucket(intakeBucketName())
 }
@@ -49,24 +60,27 @@ function evidenceBucket() {
 }
 
 /**
- * Uploads raw bytes to the temporary intake bucket. Returns the object name.
+ * Uploads raw, untrusted bytes to the QUARANTINE bucket. Returns the object
+ * name. Success means only "accepted into quarantine" - it says nothing about
+ * security clearance, processing, or evidence status; the scanner decides
+ * that asynchronously (Eventarc) and is the only thing that can promote the
+ * object to intake.
+ *
+ * The write is create-only (see create-only-write.ts): an existing quarantine
+ * object is never overwritten. This runtime therefore needs only
+ * storage.objects.create on the quarantine bucket.
  *
  * `options.metadata` is stored as GCS custom object metadata (safe tracing
  * identifiers only - e.g. batch/source-file ids and original filename, never
  * secrets or extracted document contents; callers are responsible for that).
  */
-export async function uploadIntakeObject(
+export async function uploadQuarantineObject(
   objectName: string,
   data: Buffer | Uint8Array,
   options?: { contentType?: string; metadata?: Record<string, string> },
 ): Promise<{ bucket: string; objectName: string }> {
-  const file = intakeBucket().file(objectName)
-  await file.save(Buffer.isBuffer(data) ? data : Buffer.from(data), {
-    resumable: false,
-    contentType: options?.contentType,
-    metadata: options?.metadata ? { metadata: options.metadata } : undefined,
-  })
-  return { bucket: intakeBucketName(), objectName }
+  await saveCreateOnly(quarantineBucket().file(objectName), data, options)
+  return { bucket: quarantineBucketName(), objectName }
 }
 
 /** Returns true if the given object exists in the intake bucket. */

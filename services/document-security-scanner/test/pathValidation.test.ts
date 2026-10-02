@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import { deriveIntakeObjectName, parseQuarantineObjectName } from "../src/pathValidation.js";
@@ -56,4 +57,24 @@ test("derives the intake object name only from the parsed identity", () => {
     deriveIntakeObjectName(identity),
     `intake/${VALID_COMPANY_ID}/${VALID_BATCH_ID}/${VALID_SOURCE_FILE_ID}/source`,
   );
+});
+
+test("canonical ids generated exactly the way the portal generates them (crypto.randomUUID) always pass validation", () => {
+  for (let i = 0; i < 50; i += 1) {
+    const batchId = randomUUID();
+    const sourceFileId = randomUUID();
+    const identity = parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/${batchId}/${sourceFileId}/source`);
+    assert.deepEqual(identity, { companyId: VALID_COMPANY_ID, batchId, sourceFileId });
+  }
+});
+
+test("placeholder ids that are not canonical UUIDs are rejected (the validation is deliberately NOT relaxed to accept them)", () => {
+  assert.equal(parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/batch-phaseb-clean-001/source-phaseb-clean-001/source`), null);
+  assert.equal(parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/${VALID_BATCH_ID}/source-phaseb-clean-001/source`), null);
+  assert.equal(parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/batch-phaseb-clean-001/${VALID_SOURCE_FILE_ID}/source`), null);
+});
+
+test("a UUID with a trailing/leading extra character or segment is rejected", () => {
+  assert.equal(parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/${VALID_BATCH_ID}x/${VALID_SOURCE_FILE_ID}/source`), null);
+  assert.equal(parseQuarantineObjectName(`quarantine/${VALID_COMPANY_ID}/${VALID_BATCH_ID}/${VALID_SOURCE_FILE_ID}/source/extra`), null);
 });

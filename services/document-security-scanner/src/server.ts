@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import { assessQuarantineObject, scannerEngineReady, type ScanRequest } from "./assessment.js";
+import { assessQuarantineObject, scannerEngineReady } from "./assessment.js";
 import { port, quarantineBucketName } from "./config.js";
+import { parseGcsFinalizeEvent } from "./event.js";
 import { logger } from "./logger.js";
 
 /**
@@ -32,33 +33,6 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-interface GcsFinalizePayload {
-  bucket?: unknown;
-  name?: unknown;
-  generation?: unknown;
-  contentType?: unknown;
-  size?: unknown;
-}
-
-function extractGcsPayload(parsedBody: unknown, isBinaryMode: boolean): GcsFinalizePayload | null {
-  if (!parsedBody || typeof parsedBody !== "object") return null;
-  if (isBinaryMode) return parsedBody as GcsFinalizePayload;
-  const structured = parsedBody as { data?: unknown };
-  if (!structured.data || typeof structured.data !== "object") return null;
-  return structured.data as GcsFinalizePayload;
-}
-
-function toScanRequest(payload: GcsFinalizePayload): ScanRequest | null {
-  if (typeof payload.bucket !== "string" || typeof payload.name !== "string") return null;
-  return {
-    bucket: payload.bucket,
-    objectName: payload.name,
-    generation: payload.generation !== undefined ? String(payload.generation) : undefined,
-    contentType: typeof payload.contentType === "string" ? payload.contentType : undefined,
-    size: typeof payload.size === "string" || typeof payload.size === "number" ? Number(payload.size) : undefined,
-  };
-}
-
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -73,40 +47,20 @@ async function handleEvent(req: IncomingMessage, res: ServerResponse): Promise<v
     return;
   }
 
-  let parsedBody: unknown;
-  try {
-    parsedBody = rawBody ? JSON.parse(rawBody) : null;
-  } catch {
-    sendJson(res, 400, { error: "Malformed event payload." });
-    return;
-  }
-
+  // Parsing, shape checks, and the STRICT bucket validation (the event's own
+  // bucket field is only ever compared against trusted server configuration,
+  // never used to pick a source or destination) live in event.ts so every
+  // rejection path is unit tested. A rejected event creates no assessment and
+  // makes no GCS call.
   const isBinaryMode = typeof req.headers["ce-type"] === "string";
-  const payload = extractGcsPayload(parsedBody, isBinaryMode);
-  if (!payload) {
-    sendJson(res, 400, { error: "Unrecognized event payload shape." });
+  const parsed = parseGcsFinalizeEvent(rawBody, isBinaryMode, quarantineBucketName());
+  if (!parsed.ok) {
+    logger.warn({ message: `event rejected: ${parsed.error}` });
+    sendJson(res, parsed.status, { error: parsed.error });
     return;
   }
 
-  const scanRequest = toScanRequest(payload);
-  if (!scanRequest) {
-    sendJson(res, 400, { error: "Event payload is missing required fields." });
-    return;
-  }
-
-  // STRICT bucket validation - this must come from trusted server
-  // environment configuration, never from the event payload's own field
-  // being used to pick a destination. A mismatch is refused outright; no
-  // assessment is created and no GCS call is made for a bucket this service
-  // is not responsible for.
-  const configuredQuarantineBucket = quarantineBucketName();
-  if (scanRequest.bucket !== configuredQuarantineBucket) {
-    logger.warn({ message: "event referenced an unexpected bucket, declining" });
-    sendJson(res, 400, { error: "Event does not reference the configured quarantine bucket." });
-    return;
-  }
-
-  const assessment = await assessQuarantineObject(scanRequest);
+  const assessment = await assessQuarantineObject(parsed.request);
   // Acknowledge the event (2xx) once a decision has been reached, regardless
   // of the security decision itself - THREAT_DETECTED/REVIEW_REQUIRED/
   // UNABLE_TO_SCAN are all valid, handled outcomes for Eventarc's purposes,

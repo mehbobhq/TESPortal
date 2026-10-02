@@ -4,8 +4,9 @@ An isolated malware/security scanner for TES's production document
 ingestion pipeline. This is a standalone deployable component (Google Cloud
 Run, triggered by Eventarc) - it is not part of the Next.js portal, does not
 depend on Vercel, and shares no code or `node_modules` with the root
-application. Nothing in `app/`, `lib/google/`, or any other portal file was
-modified to build this.
+application. It shares no code with the portal; the two sides agree on the
+object-path contract below, verified by a cross-boundary compatibility test in
+the portal's `test/lib/ingestion/object-paths.test.ts`.
 
 ## Conceptual pipeline
 
@@ -19,6 +20,46 @@ OCR, classification, segmentation, entity resolution, and canonical record
 creation must never operate on an uncleared quarantine object - this
 service is the only thing that promotes a quarantine object to Intake, and
 it does so only for a `CLEARED` result.
+
+## Upload / promotion contract (portal <-> scanner)
+
+- **The portal writes only to Quarantine**, create-only (`ifGenerationMatch: 0`),
+  at `quarantine/{companyId}/{batchId}/{sourceFileId}/source`, where
+  `batchId` and `sourceFileId` are canonical UUIDs (`crypto.randomUUID()`).
+  A portal upload response means only "accepted into quarantine, unscanned".
+  The portal has no capability to write to Intake.
+- **Only this scanner promotes Quarantine -> Intake**, to
+  `intake/{companyId}/{batchId}/{sourceFileId}/source` derived solely from the
+  validated quarantine path, and only for a `CLEARED` decision. The quarantine
+  source is never deleted.
+- **Path validation is strict and is not relaxed for test convenience.**
+  Non-UUID `batchId`/`sourceFileId` values (e.g. `batch-...-001`) are declined
+  with `INVALID_SOURCE_PATH`; infrastructure smoke tests must use canonical
+  UUIDs.
+- **Exactly one source generation is promotable: the one that was scanned.**
+  The GCS finalize event names the generation just written. The scanner uses
+  that event generation as the authoritative source generation and pins the
+  metadata read, the download, and the promotion copy to it
+  (`file(name, { generation })` -> `generation` / `sourceGeneration` query
+  parameters). If that generation is replaced or removed at any point, the
+  pinned operation fails (404) and nothing newer is substituted: before the
+  scan -> `UNABLE_TO_SCAN` / `SOURCE_GENERATION_CHANGED`; between scan and
+  promotion -> `REVIEW_REQUIRED` / `SOURCE_GENERATION_CHANGED`, and nothing is
+  copied to Intake. An event without a valid decimal generation fails closed
+  (`UNABLE_TO_SCAN` / `SOURCE_GENERATION_MISSING`) - the current generation is
+  never substituted. The new generation, if any, is assessed on its own
+  finalize event. Promotion is therefore conditional on BOTH
+  source-generation == scanned-generation AND destination-does-not-exist
+  (`ifGenerationMatch: 0`); the post-copy SHA-256 re-verification below remains
+  as defense in depth. No bucket versioning or retention is required for this.
+- **Eventarc is at-least-once.** A duplicate delivery re-scans the same bytes
+  and attempts the same create-only copy; GCS answers 412 (destination exists),
+  the existing Intake object is re-downloaded and SHA-256-compared against the
+  scanned bytes, and the result is `ALREADY_EXISTS_VERIFIED_IDENTICAL`
+  (`CLEARED`) or `ALREADY_EXISTS_HASH_MISMATCH` (`REVIEW_REQUIRED`). An existing
+  Intake object is never overwritten, merged, or repaired.
+- Event/bucket/path rejections (malformed body, wrong bucket, bad shape) return
+  400 and perform no GCS call; every reached decision returns 200.
 
 ## Security decision vocabulary
 
@@ -352,6 +393,12 @@ the task's explicit instruction, and is not included here.
 | `GOOGLE_CLOUD_PROJECT_ID` | yes | GCS project |
 | `GOOGLE_GCS_QUARANTINE_BUCKET` | yes | The only bucket this service will ever read from |
 | `GOOGLE_GCS_INTAKE_BUCKET` | yes | The only bucket this service will ever promote into |
+
+Portal/backend runtime (not this service) additionally requires
+`GOOGLE_GCS_QUARANTINE_BUCKET` and only `storage.objects.create` on that
+bucket (e.g. Storage Object Creator) - no read, list, update, or delete on
+Quarantine, and no write access to Intake.
+
 | `SCANNER_MAX_OBJECT_BYTES` | no (default 26214400 / 25 MiB) | Maximum object size the scanner will process |
 | `SCANNER_CLAMSCAN_TIMEOUT_MS` | no (default 60000) | Per-invocation ClamAV wall-clock timeout |
 | `PORT` | no (default 8080, Cloud Run sets this automatically) | HTTP listen port |

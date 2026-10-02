@@ -22,7 +22,8 @@ import "server-only"
  *   GOOGLE_DOCUMENT_AI_LOCATION   - e.g. us (defaults to "us" if unset)
  *   GOOGLE_DOCUMENT_AI_PROCESSOR_ID
  *   GOOGLE_BUSINESS_DOCUMENT_AI_PROCESSOR_ID
- *   GOOGLE_GCS_INTAKE_BUCKET
+ *   GOOGLE_GCS_QUARANTINE_BUCKET  - where raw, untrusted application uploads land (create-only; the portal never reads or promotes from it)
+ *   GOOGLE_GCS_INTAKE_BUCKET      - holds only scanner-cleared, promoted content; the portal never writes to it
  *   GOOGLE_GCS_EVIDENCE_BUCKET
  *   GOOGLE_WIF_POOL_ID            - only needed in production
  *   GOOGLE_WIF_PROVIDER_ID        - only needed in production
@@ -69,6 +70,10 @@ export function roadsideDocumentAiProcessorId(): string {
 
 export function businessDocumentAiProcessorId(): string {
   return requireEnv("GOOGLE_BUSINESS_DOCUMENT_AI_PROCESSOR_ID")
+}
+
+export function quarantineBucketName(): string {
+  return requireEnv("GOOGLE_GCS_QUARANTINE_BUCKET")
 }
 
 export function intakeBucketName(): string {

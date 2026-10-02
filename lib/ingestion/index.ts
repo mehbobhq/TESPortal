@@ -28,3 +28,5 @@ export * from "./source-file.ts";
 export * from "./document.ts";
 // @ts-expect-error TS5097
 export * from "./processing-run.ts";
+// @ts-expect-error TS5097
+export * from "./object-paths.ts";

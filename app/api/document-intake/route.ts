@@ -1,15 +1,27 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
-import { uploadIntakeObject } from "@/lib/google/storage"
+import { uploadQuarantineObject } from "@/lib/google/storage"
+import { asBatchId, asDocumentId, asSourceFileId } from "@/lib/ingestion/ids"
+import { COMPANY_ID_PATTERN, quarantineObjectName } from "@/lib/ingestion/object-paths"
 import type { DocumentIntakeResult, DocumentSourceFile, DocumentUploadBatch } from "@/types/document-intake"
 
 /**
  * TES Canonical Document Intake — Phase 1.
  *
  * Server-side foundation only: receives one uploaded file, validates it
- * minimally, assigns stable server-generated ids, and stores the ORIGINAL,
- * unmodified bytes in the existing production-verified GCS intake bucket via
- * lib/google/storage.ts's uploadIntakeObject(). Returns structured metadata.
+ * minimally, assigns stable server-generated ids, and places the ORIGINAL,
+ * unmodified, UNTRUSTED bytes in the GCS QUARANTINE bucket (create-only) via
+ * lib/google/storage.ts's uploadQuarantineObject(), at
+ * quarantine/{companyId}/{batchId}/{sourceFileId}/source. Returns structured
+ * metadata.
+ *
+ * A successful response means ONLY "accepted into quarantine". It does not
+ * mean security-cleared, processed, evidenced, or ready for OCR: the isolated
+ * document-security-scanner is triggered asynchronously by Eventarc on the
+ * quarantine finalize event, and it is the ONLY component that promotes a
+ * file to the intake bucket (and only for a CLEARED decision). This route has
+ * no capability to write to intake at all, and does not wait for or fabricate
+ * a scan result.
  *
  * This route does not perform OCR, entity matching, or domain-record
  * creation, and does not decide anything about document legitimacy — see
@@ -35,9 +47,6 @@ const SUPPORTED_MIME_TYPES = new Set([
 
 /** Named, centralized so this can later become configuration without changing intake semantics. */
 const MAX_INTAKE_FILE_BYTES = 25 * 1024 * 1024
-
-/** Conservative identifier allow-list for companyId as used in a GCS object path. Not authorization - see the SECURITY BOUNDARY note above. */
-const COMPANY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 
 const FILENAME_FALLBACK = "uploaded-document"
 const MAX_FILENAME_LENGTH = 255
@@ -162,20 +171,24 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date().toISOString()
-    const batchId = randomUUID()
-    const sourceFileId = randomUUID()
-    const documentId = randomUUID()
-    const intakeObjectName = `intake/${companyId}/${batchId}/${sourceFileId}/source`
+    // Canonical branded ids (lib/ingestion/ids.ts), generated as UUIDs - the
+    // exact form the scanner's path validation requires. quarantineObjectName
+    // throws for any identity the scanner would reject, so this route cannot
+    // produce an object name the scanner would silently decline.
+    const batchId = asBatchId(randomUUID())
+    const sourceFileId = asSourceFileId(randomUUID())
+    const documentId = asDocumentId(randomUUID())
+    const objectName = quarantineObjectName({ companyId, batchId, sourceFileId })
 
     const arrayBuffer = await file.arrayBuffer()
 
     try {
-      await uploadIntakeObject(intakeObjectName, Buffer.from(arrayBuffer), {
+      await uploadQuarantineObject(objectName, Buffer.from(arrayBuffer), {
         contentType: mimeType,
         metadata: { companyId, batchId, sourceFileId, documentId, originalFilename },
       })
     } catch (error) {
-      console.error("Document intake: GCS upload failed:", loggedErrorMessage(error))
+      console.error("Document intake: quarantine upload failed:", loggedErrorMessage(error))
       const batch: DocumentUploadBatch = {
         batchId,
         companyId,
@@ -191,7 +204,9 @@ export async function POST(req: NextRequest) {
         originalFilename,
         mimeType,
         byteSize: file.size,
-        intakeObjectName,
+        quarantineObjectName: objectName,
+        storageLocation: null,
+        securityState: "UNSCANNED",
         uploadedAt: now,
         processingStatus: "UNABLE_TO_PROCESS",
       }
@@ -204,7 +219,7 @@ export async function POST(req: NextRequest) {
       companyId,
       createdAt: now,
       source: "api_upload",
-      status: "STORED",
+      status: "RECEIVED",
     }
     const sourceFile: DocumentSourceFile = {
       sourceFileId,
@@ -214,9 +229,11 @@ export async function POST(req: NextRequest) {
       originalFilename,
       mimeType,
       byteSize: file.size,
-      intakeObjectName,
+      quarantineObjectName: objectName,
+      storageLocation: "QUARANTINE",
+      securityState: "UNSCANNED",
       uploadedAt: now,
-      processingStatus: "STORED",
+      processingStatus: "RECEIVED",
     }
     const result: DocumentIntakeResult = { batch, sourceFile }
     return NextResponse.json({ result })

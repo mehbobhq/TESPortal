@@ -5,6 +5,7 @@ import {
   ForbiddenFamilyOverrideError,
   ForbiddenSensitivePayloadError,
   InvalidChangeSetError,
+  InvalidFieldLengthError,
   RootEventSourceError,
   buildMasterRegisterEvent,
   recordEvent,
@@ -191,12 +192,83 @@ test("forbidden sensitive payload keys are rejected, even when smuggled past the
   assert.throws(() => buildMasterRegisterEvent(input), ForbiddenSensitivePayloadError);
 });
 
-test("forbidden sensitive payload keys are rejected when nested under change.fieldChanges", () => {
+test("a raw object under change.fieldChanges[].after is rejected - the closed ChangeValue contract itself blocks it, independent of key names", () => {
   const input = {
     ...validInput(),
     change: { changedFields: ["apiKey"], fieldChanges: [{ field: "apiKey", after: { apiKey: "sk-live-xyz" } }] },
   } as unknown as MasterRegisterEventInput;
-  assert.throws(() => buildMasterRegisterEvent(input), ForbiddenSensitivePayloadError);
+  assert.throws(() => buildMasterRegisterEvent(input), InvalidChangeSetError);
+});
+
+test("an array under change.fieldChanges[].after is rejected", () => {
+  const input = {
+    ...validInput(),
+    change: { changedFields: ["tags"], fieldChanges: [{ field: "tags", after: ["a", "b", "c"] }] },
+  } as unknown as MasterRegisterEventInput;
+  assert.throws(() => buildMasterRegisterEvent(input), InvalidChangeSetError);
+});
+
+test("a nested object inside an otherwise well-formed LITERAL change value is rejected", () => {
+  const input = {
+    ...validInput(),
+    change: {
+      changedFields: ["profile"],
+      fieldChanges: [{ field: "profile", after: { kind: "LITERAL", value: { nested: "object" } } }],
+    },
+  } as unknown as MasterRegisterEventInput;
+  assert.throws(() => buildMasterRegisterEvent(input), InvalidChangeSetError);
+});
+
+test("a LITERAL change value with an extra key is rejected (closed shape, not just closed at the type level)", () => {
+  const input = {
+    ...validInput(),
+    change: {
+      changedFields: ["name"],
+      fieldChanges: [{ field: "name", after: { kind: "LITERAL", value: "Acme Corp", extra: "smuggled" } }],
+    },
+  } as unknown as MasterRegisterEventInput;
+  assert.throws(() => buildMasterRegisterEvent(input), InvalidChangeSetError);
+});
+
+test("an oversized LITERAL string change value is rejected", () => {
+  const input = validInput({
+    change: {
+      changedFields: ["notes"],
+      fieldChanges: [{ field: "notes", after: { kind: "LITERAL", value: "x".repeat(10_000) } }],
+    },
+  });
+  assert.throws(() => buildMasterRegisterEvent(input), InvalidFieldLengthError);
+});
+
+test("a legitimate short LITERAL primitive change value is accepted", () => {
+  const event = buildMasterRegisterEvent(
+    validInput({
+      change: {
+        changedFields: ["status"],
+        fieldChanges: [
+          { field: "status", before: { kind: "LITERAL", value: "PENDING" }, after: { kind: "LITERAL", value: "APPROVED" } },
+        ],
+      },
+    }),
+  );
+  assert.deepEqual(event.change?.fieldChanges?.[0]?.after, { kind: "LITERAL", value: "APPROVED" });
+});
+
+test("REFERENCE, HASH, REDACTED, and CHANGED change values are each accepted", () => {
+  const event = buildMasterRegisterEvent(
+    validInput({
+      change: {
+        changedFields: ["document", "ssn", "notes", "internalFlag"],
+        fieldChanges: [
+          { field: "document", after: { kind: "REFERENCE", reference: "gcs://bucket/object-123" } },
+          { field: "ssn", before: { kind: "REDACTED" }, after: { kind: "REDACTED" } },
+          { field: "notes", before: { kind: "HASH", algorithm: "SHA-256", value: "a".repeat(64) } },
+          { field: "internalFlag", after: { kind: "CHANGED" } },
+        ],
+      },
+    }),
+  );
+  assert.equal(event.change?.fieldChanges?.length, 4);
 });
 
 test("sensitive key variants are rejected regardless of casing/separator style", () => {
@@ -252,6 +324,88 @@ test("COMPLIANCE_ASSESSMENT_COMPLETED can reference a report, coverage, and an a
   assert.equal(event.relationships?.assessmentId, "ASMT-1");
   assert.deepEqual(event.evidence?.documentReferences, ["assessment-report-ref-1"]);
   assert.equal(event.coverage?.expectedCount, 12);
+});
+
+test("length limits reject oversized values across the fields the recording service controls", () => {
+  assert.throws(
+    () => buildMasterRegisterEvent(validInput({ actor: { actorType: "HUMAN", actorId: "x".repeat(200) } })),
+    InvalidActorError,
+  );
+  assert.throws(
+    () => buildMasterRegisterEvent(validInput({ outcome: { result: "SUCCESS", reason: "x".repeat(2000) } })),
+    InvalidFieldLengthError,
+  );
+  assert.throws(
+    () => buildMasterRegisterEvent(validInput({ relationships: { correlationId: "x".repeat(200) } })),
+    InvalidFieldLengthError,
+  );
+  assert.throws(
+    () => buildMasterRegisterEvent(validInput({ evidence: { documentReferences: ["x".repeat(600)] } })),
+    InvalidFieldLengthError,
+  );
+});
+
+test("legitimate, normally-sized values across those same fields are accepted", () => {
+  const event = buildMasterRegisterEvent(
+    validInput({
+      outcome: { result: "SUCCESS", reason: "Routine update, no issues found." },
+      relationships: { correlationId: "corr-abc-123" },
+      evidence: { documentReferences: ["gcs://tes-evidence/company-1/doc-42"] },
+    }),
+  );
+  assert.equal(event.outcome?.reason, "Routine update, no issues found.");
+});
+
+test("recordEvent rejects invalid input and never calls repository.append", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  await assert.rejects(() => recordEvent(repository, validInput({ eventType: "NOT_A_REAL_TYPE" })), UnregisteredEventTypeError);
+  assert.equal(repository.all().length, 0, "append must never have been called for rejected input");
+});
+
+test("getById returns undefined for a non-existent eventId", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  await recordEvent(repository, validInput());
+  const result = await repository.getById("00000000-0000-0000-0000-000000000000");
+  assert.equal(result, undefined);
+});
+
+test("a real multi-hop causal chain (A -> B -> C) is recorded and preserved: each event stores its actual predecessor's real eventId", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  const eventA = await recordEvent(repository, validInput({ eventType: "ASSIGNMENT_CREATED" }));
+  const eventB = await recordEvent(
+    repository,
+    validInput({ eventType: "DOCUMENT_VIEWED", relationships: { causationEventId: eventA.eventId } }),
+  );
+  const eventC = await recordEvent(
+    repository,
+    validInput({ eventType: "RECORD_UPDATED", relationships: { causationEventId: eventB.eventId } }),
+  );
+
+  assert.equal(repository.all().length, 3);
+  assert.equal((await repository.getById(eventA.eventId))?.eventId, eventA.eventId);
+  assert.equal((await repository.getById(eventB.eventId))?.relationships?.causationEventId, eventA.eventId);
+  assert.equal((await repository.getById(eventC.eventId))?.relationships?.causationEventId, eventB.eventId);
+});
+
+test("one event can carry correlationId, assessmentId, automationRunId, and integrationOperationId together, and is retrievable by every applicable query", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  const event = await recordEvent(
+    repository,
+    validInput({
+      eventType: "INTEGRATION_OPERATION_COMPLETED",
+      relationships: {
+        correlationId: "corr-multi-1",
+        assessmentId: "ASMT-multi-1",
+        automationRunId: "RUN-multi-1",
+        integrationOperationId: "OP-multi-1",
+      },
+    }),
+  );
+
+  assert.equal((await repository.queryByCorrelationId("corr-multi-1"))[0]?.eventId, event.eventId);
+  assert.equal((await repository.queryByAssessmentId("ASMT-multi-1"))[0]?.eventId, event.eventId);
+  assert.equal((await repository.queryByAutomationRunId("RUN-multi-1"))[0]?.eventId, event.eventId);
+  assert.equal((await repository.queryByIntegrationOperationId("OP-multi-1"))[0]?.eventId, event.eventId);
 });
 
 test("investigation events are not automatically generated by a security event", async () => {

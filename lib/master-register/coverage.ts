@@ -8,6 +8,8 @@
  * its own system of record instead.
  */
 
+import { REFERENCE_MAX_LENGTH } from "./limits.ts";
+
 export interface MaterialOperationCoverage {
   expectedCount: number;
   attemptedCount: number;
@@ -59,5 +61,9 @@ export function validateCoverage(coverage: MaterialOperationCoverage): void {
     throw new InvalidCoverageError(
       `MaterialOperationCoverage: succeededCount + failedCount + unresolvedCount (${resolved}) must equal attemptedCount (${coverage.attemptedCount}).`,
     );
+  }
+
+  if (coverage.artifactReference !== undefined && coverage.artifactReference.length > REFERENCE_MAX_LENGTH) {
+    throw new InvalidCoverageError(`MaterialOperationCoverage.artifactReference must not exceed ${REFERENCE_MAX_LENGTH} characters.`);
   }
 }

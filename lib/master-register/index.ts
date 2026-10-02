@@ -1,10 +1,17 @@
 /**
- * TES Master Register — Phase 1 foundation public API.
+ * TES Master Register — Phase 1 shared contracts barrel.
  *
- * This is the ONLY module application code should import from. UI/pages/
- * components must never construct or persist Master Register events
- * directly (see record-event.ts), and must never read/write any of the
- * pre-existing, separate systems below as if they were this one.
+ * This exports only pure, client-safe type/catalogue/validation contracts —
+ * no I/O, no Node-only built-ins, nothing that writes to a ledger. It
+ * deliberately does NOT re-export record-event.ts: a shared barrel like this
+ * one must never be the thing that hands a client component a callable
+ * server write path. To record an event, import from "./server.ts" instead
+ * (guarded by the `server-only` marker package) — never from this file, and
+ * never by reaching into record-event.ts directly from application code.
+ *
+ * UI/pages/components must never construct or persist Master Register
+ * events directly, and must never read/write any of the pre-existing,
+ * separate systems below as if they were this one.
  *
  * LEGACY SYSTEMS — explicitly out of scope for this phase, not migrated,
  * not wrapped, not used as persistence for anything exported here:
@@ -27,4 +34,4 @@ export * from "./coverage.ts";
 export * from "./assessment.ts";
 export * from "./actor-identity.ts";
 export * from "./repository.ts";
-export * from "./record-event.ts";
+export * from "./limits.ts";

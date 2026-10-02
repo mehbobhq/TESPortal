@@ -8,15 +8,21 @@
  * imported by application code.
  */
 
+import { DuplicateEventError } from "../../../lib/master-register/repository.ts";
 import type { MasterRegisterRepository } from "../../../lib/master-register/repository.ts";
 import type { MasterRegisterEvent } from "../../../lib/master-register/types.ts";
 
 export class InMemoryMasterRegisterRepository implements MasterRegisterRepository {
   private readonly events: MasterRegisterEvent[] = [];
+  private readonly eventIds = new Set<string>();
 
   async append(event: MasterRegisterEvent): Promise<MasterRegisterEvent> {
-    // Append-only: always pushes a new record, never looks up/overwrites an
-    // existing eventId.
+    // Append-only: rejects a repeated eventId rather than overwriting the
+    // original — never looks up-and-replaces.
+    if (this.eventIds.has(event.eventId)) {
+      throw new DuplicateEventError(event.eventId);
+    }
+    this.eventIds.add(event.eventId);
     this.events.push(event);
     return event;
   }

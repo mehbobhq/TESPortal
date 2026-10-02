@@ -19,6 +19,7 @@
  * system" is never an acceptable actorId on its own.
  */
 
+import { IDENTIFIER_MAX_LENGTH } from "./limits.ts";
 import type { ActorType, EventActor } from "./types.ts";
 
 export class InvalidActorError extends Error {
@@ -36,5 +37,8 @@ export function validateActor(actor: EventActor): void {
   }
   if (typeof actor.actorId !== "string" || actor.actorId.trim().length === 0) {
     throw new InvalidActorError("actorId is required and must be a non-empty opaque identifier (never a display name).");
+  }
+  if (actor.actorId.length > IDENTIFIER_MAX_LENGTH) {
+    throw new InvalidActorError(`actorId must not exceed ${IDENTIFIER_MAX_LENGTH} characters (got ${actor.actorId.length}).`);
   }
 }

@@ -68,15 +68,34 @@ export interface EventClassification {
 }
 
 /**
+ * A closed representation of a single field's value at one point in time.
+ * Deliberately NOT `unknown`/`any`/a generic object: a MasterRegisterEvent
+ * must never carry an entire record, raw OCR text, or any other complex
+ * payload as "the value" — only a short literal primitive, or a pointer
+ * (REFERENCE/HASH) to where the real value lives, or a bare fact that a
+ * value existed/changed without exposing it at all (REDACTED/CHANGED).
+ * Each variant has a fixed, closed key set — no `[key: string]: unknown`
+ * escape hatch anywhere in this union, so a caller cannot smuggle a nested
+ * object in under an otherwise-innocent key.
+ */
+export type MasterRegisterChangeValue =
+  | { kind: "LITERAL"; value: string | number | boolean | null }
+  | { kind: "REFERENCE"; reference: string }
+  | { kind: "HASH"; algorithm: string; value: string }
+  | { kind: "REDACTED" }
+  | { kind: "CHANGED" };
+
+/**
  * A single named field's before/after values. Deliberately per-field, not a
  * generic object snapshot: callers cannot pass an entire record as "the
- * change" — they must name each field individually, which is what keeps
- * this a minimal representation rather than a duplicate data store.
+ * change" — they must name each field individually, and each value must be
+ * one of the closed MasterRegisterChangeValue shapes above, which is what
+ * keeps this a minimal representation rather than a duplicate data store.
  */
 export interface FieldChange {
   field: string;
-  before?: unknown;
-  after?: unknown;
+  before?: MasterRegisterChangeValue;
+  after?: MasterRegisterChangeValue;
 }
 
 export interface ChangeSet {

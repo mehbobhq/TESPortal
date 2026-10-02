@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { recordEvent } from "../../../lib/master-register/record-event.ts";
+import { buildMasterRegisterEvent, recordEvent } from "../../../lib/master-register/record-event.ts";
+import { DuplicateEventError } from "../../../lib/master-register/repository.ts";
 import type { MasterRegisterEventInput } from "../../../lib/master-register/types.ts";
 import { InMemoryMasterRegisterRepository } from "./in-memory-repository.ts";
 
@@ -19,6 +20,25 @@ test("repository has no update/delete/replace API on the concrete test adapter",
   assert.equal(typeof repository.update, "undefined");
   assert.equal(typeof repository.delete, "undefined");
   assert.equal(typeof repository.replace, "undefined");
+});
+
+test("the first append of a given eventId succeeds", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  const event = await repository.append(buildMasterRegisterEvent(input()));
+  assert.equal((await repository.getById(event.eventId))?.eventId, event.eventId);
+});
+
+test("a second append attempt with the same eventId fails, and the original event is unaffected", async () => {
+  const repository = new InMemoryMasterRegisterRepository();
+  const original = buildMasterRegisterEvent(input());
+  await repository.append(original);
+
+  const conflicting = { ...buildMasterRegisterEvent(input({ eventType: "RECORD_UPDATED" })), eventId: original.eventId };
+  await assert.rejects(() => repository.append(conflicting), DuplicateEventError);
+
+  const stored = await repository.getById(original.eventId);
+  assert.equal(stored?.eventType, "RECORD_CREATED", "the original event must remain unchanged, not overwritten by the conflicting append");
+  assert.equal(repository.all().length, 1, "the rejected append must not have been stored alongside the original");
 });
 
 test("append never mutates a previously appended event object", async () => {

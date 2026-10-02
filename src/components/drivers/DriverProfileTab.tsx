@@ -134,11 +134,19 @@ export function DriverProfileTab({
       return;
     }
 
-    // Save Master Identity
-    onSaveMaster(identityDraft);
+    try {
+      const identityPatch: Partial<DriverMaster["identity"]> = {
+        ...identityDraft,
+        dateOfBirth: identityDraft.dateOfBirth.trim() || undefined,
+      };
+      onSaveMaster(identityPatch);
 
-    // Save Company Relationship
-    onSaveRelationship(relDraft);
+      const relationshipPatch: Partial<CompanyDriverRelationship> = {
+        ...relDraft,
+        startDate: relDraft.startDate.trim() || undefined,
+        endDate: relDraft.endDate.trim() || undefined,
+      };
+      onSaveRelationship(relationshipPatch);
 
     // Address history is effective-dated. Saving unrelated profile edits must not
     // create a duplicate address-history record. Only create a new address when
@@ -156,7 +164,12 @@ export function DriverProfileTab({
         setFormError("A changed residential address requires an Effective From date after the current address effective date.");
         return;
       }
-      onSaveAddress({ ...addressDraft, effectiveFrom: driverDateInputValue(addressDraft.effectiveFrom) });
+        onSaveAddress({ ...addressDraft, effectiveFrom: driverDateInputValue(addressDraft.effectiveFrom) });
+      }
+
+      onCancelEdit();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Unable to save Driver profile changes.");
     }
   };
 

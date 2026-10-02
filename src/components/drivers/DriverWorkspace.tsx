@@ -525,7 +525,6 @@ export function DriverWorkspace({
       el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
       det: "Updated Driver identity profile.",
     });
-    setIsEditingProfile(false);
     onRefresh();
   };
 
@@ -539,7 +538,6 @@ export function DriverWorkspace({
       el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
       det: "Updated Driver company relationship.",
     });
-    setIsEditingProfile(false);
     onRefresh();
   };
 
@@ -561,7 +559,6 @@ export function DriverWorkspace({
       el: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
       det: "Added Driver address record.",
     });
-    setIsEditingProfile(false);
     onRefresh();
   };
 

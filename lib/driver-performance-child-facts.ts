@@ -22,7 +22,7 @@ export const ROADSIDE_VIOLATION_DATA_POINTS = {
  */
 export const ROADSIDE_OUTCOME_PRECEDENCE = ["PASS", "WARNING", "REQUIRES_ATTENTION", "OUT_OF_SERVICE"] as const;
 export type RoadsideOutcome = (typeof ROADSIDE_OUTCOME_PRECEDENCE)[number];
-export type RoadsideFindingOutcome = Exclude<RoadsideOutcome, "PASS">;
+export type RoadsideFindingOutcome = RoadsideOutcome;
 export const ROADSIDE_OUTCOME_LABELS: Readonly<Record<RoadsideOutcome, string>> = { PASS: "Pass", WARNING: "Warning", REQUIRES_ATTENTION: "Requires Attention", OUT_OF_SERVICE: "Out of Service" };
 export type RoadsideApplicableTo = "DRIVER" | "VEHICLE" | "BOTH";
 export const ROADSIDE_APPLICABLE_TO_LABELS: Readonly<Record<RoadsideApplicableTo, string>> = { DRIVER: "Driver", VEHICLE: "Vehicle", BOTH: "Both" };
@@ -288,9 +288,10 @@ export function validateRoadsideViolationCollection(collection: PerformanceChild
     if (["POWER_UNIT", "TOWED_UNIT"].includes(String(item.facts.subjectType)) && !String(item.facts.subjectEquipmentId || "").trim()) errors.push(`Equipment-specific violation ${item.itemId} requires a stable inspected-equipment subject ID.`);
     if (!["POWER_UNIT", "TOWED_UNIT"].includes(String(item.facts.subjectType)) && item.facts.subjectEquipmentId) errors.push(`Non-equipment violation ${item.itemId} must not carry an equipment subject ID.`);
     if (!["YES", "NO", "UNKNOWN"].includes(String(item.facts.oosState))) errors.push(`Invalid violation OOS state on ${item.itemId}.`);
-    if (item.facts.outcome !== undefined && item.facts.outcome !== null && (!isRoadsideOutcome(item.facts.outcome) || item.facts.outcome === "PASS")) errors.push(`Invalid finding outcome on ${item.itemId}.`);
+    if (item.facts.outcome !== undefined && item.facts.outcome !== null && !isRoadsideOutcome(item.facts.outcome)) errors.push(`Invalid finding outcome on ${item.itemId}.`);
     if (item.facts.applicableTo !== undefined && item.facts.applicableTo !== null && !isRoadsideApplicableTo(item.facts.applicableTo)) errors.push(`Invalid Applicable To on ${item.itemId}.`);
     if (item.facts.outcome === "OUT_OF_SERVICE" && item.facts.oosState === "NO") errors.push(`Finding ${item.itemId} has outcome Out of Service but OOS state No.`);
+    if (item.facts.outcome === "PASS" && item.facts.oosState === "YES") errors.push(`Finding ${item.itemId} has outcome Pass but OOS state Yes.`);
   }
   return errors;
 }
@@ -316,8 +317,9 @@ export function validateRoadsideInspectionConsistency(facts: Record<string, unkn
     if (sourceTotal !== undefined && childCount > sourceTotal) errors.push(`Structured violation count (${childCount}) exceeds source-reported total (${sourceTotal}); reconciliation conflict requires review.`);
     if (collection.completeness === "COMPLETE" && sourceTotal !== undefined && sourceTotal !== childCount) errors.push(`Complete violation collection count (${childCount}) conflicts with source-reported total (${sourceTotal}).`);
     if (collection.completeness === "NOT_PROVIDED" && childCount !== 0) errors.push("NOT_PROVIDED violation collection must not contain child items.");
-    if (sourceResult === "PASS" && childCount > 0) errors.push("Source-reported Pass conflicts with structured violations.");
-    if (sourceResult === "PASS" && collection.completeness === "COMPLETE" && childCount > 0 && (collection.items.some((item) => item.facts.oosState === "YES"))) errors.push("Source-reported Pass conflicts with an OOS violation finding.");
+    // Overall Outcome (inspection level) and finding outcomes (inspection-point level) are independent facts. A Pass overall with an adverse
+    // finding (or the reverse) is never a validation error: both are preserved, and the existing source-vs-derived reconciliation
+    // (driver-data addPerformanceEvent) flags the record for review instead.
   }
   return errors;
 }
@@ -332,7 +334,7 @@ export function deriveRoadsideInspectionOutcome(facts: Record<string, unknown>, 
   if ((driverApplicable && (facts.driverOOSState === "YES" || driverResult === "OUT_OF_SERVICE")) ||
       (vehicleApplicable && (facts.vehicleOOSState === "YES" || vehicleResult === "OUT_OF_SERVICE")) ||
       Boolean(collection?.items.some((item) => item.facts.oosState === "YES"))) return "OUT_OF_SERVICE";
-  if ((driverApplicable && driverResult === "VIOLATIONS_FOUND") || (vehicleApplicable && vehicleResult === "VIOLATIONS_FOUND") || Boolean(collection?.items.length)) return "VIOLATIONS_FOUND";
+  if ((driverApplicable && driverResult === "VIOLATIONS_FOUND") || (vehicleApplicable && vehicleResult === "VIOLATIONS_FOUND") || Boolean(collection?.items.some((item) => roadsideFindingOutcome(item) !== "PASS"))) return "VIOLATIONS_FOUND";
   if (collection?.completeness === "PARTIAL" || collection?.completeness === "NOT_PROVIDED") return "UNKNOWN";
   if ((driverApplicable && driverResult !== "PASS") || (vehicleApplicable && vehicleResult !== "PASS")) return "UNKNOWN";
   return "PASS";
@@ -341,7 +343,7 @@ export function deriveRoadsideInspectionOutcome(facts: Record<string, unknown>, 
 /** Finding outcome: explicit TES outcome when recorded; otherwise derived from the legacy oosState (a recorded finding is at least Requires Attention). */
 export function roadsideFindingOutcome(item: PerformanceChildFactItem): RoadsideFindingOutcome {
   const explicit = item.facts.outcome;
-  if (isRoadsideOutcome(explicit) && explicit !== "PASS") return explicit;
+  if (isRoadsideOutcome(explicit)) return explicit;
   return item.facts.oosState === "YES" ? "OUT_OF_SERVICE" : "REQUIRES_ATTENTION";
 }
 
@@ -360,16 +362,18 @@ export function maxRoadsideOutcome(values: Array<RoadsideOutcome | undefined>): 
 }
 
 /**
- * Overall Outcome (TES-normalized). Precedence: Out of Service > Requires Attention > Warning > Pass.
- * Inputs: the recorded Overall Outcome fact (when present), every finding's outcome, and the existing
- * OOS derivation. Legacy records (no overallOutcome fact) resolve from the existing derivation without any rewrite.
- * Source-reported wording (inspectionResult) is never modified.
+ * Overall Outcome (TES-normalized) is an INSPECTION-LEVEL fact. When it is recorded it is returned as-is: finding outcomes never raise,
+ * lower or rewrite it, and it never rewrites findings or the source-reported result. Individual finding outcomes are separate
+ * inspection-point facts.
+ *
+ * Only a LEGACY record with no recorded Overall Outcome fact is resolved from existing data (Out of Service > Requires Attention >
+ * Warning > Pass across findings and OOS state), purely for display and without any rewrite.
  */
 export function deriveRoadsideOverallOutcome(facts: Record<string, unknown>, collection: PerformanceChildCollection | undefined): RoadsideOutcome | "UNKNOWN" {
+  if (isRoadsideOutcome(facts.overallOutcome)) return facts.overallOutcome;
   const base = deriveRoadsideInspectionOutcome(facts, collection);
-  const selected = isRoadsideOutcome(facts.overallOutcome) ? facts.overallOutcome : undefined;
   const findingMax = maxRoadsideOutcome((collection?.items || []).map(roadsideFindingOutcome));
-  const resolved = maxRoadsideOutcome([selected, findingMax, base === "OUT_OF_SERVICE" ? "OUT_OF_SERVICE" : undefined]);
+  const resolved = maxRoadsideOutcome([findingMax, base === "OUT_OF_SERVICE" ? "OUT_OF_SERVICE" : undefined]);
   if (resolved) return resolved;
   if (base === "VIOLATIONS_FOUND") return "REQUIRES_ATTENTION";
   if (base === "PASS") return "PASS";

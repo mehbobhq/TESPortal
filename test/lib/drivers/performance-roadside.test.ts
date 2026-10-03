@@ -4,10 +4,12 @@ import assert from "node:assert/strict";
 import {
   createRoadsideViolationCollection,
   createRoadsideViolationItem,
+  deriveRoadsideInspectionOutcome,
   deriveRoadsideOverallOutcome,
   deriveRoadsideViolationCounts,
   roadsideFindingApplicableTo,
   roadsideFindingOutcome,
+  validateRoadsideInspectionConsistency,
   validateRoadsideViolationCollection,
   // @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution; tsconfig is intentionally left unchanged.
 } from "../../../lib/driver-performance-child-facts.ts";
@@ -63,17 +65,6 @@ test("Route Deviation is a conditional-capability family", () => {
 });
 
 // ---------------------------------------------------------------- outcome
-
-test("Overall Outcome precedence: Out of Service > Requires Attention > Warning > Pass", () => {
-  assert.equal(deriveRoadsideOverallOutcome({ ...scope, overallOutcome: "PASS" }, collection()), "PASS");
-  assert.equal(deriveRoadsideOverallOutcome({ ...scope, overallOutcome: "WARNING" }, collection(finding({ outcome: "WARNING" }))), "WARNING");
-  assert.equal(deriveRoadsideOverallOutcome({ ...scope, overallOutcome: "WARNING" }, collection(finding({ outcome: "WARNING" }), finding({ outcome: "REQUIRES_ATTENTION" }))), "REQUIRES_ATTENTION");
-  assert.equal(deriveRoadsideOverallOutcome({ ...scope, overallOutcome: "WARNING" }, collection(finding({ outcome: "REQUIRES_ATTENTION" }), finding({ outcome: "OUT_OF_SERVICE", oosState: "YES" }))), "OUT_OF_SERVICE");
-});
-
-test("an OOS state alone raises the outcome to Out of Service", () => {
-  assert.equal(deriveRoadsideOverallOutcome({ inspectionScope: "DRIVER", driverInspectionResult: "VIOLATIONS_FOUND", driverOOSState: "YES", overallOutcome: "REQUIRES_ATTENTION" }, collection()), "OUT_OF_SERVICE");
-});
 
 test("legacy records without an Overall Outcome fact resolve from existing data and are never rewritten", () => {
   const legacyPass = { inspectionScope: "DRIVER", driverInspectionResult: "PASS", inspectionResult: "PASS" };
@@ -184,4 +175,80 @@ test("PPE / Safety Protocol is legacy-only: not offered for new creation, never 
   assert.ok(LEGACY_ONLY_PERFORMANCE_EVENT_TYPES.includes("PPE / Safety Protocol" as never));
   assert.equal(performanceEventFamilyOf("PPE / Safety Protocol" as never), undefined);
   assert.equal(performanceEventTitle("PPE / Safety Protocol" as never), "PPE / Safety Protocol");
+});
+
+test("Pass is a valid individual finding outcome and persists on the child fact", () => {
+  const pass = finding({ outcome: "PASS", oosState: "NO" });
+  assert.equal(pass.facts.outcome, "PASS");
+  assert.equal(roadsideFindingOutcome(pass), "PASS");
+  assert.deepEqual(validateRoadsideViolationCollection(collection(pass)), []);
+});
+
+test("a Pass finding cannot carry OOS state Yes; unknown outcome values are still rejected", () => {
+  assert.ok(validateRoadsideViolationCollection(collection(finding({ outcome: "PASS", oosState: "YES" }))).some((m: string) => /outcome Pass but OOS state Yes/.test(m)));
+  assert.ok(validateRoadsideViolationCollection(collection(finding({ outcome: "BOGUS" }))).some((m: string) => /Invalid finding outcome/.test(m)));
+});
+
+test("Pass-only findings do not turn the derived inspection outcome into Violations Found", () => {
+  assert.equal(deriveRoadsideInspectionOutcome({ ...scope }, collection(finding({ outcome: "PASS" }))), "PASS");
+  assert.equal(deriveRoadsideInspectionOutcome({ ...scope }, collection(finding({ outcome: "WARNING" }))), "VIOLATIONS_FOUND");
+});
+
+
+// ---------------------------------------------------------------- independence of Overall Outcome and finding outcomes
+
+const F = (outcome: string, oosState = "NO") => finding({ outcome, oosState });
+const recorded = (overallOutcome: string) => ({ ...scope, overallOutcome });
+
+test("1. Overall OOS + a Pass finding stays Overall OOS", () => {
+  assert.equal(deriveRoadsideOverallOutcome(recorded("OUT_OF_SERVICE"), collection(F("PASS"))), "OUT_OF_SERVICE");
+  assert.deepEqual(validateRoadsideInspectionConsistency({ ...recorded("OUT_OF_SERVICE"), inspectionResult: "VIOLATIONS_FOUND" }, collection(F("PASS"))), []);
+});
+
+test("2. Overall OOS + OOS and Pass findings stays Overall OOS", () => {
+  assert.equal(deriveRoadsideOverallOutcome(recorded("OUT_OF_SERVICE"), collection(F("OUT_OF_SERVICE", "YES"), F("PASS"))), "OUT_OF_SERVICE");
+});
+
+test("3. Overall Pass + a Pass finding stays Overall Pass", () => {
+  assert.equal(deriveRoadsideOverallOutcome(recorded("PASS"), collection(F("PASS"))), "PASS");
+  assert.equal(deriveRoadsideOverallOutcome(recorded("PASS"), collection()), "PASS", "zero findings");
+});
+
+test("4. Overall Pass + a Requires Attention finding stays Overall Pass; the finding stays Requires Attention", () => {
+  const item = F("REQUIRES_ATTENTION");
+  assert.equal(deriveRoadsideOverallOutcome(recorded("PASS"), collection(item)), "PASS");
+  assert.equal(roadsideFindingOutcome(item), "REQUIRES_ATTENTION");
+});
+
+test("5. Overall Pass + a Warning finding stays Overall Pass; the finding stays Warning", () => {
+  const item = F("WARNING");
+  assert.equal(deriveRoadsideOverallOutcome(recorded("PASS"), collection(item)), "PASS");
+  assert.equal(roadsideFindingOutcome(item), "WARNING");
+});
+
+test("an OOS finding or OOS state does not elevate a recorded Overall Pass either", () => {
+  assert.equal(deriveRoadsideOverallOutcome(recorded("PASS"), collection(F("OUT_OF_SERVICE", "YES"))), "PASS");
+  assert.equal(deriveRoadsideOverallOutcome({ inspectionScope: "DRIVER", driverInspectionResult: "VIOLATIONS_FOUND", driverOOSState: "YES", overallOutcome: "PASS" }, collection()), "PASS");
+});
+
+test("Overall Pass + adverse findings (and the reverse) are never validation errors; the source record is preserved", () => {
+  const sourcePass = { ...recorded("PASS"), inspectionResult: "PASS" };
+  assert.deepEqual(validateRoadsideInspectionConsistency(sourcePass, collection(F("WARNING"), F("REQUIRES_ATTENTION"), F("OUT_OF_SERVICE", "YES"))), []);
+  assert.deepEqual(validateRoadsideInspectionConsistency(sourcePass, collection(finding())), [], "including a legacy finding with no outcome");
+});
+
+test("finding outcomes never rewrite findings: facts are unchanged by any Overall Outcome", () => {
+  const items = [F("PASS"), F("WARNING"), F("REQUIRES_ATTENTION"), F("OUT_OF_SERVICE", "YES")];
+  const before = JSON.stringify(items.map((item) => item.facts));
+  for (const outcome of ["PASS", "WARNING", "REQUIRES_ATTENTION", "OUT_OF_SERVICE"]) {
+    const col = collection(...items);
+    assert.equal(deriveRoadsideOverallOutcome(recorded(outcome), col), outcome);
+    assert.equal(JSON.stringify(col.items.map((item: { facts: unknown }) => item.facts)), before);
+  }
+});
+
+test("a legacy record with no recorded Overall Outcome still resolves for display only (Out of Service > Requires Attention > Warning > Pass)", () => {
+  assert.equal(deriveRoadsideOverallOutcome({ ...scope }, collection(F("WARNING"))), "WARNING");
+  assert.equal(deriveRoadsideOverallOutcome({ ...scope }, collection(F("WARNING"), F("REQUIRES_ATTENTION"))), "REQUIRES_ATTENTION");
+  assert.equal(deriveRoadsideOverallOutcome({ ...scope }, collection(F("PASS"), F("OUT_OF_SERVICE", "YES"))), "OUT_OF_SERVICE");
 });

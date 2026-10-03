@@ -32,6 +32,9 @@ export type FoundationEvent = Pick<PerformanceEventRecord, "id" | "companyId" | 
       | "investigationRequirement"
       | "workflowClosures"
       | "collisionDetails"
+      | "structuredEventFacts"
+      | "structuredFacts"
+      | "childCollections"
     >
   >
 

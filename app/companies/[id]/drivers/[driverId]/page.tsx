@@ -223,6 +223,8 @@ const allDriversCohort = companyStore.relationships
       hosReviews={hosReviews}
       companyActions={companyActions}
       companyDeterminations={companyDeterminations}
+      performanceInvestigations={companyStore.performanceInvestigations || []}
+      eventRelationships={companyStore.eventRelationships || []}
       allDriversCohort={allDriversCohort}
       onBack={() => router.push(`/companies/${companyId}/drivers`)}
       onRefresh={refresh}

@@ -57,6 +57,8 @@ import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveR
 import { performanceEventTitle, roadsideOverallOutcomeLabel, eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families";
 import { RoadsideEventPanels, RoadsideSummaryLine } from "./RoadsideEventPanels";
 import { getJurisdictionLabel } from "@/lib/jurisdictions";
+import { NearMissEventPanel, workflowStateLabel } from "./NearMissEventPanel";
+import { deriveEventWorkflow } from "@/lib/performance-workflow-registry";
 
 export interface DriverPerformanceTabProps {
   master: DriverMaster;
@@ -66,6 +68,10 @@ export interface DriverPerformanceTabProps {
   hosReviews?: HOSReview[];
   companyActions?: CompanyActionRecord[];
   companyDeterminations?: CompanyDetermination[];
+  /** Stored investigation / relationship collections used only to derive workflow state (read-only here). */
+  performanceInvestigations?: import("@/types/drivers").PerformanceInvestigationRecord[];
+  eventRelationships?: import("@/types/drivers").PerformanceEventRelationship[];
+  onResolveNearMissUnsafeCondition?: (eventId: string, input: { resolvedBy: string; note: string; outcome: "RESOLVED" | "CLARIFIED_NO_UNSAFE_CONDITION" }) => void;
   allDriversCohort?: {
     master: DriverMaster;
     relationship: CompanyDriverRelationship;
@@ -132,6 +138,9 @@ export function DriverPerformanceTab({
   hosReviews = [],
   companyActions = [],
   companyDeterminations = [],
+  performanceInvestigations = [],
+  eventRelationships = [],
+  onResolveNearMissUnsafeCondition,
   allDriversCohort = [],
   onAddEvent,
   onUpdateEventWorkflow,
@@ -245,6 +254,11 @@ export function DriverPerformanceTab({
   const selectedEvent = useMemo(() => {
     return activeEvents.find((e) => e.id === selectedEventId) || null;
   }, [activeEvents, selectedEventId]);
+
+  // Near Miss workflow is derived by the common engine (never from a stored badge).
+  const nearMissWorkflow = useMemo(() => selectedEvent?.eventType === "Near Miss"
+    ? deriveEventWorkflow(selectedEvent, { events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence })
+    : null, [selectedEvent, events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence]);
 
   const selectedCompanyDetermination = useMemo(() => {
     if (!selectedEvent) return null;
@@ -1228,7 +1242,7 @@ export function DriverPerformanceTab({
                 <ReadOnlyField label="Jurisdiction / Country" value={`${selectedEvent.stateProvince || ""} ${selectedEvent.country || ""}`.trim() || "Unspecified"} />
                 <ReadOnlyField label="Processing State" value={selectedEvent.recordProcessingState || "Legacy / Not Recorded"} />
                 {selectedEvent.eventType !== "Roadside Inspection" ? <ReadOnlyField label="Subject State" value={selectedEvent.subjectState || "Not Applicable / Not Recorded"} /> : null}
-                <ReadOnlyField label="Workflow State" value={selectedEvent.workflowState || "Legacy / Not Recorded"} />
+                <ReadOnlyField label="Workflow State" value={nearMissWorkflow ? workflowStateLabel(nearMissWorkflow.state) : selectedEvent.workflowState || "Legacy / Not Recorded"} />
               </div>
 
               {/* Full Description */}
@@ -1355,7 +1369,11 @@ export function DriverPerformanceTab({
                 </div>
               )}
 
-              {(selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
+              {selectedEvent.eventType === "Near Miss" && nearMissWorkflow ? (
+                <NearMissEventPanel event={selectedEvent} workflow={nearMissWorkflow} evidence={evidence || []} onResolveUnsafeCondition={onResolveNearMissUnsafeCondition ? (input) => onResolveNearMissUnsafeCondition(selectedEvent.id, input) : undefined} />
+              ) : null}
+
+              {selectedEvent.eventType !== "Near Miss" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
                 <div className="space-y-3">
                   <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Category-Specific Structured Facts</span>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-border p-4 bg-background">

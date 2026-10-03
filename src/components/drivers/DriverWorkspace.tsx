@@ -54,6 +54,7 @@ import {
   archivePerformanceEvent,
   addHOSReview,
   addCompanyAction,
+  resolveNearMissUnsafeConditionForEvent,
   addCompanyDetermination,
   assessDriverHiringFile,
 } from "@/lib/driver-data";
@@ -76,6 +77,8 @@ export interface DriverWorkspaceProps {
   hosReviews?: HOSReview[];
   companyActions?: CompanyActionRecord[];
   companyDeterminations?: CompanyDetermination[];
+  performanceInvestigations?: import("@/types/drivers").PerformanceInvestigationRecord[];
+  eventRelationships?: import("@/types/drivers").PerformanceEventRelationship[];
   allDriversCohort?: {
     master: DriverMaster;
     relationship: CompanyDriverRelationship;
@@ -101,6 +104,8 @@ export function DriverWorkspace({
   hosReviews = [],
   companyActions = [],
   companyDeterminations = [],
+  performanceInvestigations = [],
+  eventRelationships = [],
   allDriversCohort = [],
   onBack,
   onRefresh,
@@ -1008,6 +1013,9 @@ export function DriverWorkspace({
             hosReviews={hosReviews}
             companyActions={companyActions}
             companyDeterminations={companyDeterminations}
+            performanceInvestigations={performanceInvestigations}
+            eventRelationships={eventRelationships}
+            onResolveNearMissUnsafeCondition={(eventId, input) => { resolveNearMissUnsafeConditionForEvent(company.id, eventId, input); onRefresh(); }}
             allDriversCohort={allDriversCohort}
             onAddEvent={handleAddEvent}
             onUpdateEventWorkflow={handleUpdateEventWorkflow}

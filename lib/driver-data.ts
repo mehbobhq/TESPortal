@@ -6,6 +6,8 @@ import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, P
 import { loadVehicleStore } from "@/lib/vehicle-data"
 import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, createRoadsideStatementItem, createRoadsideStatementCollection, ROADSIDE_VIOLATION_COLLECTION_ID, type RoadsideStatementInput } from "@/lib/driver-performance-child-facts"
 import { eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families"
+import { resolveNearMissUnsafeCondition, validateNewNearMiss } from "@/lib/performance-near-miss"
+import type { UnsafeConditionResolutionOutcome } from "@/lib/performance-near-miss"
 
 import type {
   AddressRecord,
@@ -1147,6 +1149,15 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   for (const link of data.canonicalLinks || []) {
     if (link.source !== "CANONICAL_STORE") throw new Error("Canonical entity links must declare CANONICAL_STORE provenance.")
   }
+  if (data.eventType === "Near Miss") {
+    const nearMissErrors = validateNewNearMiss({ ...data, id: "PENDING_EVENT", driverMasterId })
+    if (nearMissErrors.length) throw new Error(nearMissErrors[0])
+    // Canonical relationship targets must exist in the company vehicle store.
+    const knownVehicles = new Set(loadVehicleStore(companyId).vehicles.map((vehicle) => vehicle.id))
+    const linkedVehicleIds = [data.vehicleId, ...(data.canonicalLinks || []).filter((link) => link.entityType === "Vehicle" || link.entityType === "Trailer").map((link) => link.recordId)].filter((id): id is string => Boolean(id))
+    const missingVehicle = linkedVehicleIds.find((id) => !knownVehicles.has(id))
+    if (missingVehicle) throw new Error(`Near Miss relationship target does not exist in the company Vehicle store: ${missingVehicle}.`)
+  }
   if (data.structuredEventFacts) {
     const factValues = Object.fromEntries(data.structuredEventFacts.map((fact) => {
       const field = definition.fields.find((candidate) => candidate.dataPointId === fact.dataPointId);
@@ -1487,6 +1498,17 @@ export function correctPerformanceEventFacts(companyId: string, eventId: string,
   const updated = store.events.map((event) => event.id === eventId ? { ...current, structuredEventFacts: facts, updatedAt: now } : event);
   saveCompanyDriverStore({ ...store, events: updated });
   return updated.find((event) => event.id === eventId);
+}
+
+/** Append-only resolution / clarification of a Near Miss unsafe condition. The occurrence fact the reporter recorded is never edited. */
+export function resolveNearMissUnsafeConditionForEvent(companyId: string, eventId: string, input: { outcome?: UnsafeConditionResolutionOutcome; resolvedBy: string; note?: string }) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current || current.eventType !== "Near Miss") throw new Error("Near Miss event not found.");
+  const next = { ...resolveNearMissUnsafeCondition(current, input), updatedAt: new Date().toISOString() };
+  saveCompanyDriverStore({ ...store, events: store.events.map((event) => event.id === eventId ? next : event) });
+  auditDriverMutation(companyId, eventId, "UPDATE", "Recorded Near Miss unsafe-condition resolution (append-only).");
+  return next;
 }
 
 export function updatePerformanceEventWorkflow(companyId: string, eventId: string, update: PerformanceEventWorkflowUpdate, actor: string | null = null) {

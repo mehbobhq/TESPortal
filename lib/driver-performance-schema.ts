@@ -1,6 +1,7 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
+import { IANA_TIME_ZONES, LEGACY_NEAR_MISS_TRIGGER_SOURCES, LEGACY_NEAR_MISS_TYPES, NEAR_MISS_DIRECTIONS_OF_TRAVEL, NEAR_MISS_OPERATING_ACTIVITIES, NEAR_MISS_OTHER_PARTY_TYPES, NEAR_MISS_POTENTIAL_SEVERITIES, NEAR_MISS_PRIMARY_TYPES, NEAR_MISS_SOURCES, NEAR_MISS_TYPE_GROUP_BY_VALUE, NEAR_MISS_UNSAFE_CONDITION_STATES } from "@/lib/performance-near-miss-taxonomy";
 
 export type PerformanceFieldKind =
   | "text"
@@ -11,7 +12,7 @@ export type PerformanceFieldKind =
   | "boolean"
   | "select";
 
-export interface ControlledOption { value: string; label: string }
+export interface ControlledOption { value: string; label: string; group?: string }
 
 export type PerformanceValueType = "string" | "number" | "boolean" | "date" | "time" | "duration" | "measurement";
 
@@ -95,6 +96,8 @@ export interface PerformanceFieldDefinition {
   analyticalEligibility?: boolean;
   sensitivity?: "STANDARD" | "SENSITIVE";
   relationshipTarget?: string;
+  /** Legacy-only or assessment-only fields: readable on stored records, never rendered or required when creating a new record. */
+  hiddenInCreation?: boolean;
 }
 
 export interface PerformanceCategoryDefinition {
@@ -525,6 +528,7 @@ const SOURCE_OPTIONS: Readonly<Record<string, readonly ControlledOption[]>> = {
     { value: "Company Staff", label: "Company Staff" },
     { value: "Other", label: "Other" },
   ],
+  NEAR_MISS: NEAR_MISS_SOURCES,
   COLLISION_INCIDENT: [
     { value: "Driver Report", label: "Driver Report" },
     { value: "Company Staff", label: "Company Staff" },
@@ -603,6 +607,7 @@ const SOURCE_POLICY_FAMILIES = {
   ROADSIDE_INSPECTION: makeSourcePolicy("ROADSIDE_INSPECTION", ["DOCUMENT_OCR", "MANUAL_ENTRY", "API_INTEGRATION"], "DOCUMENT_OCR", "Roadside Inspection"),
   OOS: makeSourcePolicy("OOS", ORIGINS_DOCUMENT_MANUAL_API),
   COLLISION_INCIDENT: makeSourcePolicy("COLLISION_INCIDENT", ORIGINS_DOCUMENT_MANUAL_API),
+  NEAR_MISS: makeSourcePolicy("NEAR_MISS", ORIGINS_DOCUMENT_MANUAL_API),
   CUSTOMER: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   CARGO: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   SECURITY: makeSourcePolicy("SECURITY", ORIGINS_DOCUMENT_MANUAL_API),
@@ -624,7 +629,7 @@ const oosRelationships: PerformanceRelationshipDefinition[] = [
 const OPTIONAL_VEHICLE_RELATIONSHIP: PerformanceRelationshipDefinition = { key: "vehicle", entityType: "Vehicle", label: "Related Vehicle", applicability: [{ state: "OPTIONAL" }], canonical: true };
 const REPRESENTATIVE_RELATIONSHIPS: Readonly<Partial<Record<EventType, readonly PerformanceRelationshipDefinition[]>>> = {
   "Collision": [OPTIONAL_VEHICLE_RELATIONSHIP],
-  "Near Miss": [OPTIONAL_VEHICLE_RELATIONSHIP],
+  "Near Miss": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Speeding": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Harsh Braking": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Device / Data Integrity": [OPTIONAL_VEHICLE_RELATIONSHIP],
@@ -712,7 +717,28 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
   },
   {
     code: "NEAR_MISS", value: "Near Miss", label: "Near Miss", description: "A close call without actual contact where a collision or serious incident could reasonably have occurred.", group: "Safety", sources: options.source, evidenceRequired: true, determinationTypes: ["ROOT_CAUSE_ANALYSIS", "INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
-    fields: [select("nearMissType", "Near-Miss Configuration", ["Rear-End Risk", "Lane Conflict", "Pedestrian Conflict", "Intersection Conflict", "Backing Conflict", "Rollover Risk", "Other"], { required: true }), select("triggerSource", "Trigger Source", options.trigger, { required: true }), text("otherPartyObject", "Other Party / Object"), number("distanceToImpact", "Distance to Impact", "m"), number("timeToCollision", "Time to Collision", "s"), number("speed", "Vehicle Speed", "mph / km/h"), text("avoidanceAction", "Avoidance Action"), select("zoneType", "Zone Type", options.zone), area("contextNotes", "Context / Circumstances"), ...base],
+    fields: [
+      select("nearMissPrimaryType", "Primary Near-Miss Type", NEAR_MISS_PRIMARY_TYPES.map((item) => ({ ...item, group: NEAR_MISS_TYPE_GROUP_BY_VALUE[item.value] })), { required: true, dataPointId: "DRV.PERF.NEAR_MISS.PRIMARY_TYPE" }),
+      select("operatingActivity", "Operating Activity", NEAR_MISS_OPERATING_ACTIVITIES, { required: true, dataPointId: "DRV.PERF.NEAR_MISS.OPERATING_ACTIVITY" }),
+      select("eventTimeZone", "Time Zone (IANA)", IANA_TIME_ZONES, { dataPointId: "DRV.PERF.NEAR_MISS.EVENT_TIME_ZONE", helpText: "Zone where the occurrence happened. Not derived from this browser." }),
+      text("roadHighway", "Road / Highway", { dataPointId: "DRV.PERF.NEAR_MISS.ROAD_HIGHWAY" }),
+      select("directionOfTravel", "Direction of Travel", NEAR_MISS_DIRECTIONS_OF_TRAVEL, { dataPointId: "DRV.PERF.NEAR_MISS.DIRECTION_OF_TRAVEL" }),
+      select("otherPartyType", "Other Party / Object", NEAR_MISS_OTHER_PARTY_TYPES, { dataPointId: "DRV.PERF.NEAR_MISS.OTHER_PARTY_TYPE" }),
+      text("otherPartyObject", "Other Party / Object Description"),
+      select("potentialSeverityReported", "Reported Potential Severity", NEAR_MISS_POTENTIAL_SEVERITIES, { dataPointId: "DRV.PERF.NEAR_MISS.POTENTIAL_SEVERITY_REPORTED", helpText: "As supplied by the source / reporter. TES assessment is recorded separately." }),
+      select("potentialSeverityAssessed", "TES-Assessed Potential Severity", NEAR_MISS_POTENTIAL_SEVERITIES, { dataPointId: "DRV.PERF.NEAR_MISS.POTENTIAL_SEVERITY_ASSESSED", hiddenInCreation: true }),
+      text("potentialSeverityAssessedBy", "Potential Severity Assessed By", { dataPointId: "DRV.PERF.NEAR_MISS.POTENTIAL_SEVERITY_ASSESSED_BY", hiddenInCreation: true }),
+      text("potentialSeverityAssessedAt", "Potential Severity Assessed At", { dataPointId: "DRV.PERF.NEAR_MISS.POTENTIAL_SEVERITY_ASSESSED_AT", hiddenInCreation: true }),
+      text("potentialConsequenceOtherDescription", "Other Potential Consequence", { dataPointId: "DRV.PERF.NEAR_MISS.POTENTIAL_CONSEQUENCE_OTHER" }),
+      text("immediateResponseOtherDescription", "Other Immediate Response", { dataPointId: "DRV.PERF.NEAR_MISS.IMMEDIATE_RESPONSE_OTHER" }),
+      select("unsafeConditionRemains", "Unsafe Condition Remains?", NEAR_MISS_UNSAFE_CONDITION_STATES, { required: true, dataPointId: "DRV.PERF.NEAR_MISS.UNSAFE_CONDITION_REMAINS" }),
+      area("reporterDescription", "Reporter Description", { dataPointId: "DRV.PERF.NEAR_MISS.REPORTER_DESCRIPTION", helpText: "What the reporter says they observed. Investigator conclusions do not belong here." }),
+      number("distanceToImpact", "Distance to Impact", "m"), number("timeToCollision", "Time to Collision", "s"), number("speed", "Vehicle Speed", "mph / km/h"),
+      select("zoneType", "Zone Type", options.zone), area("contextNotes", "Context / Circumstances"),
+      select("nearMissType", "Legacy Near-Miss Configuration", LEGACY_NEAR_MISS_TYPES, { hiddenInCreation: true }),
+      select("triggerSource", "Legacy Trigger Source", LEGACY_NEAR_MISS_TRIGGER_SOURCES, { hiddenInCreation: true }),
+      text("avoidanceAction", "Legacy Avoidance Action", { hiddenInCreation: true }),
+      ...base],
   },
   {
     code: "ROADSIDE_INSPECTION", value: "Roadside Inspection", label: "Roadside Inspection", description: "An enforcement inspection with source observations, inspection scope, equipment, findings, OOS state, statements, and evidence.", group: "Regulatory", sources: ["Roadside Inspection", "Driver Report", "Company Staff"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: true, temporalBehavior: "Occurrence",
@@ -1224,7 +1250,7 @@ const EXPLICIT_CATEGORY_DATA_POINT_IDS: Readonly<Record<string, string>> = {
 
 const CATEGORY_SOURCE_POLICY_FAMILY: Readonly<Partial<Record<EventType, PerformanceSourcePolicy>>> = {
   "Collision": SOURCE_POLICY_FAMILIES.COLLISION_INCIDENT,
-  "Near Miss": SOURCE_POLICY_FAMILIES.COLLISION_INCIDENT,
+  "Near Miss": SOURCE_POLICY_FAMILIES.NEAR_MISS,
   "Roadside Inspection": SOURCE_POLICY_FAMILIES.ROADSIDE_INSPECTION,
   "Out-of-Service Order": SOURCE_POLICY_FAMILIES.OOS,
   "Cargo Damage": SOURCE_POLICY_FAMILIES.CARGO,

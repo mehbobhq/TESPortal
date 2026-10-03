@@ -33,7 +33,7 @@ export function DriverCompanyActionModal({
   onClose,
   onSaveAction,
 }: DriverCompanyActionModalProps) {
-  const [actionType, setActionType] = useState<CompanyActionRecord["actionType"]>("Coaching Session");
+  const [actionType, setActionType] = useState<CompanyActionRecord["actionType"]>("COACHING");
   const [title, setTitle] = useState("");
   const [decidedBy, setDecidedBy] = useState("");
   const [decidedByRole, setDecidedByRole] = useState("");
@@ -127,12 +127,12 @@ export function DriverCompanyActionModal({
                 onChange={(e) => setActionType(e.target.value as CompanyActionRecord["actionType"])}
                 className="w-full h-9 rounded-xl border border-border bg-background px-3 font-semibold mt-1"
               >
-                <option value="Coaching Session">Coaching Session (1-on-1 Counseling)</option>
-                <option value="Verbal Warning">Verbal Warning (Documented)</option>
+                <option value="COACHING">Coaching Session (1-on-1 Counseling)</option>
+                <option value="VERBAL_WARNING">Verbal Warning (Documented)</option>
                 <option value="Written Reprimand">Written Reprimand</option>
-                <option value="Corrective Action Plan">Corrective Action Plan (Multi-Step)</option>
+                <option value="CORRECTIVE_ACTION_PLAN">Corrective Action Plan (Multi-Step)</option>
                 <option value="Re-training Mandate">Re-training Mandate</option>
-                <option value="Suspension">Safety Suspension</option>
+                <option value="SUSPENSION">Safety Suspension</option>
                 <option value="Performance Probation">Performance Probation</option>
                 <option value="Policy Acknowledgment">Policy Acknowledgment</option>
                 <option value="Commendation">Commendation / Recognition</option>

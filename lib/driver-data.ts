@@ -346,24 +346,39 @@ const ACTION_TYPE_MAP: Record<string, CompanyActionRecord["actionType"]> = {
   "Performance Improvement Plan": "PERFORMANCE_IMPROVEMENT_PLAN", Other: "OTHER",
 }
 
+// Resolves a stored enum field. A valid canonical value is preserved unchanged (also when a previous lossy migration parked it
+// in the legacy slot); a recognised display label maps to its canonical value; anything else keeps the legacy-preserving fallback.
+function resolveStoredEnum<T extends string>(primaryRaw: string | undefined, legacyRaw: string | undefined, map: Record<string, T>, fallback?: T): { canonical: T | undefined; legacy: string | undefined } {
+  const own = (key: string) => (Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined)
+  const canonicalSet = new Set<string>(Object.values(map))
+  const primary = clean(primaryRaw)
+  const legacySlot = clean(legacyRaw)
+  // The old lossy migration wrote the fallback (OTHER) as the primary and parked the real canonical value in the legacy slot.
+  const damagedFallback = fallback !== undefined && primary === fallback && legacySlot !== primary && canonicalSet.has(legacySlot)
+  if (canonicalSet.has(primary) && !damagedFallback) return { canonical: primary as T, legacy: legacySlot || undefined }
+  if (canonicalSet.has(legacySlot)) return { canonical: legacySlot as T, legacy: legacySlot }
+  const candidate = legacySlot || primary
+  return { canonical: own(candidate), legacy: candidate || undefined }
+}
+
 function migrateCompanyDetermination(raw: any, companyId: string): CompanyDetermination {
-  const legacyType = clean(raw.legacyDeterminationType || raw.determinationType)
-  const legacyValue = clean(raw.legacyDeterminationValue || raw.determinationValue)
+  const type = resolveStoredEnum(raw.determinationType, raw.legacyDeterminationType, DETERMINATION_TYPE_MAP)
+  const value = resolveStoredEnum(raw.determinationValue, raw.legacyDeterminationValue, DETERMINATION_VALUE_MAP)
   return {
     ...raw, id: clean(raw.id) || uid("DET"), companyId, driverMasterId: raw.driverMasterId || "",
     relatedRecordType: raw.relatedRecordType, legacyRelatedRecordType: raw.legacyRelatedRecordType, relatedRecordId: raw.relatedRecordId,
-    determinationType: DETERMINATION_TYPE_MAP[legacyType], legacyDeterminationType: DETERMINATION_TYPE_MAP[legacyType] ? legacyType : legacyType || undefined,
-    determinationValue: DETERMINATION_VALUE_MAP[legacyValue], legacyDeterminationValue: DETERMINATION_VALUE_MAP[legacyValue] ? legacyValue : legacyValue || undefined,
+    determinationType: type.canonical, legacyDeterminationType: type.legacy,
+    determinationValue: value.canonical, legacyDeterminationValue: value.legacy,
     preventabilityFinding: raw.preventabilityFinding, legacyPreventabilityFinding: raw.legacyPreventabilityFinding,
     isArchived: Boolean(raw.isArchived), createdAt: raw.createdAt || new Date().toISOString(), updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
   }
 }
 
 function migrateCompanyAction(raw: any, companyId: string): CompanyActionRecord {
-  const legacyType = clean(raw.legacyActionType || raw.actionType)
+  const type = resolveStoredEnum(raw.actionType, raw.legacyActionType, ACTION_TYPE_MAP, "OTHER")
   return {
     ...raw, id: clean(raw.id) || uid("ACT"), companyId, driverMasterId: raw.driverMasterId || "",
-    actionType: ACTION_TYPE_MAP[legacyType] || "OTHER", legacyActionType: ACTION_TYPE_MAP[legacyType] ? legacyType : legacyType || undefined,
+    actionType: type.canonical || "OTHER", legacyActionType: type.legacy,
     status: raw.status || "Draft", isArchived: Boolean(raw.isArchived), createdAt: raw.createdAt || new Date().toISOString(), updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
   }
 }
@@ -409,6 +424,8 @@ function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCours
     eldDiagnostics: [],
     companyDeterminations: [],
     companyActions: [],
+    performanceInvestigations: [],
+    eventRelationships: [],
     performanceIngestionItems: [],
   }
   if (Array.isArray(raw)) return { ...base, relationships: raw.map((r) => normalizeRelationship(r, companyId)) }
@@ -445,6 +462,9 @@ function migrateCompanyStore(raw: any, companyId: string, catalog: TrainingCours
     eldDiagnostics: Array.isArray(raw.eldDiagnostics) ? raw.eldDiagnostics : [],
     companyDeterminations: Array.isArray(raw.companyDeterminations) ? raw.companyDeterminations.map((r: any) => migrateCompanyDetermination(r, companyId)) : [],
     companyActions: Array.isArray(raw.companyActions) ? raw.companyActions.map((r: any) => migrateCompanyAction(r, companyId)) : [],
+    // Additive Common Performance Investigation Engine collections: stores written before this slice load them as [].
+    performanceInvestigations: Array.isArray(raw.performanceInvestigations) ? raw.performanceInvestigations : [],
+    eventRelationships: Array.isArray(raw.eventRelationships) ? raw.eventRelationships : [],
     performanceIngestionItems: Array.isArray(raw.performanceIngestionItems) ? raw.performanceIngestionItems : [],
   }
 }

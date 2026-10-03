@@ -1345,8 +1345,20 @@ export interface PerformanceEventRecord {
   provenance?: ProvenanceMetadata;
   /** Verification is distinct from dispute and from company determination. */
   verificationState?: "Unverified" | "Partially Verified" | "Verified" | "Unable to Verify";
+  /** @deprecated Legacy single-determination pointer (Collision). New architecture resolves determinations through investigations. */
   companyDeterminationId?: string;
+  /** @deprecated Never written. Company Actions link through CompanyActionRecord.linkedEventIds / investigationId. */
   companyActionId?: string;
+  /**
+   * Whether TES has determined a full investigation is required for this occurrence. Set by an explicit writer; no category
+   * hard-codes a trigger. Absent = no requirement recorded (an absent investigation then never counts as "incomplete").
+   */
+  investigationRequirement?: { required: boolean; reason?: string; setAt: string; setBy: string };
+  /**
+   * Append-only history of deliberate workflow closures. The latest entry is the effective closure; earlier entries are never
+   * removed or edited, so a closure that is later superseded by a new obligation stays on record.
+   */
+  workflowClosures?: PerformanceWorkflowClosure[];
   outcome?: {
     state: "Open" | "Resolved" | "Closed" | "Unknown";
     description?: string;
@@ -1551,6 +1563,71 @@ export interface HOSReview {
 }
 
 // --- COMPANY DETERMINATION & COMPANY ACTIONS (Phases 19 & 20) ---
+// --- COMMON PERFORMANCE INVESTIGATION ENGINE (additive foundation) ---
+
+export interface PerformanceWorkflowClosure {
+  id: string;
+  closedAt: string;
+  closedBy: string;
+  note?: string;
+}
+
+export type PerformanceInvestigationStatus = "OPEN" | "AWAITING_INFORMATION" | "COMPLETED" | "CANCELLED";
+
+export interface PerformanceInvestigationStatusEntry {
+  status: PerformanceInvestigationStatus;
+  at: string;
+  by: string;
+  reason?: string;
+}
+
+/**
+ * Reusable investigation lifecycle for a Performance event. The event stays the occurrence; the investigation is a separate
+ * record that owns the authoritative eventId. Absence of a record means "no investigation" (NOT_STARTED is never stored).
+ */
+export interface PerformanceInvestigationRecord {
+  id: string;
+  schemaVersion: 1;
+  companyId: string;
+  /** Authoritative foreign key. Event -> investigations is obtained by selector, never by a duplicate id on the event. */
+  eventId: string;
+  status: PerformanceInvestigationStatus;
+  /** Append-only. Never rewritten; reopening appends rather than erasing a prior completion/cancellation. */
+  statusHistory: PerformanceInvestigationStatusEntry[];
+  openedAt: string;
+  openedBy: string;
+  openingReason?: string;
+  assignedInvestigator?: string;
+  /** References to canonical DriverEvidenceItem ids. Evidence is stored once. */
+  evidenceIds: string[];
+  /** Generic child collection (not Near-Miss-specific, not the legacy RootCauseFactor). */
+  contributingFactors?: PerformanceChildCollection;
+  conclusion?: { summary?: string; openQuestions?: string };
+  additionalInvestigationRequired?: { required: boolean; reason?: string };
+  completedAt?: string;
+  completedBy?: string;
+  cancelledReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DeterminationSubject = "PREVENTABILITY" | "RESPONSIBILITY" | "ROOT_CAUSE" | "CLASSIFICATION" | "GENERAL_FINDING";
+export type DeterminationStatus = "ACTIVE" | "SUPERSEDED" | "WITHDRAWN";
+
+export type PreventabilityValue = "PREVENTABLE" | "NOT_PREVENTABLE" | "PARTIALLY_PREVENTABLE" | "UNDETERMINED";
+export type ClassificationOutcome = "CONFIRMED_AS_REPORTED" | "RECLASSIFIED" | "DUPLICATE" | "INSUFFICIENT_INFORMATION" | "NOT_SAFETY_RELATED";
+export type ResponsibilityParty = "CARRIER_DRIVER" | "OTHER_ROAD_USER" | "THIRD_PARTY" | "OPERATIONAL_PROCESS" | "EQUIPMENT_MAINTENANCE" | "ENVIRONMENT_SITE";
+export type ResponsibilityStandalone = "NO_DETERMINATION" | "UNDETERMINED";
+export type RootCauseStatus = "DETERMINED" | "PROBABLE" | "UNDETERMINED";
+export type RootCauseRole = "PRIMARY" | "CONTRIBUTING";
+
+export type DeterminationAssessment =
+  | { subject: "PREVENTABILITY"; value: PreventabilityValue; opportunityNotes?: string }
+  | { subject: "CLASSIFICATION"; outcome: ClassificationOutcome; notes?: string }
+  | { subject: "RESPONSIBILITY"; parties?: Array<{ party: ResponsibilityParty; role: "PRIMARY" | "CONTRIBUTING" }>; standalone?: ResponsibilityStandalone; notes?: string; catalogueVersion: number }
+  | { subject: "ROOT_CAUSE"; category: string; finding?: string; status: RootCauseStatus; role: RootCauseRole; evidenceIds?: string[]; investigatorNotes?: string }
+  | { subject: "GENERAL_FINDING"; summary?: string };
+
 export interface CompanyDetermination {
   id: string;
   companyId: string;
@@ -1575,6 +1652,18 @@ export interface CompanyDetermination {
   isArchived?: boolean;
   createdAt: string;
   updatedAt?: string;
+  /**
+   * Additive investigation-engine fields. NEVER carried by a new determinationType/determinationValue enum value: load-time
+   * migration remaps those enums, so new semantics use these fields, which survive load/save.
+   */
+  subject?: DeterminationSubject;
+  investigationId?: string;
+  assessment?: DeterminationAssessment;
+  /** Missing status (every legacy row) resolves as ACTIVE. */
+  status?: DeterminationStatus;
+  /** Amendment = a new row pointing at the row it replaced; the replaced row is set SUPERSEDED, never edited otherwise. */
+  supersedesDeterminationId?: string;
+  assessmentSchemaVersion?: number;
 }
 
 export interface CompanyActionRecord {
@@ -1613,6 +1702,64 @@ export interface CompanyActionRecord {
   isArchived?: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Additive enrichment. Reused unchanged: targetCompletionDate (= due), actualCompletionDate (= completion), evidenceIds
+   * (= basis/supporting evidence), status, actionItems, closureNotes, linkedEventIds.
+   */
+  actionOwner?: string;
+  actionOwnerRole?: string;
+  assignedAt?: string;
+  investigationId?: string;
+  /** Only REQUIRED actions gate event closure. Missing = NOT_REQUIRED (legacy actions never block anything). */
+  closureRequirement?: ActionClosureRequirement;
+  completionEvidenceIds?: string[];
+  verification?: ActionVerification;
+  /** Distinct from completion, and never gates event closure. */
+  effectiveness?: ActionEffectiveness;
+}
+
+export type ActionClosureRequirement = "REQUIRED" | "NOT_REQUIRED";
+export type ActionVerificationStatus = "NOT_REQUIRED" | "PENDING" | "VERIFIED" | "FAILED";
+export type ActionEffectivenessStatus = "NOT_YET_EVALUATED" | "EFFECTIVE" | "PARTIALLY_EFFECTIVE" | "NOT_EFFECTIVE" | "CANNOT_DETERMINE";
+
+export interface ActionVerification {
+  required: boolean;
+  status: ActionVerificationStatus;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  evidenceIds?: string[];
+  notes?: string;
+}
+
+export interface ActionEffectiveness {
+  status: ActionEffectivenessStatus;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  evidenceIds?: string[];
+  notes?: string;
+}
+
+// --- CANONICAL EVENT <-> EVENT RELATIONSHIP ---
+
+export type PerformanceEventRelationshipType = "RECLASSIFIED_AS" | "ORIGINATED_FROM" | "RELATED_TO" | "SUPERSEDES" | "DUPLICATE_OF" | "SAME_OCCURRENCE_AS";
+export type PerformanceEventRelationshipStatus = "ACTIVE" | "WITHDRAWN";
+
+/** One directional row per relationship. The inverse view is derived by selector, never stored twice. Never hard-deleted. */
+export interface PerformanceEventRelationship {
+  id: string;
+  schemaVersion: 1;
+  companyId: string;
+  fromEventId: string;
+  toEventId: string;
+  type: PerformanceEventRelationshipType;
+  basisInvestigationId?: string;
+  basisDeterminationId?: string;
+  note?: string;
+  status: PerformanceEventRelationshipStatus;
+  createdAt: string;
+  createdBy: string;
+  withdrawnAt?: string;
+  withdrawnBy?: string;
 }
 
 // --- PERFORMANCE INTELLIGENCE DATA CONTRACTS (Phases 2, 3, 5, 6, 8, 9) ---
@@ -1928,6 +2075,9 @@ export interface CompanyDriverStore {
   eldDiagnostics: ELDDiagnosticRecord[];
   companyDeterminations: CompanyDetermination[];
   companyActions: CompanyActionRecord[];
+  /** Additive. Old stores without these arrays load as []. */
+  performanceInvestigations?: PerformanceInvestigationRecord[];
+  eventRelationships?: PerformanceEventRelationship[];
   // Legacy collections retained read-only for compatibility until their consumers migrate.
   taxForms?: unknown[];
   customPolicies?: unknown[];

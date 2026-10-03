@@ -52,6 +52,7 @@ import { DriverPerformanceEventWorkflow } from "./DriverPerformanceEventWorkflow
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_VERIFICATION_STATES, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
 import { HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
+import { companyActionTypeLabel, companyDeterminationTypeLabel, companyDeterminationValueLabel, isCoachingAction, isOpenCorrectivePlan, summarizeCollisionDeterminations } from "@/lib/performance-action-metrics";
 import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideInspectionOutcome, deriveRoadsideViolationCounts, deriveRoadsideOverallOutcome, roadsideFindingOutcome, roadsideFindingApplicableTo, ROADSIDE_OUTCOME_LABELS, ROADSIDE_APPLICABLE_TO_LABELS } from "@/lib/driver-performance-child-facts";
 import { performanceEventTitle, roadsideOverallOutcomeLabel, eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families";
 import { RoadsideEventPanels, RoadsideSummaryLine } from "./RoadsideEventPanels";
@@ -296,10 +297,7 @@ export function DriverPerformanceTab({
 
   const stats = useMemo(() => {
     const collisions = filteredByWindow.filter((e) => e.eventType === "Collision");
-    const determinationByEvent = new Map(companyDeterminations.filter((d) => !d.isArchived).map((d) => [d.relatedRecordId, d]));
-    const preventableCollisions = collisions.filter((c) => determinationByEvent.get(c.id)?.determinationValue === "PREVENTABLE");
-    const nonPreventableCollisions = collisions.filter((c) => determinationByEvent.get(c.id)?.determinationValue === "NON_PREVENTABLE");
-    const undeterminedCollisions = collisions.filter((c) => !determinationByEvent.has(c.id) || !["PREVENTABLE", "NON_PREVENTABLE"].includes(String(determinationByEvent.get(c.id)?.determinationValue || "")));
+    const { preventable: preventableCollisions, nonPreventable: nonPreventableCollisions, undetermined: undeterminedCollisions } = summarizeCollisionDeterminations(collisions, companyDeterminations);
 
     const inspections = filteredByWindow.filter((e) => e.eventType === "Roadside Inspection");
     const passInspections = inspections.filter((inspection) => deriveRoadsideInspectionOutcome(Object.fromEntries((inspection.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[inspection.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])), getRoadsideViolationCollection(inspection)) === "PASS");
@@ -311,19 +309,12 @@ export function DriverPerformanceTab({
     const commendations = filteredByWindow.filter((e) => e.eventType === "Customer Commendation" || e.eventType === "Positive Safety Observation");
 
     // Canonical Coaching & CAP derivation from companyActions
-    const canonicalCoachings = filteredActionsByWindow.filter(
-      (a) => a.actionType === "Coaching" || a.actionType === "Coaching Session"
-    );
+    const canonicalCoachings = filteredActionsByWindow.filter(isCoachingAction);
     // Legacy fallback for backward compatibility if any legacy PerformanceEvents exist without duplicating
     const legacyCoachings = filteredByWindow.filter((e) => e.eventType === "Coaching Session");
     const coachingsCount = companyActions.length > 0 ? canonicalCoachings.length : legacyCoachings.length;
 
-    const canonicalOpenCaps = filteredActionsByWindow.filter(
-      (a) =>
-        (a.actionType === "Corrective Action Plan" || a.actionType === "Performance Improvement Plan") &&
-        a.status !== "Completed" &&
-        a.status !== "Rescinded"
-    );
+    const canonicalOpenCaps = filteredActionsByWindow.filter(isOpenCorrectivePlan);
     const legacyOpenCaps = filteredByWindow.filter((e) => e.eventType === "Corrective Action Plan" && e.status !== "Closed");
     const openCapsCount = companyActions.length > 0 ? canonicalOpenCaps.length : legacyOpenCaps.length;
 
@@ -1099,7 +1090,7 @@ export function DriverPerformanceTab({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-bold text-primary">{act.id}</span>
-                        <span className="text-xs font-bold text-foreground">{act.actionType}</span>
+                        <span className="text-xs font-bold text-foreground">{companyActionTypeLabel(act.actionType, act.legacyActionType)}</span>
                         <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                           act.status === "Completed"
                             ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
@@ -1109,7 +1100,7 @@ export function DriverPerformanceTab({
                         }`}>
                           {act.status}
                         </span>
-                        {act.formalSignOffStatus === "Completed" && (
+                        {act.formalSignOffStatus === "Signed / Executed" && (
                           <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
                             Signed Off
                           </span>
@@ -1159,7 +1150,7 @@ export function DriverPerformanceTab({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-bold text-primary">{det.id}</span>
-                        <span className="text-xs font-bold text-foreground">{det.determinationType}</span>
+                        <span className="text-xs font-bold text-foreground">{companyDeterminationTypeLabel(det.determinationType, det.legacyDeterminationType)}</span>
                         <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                           det.preventabilityFinding === "Non-Preventable"
                             ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
@@ -1258,7 +1249,7 @@ export function DriverPerformanceTab({
                       Structured Collision Details
                     </h4>
                     <span className="font-bold text-xs text-primary">
-                      {selectedCompanyDetermination ? `Company Determination: ${selectedCompanyDetermination.preventabilityFinding || selectedCompanyDetermination.determinationValue || "Recorded"}` : "Company Determination: Not Recorded"}
+                      {selectedCompanyDetermination ? `Company Determination: ${selectedCompanyDetermination.preventabilityFinding || companyDeterminationValueLabel(selectedCompanyDetermination.determinationValue, selectedCompanyDetermination.legacyDeterminationValue)}` : "Company Determination: Not Recorded"}
                     </span>
                   </div>
 
@@ -1278,7 +1269,7 @@ export function DriverPerformanceTab({
                     <div className="font-bold text-foreground">Company Determination</div>
                     {selectedCompanyDetermination ? (
                       <>
-                        <p className="text-muted-foreground">{selectedCompanyDetermination.preventabilityFinding || selectedCompanyDetermination.determinationValue || "Recorded"} · {selectedCompanyDetermination.determinedBy} · {selectedCompanyDetermination.determinationDate}</p>
+                        <p className="text-muted-foreground">{selectedCompanyDetermination.preventabilityFinding || companyDeterminationValueLabel(selectedCompanyDetermination.determinationValue, selectedCompanyDetermination.legacyDeterminationValue)} · {selectedCompanyDetermination.determinedBy} · {selectedCompanyDetermination.determinationDate}</p>
                         {selectedCompanyDetermination.rationale && <p className="rounded bg-muted/30 p-2 text-foreground">{selectedCompanyDetermination.rationale}</p>}
                       </>
                     ) : <p className="text-muted-foreground">No Company Determination is recorded. Collision source facts remain unchanged.</p>}

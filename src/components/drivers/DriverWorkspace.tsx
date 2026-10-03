@@ -910,7 +910,7 @@ export function DriverWorkspace({
         openReviewsCount={openReviewsCount}
       />
 
-      {hiringAssessment.nextAction !== "NONE" && (
+      {activeTab === "profile" && hiringAssessment.nextAction !== "NONE" && (
         <div className="rounded-2xl border border-border bg-card px-5 py-4 shadow-xs">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0">

@@ -429,16 +429,18 @@ export function DriverPerformanceTab({
 
   return (
     <div className="space-y-6">
-      {/* Subview Navigation Pill Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
-        <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted/60 p-1">
+      {/* Secondary navigation (tabs) and action row are separate layers: tabs -> actions -> content */}
+      <div className="space-y-3">
+        <div role="tablist" aria-label="Performance sections" className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/50 p-1">
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "overview"}
             onClick={() => setSubView("overview")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "overview"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <Activity className="size-3.5 text-primary" />
@@ -447,11 +449,13 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "intelligence"}
             onClick={() => setSubView("intelligence")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "intelligence"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <Sparkles className="size-3.5 text-primary" />
@@ -463,11 +467,13 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "register"}
             onClick={() => setSubView("register")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "register"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <FileText className="size-3.5 text-primary" />
@@ -479,11 +485,13 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "followup"}
             onClick={() => setSubView("followup")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "followup"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <Clock className="size-3.5 text-amber-600" />
@@ -497,11 +505,13 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "hos"}
             onClick={() => setSubView("hos")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "hos"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <Radio className="size-3.5 text-primary" />
@@ -515,11 +525,13 @@ export function DriverPerformanceTab({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={subView === "actions"}
             onClick={() => setSubView("actions")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+            className={`flex items-center gap-1.5 rounded-md border border-b-2 px-3 py-1.5 text-xs transition-colors ${
               subView === "actions"
-                ? "bg-background text-foreground shadow-2xs"
-                : "text-muted-foreground hover:text-foreground"
+                ? "border-primary/30 border-b-2 border-b-primary bg-background font-bold text-foreground shadow-sm"
+                : "border-transparent font-semibold text-muted-foreground hover:border-border hover:bg-background/70 hover:text-foreground"
             }`}
           >
             <ShieldCheck className="size-3.5 text-primary" />
@@ -532,11 +544,11 @@ export function DriverPerformanceTab({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
           <button
             type="button"
             onClick={() => setIsCompanyActionModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-bold text-foreground shadow-2xs hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md border border-foreground/25 bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-foreground/40 hover:bg-muted"
           >
             <Plus className="size-3.5 text-primary" />
             <span>Record Company Action</span>
@@ -545,7 +557,7 @@ export function DriverPerformanceTab({
           <button
             type="button"
             onClick={() => onRequestPerformanceSourceUpload?.()}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[color-mix(in_oklab,var(--primary)_78%,#1e293b)] px-3.5 py-1.5 text-xs font-bold text-primary-foreground shadow-sm transition-colors hover:bg-[color-mix(in_oklab,var(--primary)_68%,#1e293b)]"
           >
             <Plus className="size-3.5" />
             <span>Upload / Ingest Source</span>
@@ -554,7 +566,7 @@ export function DriverPerformanceTab({
           <button
             type="button"
             onClick={() => handleOpenAddWizard("MANUAL")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-bold text-foreground shadow-2xs hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md border border-foreground/25 bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-foreground/40 hover:bg-muted"
           >
             <span>Enter Manually</span>
           </button>

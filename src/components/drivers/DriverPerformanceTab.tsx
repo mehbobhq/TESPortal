@@ -52,12 +52,13 @@ import { DriverPerformanceEventWorkflow } from "./DriverPerformanceEventWorkflow
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_VERIFICATION_STATES, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
 import { HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
-import { companyActionTypeLabel, companyDeterminationTypeLabel, companyDeterminationValueLabel, isCoachingAction, isOpenCorrectivePlan, summarizeCollisionDeterminations } from "@/lib/performance-action-metrics";
+import { companyActionTypeLabel, companyDeterminationTypeLabel, companyDeterminationValueLabel, isCoachingAction, isOpenCorrectivePlan, summarizeCollisionPreventability } from "@/lib/performance-action-metrics";
 import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideInspectionOutcome, deriveRoadsideViolationCounts, deriveRoadsideOverallOutcome, roadsideFindingOutcome, roadsideFindingApplicableTo, ROADSIDE_OUTCOME_LABELS, ROADSIDE_APPLICABLE_TO_LABELS } from "@/lib/driver-performance-child-facts";
 import { performanceEventTitle, roadsideOverallOutcomeLabel, eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families";
 import { RoadsideEventPanels, RoadsideSummaryLine } from "./RoadsideEventPanels";
 import { getJurisdictionLabel } from "@/lib/jurisdictions";
 import { NearMissEventPanel, workflowStateLabel } from "./NearMissEventPanel";
+import { CollisionEventPanel } from "./CollisionEventPanel";
 import { deriveEventWorkflow } from "@/lib/performance-workflow-registry";
 
 export interface DriverPerformanceTabProps {
@@ -71,6 +72,8 @@ export interface DriverPerformanceTabProps {
   /** Stored investigation / relationship collections used only to derive workflow state (read-only here). */
   performanceInvestigations?: import("@/types/drivers").PerformanceInvestigationRecord[];
   eventRelationships?: import("@/types/drivers").PerformanceEventRelationship[];
+  /** Runs one common-engine writer against the stored company state and persists it (investigation, determination, closure ...). */
+  onEngineWrite?: (eventId: string, description: string, writer: (store: import("@/types/drivers").CompanyDriverStore) => { state: import("@/types/drivers").CompanyDriverStore }) => void;
   onResolveNearMissUnsafeCondition?: (eventId: string, input: { resolvedBy: string; note: string; outcome: "RESOLVED" | "CLARIFIED_NO_UNSAFE_CONDITION" }) => void;
   allDriversCohort?: {
     master: DriverMaster;
@@ -141,6 +144,7 @@ export function DriverPerformanceTab({
   performanceInvestigations = [],
   eventRelationships = [],
   onResolveNearMissUnsafeCondition,
+  onEngineWrite,
   allDriversCohort = [],
   onAddEvent,
   onUpdateEventWorkflow,
@@ -255,10 +259,12 @@ export function DriverPerformanceTab({
     return activeEvents.find((e) => e.id === selectedEventId) || null;
   }, [activeEvents, selectedEventId]);
 
-  // Near Miss workflow is derived by the common engine (never from a stored badge).
-  const nearMissWorkflow = useMemo(() => selectedEvent?.eventType === "Near Miss"
-    ? deriveEventWorkflow(selectedEvent, { events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence })
-    : null, [selectedEvent, events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence]);
+  // One read-only snapshot of the common engine's inputs: Collision preventability counters and the derived workflow both read it.
+  const foundationState = useMemo(() => ({ events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence }), [events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence]);
+  // Near Miss and Collision workflow is derived by the common engine (never from a stored badge).
+  const engineWorkflow = useMemo(() => selectedEvent && (selectedEvent.eventType === "Near Miss" || selectedEvent.eventType === "Collision")
+    ? deriveEventWorkflow(selectedEvent, foundationState)
+    : null, [selectedEvent, foundationState]);
 
   const selectedCompanyDetermination = useMemo(() => {
     if (!selectedEvent) return null;
@@ -311,7 +317,7 @@ export function DriverPerformanceTab({
 
   const stats = useMemo(() => {
     const collisions = filteredByWindow.filter((e) => e.eventType === "Collision");
-    const { preventable: preventableCollisions, nonPreventable: nonPreventableCollisions, undetermined: undeterminedCollisions } = summarizeCollisionDeterminations(collisions, companyDeterminations);
+    const { preventable: preventableCollisions, nonPreventable: nonPreventableCollisions, undetermined: undeterminedCollisions } = summarizeCollisionPreventability(collisions, foundationState);
 
     const inspections = filteredByWindow.filter((e) => e.eventType === "Roadside Inspection");
     const passInspections = inspections.filter((inspection) => deriveRoadsideInspectionOutcome(Object.fromEntries((inspection.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[inspection.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])), getRoadsideViolationCollection(inspection)) === "PASS");
@@ -348,7 +354,7 @@ export function DriverPerformanceTab({
       coachingsCount,
       openCapsCount,
     };
-  }, [filteredByWindow, filteredActionsByWindow, companyActions, companyDeterminations]);
+  }, [filteredByWindow, filteredActionsByWindow, companyActions, foundationState]);
 
   // Open follow-up items
   const openFollowUpEvents = useMemo(() => {
@@ -848,16 +854,15 @@ export function DriverPerformanceTab({
                     >
                       Inspect Full Event
                     </button>
-                    {evt.eventType === "Collision" && evt.collisionDetails && (!evt.collisionDetails?.preventability || evt.collisionDetails.preventability === "Undetermined") && (
+                    {evt.eventType === "Collision" && !summarizeCollisionPreventability([evt], foundationState).preventable.length && !summarizeCollisionPreventability([evt], foundationState).nonPreventable.length && (
                       <button
                         type="button"
                         onClick={() => {
                           setSelectedEventId(evt.id);
-                          setIsDeterminationModalOpen(true);
                         }}
                         className="rounded-lg bg-primary px-3 py-1 text-xs font-bold text-primary-foreground hover:bg-primary/90 transition-colors"
                       >
-                        Record Preventability
+                        Review Preventability
                       </button>
                     )}
                   </div>
@@ -1242,7 +1247,7 @@ export function DriverPerformanceTab({
                 <ReadOnlyField label="Jurisdiction / Country" value={`${selectedEvent.stateProvince || ""} ${selectedEvent.country || ""}`.trim() || "Unspecified"} />
                 <ReadOnlyField label="Processing State" value={selectedEvent.recordProcessingState || "Legacy / Not Recorded"} />
                 {selectedEvent.eventType !== "Roadside Inspection" ? <ReadOnlyField label="Subject State" value={selectedEvent.subjectState || "Not Applicable / Not Recorded"} /> : null}
-                <ReadOnlyField label="Workflow State" value={nearMissWorkflow ? workflowStateLabel(nearMissWorkflow.state) : selectedEvent.workflowState || "Legacy / Not Recorded"} />
+                <ReadOnlyField label="Workflow State" value={engineWorkflow ? workflowStateLabel(engineWorkflow.state) : selectedEvent.workflowState || "Legacy / Not Recorded"} />
               </div>
 
               {/* Full Description */}
@@ -1256,40 +1261,9 @@ export function DriverPerformanceTab({
               </div>
 
               {/* Collision Specific Payload */}
-              {selectedEvent.eventType === "Collision" && selectedEvent.collisionDetails && (
-                <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-4">
-                  <div className="flex items-center justify-between border-b border-border pb-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
-                      Structured Collision Details
-                    </h4>
-                    <span className="font-bold text-xs text-primary">
-                      {selectedCompanyDetermination ? `Company Determination: ${selectedCompanyDetermination.preventabilityFinding || companyDeterminationValueLabel(selectedCompanyDetermination.determinationValue, selectedCompanyDetermination.legacyDeterminationValue)}` : "Company Determination: Not Recorded"}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3 text-xs">
-                    <ReadOnlyField label="Collision Type" value={selectedEvent.collisionDetails.collisionType} />
-                    <ReadOnlyField label="Weather / Road" value={`${selectedEvent.collisionDetails.weather} / ${selectedEvent.collisionDetails.roadCondition}`} />
-                    <ReadOnlyField label="Lighting" value={selectedEvent.collisionDetails.lightCondition} />
-                    <ReadOnlyField label="Tow Required" value={selectedEvent.collisionDetails.towRequired ? "Yes" : "No"} />
-                    <ReadOnlyField label="Police Attended" value={selectedEvent.collisionDetails.policeAttended ? "Yes" : "No"} />
-                    <ReadOnlyField label="Police Report #" value={selectedEvent.collisionDetails.policeReportNumber || "Not recorded"} mono />
-                    <ReadOnlyField label="Injuries / Fatalities" value={`${selectedEvent.collisionDetails.injuriesCount} Inj / ${selectedEvent.collisionDetails.fatalitiesCount} Fat`} />
-                    <ReadOnlyField label="DOT Reportable" value={selectedEvent.collisionDetails.dotReportable ? "Yes" : "No"} />
-                    <ReadOnlyField label="Estimated Cost" value={selectedEvent.collisionDetails.estimatedCost || "Not recorded"} />
-                  </div>
-
-                  <div className="rounded-lg bg-card border border-border p-3 space-y-1.5 text-xs">
-                    <div className="font-bold text-foreground">Company Determination</div>
-                    {selectedCompanyDetermination ? (
-                      <>
-                        <p className="text-muted-foreground">{selectedCompanyDetermination.preventabilityFinding || companyDeterminationValueLabel(selectedCompanyDetermination.determinationValue, selectedCompanyDetermination.legacyDeterminationValue)} · {selectedCompanyDetermination.determinedBy} · {selectedCompanyDetermination.determinationDate}</p>
-                        {selectedCompanyDetermination.rationale && <p className="rounded bg-muted/30 p-2 text-foreground">{selectedCompanyDetermination.rationale}</p>}
-                      </>
-                    ) : <p className="text-muted-foreground">No Company Determination is recorded. Collision source facts remain unchanged.</p>}
-                  </div>
-                </div>
-              )}
+              {selectedEvent.eventType === "Collision" && engineWorkflow ? (
+                <CollisionEventPanel event={selectedEvent} workflow={engineWorkflow} state={foundationState} evidence={evidence || []} run={onEngineWrite ? (description, writer) => onEngineWrite(selectedEvent.id, description, writer) : undefined} />
+              ) : null}
 
               {/* Roadside Inspection — semantic record presentation */}
               {selectedEvent.eventType === "Roadside Inspection" && (
@@ -1369,11 +1343,11 @@ export function DriverPerformanceTab({
                 </div>
               )}
 
-              {selectedEvent.eventType === "Near Miss" && nearMissWorkflow ? (
-                <NearMissEventPanel event={selectedEvent} workflow={nearMissWorkflow} evidence={evidence || []} onResolveUnsafeCondition={onResolveNearMissUnsafeCondition ? (input) => onResolveNearMissUnsafeCondition(selectedEvent.id, input) : undefined} />
+              {selectedEvent.eventType === "Near Miss" && engineWorkflow ? (
+                <NearMissEventPanel event={selectedEvent} workflow={engineWorkflow} evidence={evidence || []} onResolveUnsafeCondition={onResolveNearMissUnsafeCondition ? (input) => onResolveNearMissUnsafeCondition(selectedEvent.id, input) : undefined} />
               ) : null}
 
-              {selectedEvent.eventType !== "Near Miss" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
+              {selectedEvent.eventType !== "Near Miss" && selectedEvent.eventType !== "Collision" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
                 <div className="space-y-3">
                   <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Category-Specific Structured Facts</span>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-border p-4 bg-background">
@@ -1462,25 +1436,6 @@ export function DriverPerformanceTab({
             {/* Modal Actions Footer */}
             <div className="bg-muted/40 px-6 py-4 border-t border-border flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                {selectedEvent.eventType === "Collision" && selectedEvent.collisionDetails && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeterminationData({
-                        preventability: selectedEvent.collisionDetails?.preventability || "Undetermined",
-                        determinedBy: selectedEvent.collisionDetails?.preventabilityDeterminedBy || "",
-                        determinationDate: selectedEvent.collisionDetails?.preventabilityDeterminationDate || "",
-                        source: selectedEvent.collisionDetails?.preventabilitySource || "",
-                        notes: selectedEvent.collisionDetails?.preventabilityNotes || "",
-                      });
-                      setIsDeterminationModalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted"
-                  >
-                    <UserCheck className="size-3.5 text-primary" />
-                    <span>Update Preventability</span>
-                  </button>
-                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -1489,7 +1444,7 @@ export function DriverPerformanceTab({
                     Archive Event
                   </button>
                 )}
-                {selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
+                {selectedEvent.eventType !== "Collision" && selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
                   <button
                     type="button"
                     onClick={handleCloseEvent}

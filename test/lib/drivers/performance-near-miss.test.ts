@@ -246,8 +246,8 @@ test("unsafe condition + required corrective action produce BOTH reasons, with s
   const released = setPerformanceInvestigationRequirement(s, "NM-1", { required: false, reason: "Reviewed", setBy: "SM" });
   assert.deepEqual(labels(deriveEventWorkflow(released.state.events[0] as never, released.state)), ["Unsafe condition remains", "Investigation incomplete", "Corrective action outstanding"]);
   // The generic providers alone would not know about the unsafe condition: the family provider is what adds it.
-  assert.equal(getWorkflowProvidersForEventType("Near Miss").length, getWorkflowProvidersForEventType("Collision").length + 1);
-  assert.deepEqual(labels(deriveWorkflow(event, s, getWorkflowProvidersForEventType("Collision"))), ["Corrective action outstanding"]);
+  assert.equal(getWorkflowProvidersForEventType("Near Miss").length, getWorkflowProvidersForEventType("Roadside Inspection").length + 1);
+  assert.deepEqual(labels(deriveWorkflow(event, s, getWorkflowProvidersForEventType("Roadside Inspection"))), ["Corrective action outstanding"]);
 });
 
 test("resolving the unsafe condition removes that open reason while a required action keeps the event Open independently", () => {

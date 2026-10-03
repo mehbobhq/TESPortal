@@ -1,6 +1,7 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
+import { COLLISION_CARGO_IMPACT, COLLISION_DRIVER_ACTIONS, COLLISION_DRIVER_ACTIVITIES, COLLISION_ENFORCEMENT, COLLISION_FIRST_HARMFUL_EVENTS, COLLISION_HAZMAT, COLLISION_INJURY_STATUSES, COLLISION_MANNERS, COLLISION_POLICE_RESPONSES, COLLISION_TRAFFIC, COLLISION_TYPES, COLLISION_VISIBILITY, COLLISION_YES_NO_UNKNOWN } from "@/lib/performance-collision-taxonomy";
 import { IANA_TIME_ZONES, LEGACY_NEAR_MISS_TRIGGER_SOURCES, LEGACY_NEAR_MISS_TYPES, NEAR_MISS_DIRECTIONS_OF_TRAVEL, NEAR_MISS_OPERATING_ACTIVITIES, NEAR_MISS_OTHER_PARTY_TYPES, NEAR_MISS_POTENTIAL_SEVERITIES, NEAR_MISS_PRIMARY_TYPES, NEAR_MISS_SOURCES, NEAR_MISS_TYPE_GROUP_BY_VALUE, NEAR_MISS_UNSAFE_CONDITION_STATES } from "@/lib/performance-near-miss-taxonomy";
 
 export type PerformanceFieldKind =
@@ -44,6 +45,11 @@ export type PerformanceStepKey =
   | "CATEGORY"
   | "OCCURRENCE"
   | "FACTS"
+  | "COLLISION_FACTS"
+  | "COLLISION_PARTIES"
+  | "COLLISION_ENVIRONMENT"
+  | "COLLISION_OUTCOMES"
+  | "COLLISION_INJURIES"
   | "RELATIONSHIPS"
   | "EVIDENCE"
   | "REVIEW";
@@ -147,7 +153,7 @@ const options = {
   collisionType: ["Rear-End", "Sideswipe", "Backing", "Intersection", "Lane Change", "Rollover", "Jackknife", "Fixed Object", "Animal", "Pedestrian", "Other"],
   weather: ["Clear", "Rain", "Snow", "Fog", "Ice / Freezing Rain", "High Wind", "Other", "Unknown"],
   road: ["Dry", "Wet", "Snow Covered", "Icy", "Gravel", "Construction", "Other", "Unknown"],
-  lighting: ["Daylight", "Dawn / Dusk", "Dark â€” Lighted", "Dark â€” Unlighted", "Unknown"],
+  lighting: ["Daylight", "Dawn / Dusk", "Dark — Lighted", "Dark — Unlighted", "Unknown"],
   result: ["Passed", "Violation(s) Found", "Out of Service"],
   source: ["Driver Report", "Company Staff", "Roadside Inspection", "ELD / Telematics", "Camera", "Customer", "Citation", "Maintenance", "Training", "Other"],
   zone: ["Urban", "Rural", "Highway", "Work Zone", "School Zone", "Rail Crossing", "Customer Site", "Other", "Unknown"],
@@ -628,7 +634,7 @@ const oosRelationships: PerformanceRelationshipDefinition[] = [
 
 const OPTIONAL_VEHICLE_RELATIONSHIP: PerformanceRelationshipDefinition = { key: "vehicle", entityType: "Vehicle", label: "Related Vehicle", applicability: [{ state: "OPTIONAL" }], canonical: true };
 const REPRESENTATIVE_RELATIONSHIPS: Readonly<Partial<Record<EventType, readonly PerformanceRelationshipDefinition[]>>> = {
-  "Collision": [OPTIONAL_VEHICLE_RELATIONSHIP],
+  "Collision": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Near Miss": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Speeding": [OPTIONAL_VEHICLE_RELATIONSHIP],
   "Harsh Braking": [OPTIONAL_VEHICLE_RELATIONSHIP],
@@ -710,10 +716,51 @@ export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, Performa
 
 
 
+const COLLISION_STEPS: readonly PerformanceStepDefinition[] = [
+  { key: "CATEGORY", label: "Category" },
+  { key: "OCCURRENCE", label: "Occurrence" },
+  { key: "COLLISION_FACTS", label: "Collision Facts" },
+  { key: "COLLISION_PARTIES", label: "Parties & Equipment" },
+  { key: "COLLISION_ENVIRONMENT", label: "Environment & Operations" },
+  { key: "COLLISION_OUTCOMES", label: "Immediate Outcomes" },
+  { key: "COLLISION_INJURIES", label: "Injured Persons" },
+  { key: "EVIDENCE", label: "Evidence & Statements" },
+  { key: "REVIEW", label: "Review" },
+];
+
 const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefinition[] = [
   {
     code: "COLLISION", value: "Collision", label: "Collision", description: "A vehicle collision or physical contact occurrence requiring factual, consequence, and evidence capture.", group: "Safety", sources: options.source, evidenceRequired: true, determinationTypes: ["COLLISION_PREVENTABILITY", "ROOT_CAUSE_ANALYSIS"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
-    fields: [select("collisionType", "Collision Configuration", options.collisionType, { required: true }), text("otherPartyObject", "Other Party / Object"), select("weather", "Weather", options.weather), select("roadCondition", "Road Surface", options.road), select("lightCondition", "Lighting", options.lighting), number("speedAtOccurrence", "Speed at Occurrence", "mph / km/h"), number("injuriesCount", "Injuries", "count"), number("fatalitiesCount", "Fatalities", "count"), bool("towRequired", "Tow-Away"), bool("policeAttended", "Police Attended"), bool("propertyDamage", "Property Damage"), select("reportabilityResult", "Reportability Result", ["Reportable", "Not Reportable", "Unable to Determine"], { helpText: "Preserve the governing jurisdiction/rule context in the reportability determination fields." }), number("downtimeHours", "Downtime", "hours"), area("driverStatement", "Driver Statement"), area("investigationNotes", "Investigation Narrative"), ...base],
+    policy: { ...DOCUMENT_POLICY, steps: COLLISION_STEPS },
+    fields: [
+      select("collisionClassType", "Collision Type", COLLISION_TYPES, { required: true, dataPointId: "DRV.PERF.COLLISION.CLASS_TYPE", helpText: "Broad occurrence classification." }),
+      select("collisionManner", "Manner of Collision", COLLISION_MANNERS, { required: true, dataPointId: "DRV.PERF.COLLISION.MANNER", helpText: "How the involved units / objects interacted." }),
+      select("firstHarmfulEvent", "First Harmful Event", COLLISION_FIRST_HARMFUL_EVENTS, { required: true, dataPointId: "DRV.PERF.COLLISION.FIRST_HARMFUL_EVENT", helpText: "The first event that actually produced injury or damage." }),
+      select("driverActivity", "Driver Activity", COLLISION_DRIVER_ACTIVITIES, { dataPointId: "DRV.PERF.COLLISION.DRIVER_ACTIVITY" }),
+      select("driverAction", "Driver Action", COLLISION_DRIVER_ACTIONS, { dataPointId: "DRV.PERF.COLLISION.DRIVER_ACTION" }),
+      select("eventTimeZone", "Time Zone (IANA)", IANA_TIME_ZONES, { dataPointId: "DRV.PERF.COLLISION.EVENT_TIME_ZONE", helpText: "Zone where the occurrence happened. Not derived from this browser." }),
+      text("roadHighway", "Road / Highway", { dataPointId: "DRV.PERF.COLLISION.ROAD_HIGHWAY" }),
+      select("directionOfTravel", "Direction of Travel", NEAR_MISS_DIRECTIONS_OF_TRAVEL, { dataPointId: "DRV.PERF.COLLISION.DIRECTION_OF_TRAVEL" }),
+      select("weather", "Weather", options.weather), select("roadCondition", "Road Surface", options.road), select("lightCondition", "Lighting", options.lighting),
+      select("visibility", "Visibility", COLLISION_VISIBILITY, { dataPointId: "DRV.PERF.COLLISION.VISIBILITY" }),
+      select("trafficCondition", "Traffic", COLLISION_TRAFFIC, { dataPointId: "DRV.PERF.COLLISION.TRAFFIC" }),
+      select("workZone", "Work Zone", COLLISION_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.COLLISION.WORK_ZONE" }),
+      number("speedAtOccurrence", "Speed at Occurrence", "mph / km/h"),
+      select("injuryStatus", "Injury Status", COLLISION_INJURY_STATUSES, { required: true, dataPointId: "DRV.PERF.COLLISION.INJURY_STATUS", helpText: "Person-level detail is optional and recorded separately." }),
+      select("policeResponse", "Police Response", COLLISION_POLICE_RESPONSES, { dataPointId: "DRV.PERF.COLLISION.POLICE_RESPONSE" }),
+      text("policeReportReference", "Police Report / Reference", { dataPointId: "DRV.PERF.COLLISION.POLICE_REPORT_REFERENCE" }),
+      select("enforcementStatus", "Enforcement", COLLISION_ENFORCEMENT, { dataPointId: "DRV.PERF.COLLISION.ENFORCEMENT" }),
+      select("cargoImpact", "Cargo", COLLISION_CARGO_IMPACT, { dataPointId: "DRV.PERF.COLLISION.CARGO_IMPACT" }),
+      select("hazmatConsequence", "Hazmat", COLLISION_HAZMAT, { dataPointId: "DRV.PERF.COLLISION.HAZMAT" }),
+      select("serviceInterruption", "Service Interruption", COLLISION_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.COLLISION.SERVICE_INTERRUPTION" }),
+      number("downtimeHours", "Operational Downtime", "hours"),
+      select("reportabilityResult", "Reportability Determination", ["Reportable", "Not Reportable", "Unable to Determine"], { helpText: "A manual determination. TES does not derive it from the facts above; preserve the governing jurisdiction / rule context." }),
+      select("driverStatementRequired", "Driver Statement Required?", COLLISION_YES_NO_UNKNOWN.filter((item) => item.value !== "UNKNOWN"), { dataPointId: "DRV.PERF.COLLISION.DRIVER_STATEMENT_REQUIRED" }),
+      select("collisionType", "Legacy Collision Configuration", options.collisionType, { hiddenInCreation: true }), text("otherPartyObject", "Legacy Other Party / Object", { hiddenInCreation: true }),
+      number("injuriesCount", "Legacy Injuries (count)", "count", { hiddenInCreation: true }), number("fatalitiesCount", "Legacy Fatalities (count)", "count", { hiddenInCreation: true }),
+      bool("towRequired", "Legacy Tow-Away", { hiddenInCreation: true }), bool("policeAttended", "Legacy Police Attended", { hiddenInCreation: true }), bool("propertyDamage", "Legacy Property Damage", { hiddenInCreation: true }),
+      area("driverStatement", "Legacy Driver Statement", { hiddenInCreation: true }), area("investigationNotes", "Legacy Investigation Narrative", { hiddenInCreation: true }),
+      ...base],
   },
   {
     code: "NEAR_MISS", value: "Near Miss", label: "Near Miss", description: "A close call without actual contact where a collision or serious incident could reasonably have occurred.", group: "Safety", sources: options.source, evidenceRequired: true, determinationTypes: ["ROOT_CAUSE_ANALYSIS", "INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",

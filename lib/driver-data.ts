@@ -8,6 +8,7 @@ import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveR
 import { eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families"
 import { resolveNearMissUnsafeCondition, validateNewNearMiss } from "@/lib/performance-near-miss"
 import type { UnsafeConditionResolutionOutcome } from "@/lib/performance-near-miss"
+import { validateNewCollision } from "@/lib/performance-collision"
 
 import type {
   AddressRecord,
@@ -1149,14 +1150,14 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   for (const link of data.canonicalLinks || []) {
     if (link.source !== "CANONICAL_STORE") throw new Error("Canonical entity links must declare CANONICAL_STORE provenance.")
   }
-  if (data.eventType === "Near Miss") {
-    const nearMissErrors = validateNewNearMiss({ ...data, id: "PENDING_EVENT", driverMasterId })
-    if (nearMissErrors.length) throw new Error(nearMissErrors[0])
+  if (data.eventType === "Near Miss" || data.eventType === "Collision") {
+    const familyErrors = data.eventType === "Near Miss" ? validateNewNearMiss({ ...data, id: "PENDING_EVENT", driverMasterId }) : validateNewCollision({ ...data, id: "PENDING_EVENT", driverMasterId })
+    if (familyErrors.length) throw new Error(familyErrors[0])
     // Canonical relationship targets must exist in the company vehicle store.
     const knownVehicles = new Set(loadVehicleStore(companyId).vehicles.map((vehicle) => vehicle.id))
     const linkedVehicleIds = [data.vehicleId, ...(data.canonicalLinks || []).filter((link) => link.entityType === "Vehicle" || link.entityType === "Trailer").map((link) => link.recordId)].filter((id): id is string => Boolean(id))
     const missingVehicle = linkedVehicleIds.find((id) => !knownVehicles.has(id))
-    if (missingVehicle) throw new Error(`Near Miss relationship target does not exist in the company Vehicle store: ${missingVehicle}.`)
+    if (missingVehicle) throw new Error(`${data.eventType} relationship target does not exist in the company Vehicle store: ${missingVehicle}.`)
   }
   if (data.structuredEventFacts) {
     const factValues = Object.fromEntries(data.structuredEventFacts.map((fact) => {
@@ -1498,6 +1499,13 @@ export function correctPerformanceEventFacts(companyId: string, eventId: string,
   const updated = store.events.map((event) => event.id === eventId ? { ...current, structuredEventFacts: facts, updatedAt: now } : event);
   saveCompanyDriverStore({ ...store, events: updated });
   return updated.find((event) => event.id === eventId);
+}
+
+/** Runs one common-engine writer (investigation, determination, requirement, closure ...) against the stored company state and persists the result. */
+export function applyPerformanceEngineWrite(companyId: string, eventId: string, description: string, writer: (store: CompanyDriverStore) => { state: CompanyDriverStore }) {
+  const next = updateCompanyDriverStore(companyId, (store) => writer(store).state);
+  auditDriverMutation(companyId, eventId, "UPDATE", description);
+  return next;
 }
 
 /** Append-only resolution / clarification of a Near Miss unsafe condition. The occurrence fact the reporter recorded is never edited. */

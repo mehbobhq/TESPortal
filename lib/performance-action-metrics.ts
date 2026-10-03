@@ -1,4 +1,7 @@
 import type { CompanyActionRecord, CompanyDetermination } from "../types/drivers.ts";
+import type { FoundationEvent, PerformanceFoundationState } from "./performance-foundation-state.ts";
+// @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution; tsconfig is intentionally left unchanged.
+import { resolvePreventability } from "./performance-investigation.ts";
 
 // Business logic compares CANONICAL stored enums; the label maps below are presentation only.
 export const COMPANY_ACTION_TYPE_LABELS: Record<CompanyActionRecord["actionType"], string> = {
@@ -49,11 +52,20 @@ export const isCoachingAction = (action: Pick<CompanyActionRecord, "actionType">
 export const isOpenCorrectivePlan = (action: ActionLike) =>
   (action.actionType === "CORRECTIVE_ACTION_PLAN" || action.actionType === "PERFORMANCE_IMPROVEMENT_PLAN") && action.status !== "Completed" && action.status !== "Rescinded";
 
-/** Extracted unchanged from the Performance tab stats: one determination per related record id (last non-archived wins). */
-export function summarizeCollisionDeterminations<E extends { id: string }>(collisions: E[], determinations: Array<Pick<CompanyDetermination, "relatedRecordId" | "determinationValue" | "isArchived">>) {
-  const byEvent = new Map(determinations.filter((d) => !d.isArchived).map((d) => [d.relatedRecordId, d]));
-  const preventable = collisions.filter((c) => byEvent.get(c.id)?.determinationValue === "PREVENTABLE");
-  const nonPreventable = collisions.filter((c) => byEvent.get(c.id)?.determinationValue === "NON_PREVENTABLE");
-  const undetermined = collisions.filter((c) => !byEvent.has(c.id) || !["PREVENTABLE", "NON_PREVENTABLE"].includes(String(byEvent.get(c.id)?.determinationValue || "")));
-  return { preventable, nonPreventable, undetermined };
+/**
+ * Collision preventability buckets, read through the ONE resolver (new engine determination, then legacy Collision determination,
+ * then the deprecated collisionDetails field). Only COLLISION_PREVENTABILITY / engine PREVENTABILITY determinations keyed to the
+ * collision count, so an unrelated determination can never drive these counters. Every collision lands in exactly one bucket.
+ */
+export function summarizeCollisionPreventability<E extends FoundationEvent>(collisions: E[], state: PerformanceFoundationState) {
+  const preventable: E[] = []
+  const nonPreventable: E[] = []
+  const undetermined: E[] = []
+  for (const collision of collisions) {
+    const value = resolvePreventability(state, collision)?.value
+    if (value === "PREVENTABLE") preventable.push(collision)
+    else if (value === "NOT_PREVENTABLE") nonPreventable.push(collision)
+    else undetermined.push(collision)
+  }
+  return { preventable, nonPreventable, undetermined }
 }

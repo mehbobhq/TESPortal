@@ -9,7 +9,7 @@ import {
   companyDeterminationValueLabel,
   isCoachingAction,
   isOpenCorrectivePlan,
-  summarizeCollisionDeterminations,
+  summarizeCollisionPreventability,
   // @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution; tsconfig is intentionally left unchanged.
 } from "../../../lib/performance-action-metrics.ts";
 
@@ -70,8 +70,9 @@ test("presentation shows human-readable labels for canonical values, with the le
   for (const label of Object.values(COMPANY_ACTION_TYPE_LABELS)) assert.ok(!/^[A-Z_]+$/.test(String(label)));
 });
 
-test("canonical Collision determinations feed the counters exactly once per collision, before and after reload", () => {
-  const collisions = ["COL-P", "COL-N", "COL-U", "COL-NONE", "COL-LEGACY", "COL-ARCH"].map((id) => ({ id }));
+test("canonical, label-based and legacy Collision determinations feed the counters once per collision; unrelated determinations never do", () => {
+  const ids = ["COL-P", "COL-N", "COL-U", "COL-NONE", "COL-LEGACY", "COL-ARCH", "COL-OTHERTYPE"];
+  const collisions = ids.map((id) => ({ id, companyId: COMPANY, eventType: "Collision" as const }));
   const store = load(
     [],
     [
@@ -80,12 +81,15 @@ test("canonical Collision determinations feed the counters exactly once per coll
       determination("D3", "COL-U", { determinationType: "COLLISION_PREVENTABILITY", determinationValue: "UNABLE_TO_DETERMINE" }),
       determination("D4", "COL-LEGACY", { determinationType: "Collision Preventability", determinationValue: "Preventable" }),
       determination("D5", "COL-ARCH", { determinationType: "COLLISION_PREVENTABILITY", determinationValue: "PREVENTABLE", isArchived: true }),
+      // A determination of another type on the same record id must not drive the Collision counters.
+      determination("D6", "COL-OTHERTYPE", { determinationType: "ROOT_CAUSE_ANALYSIS", determinationValue: "PREVENTABLE" }),
     ],
   );
-  const result = summarizeCollisionDeterminations(collisions, store.companyDeterminations);
-  assert.deepEqual(result.preventable.map((c) => c.id), ["COL-P", "COL-LEGACY"]);
-  assert.deepEqual(result.nonPreventable.map((c) => c.id), ["COL-N"]);
-  assert.deepEqual(result.undetermined.map((c) => c.id), ["COL-U", "COL-NONE", "COL-ARCH"]);
+  const state = { events: collisions, companyDeterminations: store.companyDeterminations, performanceInvestigations: [], eventRelationships: [], companyActions: [] } as never;
+  const result = summarizeCollisionPreventability(collisions, state);
+  assert.deepEqual(result.preventable.map((c: { id: string }) => c.id), ["COL-P", "COL-LEGACY"]);
+  assert.deepEqual(result.nonPreventable.map((c: { id: string }) => c.id), ["COL-N"]);
+  assert.deepEqual(result.undetermined.map((c: { id: string }) => c.id), ["COL-U", "COL-NONE", "COL-ARCH", "COL-OTHERTYPE"]);
   // No double counting: the three buckets partition the collisions.
   assert.equal(result.preventable.length + result.nonPreventable.length + result.undetermined.length, collisions.length);
 });

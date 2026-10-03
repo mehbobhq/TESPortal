@@ -55,6 +55,7 @@ import {
   addHOSReview,
   addCompanyAction,
   resolveNearMissUnsafeConditionForEvent,
+  applyPerformanceEngineWrite,
   addCompanyDetermination,
   assessDriverHiringFile,
 } from "@/lib/driver-data";
@@ -1015,6 +1016,7 @@ export function DriverWorkspace({
             companyDeterminations={companyDeterminations}
             performanceInvestigations={performanceInvestigations}
             eventRelationships={eventRelationships}
+            onEngineWrite={(eventId, description, writer) => { applyPerformanceEngineWrite(company.id, eventId, description, writer); onRefresh(); }}
             onResolveNearMissUnsafeCondition={(eventId, input) => { resolveNearMissUnsafeConditionForEvent(company.id, eventId, input); onRefresh(); }}
             allDriversCohort={allDriversCohort}
             onAddEvent={handleAddEvent}

@@ -1011,6 +1011,7 @@ export function DriverWorkspace({
             allDriversCohort={allDriversCohort}
             onAddEvent={handleAddEvent}
             onUpdateEventWorkflow={handleUpdateEventWorkflow}
+            onRoadsideChange={onRefresh}
             onAddHOSReview={handleAddHOSReview}
             onAddCompanyAction={handleAddCompanyAction}
             onAddCompanyDetermination={handleAddCompanyDetermination}

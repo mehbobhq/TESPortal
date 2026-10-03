@@ -209,6 +209,8 @@ const EXPLICIT_DATA_POINT_IDS: Readonly<Record<string, string>> = {
   'agency': 'DRV.PERF.AGENCY',
   'inspectionReportNumber': 'DRV.PERF.INSPECTIONREPORTNUMBER',
   'inspectionResult': 'DRV.PERF.INSPECTIONRESULT',
+  'overallOutcome': 'DRV.PERF.OVERALLOUTCOME',
+  'driverStatementRequired': 'DRV.PERF.DRIVERSTATEMENTREQUIRED',
   'driverViolationsCount': 'DRV.PERF.DRIVERVIOLATIONSCOUNT',
   'vehicleViolationsCount': 'DRV.PERF.VEHICLEVIOLATIONSCOUNT',
   'hosViolationsCount': 'DRV.PERF.HOSVIOLATIONSCOUNT',
@@ -688,17 +690,17 @@ export type PerformanceCategoryOwnership = "RECORDABLE_EVENT" | "LEGACY_READ_ONL
 export const PERFORMANCE_EVENT_SCHEMA_VERSION = "1.2";
 
 export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, PerformanceCategoryOwnership>> = {
-  "Collision": "RECORDABLE_EVENT", "Near Miss": "RECORDABLE_EVENT", "Roadside Inspection": "RECORDABLE_EVENT", "Out-of-Service Order": "RECORDABLE_EVENT",
+  "Collision": "RECORDABLE_EVENT", "Near Miss": "RECORDABLE_EVENT", "Roadside Inspection": "RECORDABLE_EVENT", "Out-of-Service Order": "LEGACY_READ_ONLY",
   "HOS Violation": "AUTHORITATIVE_LINKED_RECORD", "Traffic Citation": "AUTHORITATIVE_LINKED_RECORD", "Cargo Damage": "RECORDABLE_EVENT", "Cargo Theft": "RECORDABLE_EVENT",
   "Spill or Release": "RECORDABLE_EVENT", "Customer Complaint": "RECORDABLE_EVENT", "Customer Commendation": "RECORDABLE_EVENT", "Positive Safety Observation": "ALIAS",
-  "Coaching Session": "COMPANY_ACTION", "Disciplinary Action": "COMPANY_ACTION", "Corrective Action Plan": "COMPANY_ACTION", "Injury": "RECORDABLE_EVENT",
-  "Security Incident": "RECORDABLE_EVENT", "Warning": "RECORDABLE_EVENT", "Violation": "RECORDABLE_EVENT", "Citation-linked Event": "LEGACY_READ_ONLY",
-  "Equipment-related Event": "ALIAS", "Equipment Failure / Critical Defect": "RECORDABLE_EVENT", "Safety Observation": "RECORDABLE_EVENT", "Customer Compliment": "ALIAS", "Telematics / Camera Observation": "SPECIALIZED_WORKSPACE_RECORD",
+  "Coaching Session": "COMPANY_ACTION", "Disciplinary Action": "COMPANY_ACTION", "Corrective Action Plan": "COMPANY_ACTION", "Injury": "LEGACY_READ_ONLY",
+  "Security Incident": "RECORDABLE_EVENT", "Warning": "LEGACY_READ_ONLY", "Violation": "LEGACY_READ_ONLY", "Citation-linked Event": "LEGACY_READ_ONLY",
+  "Equipment-related Event": "ALIAS", "Equipment Failure / Critical Defect": "RECORDABLE_EVENT", "Safety Observation": "LEGACY_READ_ONLY", "Customer Compliment": "ALIAS", "Telematics / Camera Observation": "SPECIALIZED_WORKSPACE_RECORD",
   "Security Event": "ALIAS", "Emergency Event": "RECORDABLE_EVENT", "Speeding": "RECORDABLE_EVENT", "Harsh Braking": "RECORDABLE_EVENT", "Harsh Acceleration": "RECORDABLE_EVENT",
   "Harsh Cornering": "RECORDABLE_EVENT", "Following Distance": "RECORDABLE_EVENT", "Fatigue Indicator": "RECORDABLE_EVENT", "Device / Data Integrity": "RECORDABLE_EVENT",
-  "Trip Completion / Service Performance": "RECORDABLE_EVENT", "Lane Departure": "RECORDABLE_EVENT", "Seatbelt": "RECORDABLE_EVENT", "Distracted Driving": "RECORDABLE_EVENT",
-  "Idle Time": "RECORDABLE_EVENT", "Route Deviation": "RECORDABLE_EVENT", "Backing": "RECORDABLE_EVENT", "Stop Sign / Red Light": "RECORDABLE_EVENT", "Railroad Crossing": "RECORDABLE_EVENT",
-  "Customer-Site Behavior": "RECORDABLE_EVENT", "PPE / Safety Protocol": "RECORDABLE_EVENT"
+  "Trip Completion / Service Performance": "LEGACY_READ_ONLY", "Lane Departure": "LEGACY_READ_ONLY", "Seatbelt": "RECORDABLE_EVENT", "Distracted Driving": "RECORDABLE_EVENT",
+  "Idle Time": "RECORDABLE_EVENT", "Route Deviation": "RECORDABLE_EVENT", "Backing": "LEGACY_READ_ONLY", "Stop Sign / Red Light": "LEGACY_READ_ONLY", "Railroad Crossing": "LEGACY_READ_ONLY",
+  "Customer-Site Behavior": "RECORDABLE_EVENT", "PPE / Safety Protocol": "LEGACY_READ_ONLY"
 };
 
 
@@ -722,7 +724,9 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
       select("inspectionScope", "Inspection Scope", [{ value: "DRIVER", label: "Driver" }, { value: "VEHICLE", label: "Vehicle" }, { value: "BOTH", label: "Driver & Vehicle" }], { required: true, definition: "What the source establishes was inspected; not a violation, OOS, or responsibility attribution." }),
       text("agency", "Enforcement Agency", { semanticPrimitive: "REGULATORY_IDENTITY" }),
       text("inspectionReportNumber", "Inspection / Report Number", { semanticPrimitive: "REGULATORY_IDENTITY" }),
-      select("inspectionResult", "Source-Reported Overall Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, semanticPrimitive: "REGULATORY_IDENTITY" }),
+      select("inspectionResult", "Source-Reported Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, semanticPrimitive: "REGULATORY_IDENTITY" }),
+      select("overallOutcome", "Overall Outcome", [{ value: "PASS", label: "Pass" }, { value: "WARNING", label: "Warning" }, { value: "REQUIRES_ATTENTION", label: "Requires Attention" }, { value: "OUT_OF_SERVICE", label: "Out of Service" }], { semanticPrimitive: "REGULATORY_IDENTITY", definition: "TES-normalized overall inspection outcome (precedence: Out of Service > Requires Attention > Warning > Pass). Presentation/logic only; the source-reported result is preserved separately and workflow Open/Closed never changes it." }),
+      select("driverStatementRequired", "Driver Statement Required", [{ value: "YES", label: "Required" }, { value: "NO", label: "Not Required" }], { definition: "Recorded determination (findings, circumstances, required actions, policy or reviewer). Never derived from Overall Outcome alone. Separate from whether a statement has been provided." }),
       select("driverInspectionResult", "Driver Inspection Result", [{ value: "PASS", label: "Pass" }, { value: "VIOLATIONS_FOUND", label: "Violations Found" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"] } }] }),
       select("driverOOSState", "Driver OOS", [{ value: "NO", label: "No" }, { value: "YES", label: "Yes" }, { value: "UNKNOWN", label: "Unknown / Not Provided" }], { required: true, applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], driverInspectionResult: ["VIOLATIONS_FOUND"] } }] }),
       number("driverDemeritPoints", "Driver Demerit / Points", "points", { applicability: [{ state: "CONDITIONAL", when: { inspectionScope: ["DRIVER", "BOTH"], inspectionResult: ["VIOLATIONS_FOUND"], driverInspectionResult: ["VIOLATIONS_FOUND"] } }], definition: "Regulator-provided points only when actually sourced." }),
@@ -944,6 +948,8 @@ const EXPLICIT_CATEGORY_DATA_POINT_IDS: Readonly<Record<string, string>> = {
   'ROADSIDE_INSPECTION:agency': 'DRV.PERF.ROADSIDE_INSPECTION.AGENCY',
   'ROADSIDE_INSPECTION:inspectionReportNumber': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONREPORTNUMBER',
   'ROADSIDE_INSPECTION:inspectionResult': 'DRV.PERF.ROADSIDE_INSPECTION.INSPECTIONRESULT',
+  'ROADSIDE_INSPECTION:overallOutcome': 'DRV.PERF.ROADSIDE_INSPECTION.OVERALLOUTCOME',
+  'ROADSIDE_INSPECTION:driverStatementRequired': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERSTATEMENTREQUIRED',
   'ROADSIDE_INSPECTION:driverInspectionResult': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERRESULT',
   'ROADSIDE_INSPECTION:driverOOSState': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVEROOSSTATE',
   'ROADSIDE_INSPECTION:driverDemeritPoints': 'DRV.PERF.ROADSIDE_INSPECTION.DRIVERDEMERITPOINTS',

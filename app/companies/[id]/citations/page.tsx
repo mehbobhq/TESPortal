@@ -6,7 +6,9 @@ import {
   useRef,
   useState,
 } from "react"
+import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
+import { getQueryParam } from "@/lib/deep-linking"
 import {
   AlertOctagon,
   AlertTriangle,
@@ -188,6 +190,9 @@ type CitationRecord = {
   notes?: string
   evidenceIds: string[]
   source: "OCR" | "Manual"
+  /** Optional two-way link to the Roadside Inspection this Citation originated from (Driver > Performance event). A Citation does not need one. */
+  originatingPerformanceEventId?: string
+  originatingDriverMasterId?: string
   createdAt: string
   updatedAt: string
 }
@@ -343,7 +348,7 @@ function statusClasses(status: DeadlineStatus) {
 function emptyCitationDraft(company: Company): CitationDraft {
   const isCanada = (company.regCorpCountry || "").toLowerCase().includes("canada")
   return {
-    citationType: "ROADSIDE_INSPECTION",
+    citationType: "TRAFFIC_TICKET",
     reportNumber: "",
     issuingAgency: isCanada ? "MTO / OPP" : "State Highway Patrol / FMCSA",
     jurisdictionCode: company.regCorpState || (isCanada ? "ON" : "US-FED"),
@@ -352,7 +357,7 @@ function emptyCitationDraft(company: Company): CitationDraft {
     eventDate: todayISO(),
     courtDueDate: "",
     resolvedDate: "",
-    inspectionLevel: "Level II - Walk-Around",
+    inspectionLevel: "N/A - Non-Inspection Citation",
     officerName: "",
     officerBadge: "",
     location: "",
@@ -546,7 +551,7 @@ function CitationForm({
             <Select value={draft.citationType} onValueChange={(val) => patch({ citationType: val as CitationType })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ROADSIDE_INSPECTION">Roadside Inspection Report</SelectItem>
+                {draft.citationType === "ROADSIDE_INSPECTION" ? <SelectItem value="ROADSIDE_INSPECTION">Roadside Inspection Report (legacy record)</SelectItem> : null}
                 <SelectItem value="TRAFFIC_TICKET">Traffic Ticket / Moving Violation</SelectItem>
                 <SelectItem value="SCALE_VIOLATION">Weigh Scale / Bypass Violation</SelectItem>
                 <SelectItem value="HOURS_OF_SERVICE">HOS / Logbook Citation</SelectItem>
@@ -749,11 +754,42 @@ export default function CitationsPage() {
     }
   }, [companyId, storageKey])
 
+  // The Driver > Performance workspace writes a reverse link (originatingPerformanceEventId / originatingDriverMasterId)
+  // into this same store. This page never edits those two fields, so the stored copy is authoritative for them: they are
+  // re-read and merged before every write, and refreshed when another tab changes the store, so a stale page can never erase a link.
+  const mergeStoredLinks = (current: CitationRecord[], stored: unknown): CitationRecord[] => {
+    if (!Array.isArray(stored)) return current
+    let changed = false
+    const next = current.map((record) => {
+      const external = stored.find((item: { id?: string }) => item && item.id === record.id) as Partial<CitationRecord> | undefined
+      if (!external) return record
+      const eventId = external.originatingPerformanceEventId
+      const masterId = external.originatingDriverMasterId
+      if (record.originatingPerformanceEventId === eventId && record.originatingDriverMasterId === masterId) return record
+      if (!eventId && !masterId) return record
+      changed = true
+      return { ...record, originatingPerformanceEventId: eventId, originatingDriverMasterId: masterId }
+    })
+    return changed ? next : current
+  }
+
   useEffect(() => {
-    if (!loading) {
-      localStorage.setItem(storageKey, JSON.stringify({ citations, evidence: evidenceList }))
-    }
+    if (loading) return
+    let stored: { citations?: unknown } & Record<string, unknown> = {}
+    try { stored = JSON.parse(localStorage.getItem(storageKey) || "{}") || {} } catch { stored = {} }
+    const merged = mergeStoredLinks(citations, stored.citations)
+    localStorage.setItem(storageKey, JSON.stringify({ ...stored, citations: merged, evidence: evidenceList }))
+    if (merged !== citations) setCitations(merged)
   }, [citations, evidenceList, loading, storageKey])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey || !event.newValue) return
+      try { setCitations((current) => mergeStoredLinks(current, JSON.parse(event.newValue as string).citations)) } catch { /* ignore malformed external write */ }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [storageKey])
 
   // Filter 3-year history
   const threeYearsAgo = useMemo(() => {
@@ -783,8 +819,24 @@ export default function CitationsPage() {
     [citations, selectedCitationId]
   )
 
-  const totalOOS = useMemo(() => citations.filter((c) => c.outOfService).length, [citations])
-  const pendingCount = useMemo(() => citations.filter((c) => c.adjudicationStatus === "Pending Review" || c.adjudicationStatus === "Contested / In Court").length, [citations])
+  // Deep link: ?citation=<id> (used by the Roadside Inspection's Tickets / Citations panel)
+  const citationDeepLinkHandled = useRef(false)
+  useEffect(() => {
+    if (loading || citationDeepLinkHandled.current) return
+    const requested = getQueryParam("citation")
+    if (requested && citations.some((c) => c.id === requested)) {
+      citationDeepLinkHandled.current = true
+      setSelectedCitationId(requested)
+    }
+  }, [loading, citations])
+
+  // Legacy ROADSIDE_INSPECTION-type records are not citations and are excluded from citation counters.
+  const citationRecords = useMemo(() => citations.filter((c) => c.citationType !== "ROADSIDE_INSPECTION"), [citations])
+  const legacyInspectionCount = citations.length - citationRecords.length
+  const isClosedCitation = (c: CitationRecord) => Boolean(c.resolvedDate) || c.adjudicationStatus === "Paid in Full" || c.adjudicationStatus === "Dismissed" || c.adjudicationStatus === "No Fine Assessed"
+  const openCitationCount = useMemo(() => citationRecords.filter((c) => !isClosedCitation(c)).length, [citationRecords])
+  const linkedToRoadsideCount = useMemo(() => citationRecords.filter((c) => Boolean(c.originatingPerformanceEventId)).length, [citationRecords])
+  const pendingCount = useMemo(() => citationRecords.filter((c) => c.adjudicationStatus === "Pending Review" || c.adjudicationStatus === "Contested / In Court").length, [citationRecords])
 
   const handleSaveDraft = (draft: CitationDraft, source: "OCR" | "Manual", evidence?: CitationEvidence) => {
     const now = isoNow()
@@ -810,7 +862,25 @@ export default function CitationsPage() {
     setOcrSession(null)
   }
 
+  // A Citation that originated from (or is linked to) a Roadside Inspection stays permanently traceable, so it cannot be hard-deleted.
+  const linkedRoadsideEventId = (id: string): string | null => {
+    const record = citations.find((c) => c.id === id)
+    if (record?.originatingPerformanceEventId) return record.originatingPerformanceEventId
+    try {
+      const driverStore = JSON.parse(localStorage.getItem(`tes_company_drivers_${companyId}`) || "{}")
+      const event = (Array.isArray(driverStore.events) ? driverStore.events : []).find((e: { isArchived?: boolean; canonicalLinks?: Array<{ entityType?: string; recordId?: string }> }) => !e.isArchived && (e.canonicalLinks || []).some((l) => l.entityType === "Citation" && l.recordId === id))
+      return event ? String(event.id) : null
+    } catch {
+      return null
+    }
+  }
+
   const handleDelete = (id: string) => {
+    const linkedEvent = linkedRoadsideEventId(id)
+    if (linkedEvent) {
+      alert(`This Citation is linked to Roadside Inspection ${linkedEvent} and cannot be deleted while that link exists. The link is a permanent traceability record.`)
+      return
+    }
     if (!confirm("Are you sure you want to delete this citation record?")) return
     setCitations((prev) => prev.filter((c) => c.id !== id))
     if (selectedCitationId === id) setSelectedCitationId(null)
@@ -853,7 +923,7 @@ export default function CitationsPage() {
           <CompanyWorkspaceHeader
             company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
             section="Citations"
-            description="FMCSA Roadside Inspections, CVOR Points & Traffic Citations"
+            description="Tickets, citations and penalty notices. New Roadside Inspections are recorded in Driver > Performance."
           />
         )}
 
@@ -861,20 +931,20 @@ export default function CitationsPage() {
         <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Card className="border-l-4 border-l-primary">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">Total Violations (YTD)</p>
+              <p className="text-xs text-muted-foreground">Citations on File</p>
               <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold">{citations.length}</span>
-                <Badge variant="outline" className="text-xs">{filteredCitations.length} active</Badge>
+                <span className="text-2xl font-bold">{citationRecords.length}</span>
+                <Badge variant="outline" className="text-xs">{filteredCitations.length} shown{legacyInspectionCount ? ` · ${legacyInspectionCount} legacy inspection` : ""}</Badge>
               </div>
             </CardContent>
           </Card>
 
           <Card className="border-l-4 border-l-destructive">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">Out of Service (OOS)</p>
+              <p className="text-xs text-muted-foreground">Open Citations</p>
               <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-destructive">{totalOOS}</span>
-                <span className="text-[10px] text-muted-foreground">Critical Safety</span>
+                <span className="text-2xl font-bold text-destructive">{openCitationCount}</span>
+                <span className="text-[10px] text-muted-foreground">Not yet resolved</span>
               </div>
             </CardContent>
           </Card>
@@ -891,10 +961,10 @@ export default function CitationsPage() {
 
           <Card className="border-l-4 border-l-emerald-500">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">Clean Inspections</p>
+              <p className="text-xs text-muted-foreground">Linked to a Roadside Inspection</p>
               <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-emerald-600">{citations.filter((c) => c.violations.length === 0).length}</span>
-                <span className="text-[10px] text-muted-foreground">Passed</span>
+                <span className="text-2xl font-bold text-emerald-600">{linkedToRoadsideCount}</span>
+                <span className="text-[10px] text-muted-foreground">Driver &gt; Performance</span>
               </div>
             </CardContent>
           </Card>
@@ -912,7 +982,7 @@ export default function CitationsPage() {
             <SelectTrigger className="w-48 h-9"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Types</SelectItem>
-              <SelectItem value="ROADSIDE_INSPECTION">Roadside Inspection</SelectItem>
+              <SelectItem value="ROADSIDE_INSPECTION">Roadside Inspection (legacy)</SelectItem>
               <SelectItem value="TRAFFIC_TICKET">Traffic Ticket</SelectItem>
               <SelectItem value="SCALE_VIOLATION">Scale / Weight</SelectItem>
               <SelectItem value="HOURS_OF_SERVICE">HOS Citation</SelectItem>
@@ -1026,8 +1096,9 @@ export default function CitationsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4 pt-4 text-sm">
+                {selectedRecord.originatingPerformanceEventId && selectedRecord.originatingDriverMasterId ? <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs"><span className="font-semibold text-muted-foreground">Originating Roadside Inspection: </span><Link href={`/companies/${companyId}/drivers/${selectedRecord.originatingDriverMasterId}?driverTab=performance&performanceView=register&performanceEvent=${encodeURIComponent(selectedRecord.originatingPerformanceEventId)}`} className="font-mono font-semibold text-primary hover:underline">{selectedRecord.originatingPerformanceEventId}</Link></div> : null}
                 <div className="grid grid-cols-2 gap-3">
-                  <CopyField label="Citation Type" value={selectedRecord.citationType.replaceAll("_", " ")} />
+                  <CopyField label="Citation Type" value={selectedRecord.citationType === "ROADSIDE_INSPECTION" ? "ROADSIDE INSPECTION (legacy record)" : selectedRecord.citationType.replaceAll("_", " ")} />
                   <CopyField label="Inspection Level" value={selectedRecord.inspectionLevel} />
                   <CopyField label="Driver Name" value={selectedRecord.driverName} />
                   <CopyField label="Driver CDL #" value={selectedRecord.driverDl} />
@@ -1129,7 +1200,7 @@ export default function CitationsPage() {
               <CardHeader className="border-b">
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle className="text-base">{isEditing ? "Edit Citation" : "Add Citation / Inspection"}</CardTitle>
+                    <CardTitle className="text-base">{isEditing ? "Edit Citation" : "Add Citation"}</CardTitle>
                     <CardDescription className="text-xs">Record safety compliance data for reporting and CVOR/SMS analytics.</CardDescription>
                   </div>
                   <Button variant="ghost" size="icon" onClick={() => setManualDraft(null)}><X className="size-4" /></Button>

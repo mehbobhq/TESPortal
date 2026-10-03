@@ -4,7 +4,8 @@ import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
 import { loadVehicleStore } from "@/lib/vehicle-data"
-import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, ROADSIDE_VIOLATION_COLLECTION_ID } from "@/lib/driver-performance-child-facts"
+import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, createRoadsideStatementItem, createRoadsideStatementCollection, ROADSIDE_VIOLATION_COLLECTION_ID, type RoadsideStatementInput } from "@/lib/driver-performance-child-facts"
+import { eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families"
 
 import type {
   AddressRecord,
@@ -1472,6 +1473,11 @@ export function updatePerformanceEventWorkflow(companyId: string, eventId: strin
   const store = loadCompanyDriverStore(companyId);
   const current = store.events.find((event) => event.id === eventId);
   if (!current) throw new Error("Performance event not found.");
+  if (current.eventType === "Roadside Inspection" && update.status === "Closed") {
+    // Closure only when every required action is resolved. Citations have their own lifecycle and never gate this.
+    const openActions = getRoadsideOpenActions(current, eventFactsByKey(current, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"].fields));
+    if (openActions.length) throw new Error(`Roadside Inspection cannot be closed while required actions remain: ${openActions.map((action) => action.label).join("; ")}.`);
+  }
   const now = new Date().toISOString();
   const changed = Object.keys(update).filter((key) => (update as Record<string, unknown>)[key] !== undefined);
   const updated = store.events.map((event) => event.id === eventId ? { ...event, ...update, structuredEventFacts: event.structuredEventFacts, updatedAt: now, chronology: appendEventChronology(event, "EVENT_WORKFLOW_UPDATED", `Workflow/lifecycle fields updated: ${changed.join(", ")}.`, actor) } : event);
@@ -2283,4 +2289,99 @@ export function assessDriverHiringFile(
     ],
     assessedAt: new Date().toISOString(),
   } satisfies import("@/types/drivers").DriverHiringFileAssessment
+}
+
+// ---------------------------------------------------------------------------
+// Roadside Inspection: Driver Statement (post-save) and Tickets / Citations linkage
+// ---------------------------------------------------------------------------
+
+/**
+ * Records a Driver Statement against an existing Roadside Inspection. Existing statements are preserved
+ * (the new one is appended). Recording a statement never changes workflow Status: the inspection closes
+ * only through updatePerformanceEventWorkflow once every required action is resolved.
+ */
+export function recordRoadsideDriverStatement(companyId: string, eventId: string, input: RoadsideStatementInput, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const current = store.events.find((event) => event.id === eventId);
+  if (!current) throw new Error("Performance event not found.");
+  if (current.eventType !== "Roadside Inspection") throw new Error("Driver Statements are recorded against Roadside Inspections only.");
+  const item = createRoadsideStatementItem(input);
+  const existing = (current.childCollections || []).find((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.DRIVER_STATEMENTS");
+  const nextCollection = createRoadsideStatementCollection([...(existing?.items || []), item]);
+  const errors = validateRoadsideStatementCollection(nextCollection);
+  if (errors.length) throw new Error(errors[0]);
+  const now = new Date().toISOString();
+  const childCollections = [...(current.childCollections || []).filter((collection) => collection.collectionId !== nextCollection.collectionId), nextCollection];
+  const updated = store.events.map((event) => event.id === eventId ? { ...event, childCollections, updatedAt: now, chronology: appendEventChronology(event, "DRIVER_STATEMENT_RECORDED", `Driver Statement recorded with status ${input.status}.`, actor) } : event);
+  saveCompanyDriverStore({ ...store, events: updated });
+  auditDriverMutation(companyId, eventId, "UPDATE", `Recorded Roadside Driver Statement (${input.status}).`);
+  return updated.find((event) => event.id === eventId);
+}
+
+export interface RoadsideLinkedCitation {
+  id: string;
+  label: string;
+  citationType?: string;
+  adjudicationStatus?: string;
+  /** Citation lifecycle only (independent of the Roadside Inspection's Open/Closed status). */
+  closed: boolean;
+  /** The event links to a citation id that no longer exists in the Citations store. */
+  missing?: boolean;
+}
+
+type StoredCitation = { id: string; reportNumber?: string; citationType?: string; adjudicationStatus?: string; resolvedDate?: string; originatingPerformanceEventId?: string; originatingDriverMasterId?: string; [key: string]: unknown };
+
+const citationStoreKey = (companyId: string) => `tes_company_citations_${companyId}`;
+
+function readCitationStoreRaw(companyId: string): { raw: string | null; parsed: { citations?: StoredCitation[]; [key: string]: unknown } } {
+  if (typeof window === "undefined") return { raw: null, parsed: {} };
+  const raw = window.localStorage.getItem(citationStoreKey(companyId));
+  try { return { raw, parsed: raw ? JSON.parse(raw) : {} }; } catch { return { raw, parsed: {} }; }
+}
+
+const CITATION_CLOSED_STATUSES = ["Paid in Full", "Dismissed", "No Fine Assessed"];
+const isCitationClosed = (citation: StoredCitation) => Boolean(citation.resolvedDate) || CITATION_CLOSED_STATUSES.includes(String(citation.adjudicationStatus));
+const citationSummary = (citation: StoredCitation): RoadsideLinkedCitation => ({ id: citation.id, label: String(citation.reportNumber || citation.id), citationType: citation.citationType, adjudicationStatus: citation.adjudicationStatus, closed: isCitationClosed(citation) });
+
+/** Citations linked to a Roadside Inspection: forward links on the event plus the reverse link stored on the Citation. */
+export function getRoadsideLinkedCitations(companyId: string, event: Pick<DriverPerformanceEvent, "id" | "canonicalLinks">): RoadsideLinkedCitation[] {
+  const citations = readCitationStoreRaw(companyId).parsed.citations || [];
+  const linkedIds = new Set<string>((event.canonicalLinks || []).filter((link) => link.entityType === "Citation").map((link) => link.recordId));
+  for (const citation of citations) if (citation.originatingPerformanceEventId === event.id) linkedIds.add(citation.id);
+  return [...linkedIds].map((id) => {
+    const citation = citations.find((item) => item.id === id);
+    return citation ? citationSummary(citation) : { id, label: id, closed: false, missing: true };
+  });
+}
+
+/** Citations that could still be linked: not already tied to a different Roadside Inspection. Roadside-inspection-type records are excluded (they are inspections, not tickets). */
+export function getLinkableCitationsForRoadside(companyId: string, event: Pick<DriverPerformanceEvent, "id" | "canonicalLinks">): RoadsideLinkedCitation[] {
+  const already = new Set(getRoadsideLinkedCitations(companyId, event).map((item) => item.id));
+  return (readCitationStoreRaw(companyId).parsed.citations || [])
+    .filter((citation) => citation.citationType !== "ROADSIDE_INSPECTION" && !already.has(citation.id) && (!citation.originatingPerformanceEventId || citation.originatingPerformanceEventId === event.id))
+    .map(citationSummary);
+}
+
+/**
+ * Creates the permanent two-way link: Roadside Inspection -> Citation (canonicalLinks) and
+ * Citation -> originating Roadside Inspection (originatingPerformanceEventId on the Citation record).
+ * Neither record's lifecycle or content is otherwise changed, and a Citation does not need a Roadside parent.
+ */
+export function linkRoadsideInspectionCitation(companyId: string, eventId: string, citationId: string, actor: string | null = null) {
+  const store = loadCompanyDriverStore(companyId);
+  const event = store.events.find((item) => item.id === eventId);
+  if (!event) throw new Error("Performance event not found.");
+  if (event.eventType !== "Roadside Inspection") throw new Error("Citations are linked from Roadside Inspections only.");
+  const { raw, parsed } = readCitationStoreRaw(companyId);
+  const citation = (parsed.citations || []).find((item) => item.id === citationId);
+  if (!citation) throw new Error("Citation was not found in this company's Tickets / Citations.");
+  if (citation.originatingPerformanceEventId && citation.originatingPerformanceEventId !== eventId) throw new Error("This Citation is already linked to a different Roadside Inspection.");
+  const nextCitations = (parsed.citations || []).map((item) => item.id === citationId ? { ...item, originatingPerformanceEventId: eventId, originatingDriverMasterId: event.driverMasterId } : item);
+  window.localStorage.setItem(citationStoreKey(companyId), JSON.stringify({ ...parsed, citations: nextCitations }));
+  try {
+    return linkPerformanceEventRecord(companyId, eventId, { entityType: "Citation", recordId: citationId, label: String(citation.reportNumber || citationId), source: "CANONICAL_STORE" }, actor);
+  } catch (error) {
+    if (raw === null) window.localStorage.removeItem(citationStoreKey(companyId)); else window.localStorage.setItem(citationStoreKey(companyId), raw);
+    throw error;
+  }
 }

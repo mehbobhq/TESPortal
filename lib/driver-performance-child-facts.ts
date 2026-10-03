@@ -12,7 +12,23 @@ export const ROADSIDE_VIOLATION_DATA_POINTS = {
   OOS_STATE: "DRV.PERF.ROADSIDE.VIOLATION.OOS_STATE",
   REGULATOR_SEVERITY_WEIGHT: "DRV.PERF.ROADSIDE.VIOLATION.REGULATOR_SEVERITY_WEIGHT",
   DEMERIT_POINTS: "DRV.PERF.ROADSIDE.VIOLATION.DEMERIT_POINTS",
+  OUTCOME: "DRV.PERF.ROADSIDE.VIOLATION.OUTCOME",
+  APPLICABLE_TO: "DRV.PERF.ROADSIDE.VIOLATION.APPLICABLE_TO",
 } as const;
+
+/**
+ * TES-normalized Roadside outcome scale (presentation/logic, not source wording).
+ * Ordered lowest -> highest; the highest value present wins (deterministic precedence).
+ */
+export const ROADSIDE_OUTCOME_PRECEDENCE = ["PASS", "WARNING", "REQUIRES_ATTENTION", "OUT_OF_SERVICE"] as const;
+export type RoadsideOutcome = (typeof ROADSIDE_OUTCOME_PRECEDENCE)[number];
+export type RoadsideFindingOutcome = Exclude<RoadsideOutcome, "PASS">;
+export const ROADSIDE_OUTCOME_LABELS: Readonly<Record<RoadsideOutcome, string>> = { PASS: "Pass", WARNING: "Warning", REQUIRES_ATTENTION: "Requires Attention", OUT_OF_SERVICE: "Out of Service" };
+export type RoadsideApplicableTo = "DRIVER" | "VEHICLE" | "BOTH";
+export const ROADSIDE_APPLICABLE_TO_LABELS: Readonly<Record<RoadsideApplicableTo, string>> = { DRIVER: "Driver", VEHICLE: "Vehicle", BOTH: "Both" };
+
+export const isRoadsideOutcome = (value: unknown): value is RoadsideOutcome => (ROADSIDE_OUTCOME_PRECEDENCE as readonly unknown[]).includes(value);
+export const isRoadsideApplicableTo = (value: unknown): value is RoadsideApplicableTo => value === "DRIVER" || value === "VEHICLE" || value === "BOTH";
 
 export type RoadsideViolationSubjectType = "DRIVER" | "OPERATING_CARRIER" | "POWER_UNIT" | "TOWED_UNIT" | "OTHER";
 export type RoadsideViolationAttribution = RoadsideViolationSubjectType;
@@ -152,6 +168,10 @@ export interface RoadsideInspectionViolationInput {
   oosState: RoadsideViolationOOSState;
   regulatorSeverityWeight?: number;
   demeritPoints?: number;
+  /** TES-normalized finding outcome. Optional: legacy findings carry only oosState. */
+  outcome?: RoadsideFindingOutcome;
+  /** Presentation attribution (Driver / Vehicle / Both). subjectType remains the canonical equipment-aware subject. */
+  applicableTo?: RoadsideApplicableTo;
   evidenceIds?: string[];
   sourceObservation?: PerformanceFactObservation;
   ingestionOrigin?: string;
@@ -187,6 +207,8 @@ export function createRoadsideViolationItem(input: RoadsideInspectionViolationIn
   addObservation(ROADSIDE_VIOLATION_DATA_POINTS.OOS_STATE, input.oosState, "string");
   addObservation(ROADSIDE_VIOLATION_DATA_POINTS.REGULATOR_SEVERITY_WEIGHT, input.regulatorSeverityWeight ?? null, "number");
   addObservation(ROADSIDE_VIOLATION_DATA_POINTS.DEMERIT_POINTS, input.demeritPoints ?? null, "number");
+  addObservation(ROADSIDE_VIOLATION_DATA_POINTS.OUTCOME, input.outcome || null, "string");
+  addObservation(ROADSIDE_VIOLATION_DATA_POINTS.APPLICABLE_TO, input.applicableTo || null, "string");
   if (input.sourceObservation) observations.push(input.sourceObservation);
   return {
     itemId,
@@ -200,6 +222,8 @@ export function createRoadsideViolationItem(input: RoadsideInspectionViolationIn
       oosState: input.oosState,
       regulatorSeverityWeight: input.regulatorSeverityWeight ?? null,
       demeritPoints: input.demeritPoints ?? null,
+      ...(input.outcome ? { outcome: input.outcome } : {}),
+      ...(input.applicableTo ? { applicableTo: input.applicableTo } : {}),
     },
     observations,
     evidenceIds: unique(input.evidenceIds),
@@ -237,10 +261,13 @@ export function getRoadsideViolationCollection(event: { childCollections?: Perfo
 
 export function deriveRoadsideViolationCounts(collection: PerformanceChildCollection | undefined) {
   const items = collection?.items || [];
+  // An explicit Applicable To (Driver / Vehicle / Both) takes precedence; legacy findings use subjectType.
+  const touchesDriver = (item: PerformanceChildFactItem) => isRoadsideApplicableTo(item.facts.applicableTo) ? item.facts.applicableTo !== "VEHICLE" : item.facts.subjectType === "DRIVER";
+  const touchesVehicle = (item: PerformanceChildFactItem) => isRoadsideApplicableTo(item.facts.applicableTo) ? item.facts.applicableTo !== "DRIVER" : (item.facts.subjectType === "POWER_UNIT" || item.facts.subjectType === "TOWED_UNIT");
   return {
     total: items.length,
-    driver: items.filter((item) => item.facts.subjectType === "DRIVER").length,
-    vehicle: items.filter((item) => item.facts.subjectType === "POWER_UNIT" || item.facts.subjectType === "TOWED_UNIT").length,
+    driver: items.filter(touchesDriver).length,
+    vehicle: items.filter(touchesVehicle).length,
     carrier: items.filter((item) => item.facts.subjectType === "OPERATING_CARRIER").length,
     other: items.filter((item) => item.facts.subjectType === "OTHER").length,
     oos: items.filter((item) => item.facts.oosState === "YES").length,
@@ -261,6 +288,9 @@ export function validateRoadsideViolationCollection(collection: PerformanceChild
     if (["POWER_UNIT", "TOWED_UNIT"].includes(String(item.facts.subjectType)) && !String(item.facts.subjectEquipmentId || "").trim()) errors.push(`Equipment-specific violation ${item.itemId} requires a stable inspected-equipment subject ID.`);
     if (!["POWER_UNIT", "TOWED_UNIT"].includes(String(item.facts.subjectType)) && item.facts.subjectEquipmentId) errors.push(`Non-equipment violation ${item.itemId} must not carry an equipment subject ID.`);
     if (!["YES", "NO", "UNKNOWN"].includes(String(item.facts.oosState))) errors.push(`Invalid violation OOS state on ${item.itemId}.`);
+    if (item.facts.outcome !== undefined && item.facts.outcome !== null && (!isRoadsideOutcome(item.facts.outcome) || item.facts.outcome === "PASS")) errors.push(`Invalid finding outcome on ${item.itemId}.`);
+    if (item.facts.applicableTo !== undefined && item.facts.applicableTo !== null && !isRoadsideApplicableTo(item.facts.applicableTo)) errors.push(`Invalid Applicable To on ${item.itemId}.`);
+    if (item.facts.outcome === "OUT_OF_SERVICE" && item.facts.oosState === "NO") errors.push(`Finding ${item.itemId} has outcome Out of Service but OOS state No.`);
   }
   return errors;
 }
@@ -306,4 +336,42 @@ export function deriveRoadsideInspectionOutcome(facts: Record<string, unknown>, 
   if (collection?.completeness === "PARTIAL" || collection?.completeness === "NOT_PROVIDED") return "UNKNOWN";
   if ((driverApplicable && driverResult !== "PASS") || (vehicleApplicable && vehicleResult !== "PASS")) return "UNKNOWN";
   return "PASS";
+}
+
+/** Finding outcome: explicit TES outcome when recorded; otherwise derived from the legacy oosState (a recorded finding is at least Requires Attention). */
+export function roadsideFindingOutcome(item: PerformanceChildFactItem): RoadsideFindingOutcome {
+  const explicit = item.facts.outcome;
+  if (isRoadsideOutcome(explicit) && explicit !== "PASS") return explicit;
+  return item.facts.oosState === "YES" ? "OUT_OF_SERVICE" : "REQUIRES_ATTENTION";
+}
+
+/** Applicable To: explicit when recorded; otherwise derived from subjectType where that is unambiguous; otherwise undefined (never guessed). */
+export function roadsideFindingApplicableTo(item: PerformanceChildFactItem): RoadsideApplicableTo | undefined {
+  if (isRoadsideApplicableTo(item.facts.applicableTo)) return item.facts.applicableTo;
+  if (item.facts.subjectType === "DRIVER") return "DRIVER";
+  if (item.facts.subjectType === "POWER_UNIT" || item.facts.subjectType === "TOWED_UNIT") return "VEHICLE";
+  return undefined;
+}
+
+export function maxRoadsideOutcome(values: Array<RoadsideOutcome | undefined>): RoadsideOutcome | undefined {
+  let best: RoadsideOutcome | undefined;
+  for (const value of values) if (value && (!best || ROADSIDE_OUTCOME_PRECEDENCE.indexOf(value) > ROADSIDE_OUTCOME_PRECEDENCE.indexOf(best))) best = value;
+  return best;
+}
+
+/**
+ * Overall Outcome (TES-normalized). Precedence: Out of Service > Requires Attention > Warning > Pass.
+ * Inputs: the recorded Overall Outcome fact (when present), every finding's outcome, and the existing
+ * OOS derivation. Legacy records (no overallOutcome fact) resolve from the existing derivation without any rewrite.
+ * Source-reported wording (inspectionResult) is never modified.
+ */
+export function deriveRoadsideOverallOutcome(facts: Record<string, unknown>, collection: PerformanceChildCollection | undefined): RoadsideOutcome | "UNKNOWN" {
+  const base = deriveRoadsideInspectionOutcome(facts, collection);
+  const selected = isRoadsideOutcome(facts.overallOutcome) ? facts.overallOutcome : undefined;
+  const findingMax = maxRoadsideOutcome((collection?.items || []).map(roadsideFindingOutcome));
+  const resolved = maxRoadsideOutcome([selected, findingMax, base === "OUT_OF_SERVICE" ? "OUT_OF_SERVICE" : undefined]);
+  if (resolved) return resolved;
+  if (base === "VIOLATIONS_FOUND") return "REQUIRES_ATTENTION";
+  if (base === "PASS") return "PASS";
+  return "UNKNOWN";
 }

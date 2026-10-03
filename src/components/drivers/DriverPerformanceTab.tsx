@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
   AlertTriangle,
   FileText,
@@ -52,7 +52,9 @@ import { DriverPerformanceEventWorkflow } from "./DriverPerformanceEventWorkflow
 import { getQueryParam, pushHistoryQueryParams } from "@/lib/deep-linking";
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_VERIFICATION_STATES, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
 import { HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
-import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideInspectionOutcome, deriveRoadsideViolationCounts } from "@/lib/driver-performance-child-facts";
+import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideInspectionOutcome, deriveRoadsideViolationCounts, deriveRoadsideOverallOutcome, roadsideFindingOutcome, roadsideFindingApplicableTo, ROADSIDE_OUTCOME_LABELS, ROADSIDE_APPLICABLE_TO_LABELS } from "@/lib/driver-performance-child-facts";
+import { performanceEventTitle, roadsideOverallOutcomeLabel, eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families";
+import { RoadsideEventPanels, RoadsideSummaryLine } from "./RoadsideEventPanels";
 import { getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverPerformanceTabProps {
@@ -89,6 +91,8 @@ export interface DriverPerformanceTabProps {
   evidence?: import("@/types/drivers").DriverEvidenceItem[];
   onArchiveEvent?: (eventId: string) => void;
   onClearEvidenceCreatedId?: () => void;
+  /** Called after a Roadside action (statement / citation link / follow-up) changed stored data, so the workspace re-reads the store. */
+  onRoadsideChange?: () => void;
 }
 
 const EVENT_TYPE_DEFINITIONS = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.map((definition) => ({ type: definition.value, label: definition.label, category: definition.group, description: definition.description, ownership: PERFORMANCE_CATEGORY_OWNERSHIP[definition.value] }));
@@ -108,6 +112,15 @@ const getEventFact = (event: DriverPerformanceEvent, key: string): unknown => {
   if (field) return event.structuredEventFacts?.find((fact) => fact.dataPointId === field.dataPointId)?.value;
   return event.structuredFacts?.[key];
 };
+
+/** Human-facing title. Stored eventType is never altered; legacy categories keep their stored name. */
+const eventDisplayTitle = (event: DriverPerformanceEvent): string => {
+  if (event.eventType !== "Roadside Inspection") return performanceEventTitle(event.eventType);
+  const fields = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"]?.fields || [];
+  return performanceEventTitle("Roadside Inspection", roadsideOverallOutcomeLabel(eventFactsByKey(event, fields), getRoadsideViolationCollection(event)));
+};
+
+const roadsideOpenActionsFor = (event: DriverPerformanceEvent) => getRoadsideOpenActions(event, eventFactsByKey(event, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"]?.fields || []));
 
 export function DriverPerformanceTab({
   master,
@@ -138,6 +151,7 @@ export function DriverPerformanceTab({
   evidence = [],
   onArchiveEvent,
   onClearEvidenceCreatedId,
+  onRoadsideChange,
 }: DriverPerformanceTabProps) {
   // Sub-views
   type PerformanceSubview = "overview" | "intelligence" | "register" | "followup" | "hos" | "actions" | "chronology";
@@ -169,6 +183,16 @@ export function DriverPerformanceTab({
 
   // Selected event for detail view drawer/modal
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Deep link from a linked record (e.g. a Citation's originating Roadside Inspection): ?performanceEvent=<eventId>
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    const requested = getQueryParam("performanceEvent");
+    if (requested && events.some((event) => event.id === requested)) {
+      deepLinkHandled.current = true;
+      setSelectedEventId(requested);
+    }
+  }, [events]);
 
   // Time window for Performance Indicators
   const [metricsWindow, setMetricsWindow] = useState<"30D" | "90D" | "12M" | "YTD" | "ALL">("12M");
@@ -399,6 +423,7 @@ export function DriverPerformanceTab({
 
   const handleCloseEvent = () => {
     if (!selectedEvent) return;
+    if (selectedEvent.eventType === "Roadside Inspection" && roadsideOpenActionsFor(selectedEvent).length) return;
     onUpdateEventWorkflow(selectedEvent.id, { status: "Closed", followUpActionRequired: false });
   };
 
@@ -725,7 +750,7 @@ export function DriverPerformanceTab({
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><input type="date" value={dateFromFilter} onChange={(e) => { setDateFromFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="From date" /><input type="date" value={dateToFilter} onChange={(e) => { setDateToFilter(e.target.value); setRegisterPage(1); }} className="rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" aria-label="To date" /><div className="lg:col-span-2 flex items-center justify-end text-[11px] text-muted-foreground">{registerEvents.length} matching record{registerEvents.length === 1 ? "" : "s"}</div></div>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs"><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Event</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Occurrence / Context</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Verification</th><th className="px-4 py-3">Evidence / Links</th><th className="px-4 py-3 text-right">View</th></tr></thead><tbody className="divide-y divide-border">{paginatedRegisterEvents.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No performance events found matching the selected filters.</td></tr> : paginatedRegisterEvents.map((evt) => { const def = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[evt.eventType]; return <tr key={evt.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setSelectedEventId(evt.id)}><td className="px-4 py-3"><span className="block font-mono font-bold text-primary">{evt.id}</span><span className="text-[10px] text-muted-foreground">{evt.eventDate}{evt.eventTime ? ` · ${evt.eventTime}` : ""}</span></td><td className="px-4 py-3"><span className="font-semibold text-foreground">{def?.label || evt.eventType}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{def?.group || "Driver Event"}</span></td><td className="max-w-sm px-4 py-3"><p className="line-clamp-1 font-medium text-foreground">{evt.summary}</p><p className="truncate text-[10px] text-muted-foreground">{[evt.location, evt.city, evt.stateProvince].filter(Boolean).join(", ") || "Context not recorded"}</p></td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.provenance?.source || "Not recorded"}</td><td className="px-4 py-3 text-[11px] font-semibold text-foreground">{evt.verificationState || "Unverified"}</td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.evidenceIds.length} evidence · {(evt.canonicalLinks?.length || 0) + (evt.operationalReferences?.length || 0)} related</td><td className="px-4 py-3 text-right"><button type="button" onClick={(e) => { e.stopPropagation(); setSelectedEventId(evt.id); }} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-bold text-foreground hover:bg-muted">View</button></td></tr>; })}</tbody></table></div><div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3"><span className="text-[10px] text-muted-foreground">Page {registerPage} of {registerTotalPages}</span><div className="flex gap-2"><button type="button" disabled={registerPage === 1} onClick={() => setRegisterPage((page) => page - 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Previous</button><button type="button" disabled={registerPage >= registerTotalPages} onClick={() => setRegisterPage((page) => page + 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Next</button></div></div></div>
+          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs"><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Event</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Occurrence / Context</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Verification</th><th className="px-4 py-3">Evidence / Links</th><th className="px-4 py-3 text-right">View</th></tr></thead><tbody className="divide-y divide-border">{paginatedRegisterEvents.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No performance events found matching the selected filters.</td></tr> : paginatedRegisterEvents.map((evt) => { const def = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[evt.eventType]; return <tr key={evt.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setSelectedEventId(evt.id)}><td className="px-4 py-3"><span className="block font-mono font-bold text-primary">{evt.id}</span><span className="text-[10px] text-muted-foreground">{evt.eventDate}{evt.eventTime ? ` · ${evt.eventTime}` : ""}</span></td><td className="px-4 py-3"><span className="font-semibold text-foreground">{eventDisplayTitle(evt)}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{def?.group || "Driver Event"}{evt.eventType === "Roadside Inspection" && (evt.status === "Open" || evt.status === "Closed") ? ` · ${evt.status}` : ""}</span></td><td className="max-w-sm px-4 py-3"><p className="line-clamp-1 font-medium text-foreground">{evt.summary}</p><p className="truncate text-[10px] text-muted-foreground">{[evt.location, evt.city, evt.stateProvince].filter(Boolean).join(", ") || "Context not recorded"}</p></td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.provenance?.source || "Not recorded"}</td><td className="px-4 py-3 text-[11px] font-semibold text-foreground">{evt.verificationState || "Unverified"}</td><td className="px-4 py-3 text-[11px] text-muted-foreground">{evt.evidenceIds.length} evidence · {(evt.canonicalLinks?.length || 0) + (evt.operationalReferences?.length || 0)} related</td><td className="px-4 py-3 text-right"><button type="button" onClick={(e) => { e.stopPropagation(); setSelectedEventId(evt.id); }} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-bold text-foreground hover:bg-muted">View</button></td></tr>; })}</tbody></table></div><div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3"><span className="text-[10px] text-muted-foreground">Page {registerPage} of {registerTotalPages}</span><div className="flex gap-2"><button type="button" disabled={registerPage === 1} onClick={() => setRegisterPage((page) => page - 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Previous</button><button type="button" disabled={registerPage >= registerTotalPages} onClick={() => setRegisterPage((page) => page + 1)} className="rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40">Next</button></div></div></div>
         </div>
       )}
 
@@ -1151,12 +1176,12 @@ export function DriverPerformanceTab({
       {/* EVENT DETAIL DRAWER / MODAL */}
       {selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs overflow-y-auto">
-          <div className="relative w-full max-w-3xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden my-8">
+          <div className={`relative w-full ${selectedEvent.eventType === "Roadside Inspection" ? "max-w-5xl" : "max-w-3xl"} rounded-2xl border border-border bg-card shadow-2xl overflow-hidden my-8`}>
             <div className="bg-muted/40 px-6 py-4 border-b border-border flex items-center justify-between">
               <div className="space-y-0.5">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-primary">{selectedEvent.id}</span>
-                  <span className="text-sm font-bold text-foreground">{selectedEvent.eventType}</span>
+                  <span className="shrink-0 whitespace-nowrap font-mono text-xs font-bold text-primary">{selectedEvent.id}</span>
+                  {selectedEvent.eventType === "Roadside Inspection" ? <RoadsideSummaryLine event={selectedEvent} title={eventDisplayTitle(selectedEvent)} driverName={[master.identity.legalFirstName, master.identity.legalLastName].filter(Boolean).join(" ")} /> : <span className="text-sm font-bold text-foreground">{eventDisplayTitle(selectedEvent)}</span>}
                   {selectedEvent.severity !== "Not Applicable" && <span
                     className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                       selectedEvent.severity === "Critical"
@@ -1261,7 +1286,7 @@ export function DriverPerformanceTab({
                       <ReadOnlyField label="Inspection Regime" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionRegime")?.dataPointId || "", getEventFact(selectedEvent, "inspectionRegime")) || "Not recorded")} />
                       <ReadOnlyField label="Inspection Level / Type" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionClassification")?.dataPointId || "", getEventFact(selectedEvent, "inspectionClassification")) || "Not recorded")} />
                       <ReadOnlyField label="Inspection Scope" value={String(displayFact(selectedEvent, DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((f) => f.key === "inspectionScope")?.dataPointId || "", getEventFact(selectedEvent, "inspectionScope")) || "Not recorded")} />
-                      <ReadOnlyField label="Derived Overall Outcome" value={displayFact(selectedEvent, "", deriveRoadsideInspectionOutcome(Object.fromEntries((selectedEvent.structuredEventFacts || []).map((fact) => [DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields.find((field) => field.dataPointId === fact.dataPointId)?.key || fact.dataPointId, fact.value])), getRoadsideViolationCollection(selectedEvent)))} />
+                      <ReadOnlyField label="Overall Outcome" value={(() => { const fields = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE[selectedEvent.eventType]?.fields || []; const outcome = deriveRoadsideOverallOutcome(eventFactsByKey(selectedEvent, fields), getRoadsideViolationCollection(selectedEvent)); return outcome === "UNKNOWN" ? "Unknown / Not Provided" : ROADSIDE_OUTCOME_LABELS[outcome]; })()} />
                       <ReadOnlyField label="Source-Reported Total" value={String(getEventFact(selectedEvent, "sourceReportedViolationCount") ?? "Not reported")} />
                     </div>
                   </div>
@@ -1291,8 +1316,39 @@ export function DriverPerformanceTab({
                     </div>
                   )}
 
-                  {(() => { const collection = getRoadsideViolationCollection(selectedEvent); const counts = deriveRoadsideViolationCounts(collection); const completeness = collection?.completeness || "NOT_PROVIDED"; return <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-3"><div className="flex items-center justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Violations</h4><span className="text-[10px] text-muted-foreground">{completeness === "COMPLETE" ? `${counts.total} known` : completeness}</span></div>{collection?.items.length ? <div className="space-y-2">{collection.items.map((item) => <div key={item.itemId} className="rounded-lg border border-border bg-background p-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"><ReadOnlyField label="Rule / Regulation" value={String(item.facts.ruleRegulationCode || "Not recorded")} /><ReadOnlyField label="Description" value={String(item.facts.description || "Not recorded")} /><ReadOnlyField label="Attribution" value={String(item.facts.subjectType || "UNKNOWN")} /><ReadOnlyField label="OOS" value={String(item.facts.oosState || "UNKNOWN")} /><ReadOnlyField label="Category" value={String(item.facts.regulatoryCategory || "Not recorded")} /><ReadOnlyField label="Component / System" value={String(item.facts.componentSystem || "Not recorded")} /><ReadOnlyField label="Regulator Weight" value={String(item.facts.regulatorSeverityWeight ?? "Not recorded")} /><ReadOnlyField label="Demerit / Points" value={String(item.facts.demeritPoints ?? "Not recorded")} /></div></div>)}</div> : <p className="text-[11px] text-muted-foreground">{completeness === "COMPLETE" ? "No violations were established in the complete collection (known zero)." : completeness === "PARTIAL" ? "Violation itemization is partial; the source may contain additional unitemized violations." : "Violation information was not provided; this is not equivalent to zero violations."}</p>}<p className="text-[10px] text-muted-foreground">Collection: {collection?.completeness || "NOT_PROVIDED"} · Driver: {counts.driver} · Vehicle: {counts.vehicle} · Carrier: {counts.carrier} · Other: {counts.other}</p></div>; })()}
+                  {(() => {
+                    const collection = getRoadsideViolationCollection(selectedEvent);
+                    const counts = deriveRoadsideViolationCounts(collection);
+                    const completeness = collection?.completeness || "NOT_PROVIDED";
+                    const cols = "lg:grid-cols-[minmax(7rem,1fr)_minmax(10rem,3fr)_minmax(9rem,1.2fr)_minmax(7rem,1fr)_minmax(6.5rem,0.8fr)]";
+                    const tone = (outcome: string) => outcome === "OUT_OF_SERVICE" ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300" : outcome === "REQUIRES_ATTENTION" ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" : "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
+                    const detail = (label: string, value: unknown) => value === undefined || value === null || value === "" ? null : <span key={label} className="text-[10px] text-muted-foreground"><span className="font-semibold">{label}:</span> {String(value)}</span>;
+                    return <div className="rounded-xl border border-border p-4 bg-muted/10 space-y-3">
+                      <div className="flex items-center justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Violations / Findings</h4><span className="text-[10px] text-muted-foreground">{completeness === "COMPLETE" ? `${counts.total} known` : completeness}</span></div>
+                      {collection?.items.length ? <div className="space-y-1.5">
+                        <div className={`hidden gap-3 px-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:grid ${cols}`}><span>Rule / Section</span><span>Description</span><span>Outcome</span><span>Applicable To</span><span>Demerit Points</span></div>
+                        {collection.items.map((item) => {
+                          const outcome = roadsideFindingOutcome(item);
+                          const applicable = roadsideFindingApplicableTo(item);
+                          return <div key={item.itemId} className="rounded-lg border border-border bg-background px-3 py-2">
+                            <div className={`grid gap-x-3 gap-y-1 text-xs sm:grid-cols-2 lg:items-center ${cols}`}>
+                              <span className="break-words font-mono font-semibold text-foreground"><span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:hidden">Rule / Section:</span>{String(item.facts.ruleRegulationCode || "Not recorded")}</span>
+                              <span className="break-words text-foreground sm:col-span-2 lg:col-span-1"><span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:hidden">Description:</span>{String(item.facts.description || "Not recorded")}</span>
+                              <span><span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:hidden">Outcome:</span><span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-bold ${tone(outcome)}`}>{ROADSIDE_OUTCOME_LABELS[outcome]}</span></span>
+                              <span className="text-foreground"><span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:hidden">Applicable To:</span>{applicable ? ROADSIDE_APPLICABLE_TO_LABELS[applicable] : "Not specified"}</span>
+                              <span className="text-foreground"><span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground lg:hidden">Demerit Points:</span>{item.facts.demeritPoints === null || item.facts.demeritPoints === undefined ? "Not recorded" : String(item.facts.demeritPoints)}</span>
+                            </div>
+                            <details className="mt-1"><summary className="cursor-pointer text-[10px] font-semibold text-muted-foreground">More</summary>
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">{[detail("Regulatory category", item.facts.regulatoryCategory), detail("Subject", item.facts.subjectType), detail("Component / system", item.facts.componentSystem), detail("OOS", item.facts.oosState), detail("Regulator weight", item.facts.regulatorSeverityWeight)]}</div>
+                            </details>
+                          </div>;
+                        })}
+                      </div> : <p className="text-[11px] text-muted-foreground">{completeness === "COMPLETE" ? "No violations were established in the complete collection (known zero)." : completeness === "PARTIAL" ? "Violation itemization is partial; the source may contain additional unitemized violations." : "Violation information was not provided; this is not equivalent to zero violations."}</p>}
+                      <p className="text-[10px] text-muted-foreground">Collection: {collection?.completeness || "NOT_PROVIDED"} · Driver: {counts.driver} · Vehicle: {counts.vehicle} · Carrier: {counts.carrier} · Other: {counts.other}</p>
+                    </div>;
+                  })()}
                 {(() => { const statements = selectedEvent.childCollections?.find((collection) => collection.collectionId === "DRV.PERF.ROADSIDE_INSPECTION.DRIVER_STATEMENTS"); return statements?.items.length ? <div className="rounded-xl border border-border p-4 bg-background space-y-3"><h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Driver Statements / Accounts</h4>{statements.items.map((item) => <div key={item.itemId} className="rounded-lg border border-border bg-muted/10 p-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><ReadOnlyField label="Status" value={String(item.facts.status || "Not recorded")} /><ReadOnlyField label="Date" value={String(item.facts.date || "Not recorded")} /><ReadOnlyField label="Time" value={String(item.facts.time || "Not recorded")} /><ReadOnlyField label="Method" value={String(item.facts.method || "Not recorded")} /></div><p className="mt-2 whitespace-pre-wrap text-xs text-foreground">{String(item.facts.content || "No statement content recorded.")}</p></div>)}</div> : null; })()}
+                <RoadsideEventPanels event={selectedEvent} companyId={relationship.companyId} onChange={() => onRoadsideChange?.()} />
                 </div>
               )}
 
@@ -1416,7 +1472,9 @@ export function DriverPerformanceTab({
                   <button
                     type="button"
                     onClick={handleCloseEvent}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
+                    disabled={selectedEvent.eventType === "Roadside Inspection" && roadsideOpenActionsFor(selectedEvent).length > 0}
+                    title={selectedEvent.eventType === "Roadside Inspection" && roadsideOpenActionsFor(selectedEvent).length > 0 ? "Resolve the required actions first" : undefined}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <CheckCircle2 className="size-3.5" />
                     <span>Close Event</span>

@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import type { CompanyDriverStore, DriverPerformanceEvent } from "@/types/drivers";
 import type { PerformanceFoundationState } from "@/lib/performance-foundation-state";
 import {
-  CLASSIFICATION_OUTCOMES, CONTRIBUTING_FACTOR_DOMAINS, PREVENTABILITY_VALUES, RESPONSIBILITY_CATALOGUE_VERSION, RESPONSIBILITY_PARTIES, RESPONSIBILITY_STANDALONE, ROOT_CAUSE_STATUSES,
+  CLASSIFICATION_OUTCOMES, CONTRIBUTING_FACTOR_DOMAINS, SUBSTANTIATION_OUTCOMES, PREVENTABILITY_VALUES, RESPONSIBILITY_CATALOGUE_VERSION, RESPONSIBILITY_PARTIES, RESPONSIBILITY_STANDALONE, ROOT_CAUSE_STATUSES,
   completePerformanceInvestigation, getActiveDetermination, getActiveDeterminations, getInvestigationsForEvent, openPerformanceInvestigation, recordPerformanceDetermination,
   reopenPerformanceInvestigation, resolvePreventability, setInvestigationContributingFactors, updatePerformanceInvestigation,
   type ContributingFactorDomain,
@@ -13,7 +13,7 @@ import { setPerformanceInvestigationRequirement } from "@/lib/performance-workfl
 
 const inputClass = "mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20";
 const human = (value: string) => value.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
-const DOMAIN_LABELS: Record<string, string> = { DRIVER_STATE: "Driver state", DRIVER_BEHAVIOR: "Driver behaviour", OTHER_ROAD_USER: "Other road user", ROAD_WEATHER: "Road / weather", VEHICLE_EQUIPMENT: "Vehicle / equipment", OPERATIONS: "Operations", SITE_CUSTOMER: "Site / customer", LOADING_UNLOADING: "Loading / unloading", CARGO_SECUREMENT: "Cargo securement", SECURITY: "Security", FRAUD_CRIME: "Fraud / crime", PROCESS_POLICY: "Process / policy", PACKAGING: "Packaging", MAINTENANCE: "Maintenance", HANDLING: "Handling", TRAINING: "Training", EXTERNAL_EVENT: "External event" };
+const DOMAIN_LABELS: Record<string, string> = { DRIVER_STATE: "Driver state", DRIVER_BEHAVIOR: "Driver behaviour", OTHER_ROAD_USER: "Other road user", ROAD_WEATHER: "Road / weather", VEHICLE_EQUIPMENT: "Vehicle / equipment", OPERATIONS: "Operations", SITE_CUSTOMER: "Site / customer", LOADING_UNLOADING: "Loading / unloading", CARGO_SECUREMENT: "Cargo securement", SECURITY: "Security", FRAUD_CRIME: "Fraud / crime", PROCESS_POLICY: "Process / policy", PACKAGING: "Packaging", MAINTENANCE: "Maintenance", HANDLING: "Handling", TRAINING: "Training", EXTERNAL_EVENT: "External event", COMMUNICATION: "Communication" };
 const SOURCE_LABEL = { INVESTIGATION: "Investigation determination", LEGACY_DETERMINATION: "Legacy Collision determination (read-only)", DEPRECATED_COLLISION_FIELD: "Deprecated Collision field (read-only)" } as const;
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -32,10 +32,11 @@ const Submit = ({ children, disabled, onClick }: { children: React.ReactNode; di
  * Collision-facing adapter over the COMMON investigation writers. It adds no model of its own: every action calls the engine
  * (investigation, determinations, contributing factors, requirement) and persists through applyPerformanceEngineWrite.
  */
-export function CollisionInvestigationPanel({ event, state, run, subject = "Collision" }: { event: DriverPerformanceEvent; state: PerformanceFoundationState; run: EngineRun; /** Display noun for audit text; the panel itself is the generic adapter over the common engine. */ subject?: string }) {
+export function CollisionInvestigationPanel({ event, state, run, subject = "Collision", substantiation = false }: { event: DriverPerformanceEvent; state: PerformanceFoundationState; run: EngineRun; /** Show the Substantiation determination (Customer Event Complaints only). */ substantiation?: boolean; /** Display noun for audit text; the panel itself is the generic adapter over the common engine. */ subject?: string }) {
   const [actor, setActor] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [classification, setClassification] = useState({ outcome: "", notes: "" });
+  const [substantiated, setSubstantiated] = useState({ outcome: "", notes: "" });
   const [prevent, setPrevent] = useState({ value: "", notes: "" });
   const [resp, setResp] = useState({ primary: "", contributing: [] as string[], notes: "" });
   const [root, setRoot] = useState({ category: "", finding: "", status: "" });
@@ -53,7 +54,7 @@ export function CollisionInvestigationPanel({ event, state, run, subject = "Coll
     try { setError(null); run(description, writer); } catch (caught) { setError(caught instanceof Error ? caught.message : "The action could not be recorded."); }
   };
   const by = actor.trim();
-  const activeDetermination = (subject: "CLASSIFICATION" | "PREVENTABILITY" | "RESPONSIBILITY" | "ROOT_CAUSE") => (active ? getActiveDetermination(state, active.id, subject) : undefined);
+  const activeDetermination = (subject: "CLASSIFICATION" | "PREVENTABILITY" | "RESPONSIBILITY" | "ROOT_CAUSE" | "SUBSTANTIATION") => (active ? getActiveDetermination(state, active.id, subject) : undefined);
   const rootCauses = active ? getActiveDeterminations(state, active.id, "ROOT_CAUSE") : [];
 
   const recordPreventability = () => act(`Recorded ${subject} preventability through the investigation engine.`, (store) => {
@@ -103,6 +104,15 @@ export function CollisionInvestigationPanel({ event, state, run, subject = "Coll
             <div className="grid gap-2 sm:grid-cols-2"><Select label="Outcome" value={classification.outcome} options={CLASSIFICATION_OUTCOMES} onChange={(outcome) => setClassification({ ...classification, outcome })} /><Text label="Notes" value={classification.notes} onChange={(notes) => setClassification({ ...classification, notes })} /></div>
             <Submit disabled={!classification.outcome} onClick={() => act(`Recorded ${subject} classification.`, (store) => recordPerformanceDetermination(store, { investigationId: active.id, assessment: { subject: "CLASSIFICATION", outcome: classification.outcome as never, notes: classification.notes.trim() || undefined }, determinedBy: by, determinationDate: today() }))}>Record classification</Submit>
           </div>
+
+          {substantiation ? (
+            <div className="space-y-2 rounded-lg border border-border bg-background p-3" data-testid="ce-substantiation-form">
+              <div className="text-[11px] font-bold">Substantiation{activeDetermination("SUBSTANTIATION") ? " (recorded)" : " (pending assessment)"}</div>
+              <p className="text-[10px] text-muted-foreground">Whether the complaint's allegations were supported. Separate from Classification, which is still needed to complete.</p>
+              <div className="grid gap-2 sm:grid-cols-2"><Select label="Outcome" value={substantiated.outcome} options={SUBSTANTIATION_OUTCOMES} onChange={(outcome) => setSubstantiated({ ...substantiated, outcome })} /><Text label="Notes" value={substantiated.notes} onChange={(notes) => setSubstantiated({ ...substantiated, notes })} /></div>
+              <Submit disabled={!substantiated.outcome} onClick={() => act(`Recorded ${subject} substantiation.`, (store) => recordPerformanceDetermination(store, { investigationId: active.id, assessment: { subject: "SUBSTANTIATION", outcome: substantiated.outcome as never, notes: substantiated.notes.trim() || undefined }, determinedBy: by, determinationDate: today() }))}>Record substantiation</Submit>
+            </div>
+          ) : null}
 
           <div className="space-y-2 rounded-lg border border-border bg-background p-3">
             <div className="text-[11px] font-bold">Responsibility</div>

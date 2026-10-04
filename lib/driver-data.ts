@@ -11,6 +11,7 @@ import type { UnsafeConditionResolutionOutcome } from "@/lib/performance-near-mi
 import { validateNewCollision } from "@/lib/performance-collision"
 import { validateNewCargoIncident } from "@/lib/performance-cargo"
 import { validateNewSpillRelease } from "@/lib/performance-spill"
+import { validateNewCustomerEvent } from "@/lib/performance-customer-event"
 
 import type {
   AddressRecord,
@@ -1161,6 +1162,10 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
     const linkedVehicleIds = [data.vehicleId, ...(data.canonicalLinks || []).filter((link) => link.entityType === "Vehicle" || link.entityType === "Trailer").map((link) => link.recordId)].filter((id): id is string => Boolean(id))
     const missingVehicle = linkedVehicleIds.find((id) => !knownVehicles.has(id))
     if (missingVehicle) throw new Error(`${data.eventType} relationship target does not exist in the company Vehicle store: ${missingVehicle}.`)
+  }
+  if (data.eventType === "Customer Event") {
+    const familyErrors = validateNewCustomerEvent({ ...data, id: "PENDING_EVENT", driverMasterId })
+    if (familyErrors.length) throw new Error(familyErrors[0])
   }
   if (data.structuredEventFacts) {
     const factValues = Object.fromEntries(data.structuredEventFacts.map((fact) => {

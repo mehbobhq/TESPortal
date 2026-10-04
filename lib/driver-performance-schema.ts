@@ -1,6 +1,7 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
+import { CE_COMPLAINT_CATEGORIES, CE_INTAKE_CHANNELS, CE_SUBTYPES, CE_YES_NO, CE_YES_NO_UNKNOWN } from "@/lib/performance-customer-event-taxonomy";
 import { SPILL_CLEANUP_STATUSES, SPILL_RELEASE_CONDITIONS, SPILL_RELEASE_DETERMINATIONS, SPILL_RELEASE_FORMS, SPILL_RELEASE_MECHANISMS, SPILL_SOURCE_CATEGORIES, SPILL_YES_NO_UNKNOWN } from "@/lib/performance-spill-taxonomy";
 import { CARGO_CONTEXT_STATUSES, CARGO_CUSTODY_STAGES, CARGO_PRIMARY_FAMILIES, CARGO_SECONDARY_ALL, CARGO_YES_NO_UNKNOWN } from "@/lib/performance-cargo-taxonomy";
 import { COLLISION_CARGO_IMPACT, COLLISION_DRIVER_ACTIONS, COLLISION_DRIVER_ACTIVITIES, COLLISION_ENFORCEMENT, COLLISION_FIRST_HARMFUL_EVENTS, COLLISION_HAZMAT, COLLISION_INJURY_STATUSES, COLLISION_MANNERS, COLLISION_POLICE_RESPONSES, COLLISION_TRAFFIC, COLLISION_TYPES, COLLISION_VISIBILITY, COLLISION_YES_NO_UNKNOWN } from "@/lib/performance-collision-taxonomy";
@@ -66,6 +67,12 @@ export type PerformanceStepKey =
   | "SPILL_RESPONSE"
   | "SPILL_CLEANUP"
   | "SPILL_REGULATORY"
+  | "CE_CUSTOMER"
+  | "CE_OPERATIONS"
+  | "CE_PARTIES"
+  | "CE_DESCRIPTION"
+  | "CE_SUBTYPE"
+  | "CE_RESPONSE"
   | "RELATIONSHIPS"
   | "EVIDENCE"
   | "REVIEW";
@@ -536,6 +543,13 @@ const REPORTER_OPTIONS: readonly ControlledOption[] = [
 ];
 
 const SOURCE_OPTIONS: Readonly<Record<string, readonly ControlledOption[]>> = {
+  CUSTOMER_EVENT: [
+    { value: "Customer", label: "Customer" },
+    { value: "Company Staff", label: "Company Staff" },
+    { value: "Driver Report", label: "Driver Report" },
+    { value: "Camera", label: "Camera" },
+    { value: "Other", label: "Other" },
+  ],
   REGULATORY_DOCUMENT: [
     { value: "Roadside Inspection", label: "Roadside Inspection" },
     { value: "Citation", label: "Citation" },
@@ -632,6 +646,7 @@ const SOURCE_POLICY_FAMILIES = {
   NEAR_MISS: makeSourcePolicy("NEAR_MISS", ORIGINS_DOCUMENT_MANUAL_API),
   CARGO_INCIDENT: makeSourcePolicy("CARGO", ORIGINS_DOCUMENT_MANUAL_API),
   CUSTOMER: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
+  CUSTOMER_EVENT: makeSourcePolicy("CUSTOMER_EVENT", ORIGINS_DOCUMENT_MANUAL_API),
   CARGO: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   SECURITY: makeSourcePolicy("SECURITY", ORIGINS_DOCUMENT_MANUAL_API),
   EQUIPMENT_MAINTENANCE: makeSourcePolicy("EQUIPMENT_MAINTENANCE", ORIGINS_DOCUMENT_MANUAL_API),
@@ -722,7 +737,7 @@ export const PERFORMANCE_EVENT_SCHEMA_VERSION = "1.2";
 export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, PerformanceCategoryOwnership>> = {
   "Collision": "RECORDABLE_EVENT", "Near Miss": "RECORDABLE_EVENT", "Roadside Inspection": "RECORDABLE_EVENT", "Out-of-Service Order": "LEGACY_READ_ONLY",
   "HOS Violation": "AUTHORITATIVE_LINKED_RECORD", "Traffic Citation": "AUTHORITATIVE_LINKED_RECORD", "Cargo Incident": "RECORDABLE_EVENT", "Cargo Damage": "LEGACY_READ_ONLY", "Cargo Theft": "LEGACY_READ_ONLY",
-  "Spill or Release": "RECORDABLE_EVENT", "Customer Complaint": "RECORDABLE_EVENT", "Customer Commendation": "RECORDABLE_EVENT", "Positive Safety Observation": "ALIAS",
+  "Spill or Release": "RECORDABLE_EVENT", "Customer Event": "RECORDABLE_EVENT", "Customer Complaint": "LEGACY_READ_ONLY", "Customer Commendation": "LEGACY_READ_ONLY", "Positive Safety Observation": "ALIAS",
   "Coaching Session": "COMPANY_ACTION", "Disciplinary Action": "COMPANY_ACTION", "Corrective Action Plan": "COMPANY_ACTION", "Injury": "LEGACY_READ_ONLY",
   "Security Incident": "RECORDABLE_EVENT", "Warning": "LEGACY_READ_ONLY", "Violation": "LEGACY_READ_ONLY", "Citation-linked Event": "LEGACY_READ_ONLY",
   "Equipment-related Event": "ALIAS", "Equipment Failure / Critical Defect": "RECORDABLE_EVENT", "Safety Observation": "LEGACY_READ_ONLY", "Customer Compliment": "ALIAS", "Telematics / Camera Observation": "SPECIALIZED_WORKSPACE_RECORD",
@@ -730,7 +745,7 @@ export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, Performa
   "Harsh Cornering": "RECORDABLE_EVENT", "Following Distance": "RECORDABLE_EVENT", "Fatigue Indicator": "RECORDABLE_EVENT", "Device / Data Integrity": "RECORDABLE_EVENT",
   "Trip Completion / Service Performance": "LEGACY_READ_ONLY", "Lane Departure": "LEGACY_READ_ONLY", "Seatbelt": "RECORDABLE_EVENT", "Distracted Driving": "RECORDABLE_EVENT",
   "Idle Time": "RECORDABLE_EVENT", "Route Deviation": "RECORDABLE_EVENT", "Backing": "LEGACY_READ_ONLY", "Stop Sign / Red Light": "LEGACY_READ_ONLY", "Railroad Crossing": "LEGACY_READ_ONLY",
-  "Customer-Site Behavior": "RECORDABLE_EVENT", "PPE / Safety Protocol": "LEGACY_READ_ONLY"
+  "Customer-Site Behavior": "LEGACY_READ_ONLY", "PPE / Safety Protocol": "LEGACY_READ_ONLY"
 };
 
 
@@ -771,6 +786,19 @@ const SPILL_STEPS: readonly PerformanceStepDefinition[] = [
   { key: "SPILL_RESPONSE", label: "Emergency Response" },
   { key: "SPILL_CLEANUP", label: "Cleanup" },
   { key: "SPILL_REGULATORY", label: "Regulatory" },
+  { key: "EVIDENCE", label: "Evidence" },
+  { key: "REVIEW", label: "Review" },
+];
+
+const CUSTOMER_EVENT_STEPS: readonly PerformanceStepDefinition[] = [
+  { key: "CATEGORY", label: "Category" },
+  { key: "OCCURRENCE", label: "Occurrence" },
+  { key: "CE_CUSTOMER", label: "Customer & Site" },
+  { key: "CE_OPERATIONS", label: "Shipment & Operations" },
+  { key: "CE_PARTIES", label: "People & Parties" },
+  { key: "CE_DESCRIPTION", label: "Description" },
+  { key: "CE_SUBTYPE", label: "Subtype Details" },
+  { key: "CE_RESPONSE", label: "Immediate Response" },
   { key: "EVIDENCE", label: "Evidence" },
   { key: "REVIEW", label: "Review" },
 ];
@@ -980,6 +1008,58 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
       text("material", "Legacy Material / Substance", { hiddenInCreation: true }), number("quantityReleased", "Legacy Quantity Released", "dynamic", { hiddenInCreation: true }),
       select("releaseEnvironment", "Legacy Release Environment", ["Roadway", "Customer Site", "Water", "Soil", "Vehicle / Equipment", "Contained", "Unknown", "Other"], { hiddenInCreation: true }),
       bool("containmentPerformed", "Legacy Containment Performed", { hiddenInCreation: true }), bool("emergencyResponse", "Legacy Emergency Response", { hiddenInCreation: true }),
+      ...base],
+  },
+  {
+    code: "CUSTOMER_EVENT", value: "Customer Event", label: "Customer Event", description: "One customer-related occurrence: a Complaint, a Commendation or a Site Behavior observation. Parties, statements, claims and subtype records are separate children; determinations belong to the common investigation.", group: "Customer", sources: ["Customer", "Company Staff", "Driver Report", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING", "COMPLAINT_SUBSTANTIATION", "ROOT_CAUSE_ANALYSIS"], analyticsEligible: true, positiveEligible: true, temporalBehavior: "Occurrence",
+    policy: { ...DOCUMENT_POLICY, steps: CUSTOMER_EVENT_STEPS },
+    fields: [
+      select("customerEventType", "Customer Event Type", CE_SUBTYPES, { required: true, dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_EVENT_TYPE", helpText: "Complaint, Commendation or Site Behavior. It cannot be changed after the event is saved." }),
+      select("intakeChannel", "Intake Channel", CE_INTAKE_CHANNELS, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.INTAKE_CHANNEL", helpText: "How the feedback or observation reached TES. This is not the source." }),
+      select("eventTimeZone", "Time Zone (IANA)", IANA_TIME_ZONES, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.EVENT_TIME_ZONE", helpText: "Zone where the occurrence happened. Not derived from this browser." }),
+      text("occurrenceWindowStart", "Estimated Occurrence Window - Start", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.OCCURRENCE_WINDOW_START" }),
+      text("occurrenceWindowEnd", "Estimated Occurrence Window - End", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.OCCURRENCE_WINDOW_END" }),
+      text("occurrenceWindowBasis", "Basis for Estimated Window", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.OCCURRENCE_WINDOW_BASIS" }),
+      date("discoveryDate", "Discovery Date", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.DISCOVERY_DATE" }),
+      time("discoveryTime", "Discovery Time", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.DISCOVERY_TIME" }),
+      time("reportedTime", "Received Time", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REPORTED_TIME", helpText: "When the feedback or observation was received. Separate from when it occurred." }),
+      text("customerName", "Customer", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_NAME" }),
+      text("customerRole", "Customer Role", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_ROLE", helpText: "Free text, e.g. shipper, receiver, broker." }),
+      text("customerContact", "Customer Contact", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_CONTACT" }),
+      text("customerSite", "Customer Site / Facility", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_SITE" }),
+      text("siteArea", "Site Area / Dock / Yard", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.SITE_AREA" }),
+      text("shipperName", "Shipper", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.SHIPPER_NAME" }),
+      text("receiverName", "Receiver", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RECEIVER_NAME" }),
+      text("brokerName", "Broker", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.BROKER_NAME" }),
+      text("loadReference", "Load Reference", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.LOAD_REFERENCE" }),
+      text("shipmentReference", "Shipment Reference", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.SHIPMENT_REFERENCE" }),
+      text("bolPro", "BOL / PRO", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.BOL_PRO" }),
+      text("originText", "Origin", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.ORIGIN" }),
+      text("destinationText", "Destination", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.DESTINATION" }),
+      text("appointmentReference", "Appointment Reference", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.APPOINTMENT_REFERENCE" }),
+      text("routeReference", "Route Reference", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.ROUTE_REFERENCE" }),
+      text("serviceType", "Service Type", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.SERVICE_TYPE" }),
+      text("operatingStage", "Operating Stage", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.OPERATING_STAGE" }),
+      area("normalizedNarrative", "Normalized Description", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.NORMALIZED_NARRATIVE", helpText: "TES's neutral summary of what was reported or observed. The original wording is kept separately." }),
+      select("complaintPrimaryCategory", "Complaint Primary Category", CE_COMPLAINT_CATEGORIES, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.COMPLAINT_PRIMARY_CATEGORY", helpText: "Classification only. It does not establish cause, responsibility or a violation." }),
+      text("complaintSecondaryCategories", "Complaint Secondary Categories", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.COMPLAINT_SECONDARY_CATEGORIES", helpText: "Stored as controlled values separated by |." }),
+      area("customerImpactNote", "Customer Impact (as reported)", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.CUSTOMER_IMPACT_NOTE" }),
+      select("operationalInterruption", "Operational Interruption / Delay", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.OPERATIONAL_INTERRUPTION" }),
+      select("safetySignificance", "Safety Significance", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.SAFETY_SIGNIFICANCE" }),
+      select("regulatorySignificance", "Regulatory Significance", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REGULATORY_SIGNIFICANCE" }),
+      select("coachingGiven", "Coaching Given", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_COACHING_GIVEN" }),
+      select("activityStopped", "Activity Stopped", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_ACTIVITY_STOPPED" }),
+      select("supervisorContacted", "Supervisor Contacted", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_SUPERVISOR_CONTACTED" }),
+      select("securityContacted", "Security Contacted", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_SECURITY_CONTACTED" }),
+      select("emergencyServicesContacted", "Emergency Services Contacted", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_EMERGENCY_SERVICES_CONTACTED" }),
+      select("areaSecured", "Area Secured", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_AREA_SECURED" }),
+      select("noImmediateAction", "No Immediate Action", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_NO_IMMEDIATE_ACTION" }),
+      select("otherImmediateAction", "Other Immediate Action", CE_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_OTHER" }),
+      text("otherImmediateActionNote", "Other Immediate Action - Note", { dataPointId: "DRV.PERF.CUSTOMER_EVENT.RESPONSE_OTHER_NOTE" }),
+      select("complaintAssessmentRequired", "Complaint Assessment Required", CE_YES_NO, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REQUIRE_COMPLAINT_ASSESSMENT" }),
+      select("customerResponseRequired", "Customer Response Required", CE_YES_NO, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REQUIRE_CUSTOMER_RESPONSE" }),
+      select("siteReviewRequired", "Site Review Required", CE_YES_NO, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REQUIRE_SITE_REVIEW" }),
+      select("recognitionReviewRequired", "Recognition Review Required", CE_YES_NO, { dataPointId: "DRV.PERF.CUSTOMER_EVENT.REQUIRE_RECOGNITION_REVIEW" }),
       ...base],
   },
   {
@@ -1441,6 +1521,7 @@ const CATEGORY_SOURCE_POLICY_FAMILY: Readonly<Partial<Record<EventType, Performa
   "Cargo Damage": SOURCE_POLICY_FAMILIES.CARGO,
   "Cargo Theft": SOURCE_POLICY_FAMILIES.SECURITY,
   "Spill or Release": SOURCE_POLICY_FAMILIES.EMERGENCY,
+  "Customer Event": SOURCE_POLICY_FAMILIES.CUSTOMER_EVENT,
   "Customer Complaint": SOURCE_POLICY_FAMILIES.CUSTOMER,
   "Customer Commendation": SOURCE_POLICY_FAMILIES.CUSTOMER,
   "Injury": SOURCE_POLICY_FAMILIES.COLLISION_INCIDENT,

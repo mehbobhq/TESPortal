@@ -15,12 +15,15 @@ import { collisionWorkflowProvider } from "./performance-collision.ts"
 import { cargoWorkflowProvider } from "./performance-cargo.ts"
 // @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution (unit tested under `node --test`); tsconfig is intentionally left unchanged.
 import { spillWorkflowProvider } from "./performance-spill.ts"
+// @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution (unit tested under `node --test`); tsconfig is intentionally left unchanged.
+import { customerEventWorkflowProvider } from "./performance-customer-event.ts"
 
 const FAMILY_PROVIDERS: Readonly<Record<string, WorkflowProvider>> = {
   "Near Miss": nearMissWorkflowProvider,
   "Collision": collisionWorkflowProvider,
   "Cargo Incident": cargoWorkflowProvider,
   "Spill or Release": spillWorkflowProvider,
+  "Customer Event": customerEventWorkflowProvider,
 }
 
 export const getWorkflowProvidersForEventType = (eventType: string): readonly WorkflowProvider[] => {

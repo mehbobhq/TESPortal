@@ -638,9 +638,9 @@ test("38. a reviewer-required investigation drives the workflow through the comm
 
 test("39. the five new contributing-factor domains are appended and every existing domain is preserved", () => {
   const domains: readonly string[] = CONTRIBUTING_FACTOR_DOMAINS;
-  assert.deepEqual(domains.slice(-5), ["PACKAGING", "MAINTENANCE", "HANDLING", "TRAINING", "EXTERNAL_EVENT"]);
+  assert.deepEqual(domains.slice(12, 17), ["PACKAGING", "MAINTENANCE", "HANDLING", "TRAINING", "EXTERNAL_EVENT"]);
   assert.deepEqual(domains.slice(0, 12), ["DRIVER_STATE", "DRIVER_BEHAVIOR", "OTHER_ROAD_USER", "ROAD_WEATHER", "VEHICLE_EQUIPMENT", "OPERATIONS", "SITE_CUSTOMER", "LOADING_UNLOADING", "CARGO_SECUREMENT", "SECURITY", "FRAUD_CRIME", "PROCESS_POLICY"], "historical domains are neither renamed nor reordered");
-  assert.equal(domains.length, 17);
+  assert.equal(domains.length, 18); // 17 + the later additive COMMUNICATION
   const event = newSpill();
   const opened = openPerformanceInvestigation(state([event]), { eventId: "SPL-1", openedBy: "SM" });
   const factors = setInvestigationContributingFactors(opened.state, opened.investigation.id, [{ domain: "MAINTENANCE", factor: "Hose past service interval", role: "PRIMARY" }, { domain: "PACKAGING", factor: "Tote closure", role: "SECONDARY" }, { domain: "HANDLING", factor: "Forklift contact", role: "SECONDARY" }, { domain: "TRAINING", factor: "Spill kit use", role: "SECONDARY" }, { domain: "EXTERNAL_EVENT", factor: "Third-party vehicle strike", role: "SECONDARY" }, { domain: "VEHICLE_EQUIPMENT", factor: "Fitting", role: "SECONDARY" }], { by: "SM" });

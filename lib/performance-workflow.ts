@@ -40,6 +40,10 @@ export type WorkflowReasonCode =
   | "REGULATORY_NOTIFICATION_INCOMPLETE"
   | "REGULATORY_REPORT_INCOMPLETE"
   | "CLEANUP_VERIFICATION_PENDING"
+  | "COMPLAINT_ASSESSMENT_PENDING"
+  | "CUSTOMER_RESPONSE_PENDING"
+  | "SITE_REVIEW_REQUIRED"
+  | "RECOGNITION_REVIEW_PENDING"
 
 /** OBLIGATION = work remains. REVIEW = waiting / review-type condition. CLOSURE = the final deliberate review. */
 export type WorkflowReasonKind = "OBLIGATION" | "REVIEW" | "CLOSURE"
@@ -59,6 +63,10 @@ export const WORKFLOW_REASON_CATALOGUE: Readonly<Record<WorkflowReasonCode, { la
   REGULATORY_NOTIFICATION_INCOMPLETE: { label: "Regulatory notification incomplete", resolvedLabel: "Regulatory notification completed", priority: 34 },
   REGULATORY_REPORT_INCOMPLETE: { label: "Regulatory report incomplete", resolvedLabel: "Regulatory report completed", priority: 36 },
   CLEANUP_VERIFICATION_PENDING: { label: "Cleanup verification pending", resolvedLabel: "Cleanup verification completed", priority: 45 },
+  COMPLAINT_ASSESSMENT_PENDING: { label: "Complaint assessment pending", resolvedLabel: "Complaint assessment completed", priority: 31 },
+  CUSTOMER_RESPONSE_PENDING: { label: "Customer response pending", resolvedLabel: "Customer response provided", priority: 33 },
+  SITE_REVIEW_REQUIRED: { label: "Site review required", resolvedLabel: "Site review completed", priority: 37 },
+  RECOGNITION_REVIEW_PENDING: { label: "Recognition review pending", resolvedLabel: "Recognition review completed", priority: 38 },
 }
 
 export interface WorkflowReason {

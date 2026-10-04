@@ -61,6 +61,8 @@ import { NearMissEventPanel, workflowStateLabel } from "./NearMissEventPanel";
 import { CollisionEventPanel } from "./CollisionEventPanel";
 import { CargoEventPanel } from "./CargoEventPanel";
 import { SpillEventPanel } from "./SpillEventPanel";
+import { CustomerEventPanel, LegacyCustomerEventPanel } from "./CustomerEventPanel";
+import { customerEventCounterBucket, customerEventSubtype } from "@/lib/performance-customer-event";
 import { isNewTaxonomySpill } from "@/lib/performance-spill";
 import { deriveEventWorkflow } from "@/lib/performance-workflow-registry";
 
@@ -128,6 +130,7 @@ const getEventFact = (event: DriverPerformanceEvent, key: string): unknown => {
 
 /** Human-facing title. Stored eventType is never altered; legacy categories keep their stored name. */
 const eventDisplayTitle = (event: DriverPerformanceEvent): string => {
+  if (event.eventType === "Customer Event") { const subtype = customerEventSubtype(event); return subtype ? `Customer Event: ${subtype === "COMPLAINT" ? "Complaint" : subtype === "COMMENDATION" ? "Commendation" : "Site Behavior"}` : "Customer Event"; }
   if (event.eventType !== "Roadside Inspection") return performanceEventTitle(event.eventType);
   const fields = DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"]?.fields || [];
   return performanceEventTitle("Roadside Inspection", roadsideOverallOutcomeLabel(eventFactsByKey(event, fields), getRoadsideViolationCollection(event)));
@@ -248,7 +251,7 @@ export function DriverPerformanceTab({
   const intelligenceMetrics = useMemo(() => {
     const regulatory = activeEvents.filter((event) => ["Roadside Inspection", "Out-of-Service Order", "Traffic Citation", "Violation", "Warning"].includes(event.eventType));
     const safety = activeEvents.filter((event) => ["Collision", "Near Miss", "Speeding", "Harsh Braking", "Harsh Acceleration", "Harsh Cornering", "Following Distance", "Fatigue Indicator", "Lane Departure", "Seatbelt", "Distracted Driving", "Backing", "Stop Sign / Red Light", "Railroad Crossing"].includes(event.eventType));
-    const operational = activeEvents.filter((event) => ["Trip Completion / Service Performance", "Idle Time", "Route Deviation", "Customer-Site Behavior"].includes(event.eventType));
+    const operational = activeEvents.filter((event) => ["Trip Completion / Service Performance", "Idle Time", "Route Deviation", "Customer-Site Behavior"].includes(event.eventType) || (event.eventType === "Customer Event" && customerEventCounterBucket(event) === "operational"));
     const vehicleInteraction = activeEvents.filter((event) => event.vehicleId || event.canonicalLinks?.some((link) => link.entityType === "Vehicle"));
     const dataIntegrity = activeEvents.filter((event) => event.eventType === "Device / Data Integrity");
     const oos = activeEvents.filter((event) => event.eventType === "Roadside Inspection" && (event.childCollections || []).some((collection) => collection.items.some((item) => item.facts.oosState === "YES")) || (event.eventType === "Roadside Inspection" && ["OOS_ISSUED"].includes(event.subjectState || "")));
@@ -265,7 +268,7 @@ export function DriverPerformanceTab({
   // One read-only snapshot of the common engine's inputs: Collision preventability counters and the derived workflow both read it.
   const foundationState = useMemo(() => ({ events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence }), [events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence]);
   // Near Miss and Collision workflow is derived by the common engine (never from a stored badge).
-  const engineWorkflow = useMemo(() => selectedEvent && (selectedEvent.eventType === "Near Miss" || selectedEvent.eventType === "Collision" || selectedEvent.eventType === "Cargo Incident" || selectedEvent.eventType === "Spill or Release")
+  const engineWorkflow = useMemo(() => selectedEvent && (selectedEvent.eventType === "Near Miss" || selectedEvent.eventType === "Collision" || selectedEvent.eventType === "Cargo Incident" || selectedEvent.eventType === "Spill or Release" || selectedEvent.eventType === "Customer Event")
     ? deriveEventWorkflow(selectedEvent, foundationState)
     : null, [selectedEvent, foundationState]);
 
@@ -328,8 +331,8 @@ export function DriverPerformanceTab({
 
     const hosViolations = filteredByWindow.filter((e) => e.eventType === "HOS Violation");
     const citations = filteredByWindow.filter((e) => e.eventType === "Traffic Citation");
-    const complaints = filteredByWindow.filter((e) => e.eventType === "Customer Complaint");
-    const commendations = filteredByWindow.filter((e) => e.eventType === "Customer Commendation" || e.eventType === "Positive Safety Observation");
+    const complaints = filteredByWindow.filter((e) => e.eventType === "Customer Complaint" || (e.eventType === "Customer Event" && customerEventCounterBucket(e) === "complaint"));
+    const commendations = filteredByWindow.filter((e) => e.eventType === "Customer Commendation" || e.eventType === "Positive Safety Observation" || (e.eventType === "Customer Event" && customerEventCounterBucket(e) === "commendation"));
 
     // Canonical Coaching & CAP derivation from companyActions
     const canonicalCoachings = filteredActionsByWindow.filter(isCoachingAction);
@@ -1264,6 +1267,12 @@ export function DriverPerformanceTab({
               </div>
 
               {/* Collision Specific Payload */}
+              {selectedEvent.eventType === "Customer Event" && engineWorkflow ? (
+                <CustomerEventPanel event={selectedEvent} workflow={engineWorkflow} state={foundationState} evidence={evidence || []} run={onEngineWrite ? (description, writer) => onEngineWrite(selectedEvent.id, description, writer) : undefined} />
+              ) : null}
+
+              {(selectedEvent.eventType === "Customer Complaint" || selectedEvent.eventType === "Customer Commendation" || selectedEvent.eventType === "Customer-Site Behavior") ? <LegacyCustomerEventPanel event={selectedEvent} /> : null}
+
               {selectedEvent.eventType === "Spill or Release" && engineWorkflow ? (
                 <SpillEventPanel event={selectedEvent} workflow={engineWorkflow} state={foundationState} evidence={evidence || []} run={onEngineWrite ? (description, writer) => onEngineWrite(selectedEvent.id, description, writer) : undefined} />
               ) : null}
@@ -1358,7 +1367,7 @@ export function DriverPerformanceTab({
                 <NearMissEventPanel event={selectedEvent} workflow={engineWorkflow} evidence={evidence || []} onResolveUnsafeCondition={onResolveNearMissUnsafeCondition ? (input) => onResolveNearMissUnsafeCondition(selectedEvent.id, input) : undefined} />
               ) : null}
 
-              {selectedEvent.eventType !== "Near Miss" && selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && selectedEvent.eventType !== "Spill or Release" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
+              {selectedEvent.eventType !== "Near Miss" && selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && selectedEvent.eventType !== "Spill or Release" && selectedEvent.eventType !== "Customer Event" && selectedEvent.eventType !== "Customer Complaint" && selectedEvent.eventType !== "Customer Commendation" && selectedEvent.eventType !== "Customer-Site Behavior" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
                 <div className="space-y-3">
                   <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Category-Specific Structured Facts</span>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-border p-4 bg-background">
@@ -1455,7 +1464,7 @@ export function DriverPerformanceTab({
                     Archive Event
                   </button>
                 )}
-                {selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && !(selectedEvent.eventType === "Spill or Release" && isNewTaxonomySpill(selectedEvent)) && selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
+                {selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && selectedEvent.eventType !== "Customer Event" && !(selectedEvent.eventType === "Spill or Release" && isNewTaxonomySpill(selectedEvent)) && selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
                   <button
                     type="button"
                     onClick={handleCloseEvent}

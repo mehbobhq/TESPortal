@@ -38,7 +38,7 @@ export const PERFORMANCE_EVENT_FAMILIES: readonly PerformanceEventFamily[] = [
   { key: "ROADSIDE_INSPECTION", label: "Roadside Inspection", members: [{ eventType: "Roadside Inspection" }] },
   { key: "CARGO_INCIDENT", label: "Cargo Incident", members: [{ eventType: "Cargo Incident" }, { eventType: "Cargo Damage", subtypeLabel: "Damage" }, { eventType: "Cargo Theft", subtypeLabel: "Theft" }] },
   { key: "SPILL_OR_RELEASE", label: "Spill or Release", members: [{ eventType: "Spill or Release" }] },
-  { key: "CUSTOMER_EVENT", label: "Customer Event", members: [{ eventType: "Customer Complaint", subtypeLabel: "Complaint" }, { eventType: "Customer Commendation", subtypeLabel: "Commendation" }, { eventType: "Customer-Site Behavior", subtypeLabel: "Site Behavior" }] },
+  { key: "CUSTOMER_EVENT", label: "Customer Event", members: [{ eventType: "Customer Event" }, { eventType: "Customer Complaint", subtypeLabel: "Complaint" }, { eventType: "Customer Commendation", subtypeLabel: "Commendation" }, { eventType: "Customer-Site Behavior", subtypeLabel: "Site Behavior" }] },
   { key: "SECURITY_INCIDENT", label: "Security Incident", members: [{ eventType: "Security Incident" }] },
   { key: "EQUIPMENT_FAILURE", label: "Equipment Failure / Critical Defect", members: [{ eventType: "Equipment Failure / Critical Defect" }] },
   { key: "DEVICE_DATA_INTEGRITY", label: "Device / Data Integrity", members: [{ eventType: "Device / Data Integrity" }] },
@@ -63,6 +63,7 @@ export const PERFORMANCE_EVENT_FAMILIES: readonly PerformanceEventFamily[] = [
  */
 export const LEGACY_ONLY_PERFORMANCE_EVENT_TYPES: readonly EventType[] = [
   "Out-of-Service Order", "Warning", "Violation", "Stop Sign / Red Light", "Railroad Crossing",
+  "Customer Complaint", "Customer Commendation", "Customer-Site Behavior",
   "Cargo Damage", "Cargo Theft", "Injury", "Safety Observation", "Trip Completion / Service Performance", "Backing", "Lane Departure", "PPE / Safety Protocol",
 ]
 

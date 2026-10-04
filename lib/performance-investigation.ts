@@ -22,6 +22,7 @@ import type {
   ResponsibilityStandalone,
   RootCauseRole,
   RootCauseStatus,
+  SubstantiationOutcome,
 } from "@/types/drivers"
 import type { FoundationEvent, PerformanceFoundationState } from "@/lib/performance-foundation-state"
 // @ts-expect-error TS5097: .ts extension is required for Node's native runtime module resolution (unit tested under `node --test`); tsconfig is intentionally left unchanged.
@@ -37,12 +38,13 @@ export const RESPONSIBILITY_CATALOGUE_VERSION = 1
 
 export const INVESTIGATION_STATUSES: readonly PerformanceInvestigationStatus[] = ["OPEN", "AWAITING_INFORMATION", "COMPLETED", "CANCELLED"]
 export const CLASSIFICATION_OUTCOMES: readonly ClassificationOutcome[] = ["CONFIRMED_AS_REPORTED", "RECLASSIFIED", "DUPLICATE", "INSUFFICIENT_INFORMATION", "NOT_SAFETY_RELATED"]
+export const SUBSTANTIATION_OUTCOMES: readonly SubstantiationOutcome[] = ["SUBSTANTIATED", "PARTIALLY_SUBSTANTIATED", "UNSUBSTANTIATED", "UNABLE_TO_DETERMINE"]
 export const PREVENTABILITY_VALUES: readonly PreventabilityValue[] = ["PREVENTABLE", "NOT_PREVENTABLE", "PARTIALLY_PREVENTABLE", "UNDETERMINED"]
 export const RESPONSIBILITY_PARTIES: readonly ResponsibilityParty[] = ["CARRIER_DRIVER", "OTHER_ROAD_USER", "THIRD_PARTY", "OPERATIONAL_PROCESS", "EQUIPMENT_MAINTENANCE", "ENVIRONMENT_SITE"]
 export const RESPONSIBILITY_STANDALONE: readonly ResponsibilityStandalone[] = ["NO_DETERMINATION", "UNDETERMINED"]
 export const ROOT_CAUSE_STATUSES: readonly RootCauseStatus[] = ["DETERMINED", "PROBABLE", "UNDETERMINED"]
 export const ROOT_CAUSE_ROLES: readonly RootCauseRole[] = ["PRIMARY", "CONTRIBUTING"]
-export const CONTRIBUTING_FACTOR_DOMAINS = ["DRIVER_STATE", "DRIVER_BEHAVIOR", "OTHER_ROAD_USER", "ROAD_WEATHER", "VEHICLE_EQUIPMENT", "OPERATIONS", "SITE_CUSTOMER", "LOADING_UNLOADING", "CARGO_SECUREMENT", "SECURITY", "FRAUD_CRIME", "PROCESS_POLICY", "PACKAGING", "MAINTENANCE", "HANDLING", "TRAINING", "EXTERNAL_EVENT"] as const
+export const CONTRIBUTING_FACTOR_DOMAINS = ["DRIVER_STATE", "DRIVER_BEHAVIOR", "OTHER_ROAD_USER", "ROAD_WEATHER", "VEHICLE_EQUIPMENT", "OPERATIONS", "SITE_CUSTOMER", "LOADING_UNLOADING", "CARGO_SECUREMENT", "SECURITY", "FRAUD_CRIME", "PROCESS_POLICY", "PACKAGING", "MAINTENANCE", "HANDLING", "TRAINING", "EXTERNAL_EVENT", "COMMUNICATION"] as const
 export type ContributingFactorDomain = (typeof CONTRIBUTING_FACTOR_DOMAINS)[number]
 export const CONTRIBUTING_FACTORS_COLLECTION_ID = "DRV.PERF.INVESTIGATION.CONTRIBUTING_FACTORS"
 export const CONTRIBUTING_FACTORS_COLLECTION_VERSION = "1.0"
@@ -99,6 +101,9 @@ export function validateDeterminationAssessment(assessment: DeterminationAssessm
       break
     case "CLASSIFICATION":
       if (!CLASSIFICATION_OUTCOMES.includes(assessment.outcome)) errors.push("Classification outcome is not recognised.")
+      break
+    case "SUBSTANTIATION":
+      if (!SUBSTANTIATION_OUTCOMES.includes(assessment.outcome)) errors.push("Substantiation must be Substantiated, Partially Substantiated, Unsubstantiated or Unable to Determine.")
       break
     case "RESPONSIBILITY": {
       const parties = assessment.parties || []
@@ -324,6 +329,7 @@ const LEGACY_TYPE_BRIDGE: Readonly<Record<DeterminationSubject, NonNullable<Comp
   PREVENTABILITY: "INVESTIGATION_FINDING",
   RESPONSIBILITY: "INVESTIGATION_FINDING",
   CLASSIFICATION: "INVESTIGATION_FINDING",
+  SUBSTANTIATION: "COMPLAINT_SUBSTANTIATION",
   GENERAL_FINDING: "INVESTIGATION_FINDING",
   ROOT_CAUSE: "ROOT_CAUSE_ANALYSIS",
 }

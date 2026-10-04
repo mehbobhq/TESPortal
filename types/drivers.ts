@@ -818,6 +818,7 @@ export type EventType =
   | "Cargo Damage"
   | "Cargo Theft"
   | "Spill or Release"
+  | "Customer Event"
   | "Customer Complaint"
   | "Customer Commendation"
   | "Positive Safety Observation"
@@ -1612,10 +1613,12 @@ export interface PerformanceInvestigationRecord {
   updatedAt: string;
 }
 
-export type DeterminationSubject = "PREVENTABILITY" | "RESPONSIBILITY" | "ROOT_CAUSE" | "CLASSIFICATION" | "GENERAL_FINDING";
+export type DeterminationSubject = "PREVENTABILITY" | "RESPONSIBILITY" | "ROOT_CAUSE" | "CLASSIFICATION" | "GENERAL_FINDING" | "SUBSTANTIATION";
 export type DeterminationStatus = "ACTIVE" | "SUPERSEDED" | "WITHDRAWN";
 
 export type PreventabilityValue = "PREVENTABLE" | "NOT_PREVENTABLE" | "PARTIALLY_PREVENTABLE" | "UNDETERMINED";
+/** Complaint-level substantiation. "Pending assessment" is never stored: it means no active SUBSTANTIATION determination exists. */
+export type SubstantiationOutcome = "SUBSTANTIATED" | "PARTIALLY_SUBSTANTIATED" | "UNSUBSTANTIATED" | "UNABLE_TO_DETERMINE";
 export type ClassificationOutcome = "CONFIRMED_AS_REPORTED" | "RECLASSIFIED" | "DUPLICATE" | "INSUFFICIENT_INFORMATION" | "NOT_SAFETY_RELATED";
 export type ResponsibilityParty = "CARRIER_DRIVER" | "OTHER_ROAD_USER" | "THIRD_PARTY" | "OPERATIONAL_PROCESS" | "EQUIPMENT_MAINTENANCE" | "ENVIRONMENT_SITE";
 export type ResponsibilityStandalone = "NO_DETERMINATION" | "UNDETERMINED";
@@ -1627,7 +1630,8 @@ export type DeterminationAssessment =
   | { subject: "CLASSIFICATION"; outcome: ClassificationOutcome; notes?: string }
   | { subject: "RESPONSIBILITY"; parties?: Array<{ party: ResponsibilityParty; role: "PRIMARY" | "CONTRIBUTING" }>; standalone?: ResponsibilityStandalone; notes?: string; catalogueVersion: number }
   | { subject: "ROOT_CAUSE"; category: string; finding?: string; status: RootCauseStatus; role: RootCauseRole; evidenceIds?: string[]; investigatorNotes?: string }
-  | { subject: "GENERAL_FINDING"; summary?: string };
+  | { subject: "GENERAL_FINDING"; summary?: string }
+  | { subject: "SUBSTANTIATION"; outcome: SubstantiationOutcome; notes?: string };
 
 export interface CompanyDetermination {
   id: string;

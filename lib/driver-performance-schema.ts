@@ -1,6 +1,7 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
+import { CARGO_CONTEXT_STATUSES, CARGO_CUSTODY_STAGES, CARGO_PRIMARY_FAMILIES, CARGO_SECONDARY_ALL, CARGO_YES_NO_UNKNOWN } from "@/lib/performance-cargo-taxonomy";
 import { COLLISION_CARGO_IMPACT, COLLISION_DRIVER_ACTIONS, COLLISION_DRIVER_ACTIVITIES, COLLISION_ENFORCEMENT, COLLISION_FIRST_HARMFUL_EVENTS, COLLISION_HAZMAT, COLLISION_INJURY_STATUSES, COLLISION_MANNERS, COLLISION_POLICE_RESPONSES, COLLISION_TRAFFIC, COLLISION_TYPES, COLLISION_VISIBILITY, COLLISION_YES_NO_UNKNOWN } from "@/lib/performance-collision-taxonomy";
 import { IANA_TIME_ZONES, LEGACY_NEAR_MISS_TRIGGER_SOURCES, LEGACY_NEAR_MISS_TYPES, NEAR_MISS_DIRECTIONS_OF_TRAVEL, NEAR_MISS_OPERATING_ACTIVITIES, NEAR_MISS_OTHER_PARTY_TYPES, NEAR_MISS_POTENTIAL_SEVERITIES, NEAR_MISS_PRIMARY_TYPES, NEAR_MISS_SOURCES, NEAR_MISS_TYPE_GROUP_BY_VALUE, NEAR_MISS_UNSAFE_CONDITION_STATES } from "@/lib/performance-near-miss-taxonomy";
 
@@ -50,6 +51,13 @@ export type PerformanceStepKey =
   | "COLLISION_ENVIRONMENT"
   | "COLLISION_OUTCOMES"
   | "COLLISION_INJURIES"
+  | "CARGO_SHIPMENT"
+  | "CARGO_CARRIER"
+  | "CARGO_ITEMS"
+  | "CARGO_CLASSIFICATION"
+  | "CARGO_RESPONSE"
+  | "CARGO_OUTCOMES"
+  | "CARGO_CUSTODY"
   | "RELATIONSHIPS"
   | "EVIDENCE"
   | "REVIEW";
@@ -614,6 +622,7 @@ const SOURCE_POLICY_FAMILIES = {
   OOS: makeSourcePolicy("OOS", ORIGINS_DOCUMENT_MANUAL_API),
   COLLISION_INCIDENT: makeSourcePolicy("COLLISION_INCIDENT", ORIGINS_DOCUMENT_MANUAL_API),
   NEAR_MISS: makeSourcePolicy("NEAR_MISS", ORIGINS_DOCUMENT_MANUAL_API),
+  CARGO_INCIDENT: makeSourcePolicy("CARGO", ORIGINS_DOCUMENT_MANUAL_API),
   CUSTOMER: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   CARGO: makeSourcePolicy("CUSTOMER", ORIGINS_DOCUMENT_MANUAL_API),
   SECURITY: makeSourcePolicy("SECURITY", ORIGINS_DOCUMENT_MANUAL_API),
@@ -634,6 +643,7 @@ const oosRelationships: PerformanceRelationshipDefinition[] = [
 
 const OPTIONAL_VEHICLE_RELATIONSHIP: PerformanceRelationshipDefinition = { key: "vehicle", entityType: "Vehicle", label: "Related Vehicle", applicability: [{ state: "OPTIONAL" }], canonical: true };
 const REPRESENTATIVE_RELATIONSHIPS: Readonly<Partial<Record<EventType, readonly PerformanceRelationshipDefinition[]>>> = {
+  "Cargo Incident": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Collision": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Near Miss": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Speeding": [OPTIONAL_VEHICLE_RELATIONSHIP],
@@ -702,7 +712,7 @@ export const PERFORMANCE_EVENT_SCHEMA_VERSION = "1.2";
 
 export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, PerformanceCategoryOwnership>> = {
   "Collision": "RECORDABLE_EVENT", "Near Miss": "RECORDABLE_EVENT", "Roadside Inspection": "RECORDABLE_EVENT", "Out-of-Service Order": "LEGACY_READ_ONLY",
-  "HOS Violation": "AUTHORITATIVE_LINKED_RECORD", "Traffic Citation": "AUTHORITATIVE_LINKED_RECORD", "Cargo Damage": "RECORDABLE_EVENT", "Cargo Theft": "RECORDABLE_EVENT",
+  "HOS Violation": "AUTHORITATIVE_LINKED_RECORD", "Traffic Citation": "AUTHORITATIVE_LINKED_RECORD", "Cargo Incident": "RECORDABLE_EVENT", "Cargo Damage": "LEGACY_READ_ONLY", "Cargo Theft": "LEGACY_READ_ONLY",
   "Spill or Release": "RECORDABLE_EVENT", "Customer Complaint": "RECORDABLE_EVENT", "Customer Commendation": "RECORDABLE_EVENT", "Positive Safety Observation": "ALIAS",
   "Coaching Session": "COMPANY_ACTION", "Disciplinary Action": "COMPANY_ACTION", "Corrective Action Plan": "COMPANY_ACTION", "Injury": "LEGACY_READ_ONLY",
   "Security Incident": "RECORDABLE_EVENT", "Warning": "LEGACY_READ_ONLY", "Violation": "LEGACY_READ_ONLY", "Citation-linked Event": "LEGACY_READ_ONLY",
@@ -725,6 +735,20 @@ const COLLISION_STEPS: readonly PerformanceStepDefinition[] = [
   { key: "COLLISION_OUTCOMES", label: "Immediate Outcomes" },
   { key: "COLLISION_INJURIES", label: "Injured Persons" },
   { key: "EVIDENCE", label: "Evidence & Statements" },
+  { key: "REVIEW", label: "Review" },
+];
+
+const CARGO_STEPS: readonly PerformanceStepDefinition[] = [
+  { key: "CATEGORY", label: "Category" },
+  { key: "OCCURRENCE", label: "Occurrence" },
+  { key: "CARGO_SHIPMENT", label: "Shipment & Trip" },
+  { key: "CARGO_CARRIER", label: "Carrier Context" },
+  { key: "CARGO_ITEMS", label: "Cargo Exposure" },
+  { key: "CARGO_CLASSIFICATION", label: "Incident Classification" },
+  { key: "CARGO_RESPONSE", label: "Immediate Response" },
+  { key: "CARGO_OUTCOMES", label: "Damage & Theft" },
+  { key: "CARGO_CUSTODY", label: "Custody & Security" },
+  { key: "EVIDENCE", label: "Evidence" },
   { key: "REVIEW", label: "Review" },
 ];
 
@@ -840,6 +864,44 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
   {
     code: "CARGO_THEFT", value: "Cargo Theft", label: "Cargo Theft", description: "A documented cargo loss/theft occurrence with chain-of-custody and security facts.", group: "Security", sources: ["Driver Report", "Customer", "Company Staff", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING", "ROOT_CAUSE_ANALYSIS"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
     fields: [number("estimatedLossAmount", "Estimated Loss", "currency"), text("lastKnownLocation", "Last Known Location"), date("lastKnownDate", "Last Known Date"), bool("sealCompromised", "Seal Compromised"), area("theftNarrative", "Theft / Loss Narrative"), ...base],
+  },
+  {
+    code: "CARGO_INCIDENT", value: "Cargo Incident", label: "Cargo Incident", description: "One cargo occurrence. Damage and Theft are optional outcome modules of the same incident, with items, custody and security-control facts.", group: "Operations", sources: ["Driver Report", "Customer", "Company Staff", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["INVESTIGATION_FINDING", "ROOT_CAUSE_ANALYSIS"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
+    policy: { ...DOCUMENT_POLICY, steps: CARGO_STEPS },
+    fields: [
+      select("primaryFamily", "Primary Incident Family", CARGO_PRIMARY_FAMILIES, { required: true, dataPointId: "DRV.PERF.CARGO_INCIDENT.PRIMARY_FAMILY", helpText: "What best characterises the occurrence. Damage and Theft outcomes can still coexist." }),
+      select("cargoContextStatus", "Cargo Context", CARGO_CONTEXT_STATUSES, { dataPointId: "DRV.PERF.CARGO_INCIDENT.CARGO_CONTEXT_STATUS", helpText: "Optional. Detailed cargo items can be added when they are known." }),
+      text("cargoGeneralDescription", "General Cargo Description", { dataPointId: "DRV.PERF.CARGO_INCIDENT.CARGO_GENERAL_DESCRIPTION" }),
+      select("secondaryClassification", "Secondary Classification", CARGO_SECONDARY_ALL, { dataPointId: "DRV.PERF.CARGO_INCIDENT.SECONDARY_CLASSIFICATION", helpText: "Depends on the Primary Incident Family. Not a root cause." }),
+      select("custodyStage", "Custody Stage", CARGO_CUSTODY_STAGES, { dataPointId: "DRV.PERF.CARGO_INCIDENT.CUSTODY_STAGE", helpText: "Where in the shipment lifecycle the incident occurred." }),
+      text("occurrenceWindowStart", "Estimated Occurrence Window - Start", { dataPointId: "DRV.PERF.CARGO_INCIDENT.OCCURRENCE_WINDOW_START" }),
+      text("occurrenceWindowEnd", "Estimated Occurrence Window - End", { dataPointId: "DRV.PERF.CARGO_INCIDENT.OCCURRENCE_WINDOW_END" }),
+      text("occurrenceWindowBasis", "Basis for Estimated Window", { dataPointId: "DRV.PERF.CARGO_INCIDENT.OCCURRENCE_WINDOW_BASIS" }),
+      date("discoveryDate", "Discovery Date", { dataPointId: "DRV.PERF.CARGO_INCIDENT.DISCOVERY_DATE" }),
+      time("discoveryTime", "Discovery Time", { dataPointId: "DRV.PERF.CARGO_INCIDENT.DISCOVERY_TIME" }),
+      time("reportedTime", "Reported Time", { dataPointId: "DRV.PERF.CARGO_INCIDENT.REPORTED_TIME" }),
+      text("loadReference", "Load Reference", { dataPointId: "DRV.PERF.CARGO_INCIDENT.LOAD_REFERENCE" }),
+      text("bolPro", "BOL / PRO", { dataPointId: "DRV.PERF.CARGO_INCIDENT.BOL_PRO" }),
+      text("shipmentReference", "Shipment Reference", { dataPointId: "DRV.PERF.CARGO_INCIDENT.SHIPMENT_REFERENCE" }),
+      text("customerName", "Customer", { dataPointId: "DRV.PERF.CARGO_INCIDENT.CUSTOMER_NAME" }),
+      text("shipperName", "Shipper", { dataPointId: "DRV.PERF.CARGO_INCIDENT.SHIPPER_NAME" }),
+      text("receiverName", "Receiver", { dataPointId: "DRV.PERF.CARGO_INCIDENT.RECEIVER_NAME" }),
+      text("brokerName", "Broker", { dataPointId: "DRV.PERF.CARGO_INCIDENT.BROKER_NAME" }),
+      text("originText", "Origin", { dataPointId: "DRV.PERF.CARGO_INCIDENT.ORIGIN" }),
+      text("destinationText", "Destination", { dataPointId: "DRV.PERF.CARGO_INCIDENT.DESTINATION" }),
+      text("facilitySite", "Facility / Site", { dataPointId: "DRV.PERF.CARGO_INCIDENT.FACILITY_SITE" }),
+      text("plannedRouteReference", "Planned Route Reference", { dataPointId: "DRV.PERF.CARGO_INCIDENT.PLANNED_ROUTE_REFERENCE" }),
+      text("actualRouteReference", "Actual Route Reference", { dataPointId: "DRV.PERF.CARGO_INCIDENT.ACTUAL_ROUTE_REFERENCE" }),
+      select("dispatchNotified", "Dispatch Notified", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_DISPATCH_NOTIFIED" }),
+      select("customerNotified", "Customer Notified", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_CUSTOMER_NOTIFIED" }),
+      select("policeNotified", "Police / Law Enforcement Notified", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_POLICE_NOTIFIED" }),
+      select("insurerNotified", "Insurer Notified", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_INSURER_NOTIFIED" }),
+      select("securityNotified", "Security Notified", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_SECURITY_NOTIFIED" }),
+      select("cargoSecured", "Cargo Secured", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_CARGO_SECURED" }),
+      select("emergencyResponse", "Emergency Response", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_EMERGENCY" }),
+      select("recoveryInitiated", "Recovery Initiated", CARGO_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.CARGO_INCIDENT.RESPONSE_RECOVERY_INITIATED" }),
+      area("incidentNarrative", "Reporter Description", { dataPointId: "DRV.PERF.CARGO_INCIDENT.INCIDENT_NARRATIVE", helpText: "What was reported. Investigation conclusions do not belong here." }),
+      ...base],
   },
   {
     code: "SPILL_RELEASE", value: "Spill or Release", label: "Spill or Release", description: "A documented environmental spill or release occurrence with material, quantity, response, and evidence.", group: "Safety", sources: ["Driver Report", "Company Staff", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["ROOT_CAUSE_ANALYSIS", "INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
@@ -1300,6 +1362,7 @@ const CATEGORY_SOURCE_POLICY_FAMILY: Readonly<Partial<Record<EventType, Performa
   "Near Miss": SOURCE_POLICY_FAMILIES.NEAR_MISS,
   "Roadside Inspection": SOURCE_POLICY_FAMILIES.ROADSIDE_INSPECTION,
   "Out-of-Service Order": SOURCE_POLICY_FAMILIES.OOS,
+  "Cargo Incident": SOURCE_POLICY_FAMILIES.CARGO_INCIDENT,
   "Cargo Damage": SOURCE_POLICY_FAMILIES.CARGO,
   "Cargo Theft": SOURCE_POLICY_FAMILIES.SECURITY,
   "Spill or Release": SOURCE_POLICY_FAMILIES.EMERGENCY,

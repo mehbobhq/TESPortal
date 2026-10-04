@@ -814,6 +814,7 @@ export type EventType =
   | "Out-of-Service Order"
   | "HOS Violation"
   | "Traffic Citation"
+  | "Cargo Incident"
   | "Cargo Damage"
   | "Cargo Theft"
   | "Spill or Release"

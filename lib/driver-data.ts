@@ -9,6 +9,7 @@ import { eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performanc
 import { resolveNearMissUnsafeCondition, validateNewNearMiss } from "@/lib/performance-near-miss"
 import type { UnsafeConditionResolutionOutcome } from "@/lib/performance-near-miss"
 import { validateNewCollision } from "@/lib/performance-collision"
+import { validateNewCargoIncident } from "@/lib/performance-cargo"
 
 import type {
   AddressRecord,
@@ -1150,8 +1151,9 @@ export function addPerformanceEvent(companyId: string, driverMasterId: string, d
   for (const link of data.canonicalLinks || []) {
     if (link.source !== "CANONICAL_STORE") throw new Error("Canonical entity links must declare CANONICAL_STORE provenance.")
   }
-  if (data.eventType === "Near Miss" || data.eventType === "Collision") {
-    const familyErrors = data.eventType === "Near Miss" ? validateNewNearMiss({ ...data, id: "PENDING_EVENT", driverMasterId }) : validateNewCollision({ ...data, id: "PENDING_EVENT", driverMasterId })
+  if (data.eventType === "Near Miss" || data.eventType === "Collision" || data.eventType === "Cargo Incident") {
+    const candidate = { ...data, id: "PENDING_EVENT", driverMasterId }
+    const familyErrors = data.eventType === "Near Miss" ? validateNewNearMiss(candidate) : data.eventType === "Collision" ? validateNewCollision(candidate) : validateNewCargoIncident(candidate)
     if (familyErrors.length) throw new Error(familyErrors[0])
     // Canonical relationship targets must exist in the company vehicle store.
     const knownVehicles = new Set(loadVehicleStore(companyId).vehicles.map((vehicle) => vehicle.id))

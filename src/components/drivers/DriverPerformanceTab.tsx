@@ -59,6 +59,7 @@ import { RoadsideEventPanels, RoadsideSummaryLine } from "./RoadsideEventPanels"
 import { getJurisdictionLabel } from "@/lib/jurisdictions";
 import { NearMissEventPanel, workflowStateLabel } from "./NearMissEventPanel";
 import { CollisionEventPanel } from "./CollisionEventPanel";
+import { CargoEventPanel } from "./CargoEventPanel";
 import { deriveEventWorkflow } from "@/lib/performance-workflow-registry";
 
 export interface DriverPerformanceTabProps {
@@ -262,7 +263,7 @@ export function DriverPerformanceTab({
   // One read-only snapshot of the common engine's inputs: Collision preventability counters and the derived workflow both read it.
   const foundationState = useMemo(() => ({ events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence }), [events, performanceInvestigations, companyActions, companyDeterminations, eventRelationships, evidence]);
   // Near Miss and Collision workflow is derived by the common engine (never from a stored badge).
-  const engineWorkflow = useMemo(() => selectedEvent && (selectedEvent.eventType === "Near Miss" || selectedEvent.eventType === "Collision")
+  const engineWorkflow = useMemo(() => selectedEvent && (selectedEvent.eventType === "Near Miss" || selectedEvent.eventType === "Collision" || selectedEvent.eventType === "Cargo Incident")
     ? deriveEventWorkflow(selectedEvent, foundationState)
     : null, [selectedEvent, foundationState]);
 
@@ -1261,6 +1262,10 @@ export function DriverPerformanceTab({
               </div>
 
               {/* Collision Specific Payload */}
+              {selectedEvent.eventType === "Cargo Incident" && engineWorkflow ? (
+                <CargoEventPanel event={selectedEvent} workflow={engineWorkflow} state={foundationState} evidence={evidence || []} run={onEngineWrite ? (description, writer) => onEngineWrite(selectedEvent.id, description, writer) : undefined} />
+              ) : null}
+
               {selectedEvent.eventType === "Collision" && engineWorkflow ? (
                 <CollisionEventPanel event={selectedEvent} workflow={engineWorkflow} state={foundationState} evidence={evidence || []} run={onEngineWrite ? (description, writer) => onEngineWrite(selectedEvent.id, description, writer) : undefined} />
               ) : null}
@@ -1347,7 +1352,7 @@ export function DriverPerformanceTab({
                 <NearMissEventPanel event={selectedEvent} workflow={engineWorkflow} evidence={evidence || []} onResolveUnsafeCondition={onResolveNearMissUnsafeCondition ? (input) => onResolveNearMissUnsafeCondition(selectedEvent.id, input) : undefined} />
               ) : null}
 
-              {selectedEvent.eventType !== "Near Miss" && selectedEvent.eventType !== "Collision" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
+              {selectedEvent.eventType !== "Near Miss" && selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && (selectedEvent.structuredEventFacts?.length || Object.keys(selectedEvent.structuredFacts || {}).length > 0) && (
                 <div className="space-y-3">
                   <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Category-Specific Structured Facts</span>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-border p-4 bg-background">
@@ -1444,7 +1449,7 @@ export function DriverPerformanceTab({
                     Archive Event
                   </button>
                 )}
-                {selectedEvent.eventType !== "Collision" && selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
+                {selectedEvent.eventType !== "Collision" && selectedEvent.eventType !== "Cargo Incident" && selectedEvent.status !== "Closed" && selectedEvent.status !== "Not Applicable" && (
                   <button
                     type="button"
                     onClick={handleCloseEvent}

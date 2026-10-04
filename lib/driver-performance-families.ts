@@ -36,7 +36,7 @@ export const PERFORMANCE_EVENT_FAMILIES: readonly PerformanceEventFamily[] = [
   { key: "COLLISION", label: "Collision", members: [{ eventType: "Collision" }] },
   { key: "NEAR_MISS", label: "Near Miss", members: [{ eventType: "Near Miss" }] },
   { key: "ROADSIDE_INSPECTION", label: "Roadside Inspection", members: [{ eventType: "Roadside Inspection" }] },
-  { key: "CARGO_INCIDENT", label: "Cargo Incident", members: [{ eventType: "Cargo Damage", subtypeLabel: "Damage" }, { eventType: "Cargo Theft", subtypeLabel: "Theft" }] },
+  { key: "CARGO_INCIDENT", label: "Cargo Incident", members: [{ eventType: "Cargo Incident" }, { eventType: "Cargo Damage", subtypeLabel: "Damage" }, { eventType: "Cargo Theft", subtypeLabel: "Theft" }] },
   { key: "SPILL_OR_RELEASE", label: "Spill or Release", members: [{ eventType: "Spill or Release" }] },
   { key: "CUSTOMER_EVENT", label: "Customer Event", members: [{ eventType: "Customer Complaint", subtypeLabel: "Complaint" }, { eventType: "Customer Commendation", subtypeLabel: "Commendation" }, { eventType: "Customer-Site Behavior", subtypeLabel: "Site Behavior" }] },
   { key: "SECURITY_INCIDENT", label: "Security Incident", members: [{ eventType: "Security Incident" }] },
@@ -58,11 +58,12 @@ export const PERFORMANCE_EVENT_FAMILIES: readonly PerformanceEventFamily[] = [
  * - Out-of-Service Order / Warning / Violation / Stop Sign / Red Light / Railroad Crossing:
  *   outcomes or findings beneath a Roadside Inspection.
  * - Injury: a consequence of a Collision (road/transport injury only).
+ * - Cargo Damage / Cargo Theft: outcome modules of the single Cargo Incident event (history stays readable, never rewritten).
  * - Safety Observation / Trip Completion / Service Performance / Backing: not Performance events.
  */
 export const LEGACY_ONLY_PERFORMANCE_EVENT_TYPES: readonly EventType[] = [
   "Out-of-Service Order", "Warning", "Violation", "Stop Sign / Red Light", "Railroad Crossing",
-  "Injury", "Safety Observation", "Trip Completion / Service Performance", "Backing", "Lane Departure", "PPE / Safety Protocol",
+  "Cargo Damage", "Cargo Theft", "Injury", "Safety Observation", "Trip Completion / Service Performance", "Backing", "Lane Departure", "PPE / Safety Protocol",
 ]
 
 const MEMBER_INDEX = new Map<EventType, { family: PerformanceEventFamily; member: PerformanceEventFamilyMember }>()

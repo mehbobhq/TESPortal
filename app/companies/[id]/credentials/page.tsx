@@ -417,8 +417,13 @@ export default function CredentialsPage() {
   return (
     <>
       <CompanyWorkspaceHeader
-        companyName={company?.name || "Company"}
-        title="Credentials"
+        company={{
+          id: company?.id || companyId,
+          name: company?.name || "Company",
+          kind: company?.kind || "Customer",
+          status: company?.status || "Active",
+        }}
+        section="Credentials"
         description="Company login accounts linked to TES-managed external portals and systems."
       />
 

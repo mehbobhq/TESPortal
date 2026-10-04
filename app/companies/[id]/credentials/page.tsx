@@ -76,6 +76,7 @@ type CredentialMetadata = {
   category: CredentialCategory
   username: string
   status: CredentialStatus
+  recoveryStatus?: "Not added" | "Partially added" | "Recovery added"
   lastVerifiedAt?: string
   createdAt: string
   updatedAt: string
@@ -212,7 +213,6 @@ export default function CredentialsPage() {
   const [showRecoveryMenu, setShowRecoveryMenu] = useState(false)
 
   const [formError, setFormError] = useState<string | null>(null)
-  const [securityNotice, setSecurityNotice] = useState<string | null>(null)
 
   const storageKey = `tes_company_credentials_${companyId}`
   const portalRegistryStorageKey = "tes_portal_registry_v1"
@@ -249,6 +249,21 @@ export default function CredentialsPage() {
     () => [...PORTAL_REGISTRY, ...customPortals],
     [customPortals]
   )
+
+  const recoveryStatus = useMemo(() => {
+    if (securityQuestions.length === 0 && recoveryMethods.length === 0) {
+      return "Not added" as const
+    }
+
+    const allQuestionsComplete = securityQuestions.every(
+      (item) => item.question.trim() && item.answer.trim()
+    )
+    const allMethodsComplete = recoveryMethods.every((item) => item.value.trim())
+
+    return allQuestionsComplete && allMethodsComplete
+      ? ("Recovery added" as const)
+      : ("Partially added" as const)
+  }, [securityQuestions, recoveryMethods])
 
   const filteredCredentials = useMemo(() => {
     const query = normalizeSearch(searchQuery)
@@ -307,7 +322,6 @@ export default function CredentialsPage() {
     setRecoveryMethods([])
     setShowRecoveryMenu(false)
     setFormError(null)
-    setSecurityNotice(null)
   }
 
   const openCreate = () => {
@@ -378,7 +392,6 @@ export default function CredentialsPage() {
 
   const validateCredentialIdentity = () => {
     setFormError(null)
-    setSecurityNotice(null)
 
     if (!selectedPortal) {
       setFormError("Select a portal or system before saving.")
@@ -404,11 +417,6 @@ export default function CredentialsPage() {
     }
 
     return true
-  }
-
-  const continueToRecovery = () => {
-    if (!validateCredentialIdentity()) return
-    setCreateStep(2)
   }
 
   const addSecurityQuestion = () => {
@@ -439,9 +447,10 @@ export default function CredentialsPage() {
       )
 
     if (hasSecretMaterial) {
-      setSecurityNotice(
-        "TES will not store passwords or protected recovery secrets in browser localStorage. Connect the protected secret-storage service before saving secret material. You can clear those protected fields and save the credential metadata now."
+      setFormError(
+        "Protected credential material is not enabled for saving yet. For this UX test, leave password and protected recovery values blank; secure persistence will be connected in the next foundation step."
       )
+      setCreateStep(1)
       return
     }
 
@@ -453,6 +462,7 @@ export default function CredentialsPage() {
       category: credentialCategory,
       username: username.trim(),
       status: "Needs verification",
+      recoveryStatus,
       createdAt: now,
       updatedAt: now,
     }
@@ -586,8 +596,18 @@ export default function CredentialsPage() {
                     </div>
                   </div>
                   <div className="text-sm">{credential.category}</div>
-                  <div className="truncate font-mono text-xs">
-                    {maskUsername(credential.username)}
+                  <div className="min-w-0">
+                    <div className="truncate font-mono text-xs">
+                      {maskUsername(credential.username)}
+                    </div>
+                    <div className={`mt-1 inline-flex items-center gap-1 text-[11px] font-medium ${
+                      (credential.recoveryStatus || "Not added") === "Not added"
+                        ? "text-amber-700"
+                        : "text-muted-foreground"
+                    }`}>
+                      <ShieldCheck className="size-3" />
+                      Recovery · {credential.recoveryStatus || "Not added"}
+                    </div>
                   </div>
                   <div>
                     <span
@@ -638,30 +658,80 @@ export default function CredentialsPage() {
               </button>
             </div>
 
-            <div className="border-b px-6">
-              <div className="flex gap-8">
+            <div className="border-b bg-muted/20 px-6 py-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <button
                   type="button"
                   onClick={() => setCreateStep(1)}
-                  className={`border-b-2 py-3 text-sm font-semibold ${
+                  className={`rounded-xl border px-4 py-3 text-left transition ${
                     createStep === 1
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground"
+                      ? "border-primary bg-background shadow-sm ring-1 ring-primary/20"
+                      : "border-border bg-background/70 hover:border-primary/40 hover:bg-background"
                   }`}
                 >
-                  1&nbsp;&nbsp;Login Credentials
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${
+                      createStep === 1 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                    }`}>
+                      <KeyRound className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">Login Credentials</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        Portal, account ID, password and MFA
+                      </div>
+                      <div className="mt-2 text-[11px] font-medium text-primary">
+                        {createStep === 1 ? "Current" : "Login details"}
+                      </div>
+                    </div>
+                  </div>
                 </button>
+
                 <button
                   type="button"
-                  disabled={!selectedPortalId || !username.trim()}
-                  onClick={() => setCreateStep(2)}
-                  className={`border-b-2 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
+                  onClick={() => {
+                    setFormError(null)
+                    setCreateStep(2)
+                  }}
+                  className={`rounded-xl border px-4 py-3 text-left transition ${
                     createStep === 2
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground"
+                      ? "border-primary bg-background shadow-sm ring-1 ring-primary/20"
+                      : recoveryStatus === "Not added"
+                        ? "border-amber-300 bg-amber-50/70 hover:border-amber-400"
+                        : "border-border bg-background/70 hover:border-primary/40 hover:bg-background"
                   }`}
                 >
-                  2&nbsp;&nbsp;Account Recovery
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${
+                      createStep === 2
+                        ? "bg-primary/10 text-primary"
+                        : recoveryStatus === "Not added"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-muted text-muted-foreground"
+                    }`}>
+                      <ShieldCheck className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">Account Recovery</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          recoveryStatus === "Not added"
+                            ? "bg-amber-100 text-amber-800"
+                            : recoveryStatus === "Partially added"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-emerald-100 text-emerald-800"
+                        }`}>
+                          {recoveryStatus}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        Recovery access and backup methods
+                      </div>
+                      <div className="mt-2 text-[11px] font-medium text-muted-foreground">
+                        Optional to save · important for account recovery
+                      </div>
+                    </div>
+                  </div>
                 </button>
               </div>
             </div>
@@ -670,13 +740,6 @@ export default function CredentialsPage() {
               {formError ? (
                 <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {formError}
-                </div>
-              ) : null}
-
-              {securityNotice ? (
-                <div className="mb-5 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-                  <div>{securityNotice}</div>
                 </div>
               ) : null}
 
@@ -1095,11 +1158,6 @@ export default function CredentialsPage() {
                     )}
                   </section>
 
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-                    Passwords, security answers, recovery PINs, backup codes and MFA
-                    recovery secrets are sensitive authentication material. TES will
-                    not write them to browser localStorage.
-                  </div>
                 </div>
               )}
             </div>
@@ -1115,29 +1173,12 @@ export default function CredentialsPage() {
               </div>
 
               <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={createStep === 1 ? closeCreate : () => setCreateStep(1)}
-                >
-                  {createStep === 1 ? "Cancel" : "Back"}
+                <Button type="button" variant="outline" onClick={closeCreate}>
+                  Cancel
                 </Button>
-
-                {createStep === 1 ? (
-                  <>
-                    <Button type="button" variant="outline" onClick={saveCredential}>
-                      Save credential
-                    </Button>
-                    <Button type="button" onClick={continueToRecovery}>
-                      Account Recovery
-                      <ChevronRight className="ml-2 size-4" />
-                    </Button>
-                  </>
-                ) : (
-                  <Button type="button" onClick={saveCredential}>
-                    Save credential
-                  </Button>
-                )}
+                <Button type="button" onClick={saveCredential}>
+                  Save
+                </Button>
               </div>
             </div>
           </div>

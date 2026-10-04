@@ -1,6 +1,7 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
+import { SPILL_CLEANUP_STATUSES, SPILL_RELEASE_CONDITIONS, SPILL_RELEASE_DETERMINATIONS, SPILL_RELEASE_FORMS, SPILL_RELEASE_MECHANISMS, SPILL_SOURCE_CATEGORIES, SPILL_YES_NO_UNKNOWN } from "@/lib/performance-spill-taxonomy";
 import { CARGO_CONTEXT_STATUSES, CARGO_CUSTODY_STAGES, CARGO_PRIMARY_FAMILIES, CARGO_SECONDARY_ALL, CARGO_YES_NO_UNKNOWN } from "@/lib/performance-cargo-taxonomy";
 import { COLLISION_CARGO_IMPACT, COLLISION_DRIVER_ACTIONS, COLLISION_DRIVER_ACTIVITIES, COLLISION_ENFORCEMENT, COLLISION_FIRST_HARMFUL_EVENTS, COLLISION_HAZMAT, COLLISION_INJURY_STATUSES, COLLISION_MANNERS, COLLISION_POLICE_RESPONSES, COLLISION_TRAFFIC, COLLISION_TYPES, COLLISION_VISIBILITY, COLLISION_YES_NO_UNKNOWN } from "@/lib/performance-collision-taxonomy";
 import { IANA_TIME_ZONES, LEGACY_NEAR_MISS_TRIGGER_SOURCES, LEGACY_NEAR_MISS_TYPES, NEAR_MISS_DIRECTIONS_OF_TRAVEL, NEAR_MISS_OPERATING_ACTIVITIES, NEAR_MISS_OTHER_PARTY_TYPES, NEAR_MISS_POTENTIAL_SEVERITIES, NEAR_MISS_PRIMARY_TYPES, NEAR_MISS_SOURCES, NEAR_MISS_TYPE_GROUP_BY_VALUE, NEAR_MISS_UNSAFE_CONDITION_STATES } from "@/lib/performance-near-miss-taxonomy";
@@ -58,6 +59,13 @@ export type PerformanceStepKey =
   | "CARGO_RESPONSE"
   | "CARGO_OUTCOMES"
   | "CARGO_CUSTODY"
+  | "SPILL_MATERIAL"
+  | "SPILL_RELEASE"
+  | "SPILL_OPERATIONS"
+  | "SPILL_IMPACT"
+  | "SPILL_RESPONSE"
+  | "SPILL_CLEANUP"
+  | "SPILL_REGULATORY"
   | "RELATIONSHIPS"
   | "EVIDENCE"
   | "REVIEW";
@@ -644,6 +652,7 @@ const oosRelationships: PerformanceRelationshipDefinition[] = [
 const OPTIONAL_VEHICLE_RELATIONSHIP: PerformanceRelationshipDefinition = { key: "vehicle", entityType: "Vehicle", label: "Related Vehicle", applicability: [{ state: "OPTIONAL" }], canonical: true };
 const REPRESENTATIVE_RELATIONSHIPS: Readonly<Partial<Record<EventType, readonly PerformanceRelationshipDefinition[]>>> = {
   "Cargo Incident": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
+  "Spill or Release": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "OPTIONAL" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Collision": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Near Miss": [{ key: "vehicle", entityType: "Vehicle", label: "Power Unit", applicability: [{ state: "REQUIRED" }], canonical: true }, { key: "trailer", entityType: "Trailer", label: "Trailer(s)", applicability: [{ state: "OPTIONAL" }], canonical: true }],
   "Speeding": [OPTIONAL_VEHICLE_RELATIONSHIP],
@@ -748,6 +757,20 @@ const CARGO_STEPS: readonly PerformanceStepDefinition[] = [
   { key: "CARGO_RESPONSE", label: "Immediate Response" },
   { key: "CARGO_OUTCOMES", label: "Damage & Theft" },
   { key: "CARGO_CUSTODY", label: "Custody & Security" },
+  { key: "EVIDENCE", label: "Evidence" },
+  { key: "REVIEW", label: "Review" },
+];
+
+const SPILL_STEPS: readonly PerformanceStepDefinition[] = [
+  { key: "CATEGORY", label: "Category" },
+  { key: "OCCURRENCE", label: "Occurrence" },
+  { key: "SPILL_MATERIAL", label: "Material" },
+  { key: "SPILL_RELEASE", label: "Release" },
+  { key: "SPILL_OPERATIONS", label: "Shipment & Operations" },
+  { key: "SPILL_IMPACT", label: "Impact" },
+  { key: "SPILL_RESPONSE", label: "Emergency Response" },
+  { key: "SPILL_CLEANUP", label: "Cleanup" },
+  { key: "SPILL_REGULATORY", label: "Regulatory" },
   { key: "EVIDENCE", label: "Evidence" },
   { key: "REVIEW", label: "Review" },
 ];
@@ -904,8 +927,60 @@ const DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW: readonly PerformanceCategoryDefi
       ...base],
   },
   {
-    code: "SPILL_RELEASE", value: "Spill or Release", label: "Spill or Release", description: "A documented environmental spill or release occurrence with material, quantity, response, and evidence.", group: "Safety", sources: ["Driver Report", "Company Staff", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["ROOT_CAUSE_ANALYSIS", "INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
-    fields: [text("material", "Material / Substance", { required: true }), number("quantityReleased", "Quantity Released", "dynamic"), select("releaseEnvironment", "Release Environment", ["Roadway", "Customer Site", "Water", "Soil", "Vehicle / Equipment", "Contained", "Unknown", "Other"]), bool("containmentPerformed", "Containment Performed"), bool("emergencyResponse", "Emergency Response"), area("responseNotes", "Response Narrative"), ...base],
+    code: "SPILL_RELEASE", value: "Spill or Release", label: "Spill or Release", description: "One spill or release occurrence. Materials, quantities, people, environmental media, response, cleanup and regulatory records are separate child records; determinations belong to the common investigation.", group: "Safety", sources: ["Driver Report", "Company Staff", "Camera", "Other"], evidenceRequired: true, determinationTypes: ["ROOT_CAUSE_ANALYSIS", "INVESTIGATION_FINDING"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Occurrence",
+    policy: { ...DOCUMENT_POLICY, steps: SPILL_STEPS },
+    fields: [
+      select("releaseDetermination", "Release Determination", SPILL_RELEASE_DETERMINATIONS, { required: true, dataPointId: "DRV.PERF.SPILL_RELEASE.RELEASE_DETERMINATION", helpText: "Whether a release is suspected or confirmed. Use Unknown if not yet known." }),
+      select("releaseCondition", "Release Condition", SPILL_RELEASE_CONDITIONS, { required: true, dataPointId: "DRV.PERF.SPILL_RELEASE.RELEASE_CONDITION", helpText: "Whether the release is active, contained or stopped. Independent of the determination." }),
+      select("cleanupStatus", "Cleanup Status", SPILL_CLEANUP_STATUSES, { dataPointId: "DRV.PERF.SPILL_RELEASE.CLEANUP_STATUS", helpText: "Independent of the release condition. Optional at first report." }),
+      select("releaseForm", "Release Form", SPILL_RELEASE_FORMS, { dataPointId: "DRV.PERF.SPILL_RELEASE.RELEASE_FORM", helpText: "How the release manifested." }),
+      select("releaseMechanism", "Release Mechanism", SPILL_RELEASE_MECHANISMS, { dataPointId: "DRV.PERF.SPILL_RELEASE.RELEASE_MECHANISM", helpText: "What was observed. This is not a root cause." }),
+      text("releaseMechanismOther", "Other Release Mechanism", { dataPointId: "DRV.PERF.SPILL_RELEASE.RELEASE_MECHANISM_OTHER" }),
+      select("sourceCategory", "Release Source", SPILL_SOURCE_CATEGORIES, { dataPointId: "DRV.PERF.SPILL_RELEASE.SOURCE_CATEGORY" }),
+      text("sourceSubsystem", "Subsystem", { dataPointId: "DRV.PERF.SPILL_RELEASE.SOURCE_SUBSYSTEM", helpText: "Free text, e.g. Fuel System. No component record is created." }),
+      text("sourceComponent", "Component", { dataPointId: "DRV.PERF.SPILL_RELEASE.SOURCE_COMPONENT", helpText: "Free text, e.g. Fuel Line." }),
+      select("eventTimeZone", "Time Zone (IANA)", IANA_TIME_ZONES, { dataPointId: "DRV.PERF.SPILL_RELEASE.EVENT_TIME_ZONE", helpText: "Zone where the occurrence happened. Not derived from this browser." }),
+      text("occurrenceWindowStart", "Estimated Occurrence Window - Start", { dataPointId: "DRV.PERF.SPILL_RELEASE.OCCURRENCE_WINDOW_START" }),
+      text("occurrenceWindowEnd", "Estimated Occurrence Window - End", { dataPointId: "DRV.PERF.SPILL_RELEASE.OCCURRENCE_WINDOW_END" }),
+      text("occurrenceWindowBasis", "Basis for Estimated Window", { dataPointId: "DRV.PERF.SPILL_RELEASE.OCCURRENCE_WINDOW_BASIS" }),
+      date("discoveryDate", "Discovery Date", { dataPointId: "DRV.PERF.SPILL_RELEASE.DISCOVERY_DATE" }),
+      time("discoveryTime", "Discovery Time", { dataPointId: "DRV.PERF.SPILL_RELEASE.DISCOVERY_TIME" }),
+      time("reportedTime", "Reported Time", { dataPointId: "DRV.PERF.SPILL_RELEASE.REPORTED_TIME" }),
+      text("loadReference", "Load Reference", { dataPointId: "DRV.PERF.SPILL_RELEASE.LOAD_REFERENCE" }),
+      text("bolPro", "BOL / PRO", { dataPointId: "DRV.PERF.SPILL_RELEASE.BOL_PRO" }),
+      text("shipmentReference", "Shipment Reference", { dataPointId: "DRV.PERF.SPILL_RELEASE.SHIPMENT_REFERENCE" }),
+      text("customerName", "Customer", { dataPointId: "DRV.PERF.SPILL_RELEASE.CUSTOMER_NAME" }),
+      text("shipperName", "Shipper", { dataPointId: "DRV.PERF.SPILL_RELEASE.SHIPPER_NAME" }),
+      text("receiverName", "Receiver", { dataPointId: "DRV.PERF.SPILL_RELEASE.RECEIVER_NAME" }),
+      text("originText", "Origin", { dataPointId: "DRV.PERF.SPILL_RELEASE.ORIGIN" }),
+      text("destinationText", "Destination", { dataPointId: "DRV.PERF.SPILL_RELEASE.DESTINATION" }),
+      text("facilitySite", "Facility / Site", { dataPointId: "DRV.PERF.SPILL_RELEASE.FACILITY_SITE" }),
+      text("routeReference", "Route Reference", { dataPointId: "DRV.PERF.SPILL_RELEASE.ROUTE_REFERENCE" }),
+      text("operatingStage", "Operating Stage", { dataPointId: "DRV.PERF.SPILL_RELEASE.OPERATING_STAGE", helpText: "Free text, e.g. loading, in transit, unloading." }),
+      select("waterwayRisk", "Waterway Risk", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RISK_WATERWAY", helpText: "A risk, not confirmed impact." }),
+      select("publicExposureRisk", "Public Exposure Risk", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RISK_PUBLIC_EXPOSURE", helpText: "A risk, not confirmed exposure." }),
+      select("continuingDanger", "Continuing Danger", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RISK_CONTINUING_DANGER" }),
+      select("roadwayInterruption", "Roadway Interruption", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.IMPACT_ROADWAY_INTERRUPTION" }),
+      select("operationalInterruption", "Operational Interruption", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.IMPACT_OPERATIONAL_INTERRUPTION" }),
+      select("serviceImpact", "Service Impact", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.IMPACT_SERVICE" }),
+      text("otherImpactNote", "Property / Facility Impact Note", { dataPointId: "DRV.PERF.SPILL_RELEASE.IMPACT_OTHER_NOTE", helpText: "Only where no canonical record exists. Related Collision or Cargo Incident outcomes are linked as event relationships, not copied." }),
+      select("vehicleStopped", "Vehicle Stopped", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_VEHICLE_STOPPED" }),
+      select("engineShutOff", "Engine Shut Off", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_ENGINE_SHUT_OFF" }),
+      select("valveClosed", "Valve Closed", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_VALVE_CLOSED" }),
+      select("absorbentApplied", "Absorbent Applied", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_ABSORBENT_APPLIED" }),
+      select("drainProtected", "Drain Protected", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_DRAIN_PROTECTED" }),
+      select("dispatchContacted", "Dispatch Contacted", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_DISPATCH_CONTACTED" }),
+      select("emergencyServicesContacted", "911 / Emergency Services Contacted", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_EMERGENCY_SERVICES_CONTACTED" }),
+      select("evacuationPerformed", "Evacuation Performed", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_EVACUATION" }),
+      select("hazmatResponseContacted", "Hazmat Response Contacted", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_HAZMAT_RESPONSE_CONTACTED" }),
+      select("areaSecured", "Area Secured", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_AREA_SECURED" }),
+      select("ignitionSourcesRemoved", "Ignition Sources Removed", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_IGNITION_SOURCES_REMOVED" }),
+      select("ppeUsed", "PPE Used", SPILL_YES_NO_UNKNOWN, { dataPointId: "DRV.PERF.SPILL_RELEASE.RESPONSE_PPE_USED" }),
+      area("responseNotes", "Reporter Description"),
+      text("material", "Legacy Material / Substance", { hiddenInCreation: true }), number("quantityReleased", "Legacy Quantity Released", "dynamic", { hiddenInCreation: true }),
+      select("releaseEnvironment", "Legacy Release Environment", ["Roadway", "Customer Site", "Water", "Soil", "Vehicle / Equipment", "Contained", "Unknown", "Other"], { hiddenInCreation: true }),
+      bool("containmentPerformed", "Legacy Containment Performed", { hiddenInCreation: true }), bool("emergencyResponse", "Legacy Emergency Response", { hiddenInCreation: true }),
+      ...base],
   },
   {
     code: "CUSTOMER_COMPLAINT", value: "Customer Complaint", label: "Customer Complaint", description: "A customer-reported service concern captured separately from the later substantiation determination.", group: "Customer", sources: ["Customer", "Company Staff", "Other"], evidenceRequired: true, determinationTypes: ["COMPLAINT_SUBSTANTIATION", "ROOT_CAUSE_ANALYSIS"], analyticsEligible: true, positiveEligible: false, temporalBehavior: "Lifecycle",

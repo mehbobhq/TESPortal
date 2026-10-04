@@ -13,7 +13,7 @@ import { setPerformanceInvestigationRequirement } from "@/lib/performance-workfl
 
 const inputClass = "mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20";
 const human = (value: string) => value.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
-const DOMAIN_LABELS: Record<string, string> = { DRIVER_STATE: "Driver state", DRIVER_BEHAVIOR: "Driver behaviour", OTHER_ROAD_USER: "Other road user", ROAD_WEATHER: "Road / weather", VEHICLE_EQUIPMENT: "Vehicle / equipment", OPERATIONS: "Operations", SITE_CUSTOMER: "Site / customer", LOADING_UNLOADING: "Loading / unloading", CARGO_SECUREMENT: "Cargo securement", SECURITY: "Security", FRAUD_CRIME: "Fraud / crime", PROCESS_POLICY: "Process / policy" };
+const DOMAIN_LABELS: Record<string, string> = { DRIVER_STATE: "Driver state", DRIVER_BEHAVIOR: "Driver behaviour", OTHER_ROAD_USER: "Other road user", ROAD_WEATHER: "Road / weather", VEHICLE_EQUIPMENT: "Vehicle / equipment", OPERATIONS: "Operations", SITE_CUSTOMER: "Site / customer", LOADING_UNLOADING: "Loading / unloading", CARGO_SECUREMENT: "Cargo securement", SECURITY: "Security", FRAUD_CRIME: "Fraud / crime", PROCESS_POLICY: "Process / policy", PACKAGING: "Packaging", MAINTENANCE: "Maintenance", HANDLING: "Handling", TRAINING: "Training", EXTERNAL_EVENT: "External event" };
 const SOURCE_LABEL = { INVESTIGATION: "Investigation determination", LEGACY_DETERMINATION: "Legacy Collision determination (read-only)", DEPRECATED_COLLISION_FIELD: "Deprecated Collision field (read-only)" } as const;
 const today = () => new Date().toISOString().slice(0, 10);
 

@@ -1172,6 +1172,8 @@ export default function NewCompanyPage() {
   const [recordId, setRecordId] = useState("")
   const [selectedType, setSelectedType] = useState("")
   const [companyName, setCompanyName] = useState("")
+  const [companyServices, setCompanyServices] = useState<string[]>([])
+  const [companyServiceDraft, setCompanyServiceDraft] = useState("")
 
   /*
     IMPORTANT CONTRACT:
@@ -1243,6 +1245,28 @@ export default function NewCompanyPage() {
     opRegion === "Cross-Border"
 
   const showCustoms = opRegion === "Cross-Border"
+
+  const addCompanyService = () => {
+    const value = companyServiceDraft.trim()
+
+    if (!value) return
+
+    const alreadyExists = companyServices.some(
+      (service) => service.toLowerCase() === value.toLowerCase()
+    )
+
+    if (!alreadyExists) {
+      setCompanyServices((current) => [...current, value])
+    }
+
+    setCompanyServiceDraft("")
+  }
+
+  const removeCompanyService = (serviceToRemove: string) => {
+    setCompanyServices((current) =>
+      current.filter((service) => service !== serviceToRemove)
+    )
+  }
 
   /* ---------------------------------------------------------
      BUSINESS REGISTRATION JURISDICTION
@@ -1481,6 +1505,13 @@ export default function NewCompanyPage() {
         cargoTypes: selectedCargo,
 
         /*
+          One canonical company can perform multiple functions without
+          creating duplicate company identities. Example: Motive remains
+          one Service Provider while offering ELD and Fuel Cards.
+        */
+        services: isCustomer ? [] : companyServices,
+
+        /*
           Lifecycle / traceability metadata.
         */
         schemaVersion: 2,
@@ -1658,8 +1689,8 @@ export default function NewCompanyPage() {
               />
 
               <Select
-              value={selectedType}
-              onValueChange={setSelectedType}
+                value={selectedType}
+                onValueChange={setSelectedType}
               >
                 <SelectTrigger className="border-primary/30">
                   <SelectValue placeholder="Select entity type..." />
@@ -1676,7 +1707,76 @@ export default function NewCompanyPage() {
                   ))}
                 </SelectContent>
               </Select>
+
+              <p className="text-[11px] text-muted-foreground">
+                Defines the company&apos;s primary relationship to TES. A company
+                is created once even when it performs multiple functions.
+              </p>
             </div>
+
+            {selectedType && selectedType !== "Customer" && (
+              <div className="space-y-3 sm:col-span-2">
+                <div>
+                  <Label>Company Functions / Services</Label>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Optional. Add every operational function this same company
+                    performs. This does not create another company record.
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <Input
+                    value={companyServiceDraft}
+                    onChange={(event) => setCompanyServiceDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        addCompanyService()
+                      }
+                    }}
+                    placeholder="e.g. ELD, Fuel Cards, IRP, IFTA"
+                  />
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addCompanyService}
+                    disabled={!companyServiceDraft.trim()}
+                  >
+                    Add
+                  </Button>
+                </div>
+
+                {companyServices.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {companyServices.map((service) => (
+                      <Badge
+                        key={service}
+                        variant="secondary"
+                        className="gap-1.5 py-1 pl-2.5 pr-1.5"
+                      >
+                        {service}
+                        <button
+                          type="button"
+                          onClick={() => removeCompanyService(service)}
+                          className="rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`Remove ${service}`}
+                        >
+                          <XCircle className="size-3.5" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                <div className="rounded-lg border bg-muted/20 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                  Example: Motive remains one Service Provider company record
+                  with both <span className="font-medium text-foreground">ELD</span>
+                  {" "}and <span className="font-medium text-foreground">Fuel Cards</span>
+                  {" "}listed as functions.
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

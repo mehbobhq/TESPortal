@@ -95,6 +95,19 @@ const CATEGORIES: Array<"All" | CredentialCategory> = [
   "Other",
 ]
 
+const CREDENTIAL_PROVIDER_TYPES = [
+  "Owner Operator",
+  "Service Provider",
+  "Finance/ Leasing Company",
+  "Insurance Broker",
+  "Insurance Company",
+  "Workers Insurance",
+  "Employee Reference",
+  "Government Agency",
+  "Sub Contractor",
+  "Other",
+] as const
+
 /**
  * Phase-1 seed for the TES-global Portal Registry.
  *
@@ -198,6 +211,12 @@ export default function CredentialsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [createStep, setCreateStep] = useState<1 | 2>(1)
 
+  const [companyQuery, setCompanyQuery] = useState("")
+  const [selectedProviderCompanyId, setSelectedProviderCompanyId] = useState("")
+  const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false)
+  const [newCompanyName, setNewCompanyName] = useState("")
+  const [newCompanyType, setNewCompanyType] = useState<(typeof CREDENTIAL_PROVIDER_TYPES)[number]>("Service Provider")
+
   const [portalQuery, setPortalQuery] = useState("")
   const [selectedPortalId, setSelectedPortalId] = useState("")
   const [credentialCategory, setCredentialCategory] =
@@ -292,20 +311,49 @@ export default function CredentialsPage() {
     })
   }, [credentials, category, searchQuery, allPortals])
 
+  const providerCompanies = useMemo(
+    () =>
+      companies.filter(
+        (item) => item.kind !== "Customer" && item.kind !== "Prospect"
+      ),
+    [companies]
+  )
+
+  const companyResults = useMemo(() => {
+    const query = normalizeSearch(companyQuery)
+    if (!query) return providerCompanies
+
+    return providerCompanies.filter((item) =>
+      normalizeSearch(item.name || item.companyName || "").includes(query)
+    )
+  }, [companyQuery, providerCompanies])
+
   const portalResults = useMemo(() => {
     const query = normalizeSearch(portalQuery)
-    if (!query) return allPortals
 
-    return allPortals.filter((portal) =>
-      portalSearchText(portal).includes(query)
-    )
-  }, [portalQuery, allPortals])
+    return allPortals.filter((portal) => {
+      if (
+        selectedProviderCompanyId &&
+        portal.providerCompanyId &&
+        portal.providerCompanyId !== selectedProviderCompanyId
+      ) {
+        return false
+      }
+
+      return !query || portalSearchText(portal).includes(query)
+    })
+  }, [portalQuery, allPortals, selectedProviderCompanyId])
 
   const selectedPortal =
     allPortals.find((portal) => portal.id === selectedPortalId) || null
 
   const resetCreate = () => {
     setCreateStep(1)
+    setCompanyQuery("")
+    setSelectedProviderCompanyId("")
+    setIsAddCompanyOpen(false)
+    setNewCompanyName("")
+    setNewCompanyType("Service Provider")
     setPortalQuery("")
     setSelectedPortalId("")
     setCredentialCategory("Registration")
@@ -334,19 +382,96 @@ export default function CredentialsPage() {
   const portalProviderIsResolved = (portal: PortalDefinition) =>
     Boolean(providerForPortal(portal))
 
+  const createProviderCompany = () => {
+    setFormError(null)
+
+    const name = newCompanyName.trim()
+    if (!name) {
+      setFormError("Company name is required.")
+      return
+    }
+
+    const normalizedName = normalizeSearch(name)
+    const existing = companies.find(
+      (item) =>
+        normalizeSearch(item.name || item.companyName || "") === normalizedName
+    )
+
+    if (existing) {
+      setFormError(
+        `"${existing.name || existing.companyName}" already exists in Companies. Select the existing record instead.`
+      )
+      return
+    }
+
+    const now = new Date().toISOString()
+    const newCompany: CompanyRecord & Record<string, unknown> = {
+      id: `CMP-${crypto.randomUUID()}`,
+      name,
+      companyName: name,
+      kind: newCompanyType,
+      status: "Active",
+      region: "",
+      tone: "ok",
+      schemaVersion: 2,
+      isArchived: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const nextCompanies = [newCompany, ...companies]
+
+    try {
+      localStorage.setItem("tes_companies", JSON.stringify(nextCompanies))
+      setCompanies(nextCompanies)
+      setSelectedProviderCompanyId(newCompany.id)
+      setCompanyQuery(name)
+      setIsAddCompanyOpen(false)
+      setNewCompanyName("")
+      setNewCompanyType("Service Provider")
+    } catch (error) {
+      console.error("Failed to create provider company:", error)
+      setFormError("The company could not be added. Please retry.")
+    }
+  }
+
   const validateCredentialIdentity = () => {
     setFormError(null)
+
+    if (!selectedProviderCompanyId) {
+      setFormError("Select the company/provider that owns or operates this portal.")
+      return false
+    }
 
     if (!selectedPortal) {
       setFormError("Select a portal or system before saving.")
       return false
     }
 
-    if (!portalProviderIsResolved(selectedPortal)) {
-      setFormError(
-        `${selectedPortal.name} is not yet linked to a canonical provider in Companies. Create or resolve the provider under Companies first, then return here.`
-      )
+    if (
+      selectedPortal.providerCompanyId &&
+      selectedPortal.providerCompanyId !== selectedProviderCompanyId
+    ) {
+      setFormError("The selected portal belongs to a different canonical company.")
       return false
+    }
+
+    if (!selectedPortal.providerCompanyId) {
+      const updatedPortal = {
+        ...selectedPortal,
+        providerCompanyId: selectedProviderCompanyId,
+      }
+
+      if (!PORTAL_REGISTRY.some((item) => item.id === selectedPortal.id)) {
+        const nextPortals = customPortals.map((item) =>
+          item.id === selectedPortal.id ? updatedPortal : item
+        )
+        localStorage.setItem(portalRegistryStorageKey, JSON.stringify(nextPortals))
+        setCustomPortals(nextPortals)
+      } else {
+        // Seed registry is immutable in this prototype. The selected company is
+        // still the canonical provider relationship for this credential session.
+      }
     }
 
     if (!username.trim()) {
@@ -698,6 +823,90 @@ export default function CredentialsPage() {
                 <div className="space-y-6">
                   <section className="space-y-3">
                     <div>
+                      <label className="text-sm font-semibold">Company / Provider</label>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Search existing TES companies. Customer and Prospect records are not shown here.
+                      </p>
+                    </div>
+
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={companyQuery}
+                        onChange={(event) => {
+                          setCompanyQuery(event.target.value)
+                          setSelectedProviderCompanyId("")
+                          setSelectedPortalId("")
+                        }}
+                        placeholder="e.g. Motive, Alberta Transportation, Alberta Revenue"
+                        className="pl-9"
+                      />
+                    </div>
+
+                    {companyQuery.trim() ? (
+                      <div className="overflow-hidden rounded-xl border">
+                        {companyResults.length === 0 ? (
+                          <div className="px-4 py-4">
+                            <div className="text-sm text-muted-foreground">
+                              No matching company found in TES.
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-3"
+                              onClick={() => {
+                                setNewCompanyName(companyQuery.trim())
+                                setNewCompanyType("Service Provider")
+                                setIsAddCompanyOpen(true)
+                                setFormError(null)
+                              }}
+                            >
+                              <Plus className="mr-1.5 size-3.5" />
+                              Add Company
+                            </Button>
+                          </div>
+                        ) : (
+                          companyResults.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedProviderCompanyId(item.id)
+                                setCompanyQuery(item.name || item.companyName || "")
+                                setSelectedPortalId("")
+                              }}
+                              className={`flex w-full items-center justify-between gap-4 border-b px-4 py-3 text-left last:border-b-0 ${
+                                selectedProviderCompanyId === item.id
+                                  ? "bg-primary/5"
+                                  : "hover:bg-muted/50"
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold">
+                                    {item.name || item.companyName}
+                                  </span>
+                                  {selectedProviderCompanyId === item.id ? (
+                                    <CheckCircle2 className="size-4 text-primary" />
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {item.kind || "Other"}
+                                </div>
+                              </div>
+                              <span className="font-mono text-[10px] text-muted-foreground">
+                                {item.id}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <section className="space-y-3">
+                    <div>
                       <label className="text-sm font-semibold">Portal / System</label>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         Search by official name, common name, service, or alias.
@@ -760,24 +969,6 @@ export default function CredentialsPage() {
                           </button>
                         ))
                       )}
-                    </div>
-
-                    <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-4">
-                      <div className="text-sm font-semibold">Provider or portal missing?</div>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Credentials cannot create canonical providers or portals. Resolve the provider
-                        under Companies first so TES does not create duplicate identities. The portal/system
-                        can then be linked to that canonical company.
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="mt-3"
-                        onClick={() => window.open("/companies", "_blank", "noopener,noreferrer")}
-                      >
-                        Open Companies
-                      </Button>
                     </div>
                   </section>
 
@@ -1073,6 +1264,76 @@ export default function CredentialsPage() {
                   Save
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isAddCompanyOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl border bg-background shadow-2xl">
+            <div className="flex items-start justify-between border-b px-6 py-5">
+              <div>
+                <h2 className="text-lg font-semibold">Add Company</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Create the canonical provider record without leaving Credentials.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddCompanyOpen(false)}
+                className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Close"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <label className="space-y-2">
+                <span className="text-sm font-semibold">Company Name *</span>
+                <Input
+                  value={newCompanyName}
+                  onChange={(event) => setNewCompanyName(event.target.value)}
+                  placeholder="Company name"
+                  autoFocus
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-semibold">Company Record Type *</span>
+                <select
+                  value={newCompanyType}
+                  onChange={(event) =>
+                    setNewCompanyType(
+                      event.target.value as (typeof CREDENTIAL_PROVIDER_TYPES)[number]
+                    )
+                  }
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {CREDENTIAL_PROVIDER_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Customer and Prospect are intentionally unavailable from Credentials.
+                </p>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t px-6 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsAddCompanyOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={createProviderCompany}>
+                Add Company
+              </Button>
             </div>
           </div>
         </div>

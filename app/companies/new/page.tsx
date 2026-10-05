@@ -1169,6 +1169,8 @@ function DuplicateStatusPanel({
 export default function NewCompanyPage() {
   const router = useRouter()
 
+  const [credentialsContext, setCredentialsContext] = useState(false)
+  const [contextReady, setContextReady] = useState(false)
   const [recordId, setRecordId] = useState("")
   const [selectedType, setSelectedType] = useState("")
   const [companyName, setCompanyName] = useState("")
@@ -1209,6 +1211,19 @@ export default function NewCompanyPage() {
   /* ---------------------------------------------------------
      RECORD ID
   --------------------------------------------------------- */
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const fromCredentials = params.get("context") === "credentials"
+    setCredentialsContext(fromCredentials)
+
+    if (fromCredentials) {
+      const initialName = params.get("name")?.trim()
+      if (initialName) setCompanyName(initialName)
+    }
+
+    setContextReady(true)
+  }, [])
 
   useEffect(() => {
     try {
@@ -1571,6 +1586,24 @@ export default function NewCompanyPage() {
         )
       }
 
+      if (credentialsContext && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: "TES_CREDENTIALS_COMPANY_CREATED",
+            company: {
+              id: newCompany.id,
+              name: newCompany.name,
+              companyName: newCompany.companyName,
+              kind: newCompany.kind,
+              region: newCompany.region,
+              status: newCompany.status,
+            },
+          },
+          window.location.origin
+        )
+        return
+      }
+
       router.push(
         `/companies/${newCompany.id}/profile`
       )
@@ -1586,6 +1619,10 @@ export default function NewCompanyPage() {
 
       setSubmitting(false)
     }
+  }
+
+  if (!contextReady) {
+    return <div className="min-h-screen bg-background" />
   }
 
   return (
@@ -1666,7 +1703,12 @@ export default function NewCompanyPage() {
                 </SelectTrigger>
 
                 <SelectContent>
-                  {COMPANY_TYPES.map((type) => (
+                  {(credentialsContext
+                    ? COMPANY_TYPES.filter(
+                        (type) => type !== "Customer" && type !== "Prospect"
+                      )
+                    : COMPANY_TYPES
+                  ).map((type) => (
                     <SelectItem
                       key={type}
                       value={type}

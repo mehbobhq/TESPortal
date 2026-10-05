@@ -95,18 +95,6 @@ const CATEGORIES: Array<"All" | CredentialCategory> = [
   "Other",
 ]
 
-const CREDENTIAL_PROVIDER_TYPES = [
-  "Owner Operator",
-  "Service Provider",
-  "Finance/ Leasing Company",
-  "Insurance Broker",
-  "Insurance Company",
-  "Workers Insurance",
-  "Employee Reference",
-  "Government Agency",
-  "Sub Contractor",
-  "Other",
-] as const
 
 /**
  * Phase-1 seed for the TES-global Portal Registry.
@@ -214,8 +202,6 @@ export default function CredentialsPage() {
   const [companyQuery, setCompanyQuery] = useState("")
   const [selectedProviderCompanyId, setSelectedProviderCompanyId] = useState("")
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false)
-  const [newCompanyName, setNewCompanyName] = useState("")
-  const [newCompanyType, setNewCompanyType] = useState<(typeof CREDENTIAL_PROVIDER_TYPES)[number]>("Service Provider")
 
   const [portalQuery, setPortalQuery] = useState("")
   const [selectedPortalId, setSelectedPortalId] = useState("")
@@ -235,6 +221,33 @@ export default function CredentialsPage() {
   const storageKey = `tes_company_credentials_${companyId}`
   const portalRegistryStorageKey = "tes_portal_registry_v1"
   const [customPortals, setCustomPortals] = useState<PortalDefinition[]>([])
+
+  useEffect(() => {
+    const handleCompanyCreated = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      if (event.data?.type !== "TES_CREDENTIALS_COMPANY_CREATED") return
+
+      const created = event.data.company as CompanyRecord | undefined
+      if (!created?.id) return
+
+      const storedCompanies: CompanyRecord[] = JSON.parse(
+        localStorage.getItem("tes_companies") || "[]"
+      )
+      setCompanies(storedCompanies)
+
+      const resolved =
+        storedCompanies.find((item) => item.id === created.id) || created
+
+      setSelectedProviderCompanyId(resolved.id)
+      setCompanyQuery(resolved.name || resolved.companyName || "")
+      setSelectedPortalId("")
+      setIsAddCompanyOpen(false)
+      setFormError(null)
+    }
+
+    window.addEventListener("message", handleCompanyCreated)
+    return () => window.removeEventListener("message", handleCompanyCreated)
+  }, [])
 
   useEffect(() => {
     try {
@@ -352,8 +365,6 @@ export default function CredentialsPage() {
     setCompanyQuery("")
     setSelectedProviderCompanyId("")
     setIsAddCompanyOpen(false)
-    setNewCompanyName("")
-    setNewCompanyType("Service Provider")
     setPortalQuery("")
     setSelectedPortalId("")
     setCredentialCategory("Registration")
@@ -381,59 +392,6 @@ export default function CredentialsPage() {
 
   const portalProviderIsResolved = (portal: PortalDefinition) =>
     Boolean(providerForPortal(portal))
-
-  const createProviderCompany = () => {
-    setFormError(null)
-
-    const name = newCompanyName.trim()
-    if (!name) {
-      setFormError("Company name is required.")
-      return
-    }
-
-    const normalizedName = normalizeSearch(name)
-    const existing = companies.find(
-      (item) =>
-        normalizeSearch(item.name || item.companyName || "") === normalizedName
-    )
-
-    if (existing) {
-      setFormError(
-        `"${existing.name || existing.companyName}" already exists in Companies. Select the existing record instead.`
-      )
-      return
-    }
-
-    const now = new Date().toISOString()
-    const newCompany: CompanyRecord & Record<string, unknown> = {
-      id: `CMP-${crypto.randomUUID()}`,
-      name,
-      companyName: name,
-      kind: newCompanyType,
-      status: "Active",
-      region: "",
-      tone: "ok",
-      schemaVersion: 2,
-      isArchived: false,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    const nextCompanies = [newCompany, ...companies]
-
-    try {
-      localStorage.setItem("tes_companies", JSON.stringify(nextCompanies))
-      setCompanies(nextCompanies)
-      setSelectedProviderCompanyId(newCompany.id)
-      setCompanyQuery(name)
-      setIsAddCompanyOpen(false)
-      setNewCompanyName("")
-      setNewCompanyType("Service Provider")
-    } catch (error) {
-      console.error("Failed to create provider company:", error)
-      setFormError("The company could not be added. Please retry.")
-    }
-  }
 
   const validateCredentialIdentity = () => {
     setFormError(null)
@@ -856,8 +814,6 @@ export default function CredentialsPage() {
                               size="sm"
                               className="mt-3"
                               onClick={() => {
-                                setNewCompanyName(companyQuery.trim())
-                                setNewCompanyType("Service Provider")
                                 setIsAddCompanyOpen(true)
                                 setFormError(null)
                               }}
@@ -1270,71 +1226,30 @@ export default function CredentialsPage() {
       ) : null}
 
       {isAddCompanyOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4">
-          <div className="w-full max-w-xl overflow-hidden rounded-2xl border bg-background shadow-2xl">
-            <div className="flex items-start justify-between border-b px-6 py-5">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-3 md:p-6">
+          <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-3">
               <div>
-                <h2 className="text-lg font-semibold">Add Company</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Create the canonical provider record without leaving Credentials.
-                </p>
+                <div className="text-sm font-semibold">Add Company</div>
+                <div className="text-xs text-muted-foreground">
+                  Complete the full TES company record without leaving Credentials.
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddCompanyOpen(false)}
                 className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Close"
+                aria-label="Close company form"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            <div className="space-y-5 px-6 py-5">
-              <label className="space-y-2">
-                <span className="text-sm font-semibold">Company Name *</span>
-                <Input
-                  value={newCompanyName}
-                  onChange={(event) => setNewCompanyName(event.target.value)}
-                  placeholder="Company name"
-                  autoFocus
-                />
-              </label>
-
-              <label className="space-y-2">
-                <span className="text-sm font-semibold">Company Record Type *</span>
-                <select
-                  value={newCompanyType}
-                  onChange={(event) =>
-                    setNewCompanyType(
-                      event.target.value as (typeof CREDENTIAL_PROVIDER_TYPES)[number]
-                    )
-                  }
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  {CREDENTIAL_PROVIDER_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Customer and Prospect are intentionally unavailable from Credentials.
-                </p>
-              </label>
-            </div>
-
-            <div className="flex justify-end gap-2 border-t px-6 py-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsAddCompanyOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="button" onClick={createProviderCompany}>
-                Add Company
-              </Button>
-            </div>
+            <iframe
+              title="Create TES company"
+              src={`/companies/new?context=credentials&embedded=1&name=${encodeURIComponent(companyQuery.trim())}`}
+              className="min-h-0 flex-1 bg-background"
+            />
           </div>
         </div>
       ) : null}

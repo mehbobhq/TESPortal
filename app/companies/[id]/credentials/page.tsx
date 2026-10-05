@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input"
 type CompanyRecord = {
   id: string
   name?: string
+  companyName?: string
   kind?: string
   region?: string
   status?: string
@@ -39,6 +40,7 @@ type CredentialStatus = "Active" | "Needs verification" | "Locked" | "Disabled"
 
 type PortalDefinition = {
   id: string
+  providerCompanyId: string
   name: string
   legalName: string
   jurisdiction: string
@@ -105,6 +107,7 @@ const CATEGORIES: Array<"All" | CredentialCategory> = [
 const PORTAL_REGISTRY: PortalDefinition[] = [
   {
     id: "CA-AB-ATIOS",
+    providerCompanyId: "",
     name: "ATIOS Alberta",
     legalName: "Alberta Transportation Online Services",
     jurisdiction: "Alberta",
@@ -115,6 +118,7 @@ const PORTAL_REGISTRY: PortalDefinition[] = [
   },
   {
     id: "CA-AB-TRACS",
+    providerCompanyId: "",
     name: "TRACS Alberta",
     legalName: "Tax and Revenue Administration Client Self-Service",
     jurisdiction: "Alberta",
@@ -185,6 +189,7 @@ export default function CredentialsPage() {
   const companyId = params?.id ?? ""
 
   const [company, setCompany] = useState<CompanyRecord | null>(null)
+  const [companies, setCompanies] = useState<CompanyRecord[]>([])
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -195,12 +200,6 @@ export default function CredentialsPage() {
 
   const [portalQuery, setPortalQuery] = useState("")
   const [selectedPortalId, setSelectedPortalId] = useState("")
-  const [isPortalCreateOpen, setIsPortalCreateOpen] = useState(false)
-  const [customPortalName, setCustomPortalName] = useState("")
-  const [customPortalPurpose, setCustomPortalPurpose] = useState("")
-  const [customPortalJurisdiction, setCustomPortalJurisdiction] = useState("")
-  const [customPortalCountry, setCustomPortalCountry] = useState("")
-  const [customPortalUrl, setCustomPortalUrl] = useState("")
   const [credentialCategory, setCredentialCategory] =
     useState<CredentialCategory>("Registration")
   const [username, setUsername] = useState("")
@@ -228,6 +227,7 @@ export default function CredentialsPage() {
       const companies: CompanyRecord[] = JSON.parse(
         localStorage.getItem("tes_companies") || "[]"
       )
+      setCompanies(companies)
       setCompany(companies.find((item) => item.id === companyId) || null)
 
       const stored = localStorage.getItem(storageKey)
@@ -308,12 +308,6 @@ export default function CredentialsPage() {
     setCreateStep(1)
     setPortalQuery("")
     setSelectedPortalId("")
-    setIsPortalCreateOpen(false)
-    setCustomPortalName("")
-    setCustomPortalPurpose("")
-    setCustomPortalJurisdiction("")
-    setCustomPortalCountry("")
-    setCustomPortalUrl("")
     setCredentialCategory("Registration")
     setUsername("")
     setPassword("")
@@ -334,67 +328,24 @@ export default function CredentialsPage() {
     resetCreate()
   }
 
-  const createPortalDefinition = () => {
-    setFormError(null)
+  const providerForPortal = (portal: PortalDefinition) =>
+    companies.find((item) => item.id === portal.providerCompanyId) || null
 
-    const name = customPortalName.trim()
-    const purpose = customPortalPurpose.trim()
-    const jurisdiction = customPortalJurisdiction.trim()
-    const country = customPortalCountry.trim()
-    const loginUrl = customPortalUrl.trim()
-
-    if (!name || !purpose || !loginUrl) {
-      setFormError("Portal name, purpose and web portal link are required.")
-      return
-    }
-
-    const normalizedName = normalizeSearch(name)
-    const duplicatePortal = allPortals.find(
-      (portal) => normalizeSearch(portal.name) === normalizedName
-    )
-    if (duplicatePortal) {
-      setFormError(`"${duplicatePortal.name}" already exists in the TES Portal Registry.`)
-      return
-    }
-
-    let parsedUrl: URL
-    try {
-      parsedUrl = new URL(loginUrl)
-      if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error()
-    } catch {
-      setFormError("Enter a valid http or https web portal link.")
-      return
-    }
-
-    const newPortal: PortalDefinition = {
-      id: `PORTAL-${crypto.randomUUID()}`,
-      name,
-      legalName: name,
-      jurisdiction,
-      country,
-      services: [purpose],
-      aliases: [],
-      loginUrl: parsedUrl.toString(),
-    }
-
-    const next = [...customPortals, newPortal]
-    try {
-      localStorage.setItem(portalRegistryStorageKey, JSON.stringify(next))
-      setCustomPortals(next)
-      setSelectedPortalId(newPortal.id)
-      setPortalQuery(newPortal.name)
-      setIsPortalCreateOpen(false)
-    } catch (error) {
-      console.error("Failed to save portal registry metadata:", error)
-      setFormError("The new portal/system could not be saved.")
-    }
-  }
+  const portalProviderIsResolved = (portal: PortalDefinition) =>
+    Boolean(providerForPortal(portal))
 
   const validateCredentialIdentity = () => {
     setFormError(null)
 
     if (!selectedPortal) {
       setFormError("Select a portal or system before saving.")
+      return false
+    }
+
+    if (!portalProviderIsResolved(selectedPortal)) {
+      setFormError(
+        `${selectedPortal.name} is not yet linked to a canonical provider in Companies. Create or resolve the provider under Companies first, then return here.`
+      )
       return false
     }
 
@@ -797,6 +748,9 @@ export default function CredentialsPage() {
                                 {portal.legalName}
                               </div>
                               <div className="mt-1 text-xs text-muted-foreground">
+                                Provider: {providerForPortal(portal)?.name || providerForPortal(portal)?.companyName || "Not linked in Companies"}
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
                                 {[portal.jurisdiction, portal.country].filter(Boolean).join(", ")} · {portal.services.join(" · ")}
                               </div>
                             </div>
@@ -808,84 +762,23 @@ export default function CredentialsPage() {
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsPortalCreateOpen((current) => !current)
-                        setCustomPortalName(portalQuery.trim())
-                        setFormError(null)
-                      }}
-                      className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
-                    >
-                      <Plus className="size-4" />
-                      Add new portal/system
-                    </button>
-
-                    {isPortalCreateOpen ? (
-                      <div className="rounded-xl border bg-muted/20 p-4">
-                        <div className="mb-4">
-                          <h4 className="text-sm font-semibold">Create portal/system</h4>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Create a canonical TES portal only after confirming it does not already exist.
-                          </p>
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold">Canonical name</span>
-                            <Input
-                              value={customPortalName}
-                              onChange={(event) => setCustomPortalName(event.target.value)}
-                              placeholder="e.g. ATIOS Alberta"
-                            />
-                          </label>
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold">Purpose</span>
-                            <Input
-                              value={customPortalPurpose}
-                              onChange={(event) => setCustomPortalPurpose(event.target.value)}
-                              placeholder="e.g. IRP"
-                            />
-                          </label>
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold">Jurisdiction</span>
-                            <Input
-                              value={customPortalJurisdiction}
-                              onChange={(event) => setCustomPortalJurisdiction(event.target.value)}
-                              placeholder="Province / state if applicable"
-                            />
-                          </label>
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold">Country</span>
-                            <Input
-                              value={customPortalCountry}
-                              onChange={(event) => setCustomPortalCountry(event.target.value)}
-                              placeholder="Country"
-                            />
-                          </label>
-                          <label className="space-y-1.5 md:col-span-2">
-                            <span className="text-xs font-semibold">Web portal link</span>
-                            <Input
-                              value={customPortalUrl}
-                              onChange={(event) => setCustomPortalUrl(event.target.value)}
-                              placeholder="https://..."
-                            />
-                          </label>
-                        </div>
-                        <div className="mt-4 flex justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setIsPortalCreateOpen(false)}
-                          >
-                            Cancel
-                          </Button>
-                          <Button type="button" size="sm" onClick={createPortalDefinition}>
-                            Create & select
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
+                    <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-4">
+                      <div className="text-sm font-semibold">Provider or portal missing?</div>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Credentials cannot create canonical providers or portals. Resolve the provider
+                        under Companies first so TES does not create duplicate identities. The portal/system
+                        can then be linked to that canonical company.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => window.open("/companies", "_blank", "noopener,noreferrer")}
+                      >
+                        Open Companies
+                      </Button>
+                    </div>
                   </section>
 
                   <div className="grid gap-4 md:grid-cols-2">

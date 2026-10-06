@@ -7,9 +7,13 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: production-database-migration
+  cancel-in-progress: false
+
 jobs:
-  connectivity-gate:
-    name: Verify production database migration identity
+  migrate:
+    name: Run production database migrations
     runs-on: ubuntu-latest
     environment: production-database
 
@@ -58,7 +62,6 @@ jobs:
               echo "Cloud SQL Auth Proxy is accepting connections."
               exit 0
             fi
-
             sleep 1
           done
 
@@ -66,7 +69,15 @@ jobs:
           cat cloud-sql-proxy.log
           exit 1
 
-      - name: Verify migration database identity
+      - name: Run migration control system
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGDATABASE: ${{ env.TES_POSTGRES_DATABASE }}
+          PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
+        run: bash scripts/database/migrate.sh
+
+      - name: Verify migration control system
         env:
           PGHOST: 127.0.0.1
           PGPORT: "5432"
@@ -80,9 +91,9 @@ jobs:
               SELECT
                 current_database() AS database,
                 current_user AS database_user,
-                has_database_privilege(current_user, current_database(), 'CONNECT') AS can_connect,
-                has_schema_privilege(current_user, 'public', 'USAGE') AS can_use_public,
-                has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_public;
+                to_regnamespace('tes_system') IS NOT NULL AS tes_system_exists,
+                to_regclass('tes_system.schema_migrations') IS NOT NULL AS migration_ledger_exists,
+                (SELECT count(*) FROM tes_system.schema_migrations) AS applied_migrations;
             "
 
       - name: Stop Cloud SQL Auth Proxy

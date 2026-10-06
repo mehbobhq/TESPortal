@@ -29,6 +29,9 @@ import "server-only"
  *   GOOGLE_WIF_PROVIDER_ID        - only needed in production
  *   GOOGLE_BACKEND_SERVICE_ACCOUNT - only needed in production
  *   GOOGLE_WIF_OIDC_AUDIENCE      - only needed in production; see workloadIdentityAudience() below for why this is NOT the same value as the Google STS audience
+ *   TES_CLOUD_SQL_INSTANCE         - Cloud SQL instance connection name (project:region:instance)
+ *   TES_POSTGRES_DATABASE          - PostgreSQL database name
+ *   TES_POSTGRES_IAM_USER          - PostgreSQL IAM username (service account without .gserviceaccount.com)
  */
 
 export class GoogleConfigError extends Error {
@@ -82,6 +85,22 @@ export function intakeBucketName(): string {
 
 export function evidenceBucketName(): string {
   return requireEnv("GOOGLE_GCS_EVIDENCE_BUCKET")
+}
+
+// --- Cloud SQL / PostgreSQL ---
+// These are non-secret deployment identifiers. Keeping them here preserves the
+// same fail-loud, server-only configuration boundary used by the rest of TES.
+
+export function cloudSqlInstanceConnectionName(): string {
+  return requireEnv("TES_CLOUD_SQL_INSTANCE")
+}
+
+export function postgresDatabaseName(): string {
+  return requireEnv("TES_POSTGRES_DATABASE")
+}
+
+export function postgresIamUser(): string {
+  return requireEnv("TES_POSTGRES_IAM_USER")
 }
 
 // --- Values needed only in production (Workload Identity Federation) ---

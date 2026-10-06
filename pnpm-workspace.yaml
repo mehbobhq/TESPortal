@@ -1,2 +1,3 @@
 allowBuilds:
   msw: true
+  protobufjs: false

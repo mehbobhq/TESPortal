@@ -1,0 +1,93 @@
+name: Production Database Migration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  connectivity-gate:
+    name: Verify production database migration identity
+    runs-on: ubuntu-latest
+    environment: production-database
+
+    if: github.ref == 'refs/heads/main'
+
+    env:
+      TES_CLOUD_SQL_INSTANCE: ${{ vars.TES_CLOUD_SQL_INSTANCE }}
+      TES_POSTGRES_DATABASE: ${{ vars.TES_POSTGRES_DATABASE }}
+      TES_POSTGRES_IAM_USER: ${{ vars.TES_POSTGRES_IAM_USER }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Download Cloud SQL Auth Proxy
+        run: |
+          curl -fsSL \
+            -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.20.0/cloud-sql-proxy.linux.amd64
+
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --version
+
+      - name: Start Cloud SQL Auth Proxy
+        run: |
+          ./cloud-sql-proxy \
+            --auto-iam-authn \
+            --address 127.0.0.1 \
+            --port 5432 \
+            "${TES_CLOUD_SQL_INSTANCE}" \
+            > cloud-sql-proxy.log 2>&1 &
+
+          echo $! > cloud-sql-proxy.pid
+
+      - name: Wait for proxy
+        run: |
+          for attempt in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
+              echo "Cloud SQL Auth Proxy is accepting connections."
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          echo "Cloud SQL Auth Proxy did not become ready."
+          cat cloud-sql-proxy.log
+          exit 1
+
+      - name: Verify migration database identity
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGDATABASE: ${{ env.TES_POSTGRES_DATABASE }}
+          PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
+        run: |
+          psql \
+            --no-password \
+            --set=ON_ERROR_STOP=1 \
+            --command="
+              SELECT
+                current_database() AS database,
+                current_user AS database_user,
+                has_database_privilege(current_user, current_database(), 'CONNECT') AS can_connect,
+                has_schema_privilege(current_user, 'public', 'USAGE') AS can_use_public,
+                has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_public;
+            "
+
+      - name: Stop Cloud SQL Auth Proxy
+        if: always()
+        run: |
+          if [ -f cloud-sql-proxy.pid ]; then
+            kill "$(cat cloud-sql-proxy.pid)" 2>/dev/null || true
+          fi

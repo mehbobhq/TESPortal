@@ -100,32 +100,6 @@ jobs:
                 to_regclass('tes_system.schema_migrations') IS NOT NULL AS migration_ledger_exists,
                 (SELECT count(*) FROM tes_system.schema_migrations) AS applied_migrations;
             "
-      - name: Verify 0003 organization classification seed data
-        env:
-          PGHOST: 127.0.0.1
-          PGPORT: "5432"
-          PGDATABASE: ${{ env.TES_POSTGRES_DATABASE }}
-          PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
-        run: |
-          psql \
-            --no-password \
-            --set=ON_ERROR_STOP=1 \
-            --command="
-              SELECT
-                count(*) AS classification_count,
-                count(*) FILTER (WHERE is_active = true) AS active_count,
-                min(sort_order) AS minimum_sort_order,
-                max(sort_order) AS maximum_sort_order
-              FROM public.organization_classification_types;
-
-              SELECT
-                code,
-                display_name,
-                is_active,
-                sort_order
-              FROM public.organization_classification_types
-              ORDER BY sort_order;
-            "
 
       - name: Stop Cloud SQL Auth Proxy
         if: always()

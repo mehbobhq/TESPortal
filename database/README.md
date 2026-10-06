@@ -53,18 +53,18 @@ Rules:
 6. Production migrations are not run automatically during Vercel deployment. They are executed through the dedicated production database migration workflow.
 7. Business/domain tables must not be added casually to a foundation migration.
 
-## Privilege model established by 0001
+## Privilege model established by 0001 and hardened by 0002
 
-`0001_database_foundation.sql` establishes the initial application privilege boundary:
+`0001_database_foundation.sql` establishes the initial application privilege boundary, and `0002_runtime_privilege_hardening.sql` removes broad automatic runtime privileges before the first business/domain table is introduced:
 
 - `PUBLIC` cannot create objects in the `public` schema.
 - The runtime identity can use the `public` schema but cannot create objects there.
-- Future tables created by the migration identity in `public` default to runtime `SELECT`, `INSERT`, `UPDATE`, and `DELETE` privileges.
-- Future sequences created by the migration identity in `public` default to runtime `USAGE` and `SELECT` privileges.
+- Future tables and sequences created by the migration identity in `public` do not automatically grant privileges to the runtime identity.
+- Every migration must explicitly grant only the runtime privileges required by each object.
 - Future functions do not default to `PUBLIC` execution; function execution is granted deliberately per function.
 - The runtime identity has no access to `tes_system` or its migration ledger.
 
-Default privileges are creator-specific. These defaults apply to objects created by `tes-database-migrator@tes-production-510007.iam`; they are not a substitute for reviewing grants in each migration.
+Default privileges are creator-specific. TES intentionally keeps the migration identity's future-object defaults restrictive so sensitive, append-only, and internal tables cannot inherit broad runtime access accidentally.
 
 ## Tenant isolation / RLS gate
 

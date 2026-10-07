@@ -63,27 +63,17 @@ TO "tes-backend@tes-production-510007.iam";
 
 CREATE FUNCTION tes_security.current_customer_id()
 RETURNS uuid
-LANGUAGE plpgsql
+LANGUAGE sql
 STABLE
 SECURITY INVOKER
 SET search_path = pg_catalog
 AS $$
-DECLARE
-    raw_customer_id text;
-BEGIN
-    raw_customer_id := current_setting('tes.customer_id', true);
-
-    IF raw_customer_id IS NULL OR btrim(raw_customer_id) = '' THEN
-        RETURN NULL;
-    END IF;
-
-    BEGIN
-        RETURN btrim(raw_customer_id)::uuid;
-    EXCEPTION
-        WHEN invalid_text_representation THEN
-            RETURN NULL;
+    SELECT CASE
+        WHEN btrim(current_setting('tes.customer_id', true))
+             ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        THEN btrim(current_setting('tes.customer_id', true))::uuid
+        ELSE NULL
     END;
-END;
 $$;
 
 

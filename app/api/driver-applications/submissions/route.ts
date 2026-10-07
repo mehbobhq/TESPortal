@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import {
   getApplicantSubmissions,
   saveApplicantSubmission,
@@ -22,9 +23,21 @@ function isSubmission(value: unknown): value is ServerApplicantSubmission {
 
 export async function POST(request: NextRequest) {
   try {
+    const authorization = request.headers.get("authorization")
+    const match = authorization?.match(/^Bearer\s+(.+)$/i)
+    const invitation = match ? verifyDriverInvitationToken(match[1].trim()) : null
+
+    if (!invitation) {
+      return NextResponse.json({ error: "A valid driver application invitation is required." }, { status: 401 })
+    }
+
     const body = await request.json()
     if (!isSubmission(body)) {
       return NextResponse.json({ error: "Invalid application submission payload." }, { status: 400 })
+    }
+
+    if (body.applicationId !== invitation.applicationId) {
+      return NextResponse.json({ error: "The invitation does not authorize this application." }, { status: 403 })
     }
 
     const saved = await saveApplicantSubmission(body)

@@ -260,7 +260,7 @@ export interface ApplicantApplicationStore {
   saveDraft(record: ApplicantDraftEnvelope): Promise<ApplicantDraftEnvelope>
   clearDraft(applicationId: string): Promise<void>
   loadSubmittedSnapshot(applicationId: string): Promise<ApplicantSubmittedSnapshot | null>
-  submitApplication(record: ApplicantDraftEnvelope): Promise<ApplicantSubmittedSnapshot>
+  submitApplication(record: ApplicantDraftEnvelope, invitationToken: string): Promise<ApplicantSubmittedSnapshot>
 }
 
 export function createEmptyApplicantDraft(applicationId: string): ApplicantDraftEnvelope {
@@ -387,10 +387,13 @@ export function createEmptyApplicantDraft(applicationId: string): ApplicantDraft
 
 const storageKey = (applicationId: string) => `tes_applicant_application_draft_${applicationId}`
 
-async function persistSubmittedSnapshotToServer(snapshot: ApplicantSubmittedSnapshot) {
+async function persistSubmittedSnapshotToServer(snapshot: ApplicantSubmittedSnapshot, invitationToken: string) {
   const response = await fetch("/api/driver-applications/submissions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${invitationToken}`,
+    },
     body: JSON.stringify(snapshot),
   })
 
@@ -533,7 +536,7 @@ export const browserApplicantApplicationStore: ApplicantApplicationStore = {
     }
   },
 
-  async submitApplication(record) {
+  async submitApplication(record, invitationToken) {
     if (typeof window === "undefined") {
       throw new Error("Applicant submission is only available in the browser during development.")
     }
@@ -541,7 +544,7 @@ export const browserApplicantApplicationStore: ApplicantApplicationStore = {
     const existing = window.localStorage.getItem(submittedStorageKey(record.applicationId))
     if (existing) {
       const snapshot = JSON.parse(existing) as ApplicantSubmittedSnapshot
-      await persistSubmittedSnapshotToServer(snapshot)
+      await persistSubmittedSnapshotToServer(snapshot, invitationToken)
       return snapshot
     }
 
@@ -556,7 +559,7 @@ export const browserApplicantApplicationStore: ApplicantApplicationStore = {
 
     // Shared submission boundary: the server accepts the immutable snapshot first.
     // The browser copy is retained only for the applicant receipt/resume experience.
-    await persistSubmittedSnapshotToServer(snapshot)
+    await persistSubmittedSnapshotToServer(snapshot, invitationToken)
     window.localStorage.setItem(submittedStorageKey(record.applicationId), JSON.stringify(snapshot))
     window.localStorage.removeItem(storageKey(record.applicationId))
     return snapshot

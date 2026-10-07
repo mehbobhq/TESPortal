@@ -485,7 +485,7 @@ export default function DriverApplicationWorkspace({
           : [...current.completedSteps, "review"],
       }
 
-      const snapshot = await browserApplicantApplicationStore.submitApplication(reviewComplete)
+      const snapshot = await browserApplicantApplicationStore.submitApplication(reviewComplete, token)
       setSubmitted(snapshot)
       setSubmitState("idle")
     } catch {

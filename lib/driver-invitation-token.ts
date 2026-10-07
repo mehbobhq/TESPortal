@@ -25,7 +25,7 @@ const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url
 const decode = (value: string) => Buffer.from(value, "base64url").toString("utf8")
 
 function signingSecret() {
-  const secret = process.env.TES_INVITATION_SECRET || process.env.RESEND_API_KEY
+  const secret = process.env.TES_INVITATION_SECRET
   if (!secret) throw new Error("TES invitation signing secret is not configured.")
   return secret
 }
@@ -48,7 +48,15 @@ export function verifyDriverInvitationToken(token: string): DriverInvitationToke
     const b = Buffer.from(expected)
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null
     const payload = JSON.parse(decode(body)) as DriverInvitationTokenPayload
-    if (payload.version !== 1 || !payload.applicationId || !payload.recipientEmail || !payload.expiresAt) return null
+    if (
+      payload.version !== 1 ||
+      !payload.companyId ||
+      !payload.driverMasterId ||
+      !payload.applicationId ||
+      !payload.recipientEmail ||
+      !payload.driverName ||
+      !payload.expiresAt
+    ) return null
     if (Date.parse(payload.expiresAt) <= Date.now()) return null
     return payload
   } catch {

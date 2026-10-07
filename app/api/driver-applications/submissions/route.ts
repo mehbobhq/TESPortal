@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
 import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import {
@@ -49,6 +50,12 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const { userId } = await auth()
+
+  if (!userId) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 })
+  }
+
   const applicationIds = (request.nextUrl.searchParams.get("applicationIds") ?? "")
     .split(",")
     .map((value) => value.trim())

@@ -100,7 +100,7 @@ jobs:
                 to_regclass('tes_system.schema_migrations') IS NOT NULL AS migration_ledger_exists,
                 (SELECT count(*) FROM tes_system.schema_migrations) AS applied_migrations;
             "
-+      - name: Verify 0004 tenant isolation foundation
+      - name: Verify 0004 tenant isolation foundation
         env:
           PGHOST: 127.0.0.1
           PGPORT: "5432"

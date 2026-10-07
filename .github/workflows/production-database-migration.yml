@@ -100,7 +100,93 @@ jobs:
                 to_regclass('tes_system.schema_migrations') IS NOT NULL AS migration_ledger_exists,
                 (SELECT count(*) FROM tes_system.schema_migrations) AS applied_migrations;
             "
+      - name: Verify 0004 tenant isolation foundation
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGDATABASE: ${{ env.TES_POSTGRES_DATABASE }}
+          PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
+        run: |
+          psql \
+            --no-password \
+            --set=ON_ERROR_STOP=1 \
+            --command="
+              SELECT
+                tes_security.current_customer_id() IS NULL
+                  AS missing_context_returns_null
+              \gset
 
+              \if :missing_context_returns_null
+              \else
+                \echo 'ERROR: missing tenant context did not resolve to NULL.'
+                \quit 4
+              \endif
+
+              BEGIN;
+
+              SELECT set_config('tes.customer_id', '', true);
+
+              SELECT
+                tes_security.current_customer_id() IS NULL
+                  AS blank_context_returns_null
+              \gset
+
+              \if :blank_context_returns_null
+              \else
+                \echo 'ERROR: blank tenant context did not resolve to NULL.'
+                \quit 4
+              \endif
+
+              SELECT set_config(
+                'tes.customer_id',
+                'not-a-valid-customer-uuid',
+                true
+              );
+
+              SELECT
+                tes_security.current_customer_id() IS NULL
+                  AS malformed_context_returns_null
+              \gset
+
+              \if :malformed_context_returns_null
+              \else
+                \echo 'ERROR: malformed tenant context did not resolve to NULL.'
+                \quit 4
+              \endif
+
+              SELECT set_config(
+                'tes.customer_id',
+                '123e4567-e89b-42d3-a456-426614174000',
+                true
+              );
+
+              SELECT
+                tes_security.current_customer_id()
+                  = '123e4567-e89b-42d3-a456-426614174000'::uuid
+                  AS valid_context_round_trips
+              \gset
+
+              \if :valid_context_round_trips
+              \else
+                \echo 'ERROR: valid tenant context did not round-trip.'
+                \quit 4
+              \endif
+
+              COMMIT;
+
+              SELECT
+                tes_security.current_customer_id() IS NULL
+                  AS context_cleared_after_transaction
+              \gset
+
+              \if :context_cleared_after_transaction
+              \else
+                \echo 'ERROR: tenant context survived the transaction boundary.'
+                \quit 4
+              \endif
+
+              \echo '0004 tenant isolation behavioral verification passed.'
+            "
       - name: Stop Cloud SQL Auth Proxy
         if: always()
         run: |

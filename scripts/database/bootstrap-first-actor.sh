@@ -18,46 +18,43 @@ psql \
   --set=clerk_user_id="$TES_BOOTSTRAP_CLERK_USER_ID" <<'SQL'
 BEGIN;
 
-DO $bootstrap$
-DECLARE
-  v_actor_id uuid;
-  v_existing_actor_id uuid;
-  v_actor_count bigint;
-BEGIN
-  SELECT ai.actor_id
-    INTO v_existing_actor_id
-  FROM public.authentication_identities AS ai
-  WHERE ai.provider = 'clerk'
-    AND ai.provider_subject = :'clerk_user_id';
+SELECT count(*) = 0 AS no_existing_clerk_identity
+FROM public.authentication_identities
+WHERE provider = 'clerk'
+  AND provider_subject = :'clerk_user_id'
+\gset
 
-  IF v_existing_actor_id IS NOT NULL THEN
-    RAISE EXCEPTION 'Clerk identity is already linked; bootstrap refused.';
-  END IF;
+\if :no_existing_clerk_identity
+\else
+  \echo 'ERROR: Clerk identity is already linked; bootstrap refused.'
+  \quit 3
+\endif
 
-  SELECT count(*)
-    INTO v_actor_count
-  FROM public.actors;
+SELECT count(*) = 0 AS no_existing_actors
+FROM public.actors
+\gset
 
-  IF v_actor_count <> 0 THEN
-    RAISE EXCEPTION 'TES actors already exist; first-actor bootstrap refused.';
-  END IF;
+\if :no_existing_actors
+\else
+  \echo 'ERROR: TES actors already exist; first-actor bootstrap refused.'
+  \quit 3
+\endif
 
-  INSERT INTO public.actors (actor_type)
-  VALUES ('HUMAN')
-  RETURNING id INTO v_actor_id;
+INSERT INTO public.actors (actor_type)
+VALUES ('HUMAN')
+RETURNING id AS actor_id
+\gset
 
-  INSERT INTO public.authentication_identities (
-    actor_id,
-    provider,
-    provider_subject
-  )
-  VALUES (
-    v_actor_id,
-    'clerk',
-    :'clerk_user_id'
-  );
-END
-$bootstrap$;
+INSERT INTO public.authentication_identities (
+  actor_id,
+  provider,
+  provider_subject
+)
+VALUES (
+  :'actor_id',
+  'clerk',
+  :'clerk_user_id'
+);
 
 COMMIT;
 

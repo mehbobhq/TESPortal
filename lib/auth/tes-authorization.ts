@@ -2,7 +2,11 @@ import "server-only"
 
 import type { Pool, PoolClient } from "pg"
 import { getPostgresPool } from "@/lib/database/postgres"
-import { requireTesActor, type TesActor } from "@/lib/auth/tes-actor"
+import {
+  requireTesActor,
+  requireTesActorWithClient,
+  type TesActor,
+} from "@/lib/auth/tes-actor"
 
 export type TesAuthorizationScope =
   | { type: "SYSTEM" }
@@ -92,7 +96,7 @@ export async function requireTesAuthorizationPrincipal(): Promise<TesAuthorizati
 export async function requireTesAuthorizationPrincipalWithClient(
   client: PoolClient,
 ): Promise<TesAuthorizationPrincipal> {
-  const actor = await requireTesActor()
+  const actor = await requireTesActorWithClient(client)
   return resolveTesAuthorizationPrincipal(actor, client)
 }
 
@@ -198,8 +202,9 @@ export async function requireTesAuthorization(
 }
 
 /**
- * Transaction-aware authorization. Authentication still resolves through
- * requireTesActor(); only database evaluation is pinned to the supplied client.
+ * Transaction-aware authorization. Clerk establishes the authenticated subject,
+ * while TES Actor resolution, principal resolution, and authorization evaluation
+ * all use the supplied checked-out transaction client.
  */
 export async function requireTesAuthorizationWithClient(
   client: PoolClient,

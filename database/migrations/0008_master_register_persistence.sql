@@ -77,8 +77,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = pg_catalog
-AS $$
-BEGIN
+AS $$ BEGIN
     RAISE EXCEPTION 'Master Register events are append-only and immutable'
         USING ERRCODE = '55000';
 END;

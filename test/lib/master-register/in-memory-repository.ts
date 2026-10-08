@@ -1,11 +1,9 @@
 /**
  * TEST-ONLY in-memory Master Register repository adapter.
  *
- * This exists solely so Phase 1 tests can exercise the repository contract
- * without any production persistence. It is deliberately NOT exported from
- * lib/master-register (see J. FILE SCOPE — no dev-file-adapter.ts, no
- * filesystem/localStorage persistence in that module) and must never be
- * imported by application code.
+ * This exists solely so tests can exercise the repository contract without
+ * production persistence. It is deliberately NOT exported from
+ * lib/master-register and must never be imported by application code.
  */
 
 import { DuplicateEventError } from "../../../lib/master-register/repository.ts";
@@ -17,8 +15,6 @@ export class InMemoryMasterRegisterRepository implements MasterRegisterRepositor
   private readonly eventIds = new Set<string>();
 
   async append(event: MasterRegisterEvent): Promise<MasterRegisterEvent> {
-    // Append-only: rejects a repeated eventId rather than overwriting the
-    // original — never looks up-and-replaces.
     if (this.eventIds.has(event.eventId)) {
       throw new DuplicateEventError(event.eventId);
     }
@@ -35,8 +31,8 @@ export class InMemoryMasterRegisterRepository implements MasterRegisterRepositor
     return this.events.filter((event) => event.relationships?.correlationId === correlationId);
   }
 
-  async queryByCompanyId(companyId: string): Promise<MasterRegisterEvent[]> {
-    return this.events.filter((event) => event.target?.companyId === companyId);
+  async queryByCustomerId(customerId: string): Promise<MasterRegisterEvent[]> {
+    return this.events.filter((event) => event.target?.customerId === customerId);
   }
 
   async queryByActorId(actorId: string): Promise<MasterRegisterEvent[]> {

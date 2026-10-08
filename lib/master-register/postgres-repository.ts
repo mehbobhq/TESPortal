@@ -153,8 +153,8 @@ export class PostgresMasterRegisterRepository implements MasterRegisterRepositor
     return queryRows(await this.executor(), "correlation_id = $1", value)
   }
 
-  async queryByCompanyId(value: string) {
-    return queryRows(await this.executor(), "company_id = $1", value)
+  async queryByCustomerId(value: string) {
+    return queryRows(await this.executor(), "customer_id = $1::uuid", value)
   }
 
   async queryByActorId(value: string) {

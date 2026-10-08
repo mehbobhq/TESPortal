@@ -108,16 +108,28 @@ test("integrationOperationId queries return exactly the events referencing that 
   assert.equal(results[0]!.eventId, match.eventId);
 });
 
-test("company and actor queries work as a minimum query surface beyond the relationship-ID queries", async () => {
+test("customer and actor queries preserve separate tenant, resource and actor identities", async () => {
   const repository = new InMemoryMasterRegisterRepository();
+  const customerId = "11111111-1111-4111-8111-111111111111";
+  const resourceId = "22222222-2222-4222-8222-222222222222";
+
   const event = await recordEvent(
     repository,
-    input({ target: { resourceType: "Company", resourceId: "CMP-1", companyId: "CMP-1" } }),
+    input({
+      target: {
+        customerId,
+        resourceType: "VEHICLE",
+        resourceId,
+        subjectReferences: ["VEHICLE:22222222-2222-4222-8222-222222222222"],
+      },
+    }),
   );
 
-  const byCompany = await repository.queryByCompanyId("CMP-1");
-  assert.equal(byCompany[0]?.eventId, event.eventId);
+  const byCustomer = await repository.queryByCustomerId(customerId);
+  assert.equal(byCustomer[0]?.eventId, event.eventId);
+  assert.equal(byCustomer[0]?.target?.resourceId, resourceId);
 
   const byActor = await repository.queryByActorId("USR-TEST-1");
   assert.equal(byActor[0]?.eventId, event.eventId);
+  assert.equal(byActor[0]?.target?.customerId, customerId);
 });

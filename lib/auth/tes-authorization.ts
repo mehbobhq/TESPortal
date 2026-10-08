@@ -1,5 +1,6 @@
 import "server-only"
 
+import type { Pool, PoolClient } from "pg"
 import { getPostgresPool } from "@/lib/database/postgres"
 import { requireTesActor, type TesActor } from "@/lib/auth/tes-actor"
 
@@ -50,11 +51,13 @@ function normalizeCapabilityCode(capability: string): string {
  * Resolves the authenticated TES actor and its system-level Master Account
  * authority. Authentication and authorization remain separate boundaries.
  */
-export async function requireTesAuthorizationPrincipal(): Promise<TesAuthorizationPrincipal> {
-  const actor = await requireTesActor()
-  const pool = await getPostgresPool()
+type AuthorizationQueryable = Pick<Pool | PoolClient, "query">
 
-  const result = await pool.query<MasterAccountRow>(
+async function resolveTesAuthorizationPrincipal(
+  actor: TesActor,
+  database: AuthorizationQueryable,
+): Promise<TesAuthorizationPrincipal> {
+  const result = await database.query<MasterAccountRow>(
     `SELECT EXISTS (
        SELECT 1
        FROM public.master_account_authority AS maa
@@ -71,6 +74,26 @@ export async function requireTesAuthorizationPrincipal(): Promise<TesAuthorizati
     actor,
     isMasterAccount: row.is_master_account,
   }
+}
+
+export async function requireTesAuthorizationPrincipal(): Promise<TesAuthorizationPrincipal> {
+  const actor = await requireTesActor()
+  const pool = await getPostgresPool()
+  return resolveTesAuthorizationPrincipal(actor, pool)
+}
+
+/**
+ * Transaction-aware principal resolution for server workflows that must keep
+ * authorization and later tenant context on one checked-out connection.
+ *
+ * The authenticated actor still comes exclusively from the Clerk -> TES Actor
+ * boundary; callers cannot supply or impersonate an actor ID.
+ */
+export async function requireTesAuthorizationPrincipalWithClient(
+  client: PoolClient,
+): Promise<TesAuthorizationPrincipal> {
+  const actor = await requireTesActor()
+  return resolveTesAuthorizationPrincipal(actor, client)
 }
 
 /**
@@ -100,11 +123,12 @@ export async function requireTesMasterAccount(): Promise<TesAuthorizationPrincip
  * point to that exact assignment. This also guarantees that a grant cannot
  * borrow an assignment belonging to another relationship.
  */
-export async function requireTesAuthorization(
+async function evaluateTesAuthorization(
+  principal: TesAuthorizationPrincipal,
   request: TesAuthorizationRequest,
+  database: AuthorizationQueryable,
 ): Promise<TesAuthorizationDecision> {
   const capability = normalizeCapabilityCode(request.capability)
-  const principal = await requireTesAuthorizationPrincipal()
 
   if (principal.isMasterAccount) {
     return {
@@ -123,8 +147,7 @@ export async function requireTesAuthorization(
     throw new TesAuthorizationDeniedError()
   }
 
-  const pool = await getPostgresPool()
-  const result = await pool.query<AuthorizationRow>(
+  const result = await database.query<AuthorizationRow>(
     `SELECT EXISTS (
        SELECT 1
        FROM public.actor_relationships AS ar
@@ -164,4 +187,24 @@ export async function requireTesAuthorization(
     capability,
     scope: request.scope,
   }
+}
+
+export async function requireTesAuthorization(
+  request: TesAuthorizationRequest,
+): Promise<TesAuthorizationDecision> {
+  const principal = await requireTesAuthorizationPrincipal()
+  const pool = await getPostgresPool()
+  return evaluateTesAuthorization(principal, request, pool)
+}
+
+/**
+ * Transaction-aware authorization. Authentication still resolves through
+ * requireTesActor(); only database evaluation is pinned to the supplied client.
+ */
+export async function requireTesAuthorizationWithClient(
+  client: PoolClient,
+  request: TesAuthorizationRequest,
+): Promise<TesAuthorizationDecision> {
+  const principal = await requireTesAuthorizationPrincipalWithClient(client)
+  return evaluateTesAuthorization(principal, request, client)
 }

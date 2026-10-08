@@ -17,10 +17,16 @@ export class TesCustomerContextError extends Error {
 }
 
 function normalizeCustomerId(customerId: string): string {
-  const normalized = customerId.trim()
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
+  const normalized = customerId.trim().toLowerCase()
+
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      normalized,
+    )
+  ) {
     throw new TesCustomerContextError()
   }
+
   return normalized
 }
 

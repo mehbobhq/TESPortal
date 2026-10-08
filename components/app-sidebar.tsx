@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useClerk } from "@clerk/nextjs"
 import {
   Activity,
   BarChart3,
@@ -25,6 +26,7 @@ import {
   Truck,
   User,
   Users,
+  LogOut,
   type LucideIcon,
 } from "lucide-react"
 
@@ -84,6 +86,7 @@ const COMPANY_ICONS: Record<string, LucideIcon> = {
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const { signOut } = useClerk()
   const pathSegments = pathname.split("/").filter(Boolean)
   const isCompanyContext =
     pathSegments[0] === "companies" &&
@@ -253,6 +256,16 @@ export function AppSidebar() {
                   System Admin
                 </span>
               </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Sign out"
+              onClick={() => void signOut({ redirectUrl: "/" })}
+              className="h-9 rounded-lg px-2.5 text-sidebar-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+            >
+              <LogOut className="size-4 shrink-0" />
+              <span className="truncate text-[13px]">Sign out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

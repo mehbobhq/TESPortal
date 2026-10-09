@@ -116,19 +116,22 @@ NOT EXISTS (
 \if :no_applied_migrations_missing_from_repository
 \else
   \echo 'ERROR: an applied migration is missing from the repository. Migration history is immutable.'
-  \quit 3
+  DO $$ BEGIN RAISE EXCEPTION 'TES migration integrity check failed; see the preceding ERROR line'
+    USING ERRCODE = 'P0001'; END $$;
 \endif
 
 \if :all_applied_filenames_match
 \else
   \echo 'ERROR: an applied migration filename differs from the repository. Migration history is immutable.'
-  \quit 3
+  DO $$ BEGIN RAISE EXCEPTION 'TES migration integrity check failed; see the preceding ERROR line'
+    USING ERRCODE = 'P0001'; END $$;
 \endif
 
 \if :all_applied_checksums_match
 \else
   \echo 'ERROR: an applied migration checksum differs from the repository. Migration history is immutable.'
-  \quit 3
+  DO $$ BEGIN RAISE EXCEPTION 'TES migration integrity check failed; see the preceding ERROR line'
+    USING ERRCODE = 'P0001'; END $$;
 \endif
 SQL
 

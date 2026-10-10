@@ -447,12 +447,12 @@ function parsePurposes(value: unknown, field: string): PurposeInput[] {
   })
 }
 
-/** Applies the purpose's primary_mode: NONE forbids a primary flag, REQUIRED implies it, OPTIONAL leaves the choice. */
+/** Applies the purpose's primary_mode: NONE forbids a primary flag, SINGLE implies it, OPTIONAL leaves the choice. */
 function resolvePrimary(purpose: ContactPurpose, requested: unknown, field: string): boolean {
   const mode = PURPOSE_DEFINITIONS[purpose].primaryMode as string
-  const primary = parseBoolean(requested, field, mode === "REQUIRED")
+  const primary = parseBoolean(requested, field, mode === "SINGLE")
   if (mode === "NONE" && primary) throw new ContactValidationError(field, `${purpose} cannot have a primary contact.`)
-  if (mode === "REQUIRED" && !primary) throw new ContactValidationError(field, `${purpose} is always the primary contact.`)
+  if (mode === "SINGLE" && !primary) throw new ContactValidationError(field, `${purpose} is always the primary contact.`)
   return primary
 }
 

@@ -220,10 +220,6 @@ BEGIN
 END
 $verify$;
 
--- ============================================================
--- Exact catalogue (generated from the repository 0014 migration)
--- ============================================================
-
 DO $verify$
 DECLARE
   missing text;
@@ -767,7 +763,7 @@ contact_purpose_assignments contact_purpose_assignments_relationship_fk f FOREIG
 contact_purpose_assignments contact_purpose_assignments_superseded_by_fk f FOREIGN KEY (superseded_by_id, relationship_id) REFERENCES contact_purpose_assignments(id, relationship_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true
 contact_purpose_types contact_purpose_types_code_valid c CHECK ((code ~ '^[A-Z][A-Z0-9_]{1,31}$'::text)) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_display_name_not_blank c CHECK ((btrim(display_name) <> ''::text)) deferrable=false deferred=false
-contact_purpose_types contact_purpose_types_primary_mode_valid c CHECK ((primary_mode = ANY (ARRAY['NONE'::text, 'OPTIONAL'::text, 'REQUIRED'::text]))) deferrable=false deferred=false
+contact_purpose_types contact_purpose_types_primary_mode_valid c CHECK ((primary_mode = ANY (ARRAY['NONE'::text, 'OPTIONAL'::text, 'SINGLE'::text]))) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_pkey p PRIMARY KEY (code) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_sort_order_uq u UNIQUE (sort_order) deferrable=false deferred=false
 persons persons_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
@@ -851,7 +847,7 @@ contact_purpose_assignments contact_purpose_assignments_relationship_fk f FOREIG
 contact_purpose_assignments contact_purpose_assignments_superseded_by_fk f FOREIGN KEY (superseded_by_id, relationship_id) REFERENCES contact_purpose_assignments(id, relationship_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true
 contact_purpose_types contact_purpose_types_code_valid c CHECK ((code ~ '^[A-Z][A-Z0-9_]{1,31}$'::text)) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_display_name_not_blank c CHECK ((btrim(display_name) <> ''::text)) deferrable=false deferred=false
-contact_purpose_types contact_purpose_types_primary_mode_valid c CHECK ((primary_mode = ANY (ARRAY['NONE'::text, 'OPTIONAL'::text, 'REQUIRED'::text]))) deferrable=false deferred=false
+contact_purpose_types contact_purpose_types_primary_mode_valid c CHECK ((primary_mode = ANY (ARRAY['NONE'::text, 'OPTIONAL'::text, 'SINGLE'::text]))) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_pkey p PRIMARY KEY (code) deferrable=false deferred=false
 contact_purpose_types contact_purpose_types_sort_order_uq u UNIQUE (sort_order) deferrable=false deferred=false
 persons persons_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
@@ -1028,7 +1024,9 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$persons persons_guard_update enabled=O type=19 function=tes_security.guard_person_update constraint=false deferrable=false deferred=false
+    SELECT unnest(string_to_array($exp$persons persons_require_current_name enabled=O type=5 function=tes_security.require_current_person_name constraint=true deferrable=true deferred=true
+person_name_versions person_name_versions_require_current_name enabled=O type=21 function=tes_security.require_current_person_name constraint=true deferrable=true deferred=true
+persons persons_guard_update enabled=O type=19 function=tes_security.guard_person_update constraint=false deferrable=false deferred=false
 person_name_versions person_name_versions_guard_insert enabled=O type=7 function=tes_security.guard_person_dependent_insert constraint=false deferrable=false deferred=false
 person_name_versions person_name_versions_guard_update enabled=O type=19 function=tes_security.guard_contact_period_update constraint=false deferrable=false deferred=false
 person_channels person_channels_guard_insert enabled=O type=7 function=tes_security.guard_person_dependent_insert constraint=false deferrable=false deferred=false
@@ -1063,7 +1061,9 @@ contact_purpose_assignments contact_purpose_assignments_no_truncate enabled=O ty
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
     SELECT l FROM (SELECT tgrelid::regclass::text || ' ' || tgname || ' enabled=' || tgenabled::text || ' type=' || tgtype || ' function=' || tgfoid::regproc::text || ' constraint=' || (tgconstraint <> 0) || ' deferrable=' || tgdeferrable || ' deferred=' || tginitdeferred FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN ('public.contact_purpose_types'::regclass,'public.persons'::regclass,'public.person_name_versions'::regclass,'public.person_channels'::regclass,'public.organization_channels'::regclass,'public.organization_person_relationships'::regclass,'public.organization_person_titles'::regclass,'public.contact_purpose_assignments'::regclass)) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$persons persons_guard_update enabled=O type=19 function=tes_security.guard_person_update constraint=false deferrable=false deferred=false
+    SELECT unnest(string_to_array($exp$persons persons_require_current_name enabled=O type=5 function=tes_security.require_current_person_name constraint=true deferrable=true deferred=true
+person_name_versions person_name_versions_require_current_name enabled=O type=21 function=tes_security.require_current_person_name constraint=true deferrable=true deferred=true
+persons persons_guard_update enabled=O type=19 function=tes_security.guard_person_update constraint=false deferrable=false deferred=false
 person_name_versions person_name_versions_guard_insert enabled=O type=7 function=tes_security.guard_person_dependent_insert constraint=false deferrable=false deferred=false
 person_name_versions person_name_versions_guard_update enabled=O type=19 function=tes_security.guard_contact_period_update constraint=false deferrable=false deferred=false
 person_channels person_channels_guard_insert enabled=O type=7 function=tes_security.guard_person_dependent_insert constraint=false deferrable=false deferred=false
@@ -1096,7 +1096,7 @@ contact_purpose_assignments contact_purpose_assignments_no_truncate enabled=O ty
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION '0014 triggers (enabled flag, type, function, deferral) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK 0014 triggers (enabled flag, type, function, deferral) (29 entries) match the design exactly';
+  RAISE NOTICE 'OK 0014 triggers (enabled flag, type, function, deferral) (31 entries) match the design exactly';
 END
 $verify$;
 
@@ -1108,35 +1108,37 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$guard_organization_channel_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=efeac2b47fbcf7eb804835094624f62d owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+    SELECT unnest(string_to_array($exp$guard_person_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=20750a06e8f2835c79278d5a2927ea16 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+guard_organization_channel_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=efeac2b47fbcf7eb804835094624f62d owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 prevent_contact_data_removal secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=1a554d5e90244d3a596000e9464b3dd1 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_person_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=64fc1ec8de6b3cbd7d0b3fc30bc08b55 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_contact_period_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=f77818cbb607e19d0738a8a03d4e049c owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
-guard_person_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=20750a06e8f2835c79278d5a2927ea16 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=0e40e640fa1d8d938afdc2b2108aabca owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=ed828ea2d087e82851c3d68ec4f0f643 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=8798774716e171b5ac501a906715bebc owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
-guard_purpose_assignment_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=79e1c46cacf9ac4c79ee3bbf3c9db3a2 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false$exp$, E'\n')) AS l
+guard_purpose_assignment_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=f572a3fe756607fe58e014219e6a14bc owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+require_current_person_name secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=4f858f889697f0f0ea56d2bd8fae9d8f owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT p.proname || ' secdef=' || p.prosecdef || ' config=' || COALESCE(array_to_string(p.proconfig, ';'), '-') || ' volatility=' || p.provolatile::text || ' language=' || l.lanname || ' returns=' || format_type(p.prorettype, NULL) || ' args=' || pg_get_function_arguments(p.oid) || ' body=' || md5(p.prosrc) || ' owner=' || pg_get_userbyid(p.proowner) || ' public_execute=' || has_function_privilege('public', p.oid, 'EXECUTE') || ' runtime_execute=' || has_function_privilege('tes-backend@tes-production-510007.iam', p.oid, 'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = 'tes_security' AND p.proname IN ('prevent_contact_data_removal','guard_person_update','guard_contact_period_update','guard_person_dependent_insert','guard_organization_channel_insert','guard_relationship_insert','guard_relationship_update','guard_relationship_dependent_insert','guard_purpose_assignment_insert')) AS a(l)
+    SELECT l FROM (SELECT p.proname || ' secdef=' || p.prosecdef || ' config=' || COALESCE(array_to_string(p.proconfig, ';'), '-') || ' volatility=' || p.provolatile::text || ' language=' || l.lanname || ' returns=' || format_type(p.prorettype, NULL) || ' args=' || pg_get_function_arguments(p.oid) || ' body=' || md5(p.prosrc) || ' owner=' || pg_get_userbyid(p.proowner) || ' public_execute=' || has_function_privilege('public', p.oid, 'EXECUTE') || ' runtime_execute=' || has_function_privilege('tes-backend@tes-production-510007.iam', p.oid, 'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = 'tes_security' AND p.proname IN ('prevent_contact_data_removal','guard_person_update','guard_contact_period_update','guard_person_dependent_insert','guard_organization_channel_insert','guard_relationship_insert','guard_relationship_update','guard_relationship_dependent_insert','guard_purpose_assignment_insert','require_current_person_name')) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT p.proname || ' secdef=' || p.prosecdef || ' config=' || COALESCE(array_to_string(p.proconfig, ';'), '-') || ' volatility=' || p.provolatile::text || ' language=' || l.lanname || ' returns=' || format_type(p.prorettype, NULL) || ' args=' || pg_get_function_arguments(p.oid) || ' body=' || md5(p.prosrc) || ' owner=' || pg_get_userbyid(p.proowner) || ' public_execute=' || has_function_privilege('public', p.oid, 'EXECUTE') || ' runtime_execute=' || has_function_privilege('tes-backend@tes-production-510007.iam', p.oid, 'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = 'tes_security' AND p.proname IN ('prevent_contact_data_removal','guard_person_update','guard_contact_period_update','guard_person_dependent_insert','guard_organization_channel_insert','guard_relationship_insert','guard_relationship_update','guard_relationship_dependent_insert','guard_purpose_assignment_insert')) AS a(l)
+    SELECT l FROM (SELECT p.proname || ' secdef=' || p.prosecdef || ' config=' || COALESCE(array_to_string(p.proconfig, ';'), '-') || ' volatility=' || p.provolatile::text || ' language=' || l.lanname || ' returns=' || format_type(p.prorettype, NULL) || ' args=' || pg_get_function_arguments(p.oid) || ' body=' || md5(p.prosrc) || ' owner=' || pg_get_userbyid(p.proowner) || ' public_execute=' || has_function_privilege('public', p.oid, 'EXECUTE') || ' runtime_execute=' || has_function_privilege('tes-backend@tes-production-510007.iam', p.oid, 'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = 'tes_security' AND p.proname IN ('prevent_contact_data_removal','guard_person_update','guard_contact_period_update','guard_person_dependent_insert','guard_organization_channel_insert','guard_relationship_insert','guard_relationship_update','guard_relationship_dependent_insert','guard_purpose_assignment_insert','require_current_person_name')) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$guard_organization_channel_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=efeac2b47fbcf7eb804835094624f62d owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+    SELECT unnest(string_to_array($exp$guard_person_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=20750a06e8f2835c79278d5a2927ea16 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+guard_organization_channel_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=efeac2b47fbcf7eb804835094624f62d owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 prevent_contact_data_removal secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=1a554d5e90244d3a596000e9464b3dd1 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_person_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=64fc1ec8de6b3cbd7d0b3fc30bc08b55 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_contact_period_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=f77818cbb607e19d0738a8a03d4e049c owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
-guard_person_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=20750a06e8f2835c79278d5a2927ea16 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=0e40e640fa1d8d938afdc2b2108aabca owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_update secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=ed828ea2d087e82851c3d68ec4f0f643 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
 guard_relationship_dependent_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=8798774716e171b5ac501a906715bebc owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
-guard_purpose_assignment_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=79e1c46cacf9ac4c79ee3bbf3c9db3a2 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false$exp$, E'\n'))
+guard_purpose_assignment_insert secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=f572a3fe756607fe58e014219e6a14bc owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false
+require_current_person_name secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=4f858f889697f0f0ea56d2bd8fae9d8f owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION '0014 trigger functions (SECURITY INVOKER, fixed search_path, body checksum, no PUBLIC/runtime execute) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK 0014 trigger functions (SECURITY INVOKER, fixed search_path, body checksum, no PUBLIC/runtime execute) (9 entries) match the design exactly';
+  RAISE NOTICE 'OK 0014 trigger functions (SECURITY INVOKER, fixed search_path, body checksum, no PUBLIC/runtime execute) (10 entries) match the design exactly';
 END
 $verify$;
 
@@ -1153,6 +1155,7 @@ current_customer_id
 prevent_master_register_mutation
 prevent_legacy_record_mutation
 guard_legacy_record_map_update
+guard_person_dependent_insert
 guard_organization_channel_insert
 resolve_legacy_company
 guard_location_address_update
@@ -1170,11 +1173,11 @@ require_authority_current_state
 prevent_contact_data_removal
 guard_person_update
 guard_contact_period_update
-guard_person_dependent_insert
 guard_relationship_insert
 guard_relationship_update
 guard_relationship_dependent_insert
-guard_purpose_assignment_insert$exp$, E'\n')) AS l
+guard_purpose_assignment_insert
+require_current_person_name$exp$, E'\n')) AS l
     EXCEPT
     SELECT l FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security') AS a(l)
   ) d;
@@ -1186,6 +1189,7 @@ current_customer_id
 prevent_master_register_mutation
 prevent_legacy_record_mutation
 guard_legacy_record_map_update
+guard_person_dependent_insert
 guard_organization_channel_insert
 resolve_legacy_company
 guard_location_address_update
@@ -1203,16 +1207,16 @@ require_authority_current_state
 prevent_contact_data_removal
 guard_person_update
 guard_contact_period_update
-guard_person_dependent_insert
 guard_relationship_insert
 guard_relationship_update
 guard_relationship_dependent_insert
-guard_purpose_assignment_insert$exp$, E'\n'))
+guard_purpose_assignment_insert
+require_current_person_name$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION 'tes_security function set differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK tes_security function set (27 entries) match the design exactly';
+  RAISE NOTICE 'OK tes_security function set (28 entries) match the design exactly';
 END
 $verify$;
 
@@ -1508,7 +1512,7 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$PRIMARY|Primary contact|The Organization's primary point of contact. At most one current holder per Organization.|REQUIRED|true|10
+    SELECT unnest(string_to_array($exp$PRIMARY|Primary contact|The Organization's primary point of contact. At most one current holder per Organization.|SINGLE|true|10
 BILLING|Billing|Billing, invoicing and accounts-payable contact.|OPTIONAL|true|20
 SAFETY|Safety|Safety contact.|OPTIONAL|true|30
 OPERATIONS|Operations|Dispatch and day-to-day operations contact.|OPTIONAL|true|40
@@ -1520,7 +1524,7 @@ EMERGENCY|Emergency|Emergency contact.|OPTIONAL|true|60$exp$, E'\n')) AS l
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
     SELECT l FROM (SELECT code || '|' || display_name || '|' || COALESCE(description, '-') || '|' || primary_mode || '|' || is_active || '|' || sort_order FROM public.contact_purpose_types) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$PRIMARY|Primary contact|The Organization's primary point of contact. At most one current holder per Organization.|REQUIRED|true|10
+    SELECT unnest(string_to_array($exp$PRIMARY|Primary contact|The Organization's primary point of contact. At most one current holder per Organization.|SINGLE|true|10
 BILLING|Billing|Billing, invoicing and accounts-payable contact.|OPTIONAL|true|20
 SAFETY|Safety|Safety contact.|OPTIONAL|true|30
 OPERATIONS|Operations|Dispatch and day-to-day operations contact.|OPTIONAL|true|40
@@ -1651,7 +1655,7 @@ BEGIN
 
   SELECT count(*) INTO bad FROM public.contact_purpose_assignments a
   JOIN public.contact_purpose_types k ON k.code = a.purpose_code
-  WHERE (k.primary_mode = 'NONE' AND a.is_primary) OR (k.primary_mode = 'REQUIRED' AND NOT a.is_primary);
+  WHERE (k.primary_mode = 'NONE' AND a.is_primary) OR (k.primary_mode = 'SINGLE' AND NOT a.is_primary);
   IF bad <> 0 THEN RAISE EXCEPTION '% purpose assignment(s) violate their purpose primary_mode', bad; END IF;
 
   SELECT count(*) INTO bad FROM public.persons p

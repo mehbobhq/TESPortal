@@ -19,8 +19,17 @@
 --
 -- Titles are history, not identity, and never authorize anything. Purposes are not titles: "Safety Manager" is a title,
 -- SAFETY is a purpose. "Primary" is never a person's identity: it is a flag on a purpose assignment, and a purpose's
--- primary_mode decides whether a primary flag is not allowed (NONE), optional (OPTIONAL) or implied (REQUIRED). At most
+-- primary_mode decides whether a primary flag is not allowed (NONE), optional (OPTIONAL) or implied (SINGLE). At most
 -- one CURRENT primary assignment exists per Organization + purpose.
+--
+-- primary_mode makes NO "there must always be a primary" promise (an Organization may legitimately have no assignment
+-- for a purpose). OPTIONAL: any number of current assignments, at most one of them flagged primary; zero primaries is
+-- allowed. SINGLE: the purpose has at most one current holder per Organization and that holder is the primary. NONE:
+-- the flag can never be set. The PRIMARY purpose (the Organization's general point of contact, SINGLE) is a different
+-- thing from the primary flag on BILLING, SAFETY, ... (the preferred contact WITHIN that purpose); the two are
+-- independent and a person can hold both.
+--
+-- Every person always has exactly one CURRENT name (enforced at commit by a deferred constraint trigger).
 --
 -- Channels carry no uniqueness across the registry: shared phone numbers and shared mailboxes are legitimate, and
 -- normalization only assists ADVISORY matching - it never merges people. No channel is marked verified, because nothing
@@ -80,7 +89,7 @@ CREATE TABLE public.contact_purpose_types (
     description text,
 
     -- NONE: a primary flag is not allowed. OPTIONAL: an assignment may be flagged primary (at most one current primary
-    -- per Organization + purpose). REQUIRED: every assignment is the primary one (at most one current per Organization).
+    -- per Organization + purpose). SINGLE: the assignment is always the primary one, so at most one current holder per Organization.
     primary_mode text NOT NULL,
 
     is_active boolean NOT NULL DEFAULT true,
@@ -96,7 +105,7 @@ CREATE TABLE public.contact_purpose_types (
         CHECK (btrim(display_name) <> ''),
 
     CONSTRAINT contact_purpose_types_primary_mode_valid
-        CHECK (primary_mode IN ('NONE', 'OPTIONAL', 'REQUIRED')),
+        CHECK (primary_mode IN ('NONE', 'OPTIONAL', 'SINGLE')),
 
     CONSTRAINT contact_purpose_types_sort_order_uq
         UNIQUE (sort_order)
@@ -106,7 +115,7 @@ INSERT INTO public.contact_purpose_types (code, display_name, description, prima
 VALUES
     ('PRIMARY', 'Primary contact',
         'The Organization''s primary point of contact. At most one current holder per Organization.',
-        'REQUIRED', 10),
+        'SINGLE', 10),
     ('BILLING', 'Billing',
         'Billing, invoicing and accounts-payable contact.',
         'OPTIONAL', 20),
@@ -886,7 +895,7 @@ AS $$ BEGIN
            AND (
                (k.primary_mode = 'NONE' AND NOT NEW.is_primary)
                OR k.primary_mode = 'OPTIONAL'
-               OR (k.primary_mode = 'REQUIRED' AND NEW.is_primary)
+               OR (k.primary_mode = 'SINGLE' AND NEW.is_primary)
            )
     ) THEN
         RAISE EXCEPTION 'The purpose is unknown, inactive, or incompatible with the primary flag'
@@ -895,6 +904,31 @@ AS $$ BEGIN
     END IF;
 
     RETURN NEW;
+END;
+$$;
+
+-- Every person has exactly one CURRENT name when the transaction commits. Deferred so a person and its first name (or a
+-- name change / correction: end or mark the old row, insert the replacement) can be written in any order inside one
+-- transaction. The unique index already forbids two current names; this forbids none.
+CREATE FUNCTION tes_security.require_current_person_name()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.person_name_versions AS n
+         WHERE n.person_id = (CASE WHEN TG_TABLE_NAME = 'persons' THEN to_jsonb(NEW) ->> 'id' ELSE to_jsonb(NEW) ->> 'person_id' END)::uuid
+           AND n.record_status = 'active'
+           AND n.effective_to IS NULL
+    ) THEN
+        RAISE EXCEPTION 'A person must have exactly one current name'
+            USING ERRCODE = '23514',
+                  CONSTRAINT = 'persons_require_current_name';
+    END IF;
+
+    RETURN NULL;
 END;
 $$;
 
@@ -907,6 +941,19 @@ REVOKE ALL ON FUNCTION tes_security.guard_relationship_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_relationship_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_relationship_dependent_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_purpose_assignment_insert() FROM PUBLIC;
+REVOKE ALL ON FUNCTION tes_security.require_current_person_name() FROM PUBLIC;
+
+CREATE CONSTRAINT TRIGGER persons_require_current_name
+AFTER INSERT ON public.persons
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.require_current_person_name();
+
+CREATE CONSTRAINT TRIGGER person_name_versions_require_current_name
+AFTER INSERT OR UPDATE ON public.person_name_versions
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.require_current_person_name();
 
 CREATE TRIGGER persons_guard_update
 BEFORE UPDATE ON public.persons

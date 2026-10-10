@@ -83,7 +83,7 @@ describe("names and titles", () => {
 describe("purpose vocabulary", () => {
   it("has the approved initial purposes; PRIMARY implies the primary flag", () => {
     assert.deepEqual([...D.CONTACT_PURPOSES], ["PRIMARY", "BILLING", "SAFETY", "OPERATIONS", "COMPLIANCE", "EMERGENCY"]);
-    assert.equal(D.PURPOSE_DEFINITIONS.PRIMARY.primaryMode, "REQUIRED");
+    assert.equal(D.PURPOSE_DEFINITIONS.PRIMARY.primaryMode, "SINGLE");
     for (const purpose of D.CONTACT_PURPOSES.filter((p) => p !== "PRIMARY")) assert.equal(D.PURPOSE_DEFINITIONS[purpose].primaryMode, "OPTIONAL");
   });
 

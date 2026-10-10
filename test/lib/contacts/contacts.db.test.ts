@@ -146,8 +146,9 @@ describe("Contacts (real authorization, real transactions, real Master Register)
     });
   const denied = (promise: Promise<unknown>) => rejectsWith(promise, K.authz.TesAuthorizationDeniedError);
   const rowCount = async (sql: string, params: unknown[] = []) => Number((await pools.admin.query(sql, params)).rows[0].count);
+  // Events can share a recorded_at (same instant); break such ties by type so the order is deterministic.
   const eventTypes = async (actorId: string) =>
-    (await pools.admin.query<{ event_type: string }>(`SELECT event_type FROM public.master_register_events WHERE actor_id = $1::uuid ORDER BY recorded_at, event_id`, [actorId])).rows.map((row) => row.event_type);
+    (await pools.admin.query<{ event_type: string }>(`SELECT event_type FROM public.master_register_events WHERE actor_id = $1::uuid ORDER BY recorded_at, event_type`, [actorId])).rows.map((row) => row.event_type);
   const eventsJson = async (actorId: string) =>
     JSON.stringify((await pools.admin.query(`SELECT * FROM public.master_register_events WHERE actor_id = $1::uuid`, [actorId])).rows);
 
@@ -269,6 +270,85 @@ describe("Contacts (real authorization, real transactions, real Master Register)
         await assert.rejects(pools.runtime.query(`TRUNCATE public.${table}`), /permission denied/, table);
       }
       await assert.rejects(pools.runtime.query(`INSERT INTO public.contact_purpose_types (code, display_name, primary_mode, sort_order) VALUES ('X','x','NONE',99)`), /permission denied/);
+    });
+
+    scenario("every person has exactly one current name at commit; no path leaves one nameless", async () => {
+      await fullStaff();
+      const o = await org();
+      // supported creation always writes the name in the same transaction
+      const { contact } = await create(o);
+      const currentNames = (personId: string) => rowCount(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [personId]);
+      assert.equal(await currentNames(contact.person.id), 1);
+      // a change and a correction each leave exactly one current name, and every superseded row is preserved
+      await K.c.changePersonName({ organizationId: o, personId: contact.person.id, givenName: `Chg${run}`, effectiveFrom: MONTH(3) } as never);
+      assert.equal(await currentNames(contact.person.id), 1);
+      await K.c.correctPersonName({ organizationId: o, personId: contact.person.id, givenName: `Cor${run}` } as never);
+      assert.equal(await currentNames(contact.person.id), 1);
+      assert.equal(await rowCount(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1`, [contact.person.id]), 3);
+      assert.equal((await K.c.getPerson(contact.person.id)).currentName?.givenName, `Cor${run}`);
+
+      // even the table owner cannot commit a nameless person, nor end/correct the only current name without a replacement
+      const owner = await pools.admin.connect();
+      try {
+        await owner.query("BEGIN");
+        await owner.query(`INSERT INTO public.persons DEFAULT VALUES`);
+        await assert.rejects(owner.query("COMMIT"), /exactly one current name/);
+        await owner.query("ROLLBACK").catch(() => undefined);
+
+        await owner.query("BEGIN");
+        await owner.query(`UPDATE public.person_name_versions SET effective_to = now() WHERE person_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [contact.person.id]);
+        await assert.rejects(owner.query("COMMIT"), /exactly one current name/);
+        await owner.query("ROLLBACK").catch(() => undefined);
+
+        await owner.query("BEGIN");
+        // a correction without its replacement is refused outright by the correction-state constraint
+        await assert.rejects(
+          owner.query(`UPDATE public.person_name_versions SET record_status = 'corrected', corrected_at = now() WHERE person_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [contact.person.id]),
+          /correction_state/,
+        );
+        await owner.query("ROLLBACK").catch(() => undefined);
+      } finally {
+        owner.release();
+      }
+      assert.equal(await currentNames(contact.person.id), 1, "all attempts rolled back");
+      // the runtime role (which holds UPDATE on effective_to) is held to the same invariant
+      const runtime = await pools.runtime.connect();
+      try {
+        await runtime.query("BEGIN");
+        await runtime.query(`UPDATE public.person_name_versions SET effective_to = now() WHERE person_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [contact.person.id]);
+        await assert.rejects(runtime.query("COMMIT"), /exactly one current name/);
+        await runtime.query("ROLLBACK").catch(() => undefined);
+      } finally {
+        runtime.release();
+      }
+      assert.equal(await currentNames(contact.person.id), 1);
+    });
+
+    scenario("primary_mode semantics: NONE forbids, OPTIONAL allows zero or one, SINGLE is one sole primary holder", async () => {
+      await fullStaff();
+      const modes = await pools.admin.query<{ code: string; primary_mode: string }>(`SELECT code, primary_mode FROM public.contact_purpose_types ORDER BY sort_order`);
+      assert.deepEqual(modes.rows.map((r) => [r.code, r.primary_mode]), [
+        ["PRIMARY", "SINGLE"], ["BILLING", "OPTIONAL"], ["SAFETY", "OPTIONAL"], ["OPERATIONS", "OPTIONAL"], ["COMPLIANCE", "OPTIONAL"], ["EMERGENCY", "OPTIONAL"],
+      ]);
+      await assert.rejects(pools.admin.query(`UPDATE public.contact_purpose_types SET primary_mode = 'REQUIRED' WHERE code = 'PRIMARY'`), /primary_mode_valid/);
+      const o = await org();
+      // OPTIONAL: two current BILLING assignments, no primary at all, is a valid state
+      const a = (await create(o, { purposes: [{ purpose: "BILLING" }] })).contact;
+      const b = (await create(o, { name: uniqueName("Bo"), purposes: [{ purpose: "BILLING" }] })).contact;
+      const primaries = () => rowCount(`SELECT count(*) FROM public.contact_purpose_assignments WHERE organization_id = $1 AND purpose_code = 'BILLING' AND is_primary AND record_status = 'active' AND effective_to IS NULL`, [o]);
+      assert.equal(await primaries(), 0);
+      // first primary, swap, ending the primary, ending the last assignment: never more than one, zero allowed
+      await K.c.makePrimary({ organizationId: o, relationshipId: a.relationship.id, purpose: "BILLING", effectiveFrom: MONTH(4) });
+      assert.equal(await primaries(), 1);
+      await K.c.makePrimary({ organizationId: o, relationshipId: b.relationship.id, purpose: "BILLING", effectiveFrom: MONTH(5) });
+      assert.equal(await primaries(), 1);
+      const view = (await K.c.getOrganizationContacts(o)).contacts.find((c) => c.relationship.id === b.relationship.id)!;
+      await K.c.endPurpose({ organizationId: o, assignmentId: view.current.purposes[0].id, effectiveTo: MONTH(6) });
+      assert.equal(await primaries(), 0, "an Organization can legitimately have BILLING contacts and no primary one");
+      // PRIMARY (SINGLE) is a different concept from the BILLING primary flag: the same person can hold both independently
+      const sole = (await create(o, { name: uniqueName("Sol"), purposes: [{ purpose: "PRIMARY" }, { purpose: "BILLING", primary: true }] })).contact;
+      assert.deepEqual(sole.current.purposes.map((p) => [p.purpose, p.isPrimary]).sort(), [["BILLING", true], ["PRIMARY", true]]);
+      assert.equal(await rowCount(`SELECT count(*) FROM public.contact_purpose_assignments WHERE organization_id = $1 AND purpose_code = 'PRIMARY' AND record_status = 'active' AND effective_to IS NULL`, [o]), 1);
     });
 
     scenario("database backstops hold even for the table owner", async () => {

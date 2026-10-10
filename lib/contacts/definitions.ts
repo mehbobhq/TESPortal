@@ -22,10 +22,10 @@ export type ChannelType = (typeof CHANNEL_TYPES)[number]
 export const ORGANIZATION_CHANNEL_USAGES = ["GENERAL", "DISPATCH", "OFFICE", "ACCOUNTING", "SAFETY"] as const
 export type OrganizationChannelUsage = (typeof ORGANIZATION_CHANNEL_USAGES)[number]
 
-export type PrimaryMode = "NONE" | "OPTIONAL" | "REQUIRED"
+export type PrimaryMode = "NONE" | "OPTIONAL" | "SINGLE"
 
 export const PURPOSE_DEFINITIONS = {
-  PRIMARY: { primaryMode: "REQUIRED" },
+  PRIMARY: { primaryMode: "SINGLE" },
   BILLING: { primaryMode: "OPTIONAL" },
   SAFETY: { primaryMode: "OPTIONAL" },
   OPERATIONS: { primaryMode: "OPTIONAL" },

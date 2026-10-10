@@ -229,7 +229,11 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
 
     scenario("no new capability, no unintended SECURITY DEFINER, no RLS, no policy", async () => {
       const codes = (await pools.admin.query<{ code: string }>(`SELECT code FROM public.capabilities ORDER BY code`)).rows.map((row) => row.code);
-      assert.deepEqual(codes, ["CUSTOMER_ESTABLISH", "ORGANIZATION_ARCHIVE", "ORGANIZATION_CREATE", "ORGANIZATION_READ", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_UPDATE"]);
+      // Migration 0013 added no capability: the six 0011 capabilities are present, and none belongs to Authorities.
+      for (const code of ["CUSTOMER_ESTABLISH", "ORGANIZATION_ARCHIVE", "ORGANIZATION_CREATE", "ORGANIZATION_READ", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_UPDATE"]) {
+        assert.ok(codes.includes(code), code);
+      }
+      assert.deepEqual(codes.filter((code) => /AUTHORIT/.test(code)), []);
       const functions = (await pools.admin.query<{ proname: string; prosecdef: boolean; proconfig: string[] | null }>(
         `SELECT p.proname, p.prosecdef, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE n.nspname = 'tes_security' AND p.proname ~ '(authority|authorities)'`,

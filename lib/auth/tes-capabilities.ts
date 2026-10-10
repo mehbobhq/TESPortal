@@ -32,6 +32,9 @@ export const TES_CAPABILITY_SCOPES = {
   ORGANIZATION_UPDATE: "SYSTEM",
   ORGANIZATION_ARCHIVE: "SYSTEM",
   CUSTOMER_ESTABLISH: "SYSTEM",
+  // Contacts / People foundation (migration 0014).
+  PERSON_REGISTRY_READ: "SYSTEM",
+  CONTACT_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

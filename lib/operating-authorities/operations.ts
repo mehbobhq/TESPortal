@@ -22,13 +22,10 @@
 import { randomUUID } from "node:crypto"
 import type { PoolClient } from "pg"
 import {
-  ARCHIVABLE_STATUSES,
   AUTHORITY_STATUSES,
   KIND_DEFINITIONS,
-  isAllowedTransition,
   isAuthorityKind,
   isAuthorityStatus,
-  isReactivation,
   prepareAuthorityNumber,
   resolveJurisdiction,
   type AuthorityKind,
@@ -250,15 +247,10 @@ async function assertNumberFree(ctx: OperationContext, kind: AuthorityKind, juri
   if (holder) throw await collisionError(ctx, kind, holder)
 }
 
-async function assertIdentityFree(ctx: OperationContext, organizationId: string, definition: KindDefinition, jurisdiction: ResolvedJurisdiction): Promise<void> {
-  const holder = await repo.findCurrentIdentityHolder(
-    ctx.client,
-    organizationId,
-    definition.kind,
-    definition.identityIncludesJurisdiction,
-    jurisdiction.country,
-    jurisdiction.region,
-  )
+/** Only kinds whose regulator supports one current record per Organization (USDOT) claim that identity. */
+async function assertIdentityFree(ctx: OperationContext, organizationId: string, definition: KindDefinition): Promise<void> {
+  if (!definition.oneCurrentPerOrganization) return
+  const holder = await repo.findCurrentIdentityHolder(ctx.client, organizationId, definition.kind)
   if (holder) {
     throw new OperatingAuthorityConflictError(
       `This Organization already holds a ${definition.kind} authority; change, correct or reactivate it instead of creating another.`,
@@ -404,7 +396,7 @@ export async function createAuthority(ctx: OperationContext, rawInput: unknown):
 
   const values: VersionValues = { number, jurisdiction, issuedOn, expiresOn }
   await assertNumberFree(ctx, kind, jurisdiction, number.normalized)
-  await assertIdentityFree(ctx, organizationId, definition, jurisdiction)
+  await assertIdentityFree(ctx, organizationId, definition)
 
   const authorityId = await repo.insertAuthority(ctx.client, organizationId, kind)
   const version = await insertVersionGuarded(ctx, { id: authorityId, organizationId, kind }, values, randomUUID(), "INITIAL", at)
@@ -479,9 +471,9 @@ const versionReferenceChange = (before: string, after: string): FieldChange => (
 /**
  * REAL-WORLD change of a version: the previous number / jurisdiction / dates were true until T and the new ones became
  * true at T. Both stay genuine history. Only what really changes in the world is allowed: the base jurisdiction of an
- * IRP account, a renewed document date, or a re-issued number for a kind whose numbers are issued per jurisdiction. A
- * national number (USDOT, MC) never changes in the real world, and the issuing jurisdiction of every other kind is part
- * of the authority's identity; mistakes there are corrections.
+ * IRP account, a renewed document date, or a re-issued number for a kind issued per jurisdiction. A national number
+ * (USDOT, MC) never changes in the real world, and the issuing jurisdiction of every other kind cannot change in place
+ * (a different issuer means a different identifier, recorded as a separate authority); mistakes there are corrections.
  */
 export async function changeAuthorityVersion(ctx: OperationContext, rawInput: unknown): Promise<AuthorityMutationResult> {
   const input = requireObject(rawInput, "input", ["organizationId", "authorityId", "effectiveFrom", ...VERSION_FIELD_KEYS])
@@ -502,7 +494,7 @@ export async function changeAuthorityVersion(ctx: OperationContext, rawInput: un
   if (jurisdictionChanged && definition.jurisdictionScope !== "BASE_JURISDICTION") {
     throw new OperatingAuthorityValidationError(
       "jurisdiction",
-      `The issuing jurisdiction of ${authority.kind} is part of its identity; correct a mistake, or create a separate authority.`,
+      `The issuing jurisdiction of ${authority.kind} cannot change in place (a different issuer means a different identifier); correct a mistake, or record a separate authority.`,
     )
   }
   if (numberChanged && definition.jurisdictionScope === "NATIONAL") {
@@ -512,7 +504,7 @@ export async function changeAuthorityVersion(ctx: OperationContext, rawInput: un
   const at = await resolveInstant(ctx, explicitInstant, "effectiveFrom")
   await guarded(() => repo.endVersion(ctx.client, current.id, at))
   await assertNumberFree(ctx, authority.kind, values.jurisdiction, values.number.normalized)
-  await assertIdentityFree(ctx, organizationId, definition, values.jurisdiction)
+  await assertIdentityFree(ctx, organizationId, definition)
   const replacement = await insertVersionGuarded(ctx, authority, values, randomUUID(), "CHANGE", at)
 
   await record(
@@ -547,7 +539,7 @@ export async function correctAuthorityVersion(ctx: OperationContext, rawInput: u
   await guarded(() => repo.markVersionCorrected(ctx.client, current.id, replacementId))
   // After the wrong row stops being current it can no longer collide with its own correction.
   await assertNumberFree(ctx, authority.kind, values.jurisdiction, values.number.normalized)
-  await assertIdentityFree(ctx, organizationId, definition, values.jurisdiction)
+  await assertIdentityFree(ctx, organizationId, definition)
   const replacement = await insertVersionGuarded(ctx, authority, values, replacementId, "CORRECTION", current.effectiveFrom)
 
   await record(
@@ -589,17 +581,13 @@ async function transitionStatus(
 
   const from = current.authorityStatus
   if (from === target) throw new OperatingAuthorityStateError(`The authority is already ${target}.`)
-  if (operation === "reactivateAuthority") {
-    if (!isReactivation(from, "ACTIVE") || !isAllowedTransition(from, "ACTIVE")) {
-      throw new OperatingAuthorityStateError(`A ${from} authority cannot be reactivated.`)
-    }
-  } else {
-    if (isReactivation(from, target)) {
-      throw new OperatingAuthorityStateError("Returning an authority to ACTIVE is a reactivation; use reactivateAuthority.")
-    }
-    if (!isAllowedTransition(from, target)) {
-      throw new OperatingAuthorityStateError(`A ${from} authority cannot become ${target}.`)
-    }
+  // Observed status history: any distinct status may be recorded. A return to ACTIVE after the authority was genuinely
+  // ACTIVE before is a reactivation (same authority, same number history), recorded as such.
+  const periods = (await repo.listStatusPeriods(ctx.client, [authorityId])).get(authorityId) ?? []
+  const wasActiveBefore = periods.some((period) => period.recordStatus === "active" && period.authorityStatus === "ACTIVE")
+  const isReturnToActive = target === "ACTIVE" && wasActiveBefore
+  if (operation === "reactivateAuthority" && !isReturnToActive) {
+    throw new OperatingAuthorityStateError("Only an authority that was ACTIVE before can be reactivated; record the status with changeAuthorityStatus.")
   }
 
   const at = await resolveInstant(ctx, explicitInstant, "effectiveFrom")
@@ -609,7 +597,7 @@ async function transitionStatus(
       id: randomUUID(),
       authorityId,
       authorityStatus: target,
-      periodReason: operation === "reactivateAuthority" ? "REACTIVATION" : "TRANSITION",
+      periodReason: isReturnToActive ? "REACTIVATION" : "TRANSITION",
       effectiveFrom: at,
     }),
   )
@@ -627,7 +615,7 @@ async function transitionStatus(
   return loadView(ctx, organizationId, authorityId)
 }
 
-/** REAL-WORLD regulatory status transition (a move back to ACTIVE after PENDING is a reactivation: see reactivateAuthority). */
+/** Records an OBSERVED regulatory status change. Any distinct status may be recorded; kind-specific legality is Rules-layer policy. */
 export async function changeAuthorityStatus(ctx: OperationContext, rawInput: unknown): Promise<AuthorityView> {
   return transitionStatus(ctx, rawInput, "changeAuthorityStatus")
 }
@@ -639,8 +627,7 @@ export async function reactivateAuthority(ctx: OperationContext, rawInput: unkno
 
 /**
  * CORRECTION of the current status: it was recorded wrongly. The wrong period is preserved and flagged, never ended (no
- * transition is invented), and the replacement inherits its business time. The transition policy does not apply: the
- * replacement is not a transition.
+ * transition is invented), and the replacement inherits its business time.
  */
 export async function correctAuthorityStatus(ctx: OperationContext, rawInput: unknown): Promise<AuthorityView> {
   const input = requireObject(rawInput, "input", ["organizationId", "authorityId", "status"])
@@ -689,10 +676,6 @@ export async function archiveAuthority(ctx: OperationContext, rawInput: unknown)
 
   const authority = await lockAuthority(ctx, organizationId, authorityId)
   if (authority.recordStatus !== "active") throw new OperatingAuthorityStateError("This authority record is already archived.")
-  const status = await repo.getCurrentStatusPeriod(ctx.client, authorityId, true)
-  if (!status || !ARCHIVABLE_STATUSES.includes(status.authorityStatus)) {
-    throw new OperatingAuthorityStateError(`An authority can be archived only while it is ${ARCHIVABLE_STATUSES.join(", ")}.`)
-  }
   await repo.setAuthorityRecordStatus(ctx.client, authorityId, "archived")
   await record(
     ctx,

@@ -330,6 +330,7 @@ issuer_country text NULL default=-
 region_required boolean NOT NULL default=-
 fixed_region text NULL default=-
 has_expiry boolean NOT NULL default=-
+one_current_per_organization boolean NOT NULL default=-
 is_active boolean NOT NULL default=true
 sort_order integer NOT NULL default=-
 created_at timestamp with time zone NOT NULL default=now()
@@ -348,6 +349,7 @@ issuer_country text NULL default=-
 region_required boolean NOT NULL default=-
 fixed_region text NULL default=-
 has_expiry boolean NOT NULL default=-
+one_current_per_organization boolean NOT NULL default=-
 is_active boolean NOT NULL default=true
 sort_order integer NOT NULL default=-
 created_at timestamp with time zone NOT NULL default=now()
@@ -356,7 +358,7 @@ updated_at timestamp with time zone NOT NULL default=now()$exp$, E'\n'))
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION 'authority_kinds columns (name, data type, nullability, default) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK authority_kinds columns (name, data type, nullability, default) (12 entries) match the design exactly';
+  RAISE NOTICE 'OK authority_kinds columns (name, data type, nullability, default) (13 entries) match the design exactly';
 END
 $verify$;
 
@@ -510,44 +512,44 @@ BEGIN
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
     SELECT unnest(string_to_array($exp$authority_kinds authority_kinds_code_valid c CHECK ((code ~ '^[A-Z][A-Z0-9_]{1,31}$'::text)) deferrable=false deferred=false
 authority_kinds authority_kinds_display_name_not_blank c CHECK ((btrim(display_name) <> ''::text)) deferrable=false deferred=false
-authority_kinds authority_kinds_jurisdiction_scope_valid c CHECK ((jurisdiction_scope = ANY (ARRAY['NATIONAL'::text, 'COUNTRY_REGION'::text, 'BASE_JURISDICTION'::text]))) deferrable=false deferred=false
-authority_kinds authority_kinds_issuer_country_valid c CHECK (((issuer_country IS NULL) OR (issuer_country ~ '^[A-Z]{2}$'::text))) deferrable=false deferred=false
 authority_kinds authority_kinds_fixed_region_valid c CHECK (((fixed_region IS NULL) OR (fixed_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
-authority_kinds authority_kinds_scope_shape_consistent c CHECK ((((jurisdiction_scope = 'NATIONAL'::text) AND (issuer_country IS NOT NULL) AND (region_required = false) AND (fixed_region IS NULL)) OR ((jurisdiction_scope = 'COUNTRY_REGION'::text) AND (issuer_country IS NOT NULL) AND (region_required = true)) OR ((jurisdiction_scope = 'BASE_JURISDICTION'::text) AND (region_required = true) AND (fixed_region IS NULL)))) deferrable=false deferred=false
+authority_kinds authority_kinds_issuer_country_valid c CHECK (((issuer_country IS NULL) OR (issuer_country ~ '^[A-Z]{2}$'::text))) deferrable=false deferred=false
+authority_kinds authority_kinds_jurisdiction_scope_valid c CHECK ((jurisdiction_scope = ANY (ARRAY['NATIONAL'::text, 'COUNTRY_REGION'::text, 'BASE_JURISDICTION'::text]))) deferrable=false deferred=false
 authority_kinds authority_kinds_pkey p PRIMARY KEY (code) deferrable=false deferred=false
+authority_kinds authority_kinds_scope_shape_consistent c CHECK ((((jurisdiction_scope = 'NATIONAL'::text) AND (issuer_country IS NOT NULL) AND (region_required = false) AND (fixed_region IS NULL)) OR ((jurisdiction_scope = 'COUNTRY_REGION'::text) AND (issuer_country IS NOT NULL) AND (region_required = true)) OR ((jurisdiction_scope = 'BASE_JURISDICTION'::text) AND (region_required = true) AND (fixed_region IS NULL)))) deferrable=false deferred=false
 authority_kinds authority_kinds_sort_order_uq u UNIQUE (sort_order) deferrable=false deferred=false
-operating_authorities operating_authorities_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
 operating_authorities operating_authorities_archive_state_consistent c CHECK ((((record_status = 'archived'::text) AND (archived_at IS NOT NULL)) OR ((record_status = 'active'::text) AND (archived_at IS NULL)))) deferrable=false deferred=false
-operating_authorities operating_authorities_pkey p PRIMARY KEY (id) deferrable=false deferred=false
 operating_authorities operating_authorities_id_kind_uq u UNIQUE (id, kind) deferrable=false deferred=false
 operating_authorities operating_authorities_id_organization_uq u UNIQUE (id, organization_id) deferrable=false deferred=false
-operating_authorities operating_authorities_organization_id_fkey f FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authorities operating_authorities_kind_fkey f FOREIGN KEY (kind) REFERENCES authority_kinds(code) ON UPDATE RESTRICT ON DELETE RESTRICT deferrable=false deferred=false
+operating_authorities operating_authorities_organization_id_fkey f FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authorities operating_authorities_pkey p PRIMARY KEY (id) deferrable=false deferred=false
+operating_authorities operating_authorities_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_authority_fk f FOREIGN KEY (authority_id, kind) REFERENCES operating_authorities(id, kind) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_version_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_version_id IS NOT NULL)))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_country_valid c CHECK ((jurisdiction_country ~ '^[A-Z]{2}$'::text)) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_document_dates_valid c CHECK (((issued_on IS NULL) OR (expires_on IS NULL) OR (expires_on >= issued_on))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_not_superseded_by_self c CHECK (((superseded_by_version_id IS NULL) OR (superseded_by_version_id <> id))) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_number_display_not_blank c CHECK ((btrim(number_display) <> ''::text)) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_number_normalized_not_blank c CHECK ((btrim(number_normalized) <> ''::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_rule_version_not_blank c CHECK ((btrim(normalization_rule_version) <> ''::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_country_valid c CHECK ((jurisdiction_country ~ '^[A-Z]{2}$'::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_region_valid c CHECK (((jurisdiction_region IS NULL) OR (jurisdiction_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_document_dates_valid c CHECK (((issued_on IS NULL) OR (expires_on IS NULL) OR (expires_on >= issued_on))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_reason_valid c CHECK ((version_reason = ANY (ARRAY['INITIAL'::text, 'CHANGE'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_version_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_version_id IS NOT NULL)))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_not_superseded_by_self c CHECK (((superseded_by_version_id IS NULL) OR (superseded_by_version_id <> id))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_pkey p PRIMARY KEY (id) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_authority_fk f FOREIGN KEY (authority_id, kind) REFERENCES operating_authorities(id, kind) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_organization_fk f FOREIGN KEY (authority_id, organization_id) REFERENCES operating_authorities(id, organization_id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_pkey p PRIMARY KEY (id) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_reason_valid c CHECK ((version_reason = ANY (ARRAY['INITIAL'::text, 'CHANGE'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_region_valid c CHECK (((jurisdiction_region IS NULL) OR (jurisdiction_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_rule_version_not_blank c CHECK ((btrim(normalization_rule_version) <> ''::text)) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_superseded_by_fk f FOREIGN KEY (superseded_by_version_id, authority_id) REFERENCES operating_authority_versions(id, authority_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true
-operating_authority_status_periods operating_authority_status_periods_status_valid c CHECK ((authority_status = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text, 'REVOKED'::text, 'CANCELED'::text]))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_reason_valid c CHECK ((period_reason = ANY (ARRAY['INITIAL'::text, 'TRANSITION'::text, 'REACTIVATION'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_authority_id_fkey f FOREIGN KEY (authority_id) REFERENCES operating_authorities(id) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_period_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_period_id IS NOT NULL)))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_not_superseded_by_self c CHECK (((superseded_by_period_id IS NULL) OR (superseded_by_period_id <> id))) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_pkey p PRIMARY KEY (id) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_authority_id_fkey f FOREIGN KEY (authority_id) REFERENCES operating_authorities(id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_reason_valid c CHECK ((period_reason = ANY (ARRAY['INITIAL'::text, 'TRANSITION'::text, 'REACTIVATION'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_status_valid c CHECK ((authority_status = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text, 'REVOKED'::text, 'CANCELED'::text]))) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_superseded_by_fk f FOREIGN KEY (superseded_by_period_id, authority_id) REFERENCES operating_authority_status_periods(id, authority_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true$exp$, E'\n')) AS l
     EXCEPT
     SELECT l FROM (SELECT conrelid::regclass::text || ' ' || conname || ' ' || contype::text || ' ' || pg_get_constraintdef(oid) || ' deferrable=' || condeferrable || ' deferred=' || condeferred FROM pg_constraint WHERE contype <> 't' AND conrelid IN ('public.authority_kinds'::regclass,'public.operating_authorities'::regclass,'public.operating_authority_versions'::regclass,'public.operating_authority_status_periods'::regclass)) AS a(l)
@@ -557,44 +559,44 @@ operating_authority_status_periods operating_authority_status_periods_superseded
     EXCEPT
     SELECT unnest(string_to_array($exp$authority_kinds authority_kinds_code_valid c CHECK ((code ~ '^[A-Z][A-Z0-9_]{1,31}$'::text)) deferrable=false deferred=false
 authority_kinds authority_kinds_display_name_not_blank c CHECK ((btrim(display_name) <> ''::text)) deferrable=false deferred=false
-authority_kinds authority_kinds_jurisdiction_scope_valid c CHECK ((jurisdiction_scope = ANY (ARRAY['NATIONAL'::text, 'COUNTRY_REGION'::text, 'BASE_JURISDICTION'::text]))) deferrable=false deferred=false
-authority_kinds authority_kinds_issuer_country_valid c CHECK (((issuer_country IS NULL) OR (issuer_country ~ '^[A-Z]{2}$'::text))) deferrable=false deferred=false
 authority_kinds authority_kinds_fixed_region_valid c CHECK (((fixed_region IS NULL) OR (fixed_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
-authority_kinds authority_kinds_scope_shape_consistent c CHECK ((((jurisdiction_scope = 'NATIONAL'::text) AND (issuer_country IS NOT NULL) AND (region_required = false) AND (fixed_region IS NULL)) OR ((jurisdiction_scope = 'COUNTRY_REGION'::text) AND (issuer_country IS NOT NULL) AND (region_required = true)) OR ((jurisdiction_scope = 'BASE_JURISDICTION'::text) AND (region_required = true) AND (fixed_region IS NULL)))) deferrable=false deferred=false
+authority_kinds authority_kinds_issuer_country_valid c CHECK (((issuer_country IS NULL) OR (issuer_country ~ '^[A-Z]{2}$'::text))) deferrable=false deferred=false
+authority_kinds authority_kinds_jurisdiction_scope_valid c CHECK ((jurisdiction_scope = ANY (ARRAY['NATIONAL'::text, 'COUNTRY_REGION'::text, 'BASE_JURISDICTION'::text]))) deferrable=false deferred=false
 authority_kinds authority_kinds_pkey p PRIMARY KEY (code) deferrable=false deferred=false
+authority_kinds authority_kinds_scope_shape_consistent c CHECK ((((jurisdiction_scope = 'NATIONAL'::text) AND (issuer_country IS NOT NULL) AND (region_required = false) AND (fixed_region IS NULL)) OR ((jurisdiction_scope = 'COUNTRY_REGION'::text) AND (issuer_country IS NOT NULL) AND (region_required = true)) OR ((jurisdiction_scope = 'BASE_JURISDICTION'::text) AND (region_required = true) AND (fixed_region IS NULL)))) deferrable=false deferred=false
 authority_kinds authority_kinds_sort_order_uq u UNIQUE (sort_order) deferrable=false deferred=false
-operating_authorities operating_authorities_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
 operating_authorities operating_authorities_archive_state_consistent c CHECK ((((record_status = 'archived'::text) AND (archived_at IS NOT NULL)) OR ((record_status = 'active'::text) AND (archived_at IS NULL)))) deferrable=false deferred=false
-operating_authorities operating_authorities_pkey p PRIMARY KEY (id) deferrable=false deferred=false
 operating_authorities operating_authorities_id_kind_uq u UNIQUE (id, kind) deferrable=false deferred=false
 operating_authorities operating_authorities_id_organization_uq u UNIQUE (id, organization_id) deferrable=false deferred=false
-operating_authorities operating_authorities_organization_id_fkey f FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authorities operating_authorities_kind_fkey f FOREIGN KEY (kind) REFERENCES authority_kinds(code) ON UPDATE RESTRICT ON DELETE RESTRICT deferrable=false deferred=false
+operating_authorities operating_authorities_organization_id_fkey f FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authorities operating_authorities_pkey p PRIMARY KEY (id) deferrable=false deferred=false
+operating_authorities operating_authorities_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'archived'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_authority_fk f FOREIGN KEY (authority_id, kind) REFERENCES operating_authorities(id, kind) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_version_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_version_id IS NOT NULL)))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_country_valid c CHECK ((jurisdiction_country ~ '^[A-Z]{2}$'::text)) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_document_dates_valid c CHECK (((issued_on IS NULL) OR (expires_on IS NULL) OR (expires_on >= issued_on))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_not_superseded_by_self c CHECK (((superseded_by_version_id IS NULL) OR (superseded_by_version_id <> id))) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_number_display_not_blank c CHECK ((btrim(number_display) <> ''::text)) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_number_normalized_not_blank c CHECK ((btrim(number_normalized) <> ''::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_rule_version_not_blank c CHECK ((btrim(normalization_rule_version) <> ''::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_country_valid c CHECK ((jurisdiction_country ~ '^[A-Z]{2}$'::text)) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_region_valid c CHECK (((jurisdiction_region IS NULL) OR (jurisdiction_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_document_dates_valid c CHECK (((issued_on IS NULL) OR (expires_on IS NULL) OR (expires_on >= issued_on))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_reason_valid c CHECK ((version_reason = ANY (ARRAY['INITIAL'::text, 'CHANGE'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_version_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_version_id IS NOT NULL)))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_not_superseded_by_self c CHECK (((superseded_by_version_id IS NULL) OR (superseded_by_version_id <> id))) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_pkey p PRIMARY KEY (id) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
-operating_authority_versions operating_authority_versions_authority_fk f FOREIGN KEY (authority_id, kind) REFERENCES operating_authorities(id, kind) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_organization_fk f FOREIGN KEY (authority_id, organization_id) REFERENCES operating_authorities(id, organization_id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_pkey p PRIMARY KEY (id) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_reason_valid c CHECK ((version_reason = ANY (ARRAY['INITIAL'::text, 'CHANGE'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_region_valid c CHECK (((jurisdiction_region IS NULL) OR (jurisdiction_region ~ '^[A-Z0-9]{1,8}$'::text))) deferrable=false deferred=false
+operating_authority_versions operating_authority_versions_rule_version_not_blank c CHECK ((btrim(normalization_rule_version) <> ''::text)) deferrable=false deferred=false
 operating_authority_versions operating_authority_versions_superseded_by_fk f FOREIGN KEY (superseded_by_version_id, authority_id) REFERENCES operating_authority_versions(id, authority_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true
-operating_authority_status_periods operating_authority_status_periods_status_valid c CHECK ((authority_status = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text, 'REVOKED'::text, 'CANCELED'::text]))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_reason_valid c CHECK ((period_reason = ANY (ARRAY['INITIAL'::text, 'TRANSITION'::text, 'REACTIVATION'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_authority_id_fkey f FOREIGN KEY (authority_id) REFERENCES operating_authorities(id) ON DELETE RESTRICT deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_correction_state_consistent c CHECK ((((record_status = 'active'::text) AND (corrected_at IS NULL) AND (superseded_by_period_id IS NULL)) OR ((record_status = 'corrected'::text) AND (corrected_at IS NOT NULL) AND (superseded_by_period_id IS NOT NULL)))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_effective_window_valid c CHECK (((effective_to IS NULL) OR (effective_to > effective_from))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_not_superseded_by_self c CHECK (((superseded_by_period_id IS NULL) OR (superseded_by_period_id <> id))) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_pkey p PRIMARY KEY (id) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_id_authority_uq u UNIQUE (id, authority_id) deferrable=false deferred=false
-operating_authority_status_periods operating_authority_status_periods_authority_id_fkey f FOREIGN KEY (authority_id) REFERENCES operating_authorities(id) ON DELETE RESTRICT deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_reason_valid c CHECK ((period_reason = ANY (ARRAY['INITIAL'::text, 'TRANSITION'::text, 'REACTIVATION'::text, 'CORRECTION'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_record_status_valid c CHECK ((record_status = ANY (ARRAY['active'::text, 'corrected'::text]))) deferrable=false deferred=false
+operating_authority_status_periods operating_authority_status_periods_status_valid c CHECK ((authority_status = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text, 'REVOKED'::text, 'CANCELED'::text]))) deferrable=false deferred=false
 operating_authority_status_periods operating_authority_status_periods_superseded_by_fk f FOREIGN KEY (superseded_by_period_id, authority_id) REFERENCES operating_authority_status_periods(id, authority_id) DEFERRABLE INITIALLY DEFERRED deferrable=true deferred=true$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
@@ -625,7 +627,7 @@ operating_authority_status_periods operating_authority_status_periods_history_id
 operating_authority_versions operating_authority_versions_pkey CREATE UNIQUE INDEX operating_authority_versions_pkey ON public.operating_authority_versions USING btree (id)
 operating_authority_versions operating_authority_versions_id_authority_uq CREATE UNIQUE INDEX operating_authority_versions_id_authority_uq ON public.operating_authority_versions USING btree (id, authority_id)
 operating_authority_versions operating_authority_versions_current_uq CREATE UNIQUE INDEX operating_authority_versions_current_uq ON public.operating_authority_versions USING btree (authority_id) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
-operating_authority_versions operating_authority_versions_current_identity_uq CREATE UNIQUE INDEX operating_authority_versions_current_identity_uq ON public.operating_authority_versions USING btree (organization_id, kind, ( CASE WHEN (kind = ANY (ARRAY['MVID'::text, 'RIN'::text, 'CVOR'::text, 'SAFETY_FITNESS'::text])) THEN ((jurisdiction_country || '-'::text) || COALESCE(jurisdiction_region, ''::text)) ELSE ''::text END)) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
+operating_authority_versions operating_authority_versions_current_identity_uq CREATE UNIQUE INDEX operating_authority_versions_current_identity_uq ON public.operating_authority_versions USING btree (organization_id, kind) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL) AND (kind = 'USDOT'::text))
 operating_authority_versions operating_authority_versions_current_number_uq CREATE UNIQUE INDEX operating_authority_versions_current_number_uq ON public.operating_authority_versions USING btree (kind, jurisdiction_country, jurisdiction_region, number_normalized) NULLS NOT DISTINCT WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
 operating_authority_versions operating_authority_versions_history_idx CREATE INDEX operating_authority_versions_history_idx ON public.operating_authority_versions USING btree (authority_id, effective_from)
 operating_authority_versions operating_authority_versions_number_lookup_idx CREATE INDEX operating_authority_versions_number_lookup_idx ON public.operating_authority_versions USING btree (kind, number_normalized)$exp$, E'\n')) AS l
@@ -648,7 +650,7 @@ operating_authority_status_periods operating_authority_status_periods_history_id
 operating_authority_versions operating_authority_versions_pkey CREATE UNIQUE INDEX operating_authority_versions_pkey ON public.operating_authority_versions USING btree (id)
 operating_authority_versions operating_authority_versions_id_authority_uq CREATE UNIQUE INDEX operating_authority_versions_id_authority_uq ON public.operating_authority_versions USING btree (id, authority_id)
 operating_authority_versions operating_authority_versions_current_uq CREATE UNIQUE INDEX operating_authority_versions_current_uq ON public.operating_authority_versions USING btree (authority_id) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
-operating_authority_versions operating_authority_versions_current_identity_uq CREATE UNIQUE INDEX operating_authority_versions_current_identity_uq ON public.operating_authority_versions USING btree (organization_id, kind, ( CASE WHEN (kind = ANY (ARRAY['MVID'::text, 'RIN'::text, 'CVOR'::text, 'SAFETY_FITNESS'::text])) THEN ((jurisdiction_country || '-'::text) || COALESCE(jurisdiction_region, ''::text)) ELSE ''::text END)) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
+operating_authority_versions operating_authority_versions_current_identity_uq CREATE UNIQUE INDEX operating_authority_versions_current_identity_uq ON public.operating_authority_versions USING btree (organization_id, kind) WHERE ((record_status = 'active'::text) AND (effective_to IS NULL) AND (kind = 'USDOT'::text))
 operating_authority_versions operating_authority_versions_current_number_uq CREATE UNIQUE INDEX operating_authority_versions_current_number_uq ON public.operating_authority_versions USING btree (kind, jurisdiction_country, jurisdiction_region, number_normalized) NULLS NOT DISTINCT WHERE ((record_status = 'active'::text) AND (effective_to IS NULL))
 operating_authority_versions operating_authority_versions_history_idx CREATE INDEX operating_authority_versions_history_idx ON public.operating_authority_versions USING btree (authority_id, effective_from)
 operating_authority_versions operating_authority_versions_number_lookup_idx CREATE INDEX operating_authority_versions_number_lookup_idx ON public.operating_authority_versions USING btree (kind, number_normalized)$exp$, E'\n'))
@@ -892,8 +894,7 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$operating_authority_status_periods.id tes-backend@tes-production-510007.iam INSERT grantable=false
-operating_authorities.organization_id tes-backend@tes-production-510007.iam INSERT grantable=false
+    SELECT unnest(string_to_array($exp$operating_authorities.organization_id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authorities.kind tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authorities.record_status tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authorities.archived_at tes-backend@tes-production-510007.iam UPDATE grantable=false
@@ -916,6 +917,7 @@ operating_authority_versions.record_status tes-backend@tes-production-510007.iam
 operating_authority_versions.corrected_at tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authority_versions.superseded_by_version_id tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authority_versions.updated_at tes-backend@tes-production-510007.iam UPDATE grantable=false
+operating_authority_status_periods.id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.authority_id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.authority_status tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.period_reason tes-backend@tes-production-510007.iam INSERT grantable=false
@@ -931,8 +933,7 @@ operating_authority_status_periods.updated_at tes-backend@tes-production-510007.
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
     SELECT l FROM (SELECT c.relname || '.' || a.attname || ' ' || CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(x.grantee) END || ' ' || x.privilege_type || ' grantable=' || x.is_grantable FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid, aclexplode(a.attacl) x WHERE a.attrelid IN ('public.authority_kinds'::regclass,'public.operating_authorities'::regclass,'public.operating_authority_versions'::regclass,'public.operating_authority_status_periods'::regclass) AND a.attacl IS NOT NULL AND NOT a.attisdropped) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$operating_authority_status_periods.id tes-backend@tes-production-510007.iam INSERT grantable=false
-operating_authorities.organization_id tes-backend@tes-production-510007.iam INSERT grantable=false
+    SELECT unnest(string_to_array($exp$operating_authorities.organization_id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authorities.kind tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authorities.record_status tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authorities.archived_at tes-backend@tes-production-510007.iam UPDATE grantable=false
@@ -955,6 +956,7 @@ operating_authority_versions.record_status tes-backend@tes-production-510007.iam
 operating_authority_versions.corrected_at tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authority_versions.superseded_by_version_id tes-backend@tes-production-510007.iam UPDATE grantable=false
 operating_authority_versions.updated_at tes-backend@tes-production-510007.iam UPDATE grantable=false
+operating_authority_status_periods.id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.authority_id tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.authority_status tes-backend@tes-production-510007.iam INSERT grantable=false
 operating_authority_status_periods.period_reason tes-backend@tes-production-510007.iam INSERT grantable=false
@@ -980,26 +982,26 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$USDOT|USDOT Number|US Department of Transportation carrier identification number. National (US) number space.|NATIONAL|US|false|-|false|true|10
-MC|MC Operating Authority|FMCSA Motor Carrier (MC) docket operating authority. National (US) number space.|NATIONAL|US|false|-|false|true|20
-MVID|MVID|Canadian provincial carrier identifier (MVID). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|false|true|30
-RIN|RIN|Canadian provincial carrier identifier (RIN). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|false|true|40
-CVOR|CVOR|Ontario Commercial Vehicle Operator's Registration. Ontario number space.|COUNTRY_REGION|CA|true|ON|true|true|50
-SAFETY_FITNESS|Safety Fitness Certificate|Canadian safety fitness certificate (National Safety Code). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|true|true|60
-IRP|IRP Account|International Registration Plan account at Organization level. Number space per base jurisdiction, which may change over time.|BASE_JURISDICTION|-|true|-|false|true|70$exp$, E'\n')) AS l
+    SELECT unnest(string_to_array($exp$USDOT|USDOT Number|FMCSA USDOT number: assigned once to a legal person, non-transferable. National (US) number space; at most one current per Organization.|NATIONAL|US|false|-|false|true|true|10
+MC|MC Docket (Operating Authority)|FMCSA MC-prefixed docket number of an operating authority registration (FF and MX dockets are different prefixes and are not modelled). National (US) number space; an Organization may hold more than one.|NATIONAL|US|false|-|false|false|true|20
+MVID|MVID|Provincial motor vehicle client identifier (Alberta Registries uses MVID). Issuing province recorded per version; number space per issuing province.|COUNTRY_REGION|CA|true|-|false|false|true|30
+RIN|RIN|Ontario Registrant Identification Number (MTO / ServiceOntario): a nine-digit number identifying a registrant of vehicles. Ontario number space.|COUNTRY_REGION|CA|true|ON|false|false|true|40
+CVOR|CVOR|Ontario Commercial Vehicle Operator's Registration: nine-digit operator number on the CVOR certificate. Ontario number space.|COUNTRY_REGION|CA|true|ON|true|false|true|50
+SAFETY_FITNESS|NSC / Safety Fitness Certificate|Canadian National Safety Code carrier number / safety fitness certificate assigned by the carrier's home province or territory. Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|true|false|true|60
+IRP|IRP Account|International Registration Plan account issued by the registrant's base jurisdiction. Number space per base jurisdiction, which may change over time; an Organization may hold more than one.|BASE_JURISDICTION|-|true|-|false|false|true|70$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT code || '|' || display_name || '|' || COALESCE(description, '-') || '|' || jurisdiction_scope || '|' || COALESCE(issuer_country, '-') || '|' || region_required || '|' || COALESCE(fixed_region, '-') || '|' || has_expiry || '|' || is_active || '|' || sort_order FROM public.authority_kinds) AS a(l)
+    SELECT l FROM (SELECT code || '|' || display_name || '|' || COALESCE(description, '-') || '|' || jurisdiction_scope || '|' || COALESCE(issuer_country, '-') || '|' || region_required || '|' || COALESCE(fixed_region, '-') || '|' || has_expiry || '|' || one_current_per_organization || '|' || is_active || '|' || sort_order FROM public.authority_kinds) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT code || '|' || display_name || '|' || COALESCE(description, '-') || '|' || jurisdiction_scope || '|' || COALESCE(issuer_country, '-') || '|' || region_required || '|' || COALESCE(fixed_region, '-') || '|' || has_expiry || '|' || is_active || '|' || sort_order FROM public.authority_kinds) AS a(l)
+    SELECT l FROM (SELECT code || '|' || display_name || '|' || COALESCE(description, '-') || '|' || jurisdiction_scope || '|' || COALESCE(issuer_country, '-') || '|' || region_required || '|' || COALESCE(fixed_region, '-') || '|' || has_expiry || '|' || one_current_per_organization || '|' || is_active || '|' || sort_order FROM public.authority_kinds) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$USDOT|USDOT Number|US Department of Transportation carrier identification number. National (US) number space.|NATIONAL|US|false|-|false|true|10
-MC|MC Operating Authority|FMCSA Motor Carrier (MC) docket operating authority. National (US) number space.|NATIONAL|US|false|-|false|true|20
-MVID|MVID|Canadian provincial carrier identifier (MVID). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|false|true|30
-RIN|RIN|Canadian provincial carrier identifier (RIN). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|false|true|40
-CVOR|CVOR|Ontario Commercial Vehicle Operator's Registration. Ontario number space.|COUNTRY_REGION|CA|true|ON|true|true|50
-SAFETY_FITNESS|Safety Fitness Certificate|Canadian safety fitness certificate (National Safety Code). Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|true|true|60
-IRP|IRP Account|International Registration Plan account at Organization level. Number space per base jurisdiction, which may change over time.|BASE_JURISDICTION|-|true|-|false|true|70$exp$, E'\n'))
+    SELECT unnest(string_to_array($exp$USDOT|USDOT Number|FMCSA USDOT number: assigned once to a legal person, non-transferable. National (US) number space; at most one current per Organization.|NATIONAL|US|false|-|false|true|true|10
+MC|MC Docket (Operating Authority)|FMCSA MC-prefixed docket number of an operating authority registration (FF and MX dockets are different prefixes and are not modelled). National (US) number space; an Organization may hold more than one.|NATIONAL|US|false|-|false|false|true|20
+MVID|MVID|Provincial motor vehicle client identifier (Alberta Registries uses MVID). Issuing province recorded per version; number space per issuing province.|COUNTRY_REGION|CA|true|-|false|false|true|30
+RIN|RIN|Ontario Registrant Identification Number (MTO / ServiceOntario): a nine-digit number identifying a registrant of vehicles. Ontario number space.|COUNTRY_REGION|CA|true|ON|false|false|true|40
+CVOR|CVOR|Ontario Commercial Vehicle Operator's Registration: nine-digit operator number on the CVOR certificate. Ontario number space.|COUNTRY_REGION|CA|true|ON|true|false|true|50
+SAFETY_FITNESS|NSC / Safety Fitness Certificate|Canadian National Safety Code carrier number / safety fitness certificate assigned by the carrier's home province or territory. Number space per issuing province / territory.|COUNTRY_REGION|CA|true|-|true|false|true|60
+IRP|IRP Account|International Registration Plan account issued by the registrant's base jurisdiction. Number space per base jurisdiction, which may change over time; an Organization may hold more than one.|BASE_JURISDICTION|-|true|-|false|false|true|70$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION 'authority_kinds seed rows differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');

@@ -3,7 +3,7 @@
 --
 -- Scope (additive only):
 --   1. public.authority_kinds                    controlled catalogue of authority kinds (seeded)
---   2. public.operating_authorities              stable authority identity per Organization + kind
+--   2. public.operating_authorities              stable authority identity (one row per authority record)
 --   3. public.operating_authority_versions       effective-dated number / jurisdiction / date history
 --   4. public.operating_authority_status_periods effective-dated regulatory status history
 --
@@ -22,19 +22,27 @@
 --
 -- Uniqueness / collision namespace is a property of the kind (authority_kinds.jurisdiction_scope):
 --   NATIONAL          one number space for the whole issuing country        (USDOT, MC: US)
---   COUNTRY_REGION    number space per issuing country + region             (MVID, RIN, SAFETY_FITNESS, CVOR)
+--   COUNTRY_REGION    number space per issuing country + region             (MVID, RIN, CVOR, SAFETY_FITNESS)
 --   BASE_JURISDICTION number space per base jurisdiction, which may change  (IRP)
--- A CURRENT, non-corrected version holds its number: two Organizations can never hold the same number
+-- A CURRENT, non-corrected version holds its number: two authorities can never hold the same number
 -- in the same namespace, whether or not either authority is cancelled or archived (reuse must be an
 -- explicit reviewed decision, never a silent one).
 --
--- Normal invariant: one CURRENT authority per Organization per identity. The identity of USDOT, MC and IRP
--- is just the kind (so there is no ordinary path to concurrent USDOT numbers); the identity of MVID, RIN,
--- CVOR and SAFETY_FITNESS also includes the issuing jurisdiction, so an Organization may hold one per
--- province. The identity is enforced on the CURRENT version (not on the authority row) so that a wrongly
--- recorded jurisdiction remains correctable like any other recorded fact. A cancelled or archived
--- authority keeps its current version, so it keeps holding its identity and its number: reactivation or
--- restoration is the path back, never a silent second authority.
+-- Concurrent records per Organization (authority_kinds.one_current_per_organization): the database makes
+-- ONLY the claims regulator documentation supports.
+--   - USDOT: FMCSA assigns one USDOT number to each legal person, never transfers it, and it stays with
+--     that person forever, so an Organization has at most one CURRENT USDOT (no ordinary multi-USDOT
+--     path). Enforced by operating_authority_versions_current_identity_uq.
+--   - MC, MVID, RIN, CVOR, SAFETY_FITNESS, IRP: regulator documentation does not establish that an
+--     Organization can hold only one current record (an entity may need several FMCSA operating
+--     authorities; IRP registrants may hold several fleets/accounts; the provincial identifiers are
+--     issuer-specific client / operator identifiers). The database therefore does NOT encode one-per-
+--     Organization for them; each record is distinguished by its number, which is unique in its
+--     namespace. Any stricter rule belongs to the Rules / authority-policy layer or a later migration.
+-- The jurisdiction of a record is an effective-dated attribute of its VERSION and part of its collision
+-- namespace, never part of Organization identity: a wrongly recorded jurisdiction stays correctable like
+-- any other recorded fact. A cancelled or archived authority keeps its current version, so it keeps
+-- holding its number (and, for USDOT, its identity): reactivation or restoration is the path back.
 --
 -- Business time vs record time:
 --   effective_from / effective_to describe when a fact was true in the real world and may be
@@ -54,7 +62,9 @@
 -- Archive is RECORD lifecycle (operating_authorities.record_status), not regulatory status. EXPIRED is
 -- deliberately not a stored status: whether an expiry date applies is a property of the kind
 -- (authority_kinds.has_expiry) and expiry is interpreted from expires_on, so kind-specific
--- interpretation can evolve without rewriting history. Allowed status TRANSITIONS are server policy.
+-- interpretation can evolve without rewriting history. The status history records OBSERVED regulatory
+-- status truthfully; no universal transition matrix is enforced, because legal transitions differ by
+-- regulator and kind (kind-specific transition policy belongs to the Rules / authority-policy layer).
 --
 -- Requirement is not stored here: whether an Organization needs an authority is a Rules Pool
 -- determination. These tables hold only actual authorities, so absence of a row is never the
@@ -84,10 +94,13 @@ CREATE TABLE public.authority_kinds (
     issuer_country text,
     -- Whether the issuing jurisdiction includes a region (province / state).
     region_required boolean NOT NULL,
-    -- A region the kind is bound to (CVOR is an Ontario program).
+    -- A region the kind is bound to (CVOR and RIN are Ontario programs).
     fixed_region text,
     -- Whether an expiry date applies to this kind.
     has_expiry boolean NOT NULL,
+    -- Whether regulator documentation supports at most one CURRENT record per Organization
+    -- (enforced by operating_authority_versions_current_identity_uq; a new true value needs a migration).
+    one_current_per_organization boolean NOT NULL,
 
     is_active boolean NOT NULL DEFAULT true,
     sort_order integer NOT NULL,
@@ -127,29 +140,29 @@ CREATE TABLE public.authority_kinds (
 );
 
 INSERT INTO public.authority_kinds
-    (code, display_name, description, jurisdiction_scope, issuer_country, region_required, fixed_region, has_expiry, sort_order)
+    (code, display_name, description, jurisdiction_scope, issuer_country, region_required, fixed_region, has_expiry, one_current_per_organization, sort_order)
 VALUES
     ('USDOT', 'USDOT Number',
-        'US Department of Transportation carrier identification number. National (US) number space.',
-        'NATIONAL', 'US', false, NULL, false, 10),
-    ('MC', 'MC Operating Authority',
-        'FMCSA Motor Carrier (MC) docket operating authority. National (US) number space.',
-        'NATIONAL', 'US', false, NULL, false, 20),
+        'FMCSA USDOT number: assigned once to a legal person, non-transferable. National (US) number space; at most one current per Organization.',
+        'NATIONAL', 'US', false, NULL, false, true, 10),
+    ('MC', 'MC Docket (Operating Authority)',
+        'FMCSA MC-prefixed docket number of an operating authority registration (FF and MX dockets are different prefixes and are not modelled). National (US) number space; an Organization may hold more than one.',
+        'NATIONAL', 'US', false, NULL, false, false, 20),
     ('MVID', 'MVID',
-        'Canadian provincial carrier identifier (MVID). Number space per issuing province / territory.',
-        'COUNTRY_REGION', 'CA', true, NULL, false, 30),
+        'Provincial motor vehicle client identifier (Alberta Registries uses MVID). Issuing province recorded per version; number space per issuing province.',
+        'COUNTRY_REGION', 'CA', true, NULL, false, false, 30),
     ('RIN', 'RIN',
-        'Canadian provincial carrier identifier (RIN). Number space per issuing province / territory.',
-        'COUNTRY_REGION', 'CA', true, NULL, false, 40),
+        'Ontario Registrant Identification Number (MTO / ServiceOntario): a nine-digit number identifying a registrant of vehicles. Ontario number space.',
+        'COUNTRY_REGION', 'CA', true, 'ON', false, false, 40),
     ('CVOR', 'CVOR',
-        'Ontario Commercial Vehicle Operator''s Registration. Ontario number space.',
-        'COUNTRY_REGION', 'CA', true, 'ON', true, 50),
-    ('SAFETY_FITNESS', 'Safety Fitness Certificate',
-        'Canadian safety fitness certificate (National Safety Code). Number space per issuing province / territory.',
-        'COUNTRY_REGION', 'CA', true, NULL, true, 60),
+        'Ontario Commercial Vehicle Operator''s Registration: nine-digit operator number on the CVOR certificate. Ontario number space.',
+        'COUNTRY_REGION', 'CA', true, 'ON', true, false, 50),
+    ('SAFETY_FITNESS', 'NSC / Safety Fitness Certificate',
+        'Canadian National Safety Code carrier number / safety fitness certificate assigned by the carrier''s home province or territory. Number space per issuing province / territory.',
+        'COUNTRY_REGION', 'CA', true, NULL, true, false, 60),
     ('IRP', 'IRP Account',
-        'International Registration Plan account at Organization level. Number space per base jurisdiction, which may change over time.',
-        'BASE_JURISDICTION', NULL, true, NULL, false, 70);
+        'International Registration Plan account issued by the registrant''s base jurisdiction. Number space per base jurisdiction, which may change over time; an Organization may hold more than one.',
+        'BASE_JURISDICTION', NULL, true, NULL, false, false, 70);
 
 
 -- ============================================================
@@ -307,22 +320,14 @@ CREATE UNIQUE INDEX operating_authority_versions_current_uq
     ON public.operating_authority_versions (authority_id)
     WHERE record_status = 'active' AND effective_to IS NULL;
 
--- Normal invariant: one CURRENT authority per Organization per identity. USDOT, MC and IRP are
--- identified by kind alone; MVID, RIN, CVOR and SAFETY_FITNESS also by issuing jurisdiction. A kind added
--- later must be added to (or deliberately kept out of) the list below by its own migration; the
--- production verification asserts the exact definition. The server serializes writers with a row lock
--- on the Organization; this index is the final concurrency backstop.
+-- Supported invariant: one CURRENT USDOT per Organization (FMCSA assigns one USDOT number per legal
+-- person). Only kinds with authority_kinds.one_current_per_organization = true are listed; a kind
+-- added later must be added to (or deliberately kept out of) the list below by its own migration, and
+-- the production verification asserts the exact definition. The server serializes writers with a row
+-- lock on the Organization; this index is the final concurrency backstop.
 CREATE UNIQUE INDEX operating_authority_versions_current_identity_uq
-    ON public.operating_authority_versions (
-        organization_id,
-        kind,
-        (CASE
-            WHEN kind IN ('MVID', 'RIN', 'CVOR', 'SAFETY_FITNESS')
-                THEN jurisdiction_country || '-' || COALESCE(jurisdiction_region, '')
-            ELSE ''
-         END)
-    )
-    WHERE record_status = 'active' AND effective_to IS NULL;
+    ON public.operating_authority_versions (organization_id, kind)
+    WHERE record_status = 'active' AND effective_to IS NULL AND kind IN ('USDOT');
 
 -- Authoritative collision protection: a CURRENT, non-corrected version holds its number in its
 -- namespace. Independent of whether the authority's status is cancelled or the record archived.

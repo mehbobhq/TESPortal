@@ -371,16 +371,12 @@ export async function findCurrentIdentityHolder(
   client: Queryable,
   organizationId: string,
   kind: AuthorityKind,
-  identityIncludesJurisdiction: boolean,
-  jurisdictionCountry: string,
-  jurisdictionRegion: string | null,
 ): Promise<{ authorityId: string; versionId: string } | undefined> {
   const result = await client.query<{ authority_id: string; id: string }>(
     `SELECT authority_id, id FROM public.operating_authority_versions
       WHERE organization_id = $1 AND kind = $2 AND record_status = 'active' AND effective_to IS NULL
-        AND ($3::boolean = false OR (jurisdiction_country = $4 AND jurisdiction_region IS NOT DISTINCT FROM $5::text))
       LIMIT 1`,
-    [organizationId, kind, identityIncludesJurisdiction, jurisdictionCountry, jurisdictionRegion],
+    [organizationId, kind],
   )
   const row = result.rows[0]
   return row ? { authorityId: row.authority_id, versionId: row.id } : undefined

@@ -1,21 +1,24 @@
 /**
- * Server-owned authority kind definitions, number normalization and status policy.
+ * Server-owned authority kind definitions, number normalization and status vocabulary.
  *
  * PostgreSQL's authority_kinds catalogue (migration 0013) is the persisted source of truth for which kinds exist and
- * for their jurisdiction / expiry shape; the database triggers enforce that shape. This module owns the pieces the
- * database cannot express - the per-kind number normalization rules (versioned, kept forever) and the allowed status
- * TRANSITIONS - and a drift test proves the two agree.
+ * for their jurisdiction / expiry / concurrency shape; the database triggers and indexes enforce that shape. This module
+ * owns the pieces the database cannot express - the per-kind number normalization rules (versioned, kept forever) - and
+ * a drift test proves the two agree.
  *
  * Collision namespace per kind (the legally meaningful number space):
  *   USDOT, MC           NATIONAL           one US-wide number space
- *   MVID, RIN           COUNTRY_REGION     per issuing Canadian province / territory
- *   CVOR                COUNTRY_REGION     Ontario only
- *   SAFETY_FITNESS      COUNTRY_REGION     per issuing Canadian province / territory
+ *   MVID                COUNTRY_REGION     per issuing province / territory
+ *   RIN, CVOR           COUNTRY_REGION     Ontario programs (region fixed to ON)
+ *   SAFETY_FITNESS      COUNTRY_REGION     per issuing province / territory (NSC number / safety fitness certificate)
  *   IRP                 BASE_JURISDICTION  per base jurisdiction (CA province or US state); the base may change over time
  *
- * Normalization is deliberately structural. It does not claim a registry has verified the number, and the formats of
- * MVID, RIN, SAFETY_FITNESS and IRP are generic alphanumeric until their issuing formats are confirmed; a stricter
- * rule is added as a NEW version without rewriting stored history.
+ * Number validation is classified per kind and the rule NAME says which:
+ *   AUTHORITATIVE   the exact format is documented by the issuing regulator (CVOR, RIN: nine digits, Ontario MTO)
+ *   PERMISSIVE      the issuing format is not authoritatively locked; the rule only guarantees a safe, comparable token
+ *                   (rule names contain "permissive" and are NOT regulatory-format validation)
+ * Tightening a rule is done by adding a NEW rule version (v2, v3 ...) and pointing the kind at it. Every version ever
+ * stored stays resolvable in NORMALIZATION_RULES, so historical records are never rewritten or re-validated.
  */
 
 import { CorporateIdentityValidationError } from "@/lib/corporate-identity/errors"
@@ -42,76 +45,107 @@ export function isAuthorityStatus(value: unknown): value is AuthorityStatus {
 // Versioned number normalization
 // ---------------------------------------------------------------------------------------------------------------
 
+export type RuleClassification = "AUTHORITATIVE" | "PERMISSIVE"
+
 export type NormalizationRule = {
   readonly version: string
+  readonly classification: RuleClassification
+  /** Where an AUTHORITATIVE format comes from; absent for PERMISSIVE rules. */
+  readonly source?: string
   readonly apply: (raw: string) => { ok: true; normalized: string } | { ok: false; reason: string }
 }
 
 const stripLeadingZeros = (digits: string): string => digits.replace(/^0+/, "")
 
-/** USDOT: optional "USDOT" / "US DOT" / "DOT" prefix, then 1-8 digits; leading zeros are not significant. */
-const USDOT_V1: NormalizationRule = {
-  version: "usdot.v1",
-  apply(raw) {
-    const body = raw.normalize("NFKC").trim().replace(/^(?:US\s*DOT|USDOT|DOT)\s*[#:\-]?\s*/i, "")
-    if (!/^\d{1,8}$/.test(body)) return { ok: false, reason: "A USDOT number is 1-8 digits (an optional USDOT prefix is accepted)." }
-    const normalized = stripLeadingZeros(body)
-    return normalized === "" ? { ok: false, reason: "A USDOT number cannot be zero." } : { ok: true, normalized }
-  },
-}
-
-/** MC: optional "MC" prefix, then 1-8 digits. FF (freight forwarder) and MX (Mexico) dockets are different authorities. */
-const MC_V1: NormalizationRule = {
-  version: "mc.v1",
-  apply(raw) {
-    const value = raw.normalize("NFKC").trim()
-    if (/^(?:FF|MX)\b/i.test(value)) {
-      return { ok: false, reason: "FF (freight forwarder) and MX (Mexico) dockets are not MC operating authorities." }
-    }
-    const body = value.replace(/^MC\s*[#:\-]?\s*/i, "")
-    if (!/^\d{1,8}$/.test(body)) return { ok: false, reason: "An MC number is 1-8 digits (an optional MC prefix is accepted)." }
-    const normalized = stripLeadingZeros(body)
-    return normalized === "" ? { ok: false, reason: "An MC number cannot be zero." } : { ok: true, normalized }
-  },
-}
-
-/** CVOR: nine digits; spaces and hyphens are formatting. */
-const CVOR_V1: NormalizationRule = {
-  version: "cvor.v1",
-  apply(raw) {
-    const body = raw.normalize("NFKC").trim().replace(/[\s-]/g, "")
-    if (!/^\d{9}$/.test(body)) return { ok: false, reason: "A CVOR number is nine digits." }
-    return /^0+$/.test(body) ? { ok: false, reason: "A CVOR number cannot be all zeros." } : { ok: true, normalized: body }
-  },
-}
-
-/** Generic structural rule for identifiers whose issuing format is not confirmed: 3-24 letters or digits. */
-function genericRule(version: string, label: string): NormalizationRule {
+/**
+ * FMCSA numbers (USDOT; MC docket) are numeric but FMCSA does not publish a stable length, and it has announced changes
+ * to how docket numbers are issued, so only "digits" is asserted. An optional kind prefix is display convention. Leading
+ * zeros are not significant (treating them as equal can only make collision protection stricter).
+ */
+function numericPermissiveRule(version: string, prefix: RegExp, label: string): NormalizationRule {
   return {
     version,
+    classification: "PERMISSIVE",
     apply(raw) {
-      const normalized = raw.normalize("NFKC").trim().toUpperCase().replace(/[\s\-./]+/g, "")
-      return /^[A-Z0-9]{3,24}$/.test(normalized)
-        ? { ok: true, normalized }
-        : { ok: false, reason: `${label} must be 3-24 letters or digits (spaces, hyphens, periods and slashes are ignored).` }
+      const body = raw.normalize("NFKC").trim().replace(prefix, "").replace(/[\s-]/g, "")
+      if (!/^\d{1,12}$/.test(body)) return { ok: false, reason: `${label} must be digits (an optional prefix and spaces or hyphens are accepted).` }
+      const normalized = stripLeadingZeros(body)
+      return normalized === "" ? { ok: false, reason: `${label} cannot be zero.` } : { ok: true, normalized }
     },
   }
 }
 
-const MVID_V1 = genericRule("mvid.v1", "An MVID")
-const RIN_V1 = genericRule("rin.v1", "A RIN")
-const SAFETY_FITNESS_V1 = genericRule("safety_fitness.v1", "A safety fitness certificate number")
-const IRP_V1 = genericRule("irp.v1", "An IRP account number")
+const USDOT_PERMISSIVE = numericPermissiveRule("usdot.numeric_permissive.v1", /^(?:US\s*DOT|USDOT|DOT)\s*[#:\-]?\s*/i, "A USDOT number")
+
+/**
+ * MC kind = MC-prefixed FMCSA dockets only. FF (freight forwarder) and MX (Mexico-domiciled) dockets are different
+ * prefixes of the same docket system; they are out of scope for this kind (not a format judgement), so they are refused
+ * rather than silently stored as MC numbers.
+ */
+const MC_PERMISSIVE: NormalizationRule = (() => {
+  const numeric = numericPermissiveRule("mc.numeric_permissive.v1", /^MC\s*[#:\-]?\s*/i, "An MC number")
+  return {
+    ...numeric,
+    apply(raw) {
+      if (/^(?:FF|MX)\b/i.test(raw.normalize("NFKC").trim())) {
+        return { ok: false, reason: "FF (freight forwarder) and MX (Mexico) dockets are not MC dockets; this kind records MC dockets only." }
+      }
+      return numeric.apply(raw)
+    },
+  }
+})()
+
+/**
+ * Nine digits (spaces and hyphens are formatting, not part of the number). The Ontario Ministry of Transportation states
+ * that the CVOR certificate carries a unique nine-digit number (Commercial Vehicle Operators' Safety Manual); the
+ * ministry does not document check digits or reserved ranges, so none are asserted. Digits are kept as issued.
+ */
+function ontarioNineDigitRule(version: string, label: string, source: string): NormalizationRule {
+  return {
+    version,
+    classification: "AUTHORITATIVE",
+    source,
+    apply(raw) {
+      const body = raw.normalize("NFKC").trim().replace(/[\s-]/g, "")
+      return /^\d{9}$/.test(body) ? { ok: true, normalized: body } : { ok: false, reason: `${label} is nine digits.` }
+    },
+  }
+}
+
+const CVOR_NINE_DIGIT = ontarioNineDigitRule(
+  "cvor.ontario_nine_digit.v1",
+  "A CVOR number",
+  "Ontario MTO Commercial Vehicle Operators' Safety Manual: the CVOR certificate carries a unique nine-digit identification number",
+)
+const RIN_NINE_DIGIT = ontarioNineDigitRule(
+  "rin.ontario_nine_digit.v1",
+  "A RIN",
+  "Ontario MTO / ServiceOntario forms (Declaration, Proof of Business Address): a RIN is a unique 9-digit number",
+)
+
+/**
+ * The issuing format is not authoritatively locked (MVID, NSC / safety fitness numbers and IRP account numbers are
+ * issued by many jurisdictions, each with its own format). The rule keeps letters and digits only (case, spaces,
+ * hyphens, periods and slashes ignored) so numbers are comparable and safe to index. NOT regulatory-format validation.
+ */
+const IDENTIFIER_PERMISSIVE: NormalizationRule = {
+  version: "authority_identifier.permissive.v1",
+  classification: "PERMISSIVE",
+  apply(raw) {
+    const normalized = raw.normalize("NFKC").trim().toUpperCase().replace(/[\s\-./]+/g, "")
+    return /^[A-Z0-9]{1,32}$/.test(normalized)
+      ? { ok: true, normalized }
+      : { ok: false, reason: "The number must be 1-32 letters or digits (spaces, hyphens, periods and slashes are ignored)." }
+  },
+}
 
 /** Every rule version ever stored must remain here, unchanged. */
 export const NORMALIZATION_RULES: Readonly<Record<string, NormalizationRule>> = {
-  [USDOT_V1.version]: USDOT_V1,
-  [MC_V1.version]: MC_V1,
-  [MVID_V1.version]: MVID_V1,
-  [RIN_V1.version]: RIN_V1,
-  [CVOR_V1.version]: CVOR_V1,
-  [SAFETY_FITNESS_V1.version]: SAFETY_FITNESS_V1,
-  [IRP_V1.version]: IRP_V1,
+  [USDOT_PERMISSIVE.version]: USDOT_PERMISSIVE,
+  [MC_PERMISSIVE.version]: MC_PERMISSIVE,
+  [CVOR_NINE_DIGIT.version]: CVOR_NINE_DIGIT,
+  [RIN_NINE_DIGIT.version]: RIN_NINE_DIGIT,
+  [IDENTIFIER_PERMISSIVE.version]: IDENTIFIER_PERMISSIVE,
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -126,20 +160,23 @@ export type KindDefinition = {
   readonly regionRequired: boolean
   readonly fixedRegion: string | null
   readonly hasExpiry: boolean
-  /** Whether the issuing jurisdiction is part of the authority's identity (one per province). */
-  readonly identityIncludesJurisdiction: boolean
+  /**
+   * Whether regulator documentation supports at most one CURRENT record per Organization. Only USDOT does; for every
+   * other kind the number (unique in its namespace) is what distinguishes records.
+   */
+  readonly oneCurrentPerOrganization: boolean
   /** Current normalization rule. Older stored versions remain resolvable through NORMALIZATION_RULES. */
   readonly rule: NormalizationRule
 }
 
 export const KIND_DEFINITIONS: Readonly<Record<AuthorityKind, KindDefinition>> = {
-  USDOT: { kind: "USDOT", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, identityIncludesJurisdiction: false, rule: USDOT_V1 },
-  MC: { kind: "MC", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, identityIncludesJurisdiction: false, rule: MC_V1 },
-  MVID: { kind: "MVID", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: false, identityIncludesJurisdiction: true, rule: MVID_V1 },
-  RIN: { kind: "RIN", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: false, identityIncludesJurisdiction: true, rule: RIN_V1 },
-  CVOR: { kind: "CVOR", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: true, identityIncludesJurisdiction: true, rule: CVOR_V1 },
-  SAFETY_FITNESS: { kind: "SAFETY_FITNESS", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: true, identityIncludesJurisdiction: true, rule: SAFETY_FITNESS_V1 },
-  IRP: { kind: "IRP", jurisdictionScope: "BASE_JURISDICTION", issuerCountry: null, regionRequired: true, fixedRegion: null, hasExpiry: false, identityIncludesJurisdiction: false, rule: IRP_V1 },
+  USDOT: { kind: "USDOT", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: true, rule: USDOT_PERMISSIVE },
+  MC: { kind: "MC", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: MC_PERMISSIVE },
+  MVID: { kind: "MVID", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
+  RIN: { kind: "RIN", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: false, oneCurrentPerOrganization: false, rule: RIN_NINE_DIGIT },
+  CVOR: { kind: "CVOR", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: true, oneCurrentPerOrganization: false, rule: CVOR_NINE_DIGIT },
+  SAFETY_FITNESS: { kind: "SAFETY_FITNESS", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: true, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
+  IRP: { kind: "IRP", jurisdictionScope: "BASE_JURISDICTION", issuerCountry: null, regionRequired: true, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
 }
 
 export type PreparedNumber = { display: string; normalized: string; ruleVersion: string }
@@ -214,31 +251,11 @@ export function resolveJurisdiction(kind: AuthorityKind, input: unknown, field =
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Status policy
+// Status
 // ---------------------------------------------------------------------------------------------------------------
-
-/**
- * Allowed regulatory status transitions. This is server POLICY, not schema: it can evolve (and become kind-specific)
- * without rewriting stored history. A move back to ACTIVE from a non-PENDING status is a REACTIVATION and goes through
- * its own operation so the authority's identity is visibly preserved.
- */
-const TRANSITIONS: Readonly<Record<AuthorityStatus, readonly AuthorityStatus[]>> = {
-  PENDING: ["ACTIVE", "CANCELED"],
-  ACTIVE: ["INACTIVE", "SUSPENDED", "REVOKED", "CANCELED"],
-  INACTIVE: ["ACTIVE", "SUSPENDED", "REVOKED", "CANCELED"],
-  SUSPENDED: ["ACTIVE", "INACTIVE", "REVOKED", "CANCELED"],
-  REVOKED: ["ACTIVE", "CANCELED"],
-  CANCELED: ["ACTIVE"],
-}
-
-export function isAllowedTransition(from: AuthorityStatus, to: AuthorityStatus): boolean {
-  return TRANSITIONS[from].includes(to)
-}
-
-/** ACTIVE reached from anything but PENDING. */
-export function isReactivation(from: AuthorityStatus, to: AuthorityStatus): boolean {
-  return to === "ACTIVE" && from !== "PENDING" && from !== "ACTIVE"
-}
-
-/** Statuses in which the record may be archived (record lifecycle, not regulatory status). */
-export const ARCHIVABLE_STATUSES: readonly AuthorityStatus[] = ["INACTIVE", "REVOKED", "CANCELED"]
+//
+// The status history records OBSERVED regulatory status. There is deliberately no universal transition matrix and no
+// archive-by-status rule here: which changes are legally possible differs by regulator and kind, so kind-specific
+// transition policy belongs to the Rules / authority-policy layer. The only checks the foundation makes are
+// integrity checks (the status must differ from the current one, the record must not be archived, and business time
+// must move forward). Archive is TES record lifecycle and is independent of regulatory status.

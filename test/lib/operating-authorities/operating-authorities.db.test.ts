@@ -122,7 +122,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
   const unique = () => String(1_000_000 + ((Date.now() + ++counter * 7919) % 8_000_000));
   const alnum = (prefix = "T") => `${prefix}${unique()}`;
   const numberFor = (kind: Kind): string => {
-    if (kind === "CVOR") return String(100_000_000 + ((Date.now() + ++counter * 104729) % 800_000_000));
+    if (kind === "CVOR" || kind === "RIN") return String(100_000_000 + ((Date.now() + ++counter * 104729) % 800_000_000));
     if (kind === "USDOT" || kind === "MC") return unique();
     return alnum(kind.slice(0, 2));
   };
@@ -132,6 +132,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       case "MC":
         return undefined;
       case "CVOR":
+      case "RIN":
         return { region: "ON" };
       case "IRP":
         return { country: "US", region: "TX" };
@@ -206,7 +207,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       assert.equal(ledger.rows[0].sha256, createHash("sha256").update(file).digest("hex"));
     });
 
-    scenario("the server definitions agree with the persisted catalogue, and the identity index covers every jurisdiction-scoped kind", async () => {
+    scenario("the server definitions agree with the persisted catalogue, and the identity index covers exactly the one-current-per-Organization kinds", async () => {
       const rows = (await pools.admin.query(`SELECT * FROM public.authority_kinds ORDER BY sort_order`)).rows;
       assert.equal(rows.length, K.defs.AUTHORITY_KINDS.length);
       for (const row of rows) {
@@ -217,11 +218,12 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
         assert.equal(row.region_required, def.regionRequired, row.code);
         assert.equal(row.fixed_region, def.fixedRegion, row.code);
         assert.equal(row.has_expiry, def.hasExpiry, row.code);
+        assert.equal(row.one_current_per_organization, def.oneCurrentPerOrganization, row.code);
       }
       const indexdef = (await pools.admin.query<{ d: string }>(`SELECT pg_get_indexdef('public.operating_authority_versions_current_identity_uq'::regclass) AS d`)).rows[0].d;
       for (const kind of KINDS) {
         const def = K.defs.KIND_DEFINITIONS[kind];
-        assert.equal(indexdef.includes(`'${kind}'`), def.identityIncludesJurisdiction, `identity index coverage of ${kind}`);
+        assert.equal(indexdef.includes(`'${kind}'`), def.oneCurrentPerOrganization, `identity index coverage of ${kind}`);
       }
     });
 
@@ -368,7 +370,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       scenario(`creates a ${kind} authority with display/normalized/rule version, an initial status and one Master Register event`, async () => {
         const actor = await fullStaff();
         const o = await org();
-        const raw = kind === "USDOT" ? "USDOT 00123456" : kind === "MC" ? "MC-0123456" : kind === "CVOR" ? "123-456-789" : "ab-1234.56";
+        const raw = kind === "USDOT" ? "USDOT 00123456" : kind === "MC" ? "MC-0123456" : kind === "CVOR" ? "123-456-789" : kind === "RIN" ? "987 654 321" : "ab-1234.56";
         const { view } = await K.oa.createAuthority({ organizationId: o, kind, number: raw, jurisdiction: jurisdictionFor(kind) } as never);
         const version = view.current.version!;
         assert.equal(view.authority.kind, kind);
@@ -431,25 +433,31 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       assert.equal(await rowCount(`SELECT count(*) FROM public.operating_authorities WHERE organization_id = $1`, [b]), 1);
     });
 
-    scenario("country+region namespaces: MVID/RIN/SAFETY_FITNESS per province, never across kinds; CVOR is Ontario only", async () => {
+    scenario("country+region namespaces: MVID/SAFETY_FITNESS per issuing province, RIN/CVOR Ontario only, never across kinds", async () => {
       await fullStaff();
       const [a, b] = [await org("A"), await org("B")];
-      for (const kind of ["MVID", "RIN", "SAFETY_FITNESS"] as const) {
+      for (const kind of ["MVID", "SAFETY_FITNESS"] as const) {
         const number = alnum(kind.slice(0, 2));
         await K.oa.createAuthority({ organizationId: a, kind, number, jurisdiction: { region: "AB" } });
         await rejectsWith(K.oa.createAuthority({ organizationId: b, kind, number: number.toLowerCase(), jurisdiction: { region: "AB" } }), K.oa.AuthorityNumberCollisionError);
         // same number in another province is a different namespace
         await K.oa.createAuthority({ organizationId: b, kind, number, jurisdiction: { region: "BC" } });
       }
-      // MVID and RIN are separate kinds: the same text in each never collides
+      // MVID and SAFETY_FITNESS are separate kinds: the same text in each never collides
       const shared = alnum("XX");
       const c = await org("C");
       await K.oa.createAuthority({ organizationId: c, kind: "MVID", number: shared, jurisdiction: { region: "MB" } });
-      await K.oa.createAuthority({ organizationId: c, kind: "RIN", number: shared, jurisdiction: { region: "MB" } });
-      // CVOR and SAFETY_FITNESS likewise
+      await K.oa.createAuthority({ organizationId: c, kind: "SAFETY_FITNESS", number: shared, jurisdiction: { region: "MB" } });
+      // CVOR and RIN are separate Ontario namespaces: the same nine digits in each never collide, within one kind they do
       const digits = String(300_000_000 + (counter % 1000));
       await K.oa.createAuthority({ organizationId: c, kind: "CVOR", number: digits });
+      await K.oa.createAuthority({ organizationId: c, kind: "RIN", number: digits });
       await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "CVOR", number: digits }), K.oa.AuthorityNumberCollisionError);
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: digits }), K.oa.AuthorityNumberCollisionError);
+      // an authoritative nine-digit format is enforced for both Ontario kinds
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: "AB1234567" }), K.oa.OperatingAuthorityValidationError);
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "CVOR", number: "12345678" }), K.oa.OperatingAuthorityValidationError);
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: numberFor("RIN"), jurisdiction: { region: "AB" } }), K.oa.OperatingAuthorityValidationError);
     });
 
     scenario("IRP: base-jurisdiction namespace; the same number in another base jurisdiction is allowed", async () => {
@@ -503,8 +511,14 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
         assert.equal(error.match?.recommendedAction, "RESTORE_ARCHIVED");
         return true;
       });
-      // and the same Organization cannot silently create a second one
-      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "MC", number: unique() }), K.oa.OperatingAuthorityConflictError);
+      // the same Organization cannot silently re-create the same number either (restore is the path back)
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "MC", number: n }), K.oa.AuthorityNumberCollisionError);
+      // a USDOT keeps holding the Organization's one-USDOT identity while canceled and archived
+      const usdot = (await create(a, "USDOT")).view;
+      await K.oa.changeAuthorityStatus({ organizationId: a, authorityId: usdot.authority.id, status: "CANCELED" });
+      await K.oa.archiveAuthority({ organizationId: a, authorityId: usdot.authority.id });
+      await rejectsWith(create(a, "USDOT"), K.oa.OperatingAuthorityConflictError);
+      await K.oa.restoreAuthority({ organizationId: a, authorityId: usdot.authority.id });
     });
 
     scenario("checkAuthorityNumber is read-only, needs ORGANIZATION_REGISTRY_READ and writes no Master Register event", async () => {
@@ -537,23 +551,36 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
 
   // =============================================================================================================
   describe("identity invariants", () => {
-    scenario("one current USDOT per Organization; a second authority of the same identity is refused", async () => {
+    scenario("one current USDOT per Organization; every other kind is distinguished by its number, not claimed one-per-Organization", async () => {
       await fullStaff();
       const o = await org();
       await create(o, "USDOT");
       await rejectsWith(create(o, "USDOT"), K.oa.OperatingAuthorityConflictError);
-      await create(o, "MC");
-      await rejectsWith(create(o, "MC"), K.oa.OperatingAuthorityConflictError);
-      await create(o, "IRP");
-      await rejectsWith(create(o, "IRP"), K.oa.OperatingAuthorityConflictError);
-      // jurisdiction-scoped kinds: one per province, several provinces allowed
-      await create(o, "MVID", { jurisdiction: { region: "AB" } });
-      await create(o, "MVID", { jurisdiction: { region: "BC" } });
-      await rejectsWith(create(o, "MVID", { jurisdiction: { region: "AB" } }), K.oa.OperatingAuthorityConflictError);
+      // regulator documentation does not establish one-per-Organization for these kinds: several records, each with its own number
+      for (const kind of ["MC", "IRP", "CVOR", "RIN", "MVID", "SAFETY_FITNESS"] as const) {
+        const first = (await create(o, kind)).view.authority.id;
+        const second = (await create(o, kind)).view.authority.id;
+        assert.notEqual(first, second, kind);
+      }
+      // ... but never the same number twice in one namespace, not even within the Organization
+      const held = (await create(o, "MC")).view.current.version!.numberNormalized;
+      await rejectsWith(K.oa.createAuthority({ organizationId: o, kind: "MC", number: held }), K.oa.AuthorityNumberCollisionError);
       assert.equal(await rowCount(`SELECT count(*) FROM public.operating_authorities WHERE organization_id = $1 AND kind = 'USDOT'`, [o]), 1);
+      assert.equal(await rowCount(`SELECT count(*) FROM public.operating_authorities WHERE organization_id = $1 AND kind = 'MC'`, [o]), 3);
     });
 
-    scenario("concurrent creation of one identity in one Organization yields exactly one authority", async () => {
+    scenario("concurrent creation of distinct MC dockets in one Organization all succeed; the same docket yields exactly one", async () => {
+      const as = await concurrentActors(4);
+      const o = await org();
+      const distinct = await Promise.allSettled(Array.from({ length: 4 }, (_, i) => as(i, () => create(o, "MC"))));
+      assert.equal(distinct.filter((r) => r.status === "fulfilled").length, 4, JSON.stringify(distinct.filter((r) => r.status === "rejected")));
+      const number = unique();
+      const same = await Promise.allSettled(Array.from({ length: 4 }, (_, i) => as(i, () => K.oa.createAuthority({ organizationId: o, kind: "MC", number }))));
+      assert.equal(same.filter((r) => r.status === "fulfilled").length, 1);
+      for (const r of same) if (r.status === "rejected") assert.ok(r.reason instanceof K.oa.AuthorityNumberCollisionError, String(r.reason));
+    });
+
+    scenario("concurrent creation of one identity in one Organization yields exactly one authority (USDOT)", async () => {
       const as = await concurrentActors(4);
       const o = await org();
       const results = await Promise.allSettled(Array.from({ length: 4 }, (_, i) => as(i, () => create(o, "USDOT"))));
@@ -578,7 +605,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
 
   // =============================================================================================================
   describe("status, reactivation, archive", () => {
-    scenario("regulatory status transitions follow the policy; reactivation preserves identity and number history", async () => {
+    scenario("status history records observed status without a universal transition matrix; a return to ACTIVE is a recorded reactivation of the same authority", async () => {
       const actor = await fullStaff();
       const o = await org();
       const created = (await create(o, "MC", { effectiveFrom: MONTH(1) })).view;
@@ -586,34 +613,40 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       const number = created.current.version!.numberNormalized;
       const t = (status: string, month: number) => K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: status as never, effectiveFrom: MONTH(month) });
 
-      await rejectsWith(t("ACTIVE", 2), K.oa.OperatingAuthorityStateError); // unchanged
-      await rejectsWith(t("PENDING", 2), K.oa.OperatingAuthorityStateError);
+      await rejectsWith(t("ACTIVE", 2), K.oa.OperatingAuthorityStateError); // unchanged is the only refusal
       await t("SUSPENDED", 2);
-      await rejectsWith(K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "ACTIVE" }), K.oa.OperatingAuthorityStateError); // that is a reactivation
-      const reactivated = await K.oa.reactivateAuthority({ organizationId: o, authorityId: id, effectiveFrom: MONTH(3) });
+      // returning to ACTIVE through the ordinary operation is recorded as a reactivation of the SAME authority
+      const reactivated = await t("ACTIVE", 3);
       assert.equal(reactivated.authority.id, id);
       assert.equal(reactivated.current.version!.numberNormalized, number);
       assert.equal(reactivated.current.status!.authorityStatus, "ACTIVE");
       assert.equal(reactivated.current.status!.periodReason, "REACTIVATION");
       await rejectsWith(K.oa.reactivateAuthority({ organizationId: o, authorityId: id }), K.oa.OperatingAuthorityStateError); // already ACTIVE
 
+      // no invented legal matrix: REVOKED -> SUSPENDED and ACTIVE -> PENDING are simply recorded observations
       await t("REVOKED", 4);
-      await rejectsWith(t("SUSPENDED", 5), K.oa.OperatingAuthorityStateError);
+      await t("SUSPENDED", 5);
       await K.oa.reactivateAuthority({ organizationId: o, authorityId: id, effectiveFrom: MONTH(6) });
+      await t("PENDING", 7);
       const history = (await K.oa.getOrganizationAuthorities(o)).authorities[0].statusPeriods.filter((p) => p.recordStatus === "active");
-      assert.deepEqual(history.map((p) => p.authorityStatus), ["ACTIVE", "SUSPENDED", "ACTIVE", "REVOKED", "ACTIVE"]);
+      assert.deepEqual(history.map((p) => p.authorityStatus), ["ACTIVE", "SUSPENDED", "ACTIVE", "REVOKED", "SUSPENDED", "ACTIVE", "PENDING"]);
+      assert.deepEqual(history.map((p) => p.periodReason), ["INITIAL", "TRANSITION", "REACTIVATION", "TRANSITION", "TRANSITION", "REACTIVATION", "TRANSITION"]);
       assert.equal(history.filter((p) => p.effectiveTo === null).length, 1);
       assert.equal(await rowCount(`SELECT count(*) FROM public.operating_authorities WHERE organization_id = $1`, [o]), 1, "never a second authority");
-      assert.deepEqual((await eventTypes(actor.actorId)).filter((e) => e === "RECORD_STATUS_CHANGED").length, 4);
+      assert.deepEqual((await eventTypes(actor.actorId)).filter((e) => e === "RECORD_STATUS_CHANGED").length, 6);
     });
 
-    scenario("a PENDING authority is activated (not reactivated) and can be canceled", async () => {
+    scenario("a never-active PENDING authority is activated (not reactivated), and any status may be the first observation", async () => {
       await fullStaff();
       const o = await org();
       const id = (await create(o, "CVOR", { status: "PENDING" })).view.authority.id;
       await rejectsWith(K.oa.reactivateAuthority({ organizationId: o, authorityId: id }), K.oa.OperatingAuthorityStateError);
       const active = await K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "ACTIVE" });
       assert.equal(active.current.status!.periodReason, "TRANSITION");
+      for (const status of ["PENDING", "INACTIVE", "SUSPENDED", "REVOKED", "CANCELED", "ACTIVE"] as const) {
+        const created = await create(o, "IRP", { status });
+        assert.equal(created.view.current.status!.authorityStatus, status);
+      }
     });
 
     scenario("a status correction preserves the wrong period, never ends it, and inherits its business time", async () => {
@@ -633,17 +666,22 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       await rejectsWith(K.oa.correctAuthorityStatus({ organizationId: o, authorityId: id, status: "INACTIVE" }), K.oa.OperatingAuthorityValidationError);
     });
 
-    scenario("archive is record lifecycle: only from INACTIVE/REVOKED/CANCELED, blocks changes, restore returns the same authority", async () => {
+    scenario("archive is TES record lifecycle independent of regulatory status: allowed in any status, blocks changes, restore returns the same authority", async () => {
       const actor = await fullStaff();
       const o = await org();
+      for (const status of ["PENDING", "ACTIVE", "INACTIVE", "SUSPENDED", "REVOKED", "CANCELED"] as const) {
+        const view = (await create(o, "MC", { status })).view;
+        const archived = await K.oa.archiveAuthority({ organizationId: o, authorityId: view.authority.id });
+        assert.equal(archived.authority.recordStatus, "archived", status);
+        assert.equal(archived.current.status!.authorityStatus, status, "archive does not touch regulatory status");
+        await K.oa.restoreAuthority({ organizationId: o, authorityId: view.authority.id });
+      }
       const id = (await create(o, "MC")).view.authority.id;
-      await rejectsWith(K.oa.archiveAuthority({ organizationId: o, authorityId: id }), K.oa.OperatingAuthorityStateError); // ACTIVE
-      await K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "INACTIVE" });
       const archived = await K.oa.archiveAuthority({ organizationId: o, authorityId: id });
       assert.equal(archived.authority.recordStatus, "archived");
       assert.ok(archived.authority.archivedAt);
-      assert.equal(archived.current.status!.authorityStatus, "INACTIVE", "archive does not touch regulatory status");
       await rejectsWith(K.oa.archiveAuthority({ organizationId: o, authorityId: id }), K.oa.OperatingAuthorityStateError);
+      await rejectsWith(K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "INACTIVE" }), K.oa.OperatingAuthorityStateError);
       await rejectsWith(K.oa.reactivateAuthority({ organizationId: o, authorityId: id }), K.oa.OperatingAuthorityStateError);
       await rejectsWith(K.oa.changeAuthorityVersion({ organizationId: o, authorityId: id, issuedOn: "2020-01-01" }), K.oa.OperatingAuthorityStateError);
       await rejectsWith(K.oa.correctAuthorityStatus({ organizationId: o, authorityId: id, status: "CANCELED" }), K.oa.OperatingAuthorityStateError);
@@ -705,7 +743,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       assert.equal(view.versions.filter((v) => v.recordStatus === "active").length, 1, "no invented transition");
     });
 
-    scenario("a wrongly recorded province of MVID/RIN/CVOR/SAFETY_FITNESS is correctable, but a real change of province is refused", async () => {
+    scenario("a wrongly recorded province of MVID/SAFETY_FITNESS is correctable, but an in-place change of issuing province is refused (only IRP base moves)", async () => {
       await fullStaff();
       const o = await org();
       const id = (await create(o, "MVID", { jurisdiction: { region: "AB" } })).view.authority.id;
@@ -715,13 +753,14 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       assert.equal(fixed.authority.id, id);
     });
 
-    scenario("a correction cannot create a second authority of the same identity", async () => {
+    scenario("a jurisdiction correction that lands in an occupied number namespace is a collision and rolls back", async () => {
       await fullStaff();
-      const o = await org();
-      await create(o, "MVID", { jurisdiction: { region: "AB" } });
-      const bc = (await create(o, "MVID", { jurisdiction: { region: "BC" } })).view.authority.id;
-      await rejectsWith(K.oa.correctAuthorityVersion({ organizationId: o, authorityId: bc, jurisdiction: { region: "AB" } }), K.oa.OperatingAuthorityConflictError);
-      assert.equal((await K.oa.getOrganizationAuthorities(o)).authorities.find((x) => x.authority.id === bc)!.current.version!.jurisdictionRegion, "BC", "the failed correction rolled back");
+      const [a, b] = [await org("A"), await org("B")];
+      const number = alnum("MV");
+      await K.oa.createAuthority({ organizationId: a, kind: "MVID", number, jurisdiction: { region: "AB" } });
+      const bc = (await K.oa.createAuthority({ organizationId: b, kind: "MVID", number, jurisdiction: { region: "BC" } })).view.authority.id;
+      await rejectsWith(K.oa.correctAuthorityVersion({ organizationId: b, authorityId: bc, jurisdiction: { region: "AB" } }), K.oa.AuthorityNumberCollisionError);
+      assert.equal((await K.oa.getOrganizationAuthorities(b)).authorities[0].current.version!.jurisdictionRegion, "BC", "the failed correction rolled back");
     });
 
     scenario("number correction: the wrong number is preserved but freed from the namespace, and the new number is protected", async () => {
@@ -746,13 +785,13 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       await rejectsWith(K.oa.correctAuthorityVersion({ organizationId: a, authorityId: id } as never), K.oa.OperatingAuthorityValidationError);
     });
 
-    scenario("a national number never changes in the real world (only corrected); a re-issued per-province number may change", async () => {
+    scenario("a national number never changes in the real world (only corrected); a re-issued provincial number may change", async () => {
       await fullStaff();
       const o = await org();
       const mc = (await create(o, "MC")).view.authority.id;
       await rejectsWith(K.oa.changeAuthorityVersion({ organizationId: o, authorityId: mc, number: unique() }), K.oa.OperatingAuthorityValidationError);
-      const rin = (await create(o, "RIN", { effectiveFrom: MONTH(1) })).view.authority.id;
-      const next = alnum("RN");
+      const rin = (await create(o, "MVID", { effectiveFrom: MONTH(1) })).view.authority.id;
+      const next = alnum("MV");
       const changed = (await K.oa.changeAuthorityVersion({ organizationId: o, authorityId: rin, number: next, effectiveFrom: MONTH(5) })).view;
       assert.equal(changed.current.version!.numberNormalized, next.toUpperCase());
       assert.equal(changed.versions.filter((v) => v.recordStatus === "active").length, 2);
@@ -776,7 +815,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       const as = await concurrentActors(3);
       await fullStaff();
       const o = await org();
-      const id = (await create(o, "RIN")).view.authority.id;
+      const id = (await create(o, "MVID")).view.authority.id;
       const results = await Promise.allSettled([0, 1, 2].map((i) => as(i, () => K.oa.correctAuthorityVersion({ organizationId: o, authorityId: id, number: alnum(`C${i}`) }))));
       assert.equal(results.filter((r) => r.status === "fulfilled").length, 3);
       assert.equal(await rowCount(`SELECT count(*) FROM public.operating_authority_versions WHERE authority_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [id]), 1);
@@ -823,8 +862,9 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       await K.oa.getOrganizationAuthorities(o);
       await K.oa.getOrganizationAuthorities(o, { asOf: MONTH(2) });
       await K.oa.checkAuthorityNumber({ kind: "MC", number: unique() });
-      await assert.rejects(K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "ACTIVE" }));
-      await assert.rejects(K.oa.createAuthority({ organizationId: o, kind: "IRP", number: alnum("IR"), jurisdiction: { country: "US", region: "TX" } }));
+      await assert.rejects(K.oa.changeAuthorityStatus({ organizationId: o, authorityId: id, status: "CANCELED" })); // already CANCELED
+      const heldNumber = (await K.oa.getOrganizationAuthorities(o)).authorities[0].current.version!.numberNormalized;
+      await assert.rejects(K.oa.createAuthority({ organizationId: o, kind: "IRP", number: heldNumber, jurisdiction: { country: "US", region: "KS" } }), K.oa.AuthorityNumberCollisionError);
       assert.deepEqual(await eventTypes(actor.actorId), writes);
       const json = await eventsJson(actor.actorId);
       assert.doesNotMatch(json, /"(number|numberDisplay|numberNormalized|number_display)"/i);

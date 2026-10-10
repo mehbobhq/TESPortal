@@ -23,7 +23,7 @@ RUNTIME_ROLE="tes-backend@tes-production-510007.iam"
 DATABASE="tes_prod"
 
 run_tests() {
-  TES_REQUIRE_DB_TESTS=1 node --test --test-concurrency=1 "$@" test/lib/auth/*.test.ts test/lib/corporate-identity/*.test.ts
+  TES_REQUIRE_DB_TESTS=1 node --test --test-concurrency=1 "$@" test/lib/auth/*.test.ts test/lib/corporate-identity/*.test.ts test/lib/organization-locations/*.test.ts
 }
 
 if [[ -n "${TES_TEST_ADMIN_DATABASE_URL:-}" && -n "${TES_TEST_RUNTIME_DATABASE_URL:-}" ]]; then

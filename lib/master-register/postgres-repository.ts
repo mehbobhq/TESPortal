@@ -94,7 +94,12 @@ async function queryRows(
 }
 
 export class PostgresMasterRegisterRepository implements MasterRegisterRepository {
-  constructor(private readonly client?: PoolClient) {}
+  // Plain field (not a constructor parameter property) so this module also loads under Node's type-stripping test runner.
+  private readonly client: PoolClient | undefined
+
+  constructor(client?: PoolClient) {
+    this.client = client
+  }
 
   private async executor(): Promise<Pick<PoolClient, "query">> {
     return this.client ?? (await getPostgresPool())

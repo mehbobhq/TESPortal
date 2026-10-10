@@ -238,12 +238,26 @@ export class AuthFixtures {
       ["public.actor_relationships", this.relationships],
       ["public.master_account_authority", this.masters],
       ["public.authentication_identities", this.identities],
-      ["public.actors", this.actors],
       ["public.customers", this.customers],
       ["public.organizations", this.organizations],
     ];
+    // Actors are deleted in FK order after identities, but an actor that appears in the append-only Master Register can
+    // never be deleted (master_register_events.actor_id references it). Such actors are deliberately left behind: their
+    // grants, relationships and identities are gone, so they are inert, and the disposable database is discarded anyway.
+    const actorStepIndex = steps.findIndex(([table]) => table === "public.authentication_identities") + 1;
+    steps.splice(actorStepIndex, 0, ["public.actors", this.actors]);
     for (const [table, ids] of steps) {
-      if (ids.length > 0) await this.admin.query(`DELETE FROM ${table} WHERE id = ANY($1::uuid[])`, [ids]);
+      if (ids.length > 0) {
+        if (table === "public.actors") {
+          await this.admin.query(
+            `DELETE FROM public.actors a WHERE a.id = ANY($1::uuid[])
+               AND NOT EXISTS (SELECT 1 FROM public.master_register_events e WHERE e.actor_id = a.id)`,
+            [ids],
+          );
+        } else {
+          await this.admin.query(`DELETE FROM ${table} WHERE id = ANY($1::uuid[])`, [ids]);
+        }
+      }
       ids.length = 0;
     }
   }

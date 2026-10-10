@@ -3,9 +3,11 @@ import "server-only"
 import type { PoolClient } from "pg"
 import {
   requireTesAuthorizationWithClient,
+  TesAuthorizationDeniedError,
   TesCapabilityScopeError,
   type TesAuthorizationDecision,
 } from "@/lib/auth/tes-authorization"
+import { evaluateTesAuthorization } from "@/lib/auth/tes-authorization-core"
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import {
   assertNoTenantContext,
@@ -61,4 +63,32 @@ export async function withAuthorizedSystem<T>(
       return work(client, decision as SystemAuthorizationDecision)
     }),
   )
+}
+
+/**
+ * Answers "may the already-authorized actor ALSO exercise this SYSTEM capability?" on the SAME client/transaction as the
+ * decision `withAuthorizedSystem()` produced, for a secondary, narrowing question such as whether a result may disclose
+ * more. It reuses the decision's resolved principal (no second actor lookup), applies the same evaluator as the wrapper
+ * (effective windows, TES_STAFF rule, Master Account semantics, capability existence/active state) and takes no
+ * connection, so it is not a nested wrapper.
+ *
+ * It never grants anything: a denial returns false and the caller simply withholds the extra data. Server defects
+ * (unknown capability, wrong scope) still throw.
+ */
+export async function hasAdditionalSystemCapability(
+  client: PoolClient,
+  decision: SystemAuthorizationDecision,
+  capability: TesSystemCapability,
+): Promise<boolean> {
+  try {
+    await evaluateTesAuthorization(
+      { actor: decision.actor, isMasterAccount: decision.isMasterAccount },
+      { capability, scope: { type: "SYSTEM" } },
+      client,
+    )
+    return true
+  } catch (error) {
+    if (error instanceof TesAuthorizationDeniedError) return false
+    throw error
+  }
 }

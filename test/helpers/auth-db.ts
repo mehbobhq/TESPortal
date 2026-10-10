@@ -7,6 +7,7 @@
 //
 // Never point these at a shared or production database. scripts/test/run-auth-tests.sh builds a throwaway cluster.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 
@@ -55,6 +56,16 @@ export async function closePools(): Promise<void> {
 /** Sets the authenticated Clerk subject seen by lib/auth/tes-actor.ts (null = no session). */
 export function setClerkUser(subject: string | null): void {
   (globalThis as Record<string, unknown>).__tesTestClerkUserId = subject;
+}
+
+/**
+ * Runs `work` with `subject` as the authenticated Clerk user for that async call chain only, so concurrent calls can
+ * belong to different actors (setClerkUser() is process-wide and would race).
+ */
+export function withClerkUser<T>(subject: string | null, work: () => Promise<T>): Promise<T> {
+  const holder = globalThis as Record<string, unknown>;
+  if (!holder.__tesTestClerkUserScope) holder.__tesTestClerkUserScope = new AsyncLocalStorage<string | null>();
+  return (holder.__tesTestClerkUserScope as AsyncLocalStorage<string | null>).run(subject, work);
 }
 
 export const DAY_MS = 24 * 60 * 60 * 1000;

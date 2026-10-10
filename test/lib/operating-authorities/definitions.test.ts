@@ -20,7 +20,8 @@ const invalid = (fn: () => unknown) => assert.throws(fn, (error) => error instan
 describe("authority kinds and statuses", () => {
   it("has exactly the seven locked kinds, kept distinct", () => {
     assert.deepEqual([...D.AUTHORITY_KINDS], ["USDOT", "MC", "MVID", "RIN", "CVOR", "SAFETY_FITNESS", "IRP"]);
-    assert.notEqual(D.KIND_DEFINITIONS.MVID.rule.version, D.KIND_DEFINITIONS.RIN.rule.version);
+    // MVID and RIN now share the permissive rule but remain separate kinds (separate namespaces); CVOR and SAFETY_FITNESS differ by rule too
+    assert.notEqual(D.KIND_DEFINITIONS.MVID.kind, D.KIND_DEFINITIONS.RIN.kind);
     assert.notEqual(D.KIND_DEFINITIONS.CVOR.rule.version, D.KIND_DEFINITIONS.SAFETY_FITNESS.rule.version);
   });
 
@@ -39,7 +40,7 @@ describe("authority kinds and statuses", () => {
       assert.match(rule.version, /\.v\d+$/, "versioned so v2/v3 can be added without rewriting history");
     }
     const authoritative = D.AUTHORITY_KINDS.filter((kind) => D.KIND_DEFINITIONS[kind].rule.classification === "AUTHORITATIVE");
-    assert.deepEqual(authoritative, ["RIN", "CVOR"]);
+    assert.deepEqual(authoritative, ["CVOR"]);
   });
 
   it("only USDOT claims one current record per Organization", () => {
@@ -95,10 +96,11 @@ describe("number normalization (every kind)", () => {
     for (const bad of ["12345678", "1234567890", "12345678A", ""]) invalid(() => n("CVOR", bad));
   });
 
-  it("RIN (AUTHORITATIVE, Ontario MTO): exactly nine digits", () => {
+  it("RIN (PERMISSIVE): no unconfirmed format is asserted; still an Ontario-only identifier", () => {
     assert.equal(n("RIN", "987 654 321").normalized, "987654321");
-    assert.equal(n("RIN", "987654321").ruleVersion, "rin.ontario_nine_digit.v1");
-    for (const bad of ["98765432", "9876543210", "AB1234567", "ab-1234.56"]) invalid(() => n("RIN", bad));
+    assert.equal(n("RIN", "987654321").ruleVersion, "authority_identifier.permissive.v1");
+    assert.equal(D.KIND_DEFINITIONS.RIN.rule.classification, "PERMISSIVE");
+    for (const bad of ["", "ab#12"]) invalid(() => n("RIN", bad));
   });
 
   it("MVID / SAFETY_FITNESS / IRP (PERMISSIVE): letters and digits only, case and separators ignored", () => {

@@ -454,8 +454,7 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       await K.oa.createAuthority({ organizationId: c, kind: "RIN", number: digits });
       await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "CVOR", number: digits }), K.oa.AuthorityNumberCollisionError);
       await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: digits }), K.oa.AuthorityNumberCollisionError);
-      // an authoritative nine-digit format is enforced for both Ontario kinds
-      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: "AB1234567" }), K.oa.OperatingAuthorityValidationError);
+      // CVOR has an authoritative nine-digit format; RIN's format is deliberately not asserted
       await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "CVOR", number: "12345678" }), K.oa.OperatingAuthorityValidationError);
       await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "RIN", number: numberFor("RIN"), jurisdiction: { region: "AB" } }), K.oa.OperatingAuthorityValidationError);
     });
@@ -519,6 +518,37 @@ describe("Operating Authorities (real authorization, real transactions, real Mas
       await K.oa.archiveAuthority({ organizationId: a, authorityId: usdot.authority.id });
       await rejectsWith(create(a, "USDOT"), K.oa.OperatingAuthorityConflictError);
       await K.oa.restoreAuthority({ organizationId: a, authorityId: usdot.authority.id });
+    });
+
+    scenario("MC docket identity: the docket number is held once, never duplicated for another record, and a per-docket child can reference it later", async () => {
+      await fullStaff();
+      const [a, b] = [await org("A"), await org("B")];
+      const docket = unique();
+      const held = (await K.oa.createAuthority({ organizationId: a, kind: "MC", number: `MC-${docket}` })).view;
+      // the same docket cannot be recorded again, in this Organization or any other
+      await rejectsWith(K.oa.createAuthority({ organizationId: a, kind: "MC", number: docket }), K.oa.AuthorityNumberCollisionError);
+      await rejectsWith(K.oa.createAuthority({ organizationId: b, kind: "MC", number: docket }), K.oa.AuthorityNumberCollisionError);
+      // one status history belongs to the docket record (entitlement-level status is deferred)
+      assert.equal(held.statusPeriods.filter((p) => p.recordStatus === "active" && p.effectiveTo === null).length, 1);
+      // an additive child (several entitlements per docket, each with its own history) needs no change to 0013
+      const client = await pools.admin.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`CREATE TABLE public.zz_entitlement_probe (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(), authority_id uuid NOT NULL, kind text NOT NULL CHECK (kind = 'MC'),
+          entitlement_type text NOT NULL, status text NOT NULL,
+          FOREIGN KEY (authority_id, kind) REFERENCES public.operating_authorities (id, kind))`);
+        for (const type of ["COMMON", "BROKER"]) {
+          await client.query(`INSERT INTO public.zz_entitlement_probe (authority_id, kind, entitlement_type, status) VALUES ($1, 'MC', $2, $3)`, [held.authority.id, type, type === "COMMON" ? "ACTIVE" : "REVOKED"]);
+        }
+        assert.equal(Number((await client.query(`SELECT count(*) FROM public.zz_entitlement_probe WHERE authority_id = $1`, [held.authority.id])).rows[0].count), 2);
+        await client.query("SAVEPOINT s");
+        await assert.rejects(client.query(`INSERT INTO public.zz_entitlement_probe (authority_id, kind, entitlement_type, status) VALUES ($1, 'MC', 'X', 'ACTIVE')`, [(await client.query<{ id: string }>(`SELECT id FROM public.operating_authorities WHERE organization_id = $1 AND kind = 'MC' AND id <> $2 LIMIT 1`, [b, held.authority.id])).rows[0]?.id ?? randomUUID()]), /foreign key/);
+        await client.query("ROLLBACK TO SAVEPOINT s");
+      } finally {
+        await client.query("ROLLBACK").catch(() => undefined);
+        client.release();
+      }
     });
 
     scenario("checkAuthorityNumber is read-only, needs ORGANIZATION_REGISTRY_READ and writes no Master Register event", async () => {

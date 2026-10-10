@@ -39,6 +39,15 @@
 --     issuer-specific client / operator identifiers). The database therefore does NOT encode one-per-
 --     Organization for them; each record is distinguished by its number, which is unique in its
 --     namespace. Any stricter rule belongs to the Rules / authority-policy layer or a later migration.
+-- MC docket identity vs operating-authority entitlements: an MC record is the regulatory DOCKET NUMBER
+-- (the canonical MC identity), held once in its namespace. FMCSA documents that legacy dockets can carry
+-- several operating authorities (existing authorities keep sharing a docket), that Motus assigns a separate
+-- docket to each newly granted authority, and that each authority has its own regulatory history. This
+-- migration therefore deliberately models no entitlement: the docket number is never duplicated to
+-- represent several entitlements, and operating_authorities (id, kind) is a unique target so a later,
+-- additive child table of per-docket entitlements (each with its own type and status history) can
+-- reference the docket without changing anything here. Until then the status history of an MC record is
+-- the observed status of the DOCKET as a whole; entitlement-level status is deferred.
 -- The jurisdiction of a record is an effective-dated attribute of its VERSION and part of its collision
 -- namespace, never part of Organization identity: a wrongly recorded jurisdiction stays correctable like
 -- any other recorded fact. A cancelled or archived authority keeps its current version, so it keeps
@@ -145,14 +154,14 @@ VALUES
     ('USDOT', 'USDOT Number',
         'FMCSA USDOT number: assigned once to a legal person, non-transferable. National (US) number space; at most one current per Organization.',
         'NATIONAL', 'US', false, NULL, false, true, 10),
-    ('MC', 'MC Docket (Operating Authority)',
-        'FMCSA MC-prefixed docket number of an operating authority registration (FF and MX dockets are different prefixes and are not modelled). National (US) number space; an Organization may hold more than one.',
+    ('MC', 'MC Docket Number',
+        'FMCSA MC-prefixed docket number: the regulatory docket identity (FF and MX dockets are different prefixes and are not modelled). One record per docket; individual operating-authority entitlements under a docket are deferred. National (US) number space; an Organization may hold more than one docket.',
         'NATIONAL', 'US', false, NULL, false, false, 20),
     ('MVID', 'MVID',
         'Provincial motor vehicle client identifier (Alberta Registries uses MVID). Issuing province recorded per version; number space per issuing province.',
         'COUNTRY_REGION', 'CA', true, NULL, false, false, 30),
     ('RIN', 'RIN',
-        'Ontario Registrant Identification Number (MTO / ServiceOntario): a nine-digit number identifying a registrant of vehicles. Ontario number space.',
+        'Ontario Registrant Identification Number (MTO / ServiceOntario) identifying a registrant of vehicles. Ontario number space.',
         'COUNTRY_REGION', 'CA', true, 'ON', false, false, 40),
     ('CVOR', 'CVOR',
         'Ontario Commercial Vehicle Operator''s Registration: nine-digit operator number on the CVOR certificate. Ontario number space.',

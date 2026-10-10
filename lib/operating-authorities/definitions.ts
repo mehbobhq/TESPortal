@@ -10,11 +10,15 @@
  *   USDOT, MC           NATIONAL           one US-wide number space
  *   MVID                COUNTRY_REGION     per issuing province / territory
  *   RIN, CVOR           COUNTRY_REGION     Ontario programs (region fixed to ON)
+ *
+ * MC records the regulatory DOCKET NUMBER (the canonical MC identity). Individual operating-authority entitlements that
+ * share a docket (legacy FMCSA records) or that have their own docket (Motus) are a deferred, additive child concept; see
+ * the migration header and docs/operating-authorities-regulatory-semantics.md.
  *   SAFETY_FITNESS      COUNTRY_REGION     per issuing province / territory (NSC number / safety fitness certificate)
  *   IRP                 BASE_JURISDICTION  per base jurisdiction (CA province or US state); the base may change over time
  *
  * Number validation is classified per kind and the rule NAME says which:
- *   AUTHORITATIVE   the exact format is documented by the issuing regulator (CVOR, RIN: nine digits, Ontario MTO)
+ *   AUTHORITATIVE   the exact format is documented by the issuing regulator (CVOR: nine digits, Ontario MTO)
  *   PERMISSIVE      the issuing format is not authoritatively locked; the rule only guarantees a safe, comparable token
  *                   (rule names contain "permissive" and are NOT regulatory-format validation)
  * Tightening a rule is done by adding a NEW rule version (v2, v3 ...) and pointing the kind at it. Every version ever
@@ -96,36 +100,25 @@ const MC_PERMISSIVE: NormalizationRule = (() => {
 })()
 
 /**
- * Nine digits (spaces and hyphens are formatting, not part of the number). The Ontario Ministry of Transportation states
- * that the CVOR certificate carries a unique nine-digit number (Commercial Vehicle Operators' Safety Manual); the
- * ministry does not document check digits or reserved ranges, so none are asserted. Digits are kept as issued.
+ * CVOR: nine digits (spaces and hyphens are formatting, not part of the number). The Ontario Ministry of Transportation
+ * states that the CVOR certificate carries a unique nine-digit identification number (Commercial Vehicle Operators'
+ * Safety Manual); the ministry does not document check digits or reserved ranges, so none are asserted. Digits are
+ * kept as issued.
  */
-function ontarioNineDigitRule(version: string, label: string, source: string): NormalizationRule {
-  return {
-    version,
-    classification: "AUTHORITATIVE",
-    source,
-    apply(raw) {
-      const body = raw.normalize("NFKC").trim().replace(/[\s-]/g, "")
-      return /^\d{9}$/.test(body) ? { ok: true, normalized: body } : { ok: false, reason: `${label} is nine digits.` }
-    },
-  }
+const CVOR_NINE_DIGIT: NormalizationRule = {
+  version: "cvor.ontario_nine_digit.v1",
+  classification: "AUTHORITATIVE",
+  source: "Ontario MTO Commercial Vehicle Operators' Safety Manual: the CVOR certificate carries a unique nine-digit identification number",
+  apply(raw) {
+    const body = raw.normalize("NFKC").trim().replace(/[\s-]/g, "")
+    return /^\d{9}$/.test(body) ? { ok: true, normalized: body } : { ok: false, reason: "A CVOR number is nine digits." }
+  },
 }
-
-const CVOR_NINE_DIGIT = ontarioNineDigitRule(
-  "cvor.ontario_nine_digit.v1",
-  "A CVOR number",
-  "Ontario MTO Commercial Vehicle Operators' Safety Manual: the CVOR certificate carries a unique nine-digit identification number",
-)
-const RIN_NINE_DIGIT = ontarioNineDigitRule(
-  "rin.ontario_nine_digit.v1",
-  "A RIN",
-  "Ontario MTO / ServiceOntario forms (Declaration, Proof of Business Address): a RIN is a unique 9-digit number",
-)
 
 /**
  * The issuing format is not authoritatively locked (MVID, NSC / safety fitness numbers and IRP account numbers are
- * issued by many jurisdictions, each with its own format). The rule keeps letters and digits only (case, spaces,
+ * issued by many jurisdictions, each with its own format; the Ontario RIN is described by ServiceOntario forms as a
+ * 9-digit number, but no published format specification was available, so it is not asserted). The rule keeps letters and digits only (case, spaces,
  * hyphens, periods and slashes ignored) so numbers are comparable and safe to index. NOT regulatory-format validation.
  */
 const IDENTIFIER_PERMISSIVE: NormalizationRule = {
@@ -144,7 +137,6 @@ export const NORMALIZATION_RULES: Readonly<Record<string, NormalizationRule>> = 
   [USDOT_PERMISSIVE.version]: USDOT_PERMISSIVE,
   [MC_PERMISSIVE.version]: MC_PERMISSIVE,
   [CVOR_NINE_DIGIT.version]: CVOR_NINE_DIGIT,
-  [RIN_NINE_DIGIT.version]: RIN_NINE_DIGIT,
   [IDENTIFIER_PERMISSIVE.version]: IDENTIFIER_PERMISSIVE,
 }
 
@@ -173,7 +165,7 @@ export const KIND_DEFINITIONS: Readonly<Record<AuthorityKind, KindDefinition>> =
   USDOT: { kind: "USDOT", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: true, rule: USDOT_PERMISSIVE },
   MC: { kind: "MC", jurisdictionScope: "NATIONAL", issuerCountry: "US", regionRequired: false, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: MC_PERMISSIVE },
   MVID: { kind: "MVID", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
-  RIN: { kind: "RIN", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: false, oneCurrentPerOrganization: false, rule: RIN_NINE_DIGIT },
+  RIN: { kind: "RIN", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: false, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
   CVOR: { kind: "CVOR", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: "ON", hasExpiry: true, oneCurrentPerOrganization: false, rule: CVOR_NINE_DIGIT },
   SAFETY_FITNESS: { kind: "SAFETY_FITNESS", jurisdictionScope: "COUNTRY_REGION", issuerCountry: "CA", regionRequired: true, fixedRegion: null, hasExpiry: true, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },
   IRP: { kind: "IRP", jurisdictionScope: "BASE_JURISDICTION", issuerCountry: null, regionRequired: true, fixedRegion: null, hasExpiry: false, oneCurrentPerOrganization: false, rule: IDENTIFIER_PERMISSIVE },

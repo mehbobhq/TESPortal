@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { isStructurallyValidVin, normalizeDriverLicenceNumber, normalizePlate, normalizeUnitNumber, normalizeVin } from "../../../lib/operational-identity/normalization.ts"
-import { mapLegacyDriver, mapLegacyVehicle } from "../../../lib/operational-identity/legacy.ts"
+import { isStructurallyValidVin, normalizeDriverLicenceNumber, normalizePlate, normalizeUnitNumber, normalizeVin } from "../../../lib/operational-identity/normalization"
+import { mapLegacyDriver, mapLegacyVehicle } from "../../../lib/operational-identity/legacy"
 
 test("identity normalizers are deterministic",()=>{
  assert.equal(normalizeVin(" 1hg-cm82633a004352 "),"1HGCM82633A004352")

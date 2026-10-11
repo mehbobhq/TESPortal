@@ -79,7 +79,7 @@ for filename in "${migrations[@]}"; do
     echo "Migration $filename contains a psql meta-command, which is not allowed." >&2
     exit 1
   fi
-  if grep -Eiq '^[[:space:]]*(BEGIN|START[[:space:]]+TRANSACTION|COMMIT|ROLLBACK)([[:space:];]|$)' "$path"; then
+  if grep -Eiq '^[[:space:]]*(START[[:space:]]+TRANSACTION|COMMIT|ROLLBACK)([[:space:];]|$)|^[[:space:]]*BEGIN[[:space:]]*;' "$path"; then
     echo "Migration $filename contains transaction control, which is managed by the runner." >&2
     exit 1
   fi

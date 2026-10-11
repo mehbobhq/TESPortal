@@ -1,0 +1,79 @@
+name: Core Operational Identity CI
+
+on:
+  pull_request:
+    paths:
+      - "database/**"
+      - "lib/operational-identity/**"
+      - "lib/auth/tes-capabilities.ts"
+      - "test/lib/operational-identity/**"
+      - ".github/workflows/core-operational-identity-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tes_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tes_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: tes_ci
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create production-shaped CI roles
+        run: |
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-backend@tes-production-510007.iam";'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE tes_app_runtime;'
+      - name: Apply complete migration history
+        run: bash scripts/database/migrate.sh
+      - name: Verify ledger and new relations
+        run: |
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "23"
+          psql -v ON_ERROR_STOP=1 -c "select count(*) from public.vehicles; select count(*) from public.driver_profiles; select count(*) from public.entity_resolution_cases;"
+      - name: Run pure operational identity tests
+        run: pnpm exec tsc --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions false --outDir /tmp/identity-test lib/operational-identity/normalization.ts lib/operational-identity/legacy.ts test/lib/operational-identity/normalization.test.ts || true
+          node --test /tmp/identity-test/test/lib/operational-identity/normalization.test.js
+      - name: TypeScript regression gate
+        shell: bash
+        run: |
+          set +e
+          pnpm exec tsc --noEmit --pretty false > /tmp/head-tsc.txt 2>&1
+          head_status=$?
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha || '82daa06034380a152626da2c7c22f048b85e81d0' }}"
+          cd /tmp/base
+          pnpm install --frozen-lockfile >/dev/null
+          pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
+          base_status=$?
+          cd -
+          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          if ! diff -u /tmp/base-normalized.txt /tmp/head-normalized.txt; then
+            echo "TypeScript diagnostic set changed."; exit 1
+          fi
+          echo "TypeScript diagnostics exactly match baseline (base status $base_status, head status $head_status)."

@@ -99,10 +99,10 @@ INSERT INTO public.capabilities(code,display_name,description,is_active,sort_ord
  ('IDENTITY_RESOLUTION_MANAGE','Identity resolution manage','Manage identity-resolution cases and provenance. Intended scope: SYSTEM.',true,205);
 
 REVOKE ALL ON public.entity_resolution_cases,public.entity_resolution_signals,public.entity_resolution_candidates FROM PUBLIC;
-GRANT SELECT ON public.entity_resolution_cases,public.entity_resolution_signals,public.entity_resolution_candidates TO tes_app_runtime;
+GRANT SELECT ON public.entity_resolution_cases,public.entity_resolution_signals,public.entity_resolution_candidates TO "tes-backend@tes-production-510007.iam";
 GRANT INSERT(id,entity_type,source_system,source_record_key,organization_context_id,resolution_state,outcome,resolved_organization_id,resolved_person_id,resolved_vehicle_id,resolution_method,confidence_basis,resolved_at)
- ON public.entity_resolution_cases TO tes_app_runtime;
+ ON public.entity_resolution_cases TO "tes-backend@tes-production-510007.iam";
 GRANT UPDATE(resolution_state,outcome,resolved_organization_id,resolved_person_id,resolved_vehicle_id,resolution_method,confidence_basis,resolved_at,updated_at)
- ON public.entity_resolution_cases TO tes_app_runtime;
-GRANT INSERT(id,resolution_case_id,signal_type,signal_hash,signal_reference,strength) ON public.entity_resolution_signals TO tes_app_runtime;
-GRANT INSERT(id,resolution_case_id,candidate_organization_id,candidate_person_id,candidate_vehicle_id,match_class,basis) ON public.entity_resolution_candidates TO tes_app_runtime;
+ ON public.entity_resolution_cases TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,resolution_case_id,signal_type,signal_hash,signal_reference,strength) ON public.entity_resolution_signals TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,resolution_case_id,candidate_organization_id,candidate_person_id,candidate_vehicle_id,match_class,basis) ON public.entity_resolution_candidates TO "tes-backend@tes-production-510007.iam";

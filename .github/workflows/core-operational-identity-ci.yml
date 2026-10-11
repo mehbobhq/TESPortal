@@ -48,6 +48,7 @@ jobs:
       - name: Create production-shaped CI roles
         run: |
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-backend@tes-production-510007.iam";'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE tes_app_runtime;'
       - name: Apply complete migration history
         run: bash scripts/database/migrate.sh

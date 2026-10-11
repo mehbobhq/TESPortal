@@ -53,37 +53,85 @@ VALUES ('ORGANIZATION','rls-test','secret-case') RETURNING id \gset er_
 SET LOCAL ROLE "tes-backend@tes-production-510007.iam";
 
 SELECT NOT EXISTS(SELECT 1 FROM public.organizations WHERE legal_name IN ('RLS Tenant A','RLS Tenant B')) AS ok \gset
-\if :ok \else \echo 'organization visible without context' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'organization visible without context'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid)) AS ok \gset
-\if :ok \else \echo 'vehicle visible without context' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'vehicle visible without context'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
-\if :ok \else \echo 'credential registry visible without context' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'credential registry visible without context'
+  SELECT 1/0;
+\endif
 
 -- Forging only a tenant id is insufficient.
 SELECT set_config('tes.customer_id',:'cb_id',true);
 SELECT set_config('tes.customer_actor_id',:'actor_id',true);
 SELECT set_config('tes.customer_capability','ORGANIZATION_READ',true);
 SELECT NOT tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) AS ok \gset
-\if :ok \else \echo 'actor forged access to unassigned tenant B' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'actor forged access to unassigned tenant B'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.registrations WHERE organization_id=:'ob_id'::uuid) AS ok \gset
-\if :ok \else \echo 'cross-tenant registration leaked' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'cross-tenant registration leaked'
+  SELECT 1/0;
+\endif
 
 -- Authorized tenant A sees only its graph and never SYSTEM-only registries.
 SELECT set_config('tes.customer_id',:'ca_id',true);
 SELECT tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) AS ok \gset
-\if :ok \else \echo 'authorized customer context rejected' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'authorized customer context rejected'
+  SELECT 1/0;
+\endif
 SELECT (SELECT count(*) FROM public.organizations WHERE id IN (:'oa_id'::uuid,:'ob_id'::uuid))=1 AS ok \gset
-\if :ok \else \echo 'organization isolation failed' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'organization isolation failed'
+  SELECT 1/0;
+\endif
 SELECT (SELECT count(*) FROM public.registrations WHERE id IN (:'rega_id'::uuid,:'regb_id'::uuid))=1 AS ok \gset
-\if :ok \else \echo 'registration isolation failed' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'registration isolation failed'
+  SELECT 1/0;
+\endif
 SELECT (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))=1 AS ok \gset
-\if :ok \else \echo 'vehicle isolation failed' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'vehicle isolation failed'
+  SELECT 1/0;
+\endif
 SELECT (SELECT count(*) FROM public.persons WHERE id IN (:'pa_id'::uuid,:'pb_id'::uuid))=1 AS ok \gset
-\if :ok \else \echo 'person/driver isolation failed' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'person/driver isolation failed'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
-\if :ok \else \echo 'customer saw credentials' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'customer saw credentials'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.entity_resolution_cases WHERE id=:'er_id'::uuid) AS ok \gset
-\if :ok \else \echo 'customer saw entity resolution provenance' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'customer saw entity resolution provenance'
+  SELECT 1/0;
+\endif
 
 -- Historical relationship visibility is preserved.
 RESET ROLE;
@@ -93,7 +141,11 @@ SELECT set_config('tes.customer_id',:'ca_id',true);
 SELECT set_config('tes.customer_actor_id',:'actor_id',true);
 SELECT set_config('tes.customer_capability','ORGANIZATION_READ',true);
 SELECT EXISTS(SELECT 1 FROM public.vehicles WHERE id=:'va_id'::uuid) AS ok \gset
-\if :ok \else \echo 'historical owned vehicle disappeared' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'historical owned vehicle disappeared'
+  SELECT 1/0;
+\endif
 
 -- SYSTEM access is capability-bound, not universal.
 SELECT set_config('tes.customer_id','',true);
@@ -102,16 +154,36 @@ SELECT set_config('tes.customer_capability','',true);
 SELECT set_config('tes.system_actor_id',:'actor_id',true);
 SELECT set_config('tes.system_capability','VEHICLE_READ',true);
 SELECT tes_security.system_context_authorized(ARRAY['VEHICLE_READ']) AS ok \gset
-\if :ok \else \echo 'valid system context rejected' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'valid system context rejected'
+  SELECT 1/0;
+\endif
 SELECT (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))=2 AS ok \gset
-\if :ok \else \echo 'system vehicle read failed' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'system vehicle read failed'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
-\if :ok \else \echo 'VEHICLE_READ bypassed credential boundary' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'VEHICLE_READ bypassed credential boundary'
+  SELECT 1/0;
+\endif
 SELECT set_config('tes.system_capability','CREDENTIAL_READ',true);
 SELECT NOT tes_security.system_context_authorized(ARRAY['CREDENTIAL_READ']) AS ok \gset
-\if :ok \else \echo 'ungranted system capability accepted' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'ungranted system capability accepted'
+  SELECT 1/0;
+\endif
 SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
-\if :ok \else \echo 'ungranted credential capability leaked' SELECT 1/0; \endif
+\if :ok
+\else
+  \echo 'ungranted credential capability leaked'
+  SELECT 1/0;
+\endif
 
 RESET ROLE;
 ROLLBACK;

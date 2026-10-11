@@ -3,7 +3,7 @@
  * This module performs no persistence. It converts legacy shapes into canonical commands so the later import job does
  * not redefine identity. Unknown/ambiguous facts stay explicit instead of being silently invented.
  */
-import { normalizeDriverLicenceNumber, normalizePlate, normalizeUnitNumber, normalizeVin } from "./normalization.ts"
+import { normalizeDriverLicenceNumber, normalizePlate, normalizeUnitNumber, normalizeVin } from "./normalization"
 
 export function mapLegacyVehicle(raw: Record<string, unknown>, organizationId: string) {
  const vinDisplay=String(raw.vin??"").trim()

@@ -122,7 +122,7 @@ CREATE INDEX vehicle_registration_vehicle_history_idx ON public.vehicle_registra
 CREATE OR REPLACE FUNCTION tes_security.guard_vehicle_operational_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
 DECLARE os text; vs text;
-DECLARE
+BEGIN
  SELECT status INTO os FROM public.organizations WHERE id=NEW.organization_id FOR UPDATE;
  IF os IS NULL THEN RAISE EXCEPTION 'Organization does not exist' USING ERRCODE='23503'; END IF;
  IF os <> 'active' THEN RAISE EXCEPTION 'Organization must be active' USING ERRCODE='23514'; END IF;
@@ -134,7 +134,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION tes_security.guard_vehicle_history_update() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
-DECLARE
+BEGIN
  IF OLD.record_status <> 'active' THEN RAISE EXCEPTION 'Historical/corrected row is frozen' USING ERRCODE='23514'; END IF;
  IF NEW.id<>OLD.id OR NEW.organization_id<>OLD.organization_id OR NEW.vehicle_id<>OLD.vehicle_id OR NEW.effective_from<>OLD.effective_from THEN
    RAISE EXCEPTION 'Identity/business start is immutable; correct by supersession' USING ERRCODE='23514';

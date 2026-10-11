@@ -117,7 +117,7 @@ CREATE OR REPLACE FUNCTION tes_security.accessible_customers_for_actor(p_actor_i
 RETURNS TABLE(customer_id uuid,organization_id uuid,legal_name text,display_name text,organization_status text)
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp
-AS $
+AS $access$
   SELECT DISTINCT cu.id,o.id,o.legal_name,o.display_name,o.status
   FROM public.actor_relationships ar
   JOIN public.relationship_assignments ra ON ra.relationship_id=ar.id
@@ -136,7 +136,7 @@ AS $
     AND c.code=p_capability AND c.is_active
   ORDER BY lower(coalesce(o.display_name,o.legal_name)),cu.id
   LIMIT p_limit
-$;
+$access$;
 
 REVOKE ALL ON FUNCTION tes_security.accessible_customers_for_actor(uuid,text,integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tes_security.accessible_customers_for_actor(uuid,text,integer)

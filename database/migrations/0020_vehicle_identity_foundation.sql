@@ -173,10 +173,10 @@ INSERT INTO public.capabilities(code,display_name,description,is_active,sort_ord
  ('VEHICLE_MANAGE','Vehicle manage','Manage canonical Vehicle identity and Organization relationships. Intended scope: SYSTEM.',true,201);
 
 REVOKE ALL ON public.vehicle_types,public.vehicles,public.organization_vehicle_relationships,public.vehicle_registration_periods FROM PUBLIC;
-GRANT SELECT ON public.vehicle_types,public.vehicles,public.organization_vehicle_relationships,public.vehicle_registration_periods TO tes_app_runtime;
-GRANT INSERT(id,vehicle_type_code,vin_display,vin_normalized,model_year,make,model) ON public.vehicles TO tes_app_runtime;
-GRANT UPDATE(vehicle_type_code,vin_display,vin_normalized,model_year,make,model,record_status,merged_into_vehicle_id,archived_at,updated_at) ON public.vehicles TO tes_app_runtime;
-GRANT INSERT(id,organization_id,vehicle_id,relationship_type,unit_number_display,unit_number_normalized,effective_from,effective_to) ON public.organization_vehicle_relationships TO tes_app_runtime;
-GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.organization_vehicle_relationships TO tes_app_runtime;
-GRANT INSERT(id,vehicle_id,organization_id,registration_kind,registration_number_display,registration_number_normalized,plate_display,plate_normalized,jurisdiction_country,jurisdiction_region,effective_from,effective_to) ON public.vehicle_registration_periods TO tes_app_runtime;
-GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.vehicle_registration_periods TO tes_app_runtime;
+GRANT SELECT ON public.vehicle_types,public.vehicles,public.organization_vehicle_relationships,public.vehicle_registration_periods TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,vehicle_type_code,vin_display,vin_normalized,model_year,make,model) ON public.vehicles TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(vehicle_type_code,vin_display,vin_normalized,model_year,make,model,record_status,merged_into_vehicle_id,archived_at,updated_at) ON public.vehicles TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,organization_id,vehicle_id,relationship_type,unit_number_display,unit_number_normalized,effective_from,effective_to) ON public.organization_vehicle_relationships TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.organization_vehicle_relationships TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,vehicle_id,organization_id,registration_kind,registration_number_display,registration_number_normalized,plate_display,plate_normalized,jurisdiction_country,jurisdiction_region,effective_from,effective_to) ON public.vehicle_registration_periods TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.vehicle_registration_periods TO "tes-backend@tes-production-510007.iam";

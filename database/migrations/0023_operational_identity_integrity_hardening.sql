@@ -36,7 +36,7 @@ ALTER TABLE public.driver_medical_qualification_periods
 CREATE OR REPLACE FUNCTION tes_security.prevent_vehicle_merge_cycle() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
 DECLARE cursor_id uuid;
-BEGIN
+DECLARE
  IF NEW.record_status<>'merged' THEN RETURN NEW; END IF;
  cursor_id:=NEW.merged_into_vehicle_id;
  WHILE cursor_id IS NOT NULL LOOP
@@ -51,7 +51,7 @@ REVOKE ALL ON FUNCTION tes_security.prevent_vehicle_merge_cycle() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION tes_security.prevent_person_archive_with_driver_relationship() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
-BEGIN
+DECLARE
  IF NEW.record_status='archived' AND OLD.record_status='active' AND EXISTS(
    SELECT 1 FROM public.organization_driver_relationships r
     WHERE r.person_id=NEW.id AND r.record_status='active' AND r.effective_to IS NULL

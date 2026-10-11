@@ -33,14 +33,14 @@ VALUES (:'ob_id',:'vb_id','OPERATES','B-1','B1',now()-interval '2 years');
 
 INSERT INTO public.persons DEFAULT VALUES RETURNING id \gset pa_
 INSERT INTO public.person_name_versions(person_id,given_name,family_name,name_normalized,change_reason,effective_from)
-VALUES (:'pa_id','Alice','TenantA','alice tenanta','RLS_TEST',now()-interval '2 years');
+VALUES (:'pa_id','Alice','TenantA','alice tenanta','INITIAL',now()-interval '2 years');
 INSERT INTO public.driver_profiles(person_id) VALUES (:'pa_id');
 INSERT INTO public.organization_driver_relationships(organization_id,person_id,relationship_type,status,effective_from)
 VALUES (:'oa_id',:'pa_id','EMPLOYEE','ACTIVE',current_date-700);
 
 INSERT INTO public.persons DEFAULT VALUES RETURNING id \gset pb_
 INSERT INTO public.person_name_versions(person_id,given_name,family_name,name_normalized,change_reason,effective_from)
-VALUES (:'pb_id','Bob','TenantB','bob tenantb','RLS_TEST',now()-interval '2 years');
+VALUES (:'pb_id','Bob','TenantB','bob tenantb','INITIAL',now()-interval '2 years');
 INSERT INTO public.driver_profiles(person_id) VALUES (:'pb_id');
 INSERT INTO public.organization_driver_relationships(organization_id,person_id,relationship_type,status,effective_from)
 VALUES (:'ob_id',:'pb_id','EMPLOYEE','ACTIVE',current_date-700);

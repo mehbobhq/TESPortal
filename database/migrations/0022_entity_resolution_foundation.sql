@@ -73,7 +73,7 @@ CREATE UNIQUE INDEX entity_resolution_candidate_vehicle_uq ON public.entity_reso
 
 CREATE OR REPLACE FUNCTION tes_security.guard_entity_resolution_case_update() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-BEGIN
+DECLARE
  IF OLD.resolution_state IN ('RESOLVED','REJECTED','INVALIDATED') THEN
    RAISE EXCEPTION 'Final entity-resolution cases are immutable; create a new case to correct provenance' USING ERRCODE='23514';
  END IF;
@@ -84,7 +84,7 @@ BEGIN
 END $$;
 CREATE OR REPLACE FUNCTION tes_security.prevent_entity_resolution_removal() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-BEGIN RAISE EXCEPTION 'TES entity-resolution provenance is append-preserving' USING ERRCODE='23514'; END $$;
+DECLARE RAISE EXCEPTION 'TES entity-resolution provenance is append-preserving' USING ERRCODE='23514'; END $$;
 
 CREATE TRIGGER entity_resolution_cases_update_guard BEFORE UPDATE ON public.entity_resolution_cases FOR EACH ROW EXECUTE FUNCTION tes_security.guard_entity_resolution_case_update();
 CREATE TRIGGER entity_resolution_cases_no_delete BEFORE DELETE OR TRUNCATE ON public.entity_resolution_cases FOR EACH STATEMENT EXECUTE FUNCTION tes_security.prevent_entity_resolution_removal();

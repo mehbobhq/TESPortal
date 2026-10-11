@@ -56,6 +56,8 @@ jobs:
           test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "98"
       - name: Adversarial cross-tenant matrix
         run: psql -v ON_ERROR_STOP=1 -f test/database/system-wide-authorization-rls.sql
+      - name: RLS mutation-kill suite
+        run: bash scripts/database/test-system-wide-rls-mutations.sh
       - name: Existing authorization regression
         run: bash scripts/database/verify-production-authorization.sh
       - name: TypeScript regression gate

@@ -123,7 +123,7 @@ CREATE UNIQUE INDEX driver_medical_current_uq
 CREATE OR REPLACE FUNCTION tes_security.guard_driver_operational_insert() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
 DECLARE ps text; os text;
-BEGIN
+DECLARE
  SELECT record_status INTO ps FROM public.driver_profiles WHERE person_id=NEW.person_id FOR UPDATE;
  IF ps IS NULL THEN RAISE EXCEPTION 'Driver profile does not exist' USING ERRCODE='23503'; END IF;
  IF ps<>'active' THEN RAISE EXCEPTION 'Driver profile must be active' USING ERRCODE='23514'; END IF;
@@ -137,7 +137,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION tes_security.guard_driver_history_update() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-BEGIN
+DECLARE
  IF OLD.record_status<>'active' THEN RAISE EXCEPTION 'Historical/corrected row is frozen' USING ERRCODE='23514'; END IF;
  IF NEW.id<>OLD.id OR NEW.person_id<>OLD.person_id OR NEW.effective_from<>OLD.effective_from
     OR (TG_TABLE_NAME='organization_driver_relationships' AND (to_jsonb(NEW)->>'organization_id') IS DISTINCT FROM (to_jsonb(OLD)->>'organization_id')) THEN
@@ -151,7 +151,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION tes_security.prevent_driver_identity_removal() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-BEGIN RAISE EXCEPTION 'TES canonical driver identity/history is append-preserving' USING ERRCODE='23514'; END $$;
+DECLARE RAISE EXCEPTION 'TES canonical driver identity/history is append-preserving' USING ERRCODE='23514'; END $$;
 
 CREATE TRIGGER driver_licences_insert_guard BEFORE INSERT ON public.driver_licences FOR EACH ROW EXECUTE FUNCTION tes_security.guard_driver_operational_insert();
 CREATE TRIGGER organization_driver_relationships_insert_guard BEFORE INSERT ON public.organization_driver_relationships FOR EACH ROW EXECUTE FUNCTION tes_security.guard_driver_operational_insert();

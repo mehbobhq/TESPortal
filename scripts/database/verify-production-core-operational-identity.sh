@@ -56,7 +56,7 @@ SELECT (:'phase'='pre') OR NOT EXISTS(
  SELECT 1 FROM information_schema.role_table_grants
  WHERE table_schema='public'
  AND table_name IN ('vehicles','organization_vehicle_relationships','vehicle_registration_periods','driver_profiles','driver_licences','organization_driver_relationships','driver_medical_qualification_periods','entity_resolution_cases','entity_resolution_signals','entity_resolution_candidates')
- AND grantee='tes_app_runtime' AND privilege_type IN ('DELETE','TRUNCATE','REFERENCES','TRIGGER')
+ AND grantee='"tes-backend@tes-production-510007.iam"' AND privilege_type IN ('DELETE','TRUNCATE','REFERENCES','TRIGGER')
 ) AS runtime_no_destructive \gset
 \if :runtime_no_destructive
 \else

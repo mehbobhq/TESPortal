@@ -151,7 +151,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION tes_security.prevent_driver_identity_removal() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-DECLARE RAISE EXCEPTION 'TES canonical driver identity/history is append-preserving' USING ERRCODE='23514'; END $$;
+BEGIN RAISE EXCEPTION 'TES canonical driver identity/history is append-preserving' USING ERRCODE='23514'; END $$;
 
 CREATE TRIGGER driver_licences_insert_guard BEFORE INSERT ON public.driver_licences FOR EACH ROW EXECUTE FUNCTION tes_security.guard_driver_operational_insert();
 CREATE TRIGGER organization_driver_relationships_insert_guard BEFORE INSERT ON public.organization_driver_relationships FOR EACH ROW EXECUTE FUNCTION tes_security.guard_driver_operational_insert();

@@ -49,9 +49,10 @@ CREATE TABLE public.entity_resolution_signals (
   CHECK ((signal_hash IS NOT NULL)::int + (signal_reference IS NOT NULL)::int = 1),
   CHECK (signal_hash IS NULL OR signal_hash ~ '^[0-9a-f]{64}$'),
   CHECK (signal_reference IS NULL OR btrim(signal_reference)<>''),
-  CHECK (strength IN ('DETERMINISTIC','STRONG','SUPPORTING','CONFLICTING')),
-  UNIQUE(resolution_case_id,signal_type,COALESCE(signal_hash,signal_reference))
+  CHECK (strength IN ('DETERMINISTIC','STRONG','SUPPORTING','CONFLICTING'))
 );
+CREATE UNIQUE INDEX entity_resolution_signals_identity_uq
+ ON public.entity_resolution_signals(resolution_case_id,signal_type,COALESCE(signal_hash,signal_reference));
 
 CREATE TABLE public.entity_resolution_candidates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

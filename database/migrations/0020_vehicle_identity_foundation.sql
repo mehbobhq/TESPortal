@@ -147,7 +147,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION tes_security.prevent_vehicle_identity_removal() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-DECLARE RAISE EXCEPTION 'TES canonical vehicle identity/history is append-preserving' USING ERRCODE='23514'; END $$;
+BEGIN RAISE EXCEPTION 'TES canonical vehicle identity/history is append-preserving' USING ERRCODE='23514'; END $$;
 
 CREATE TRIGGER organization_vehicle_relationships_insert_guard BEFORE INSERT ON public.organization_vehicle_relationships
  FOR EACH ROW EXECUTE FUNCTION tes_security.guard_vehicle_operational_insert();

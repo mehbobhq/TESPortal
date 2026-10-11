@@ -89,10 +89,13 @@ BEGIN
       OR NOT has_function_privilege('tes-backend@tes-production-510007.iam','tes_security.customer_context_authorized(text[])','EXECUTE')
       OR NOT has_function_privilege('tes-backend@tes-production-510007.iam','tes_security.accessible_customers_for_actor(uuid,text,integer)','EXECUTE')
       THEN RAISE EXCEPTION 'runtime helper EXECUTE grant missing'; END IF;
-   IF has_function_privilege('public','tes_security.system_context_authorized(text[])','EXECUTE')
-      OR has_function_privilege('public','tes_security.customer_context_authorized(text[])','EXECUTE')
-      OR has_function_privilege('public','tes_security.accessible_customers_for_actor(uuid,text,integer)','EXECUTE')
-      THEN RAISE EXCEPTION 'PUBLIC can execute protected RLS helper'; END IF;
+   IF EXISTS (
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+      WHERE n.nspname='tes_security'
+        AND p.proname IN ('system_context_authorized','customer_context_authorized','accessible_customers_for_actor')
+        AND a.grantee=0 AND a.privilege_type='EXECUTE'
+   ) THEN RAISE EXCEPTION 'PUBLIC can execute protected RLS helper'; END IF;
    IF EXISTS(SELECT 1 FROM information_schema.role_table_grants WHERE grantee='tes-backend@tes-production-510007.iam' AND privilege_type IN ('DELETE','TRUNCATE'))
       THEN RAISE EXCEPTION 'backend has destructive table privilege'; END IF;
  END IF;

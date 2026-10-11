@@ -1,4 +1,5 @@
 name: Core Operational Identity Production Closure
+# One-shot gated closure: PRE -> APPLY -> POST; stops on first failure.
 
 on:
   push:

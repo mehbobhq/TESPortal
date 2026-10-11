@@ -113,6 +113,35 @@ AS $$
   ),false)
 $$;
 
+CREATE OR REPLACE FUNCTION tes_security.accessible_customers_for_actor(p_actor_id uuid,p_capability text,p_limit integer)
+RETURNS TABLE(customer_id uuid,organization_id uuid,legal_name text,display_name text,organization_status text)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp
+AS $
+  SELECT DISTINCT cu.id,o.id,o.legal_name,o.display_name,o.status
+  FROM public.actor_relationships ar
+  JOIN public.relationship_assignments ra ON ra.relationship_id=ar.id
+  JOIN public.relationship_capability_grants rcg ON rcg.relationship_id=ar.id
+  JOIN public.capabilities c ON c.id=rcg.capability_id
+  JOIN public.customers cu ON cu.id=ra.customer_id
+  JOIN public.organizations o ON o.id=cu.organization_id
+  WHERE p_limit BETWEEN 1 AND 500
+    AND ar.actor_id=p_actor_id AND ar.status='active'
+    AND ar.starts_at<=statement_timestamp() AND (ar.ends_at IS NULL OR ar.ends_at>statement_timestamp())
+    AND ra.scope_type='CUSTOMER' AND ra.customer_id IS NOT NULL AND ra.status='active'
+    AND ra.starts_at<=statement_timestamp() AND (ra.ends_at IS NULL OR ra.ends_at>statement_timestamp())
+    AND rcg.status='active' AND rcg.granted_at<=statement_timestamp()
+    AND (rcg.ended_at IS NULL OR rcg.ended_at>statement_timestamp())
+    AND (rcg.assignment_id IS NULL OR rcg.assignment_id=ra.id)
+    AND c.code=p_capability AND c.is_active
+  ORDER BY lower(coalesce(o.display_name,o.legal_name)),cu.id
+  LIMIT p_limit
+$;
+
+REVOKE ALL ON FUNCTION tes_security.accessible_customers_for_actor(uuid,text,integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tes_security.accessible_customers_for_actor(uuid,text,integer)
+TO "tes-backend@tes-production-510007.iam";
+
 REVOKE ALL ON FUNCTION tes_security.current_system_actor_id() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.current_system_capability() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.current_customer_actor_id() FROM PUBLIC;

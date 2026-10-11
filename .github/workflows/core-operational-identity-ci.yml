@@ -1,6 +1,15 @@
 name: Core Operational Identity CI
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "database/migrations/002*.sql"
+      - "lib/operational-identity/**"
+      - "lib/auth/tes-capabilities.ts"
+      - "test/lib/operational-identity/**"
+      - "scripts/database/verify-production-core-operational-identity.sh"
+      - ".github/workflows/core-operational-identity-ci.yml"
   pull_request:
     paths:
       - "database/**"
@@ -49,7 +58,7 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-backend@tes-production-510007.iam";'
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
-          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE tes_app_runtime;'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-backend@tes-production-510007.iam";'
       - name: Apply complete migration history
         run: bash scripts/database/migrate.sh
       - name: Verify ledger and new relations

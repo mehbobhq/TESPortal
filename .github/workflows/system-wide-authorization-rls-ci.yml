@@ -1,0 +1,73 @@
+name: System-wide Authorization RLS CI
+
+on:
+  pull_request:
+    paths:
+      - "database/**"
+      - "lib/auth/**"
+      - "test/database/system-wide-authorization-rls.sql"
+      - "scripts/database/verify-production-system-wide-authorization-rls.sh"
+      - "docs/system-wide-authorization-rls-closure.md"
+      - ".github/workflows/system-wide-authorization-rls-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tes_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tes_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: tes_ci
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.9.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Production-shaped roles
+        run: |
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-backend@tes-production-510007.iam";'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
+      - name: Apply complete migration history
+        run: bash scripts/database/migrate.sh
+      - name: Ledger and RLS catalogue
+        run: |
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "24"
+          test "$(psql -Atc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")" = "53"
+          test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "98"
+      - name: Adversarial cross-tenant matrix
+        run: psql -v ON_ERROR_STOP=1 -f test/database/system-wide-authorization-rls.sql
+      - name: Existing authorization regression
+        run: bash scripts/database/verify-production-authorization.sh
+      - name: TypeScript regression gate
+        shell: bash
+        run: |
+          set +e
+          pnpm exec tsc --noEmit --pretty false > /tmp/head-tsc.txt 2>&1
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha }}"
+          cd /tmp/base
+          pnpm install --frozen-lockfile >/dev/null
+          pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
+          cd -
+          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          diff -u /tmp/base-normalized.txt /tmp/head-normalized.txt

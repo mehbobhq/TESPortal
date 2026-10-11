@@ -52,64 +52,66 @@ VALUES ('ORGANIZATION','rls-test','secret-case') RETURNING id \gset er_
 
 SET LOCAL ROLE "tes-backend@tes-production-510007.iam";
 
--- No context: business/sensitive registries fail closed.
-DO $$
-BEGIN
- IF EXISTS(SELECT 1 FROM public.organizations WHERE legal_name IN ('RLS Tenant A','RLS Tenant B')) THEN RAISE EXCEPTION 'organization visible without context'; END IF;
- IF EXISTS(SELECT 1 FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid)) THEN RAISE EXCEPTION 'vehicle visible without context'; END IF;
- IF EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) THEN RAISE EXCEPTION 'credential registry visible without context'; END IF;
-END $$;
+SELECT NOT EXISTS(SELECT 1 FROM public.organizations WHERE legal_name IN ('RLS Tenant A','RLS Tenant B')) AS ok \gset
+\if :ok \else \echo 'organization visible without context' \quit 31 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid)) AS ok \gset
+\if :ok \else \echo 'vehicle visible without context' \quit 32 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
+\if :ok \else \echo 'credential registry visible without context' \quit 33 \endif
 
--- Forging only a tenant id is insufficient: business policies also require a proven actor/capability path.
+-- Forging only a tenant id is insufficient.
 SELECT set_config('tes.customer_id',:'cb_id',true);
 SELECT set_config('tes.customer_actor_id',:'actor_id',true);
 SELECT set_config('tes.customer_capability','ORGANIZATION_READ',true);
-DO $$
-BEGIN
- IF tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) THEN RAISE EXCEPTION 'actor forged access to unassigned tenant B'; END IF;
- IF EXISTS(SELECT 1 FROM public.registrations WHERE organization_id=:'ob_id'::uuid) THEN RAISE EXCEPTION 'cross-tenant registration leaked'; END IF;
-END $$;
+SELECT NOT tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) AS ok \gset
+\if :ok \else \echo 'actor forged access to unassigned tenant B' \quit 34 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.registrations WHERE organization_id=:'ob_id'::uuid) AS ok \gset
+\if :ok \else \echo 'cross-tenant registration leaked' \quit 35 \endif
 
--- Authorized tenant A sees its complete graph, never tenant B, and never SYSTEM-only registries.
+-- Authorized tenant A sees only its graph and never SYSTEM-only registries.
 SELECT set_config('tes.customer_id',:'ca_id',true);
-DO $$
-BEGIN
- IF NOT tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) THEN RAISE EXCEPTION 'authorized customer context rejected'; END IF;
- IF (SELECT count(*) FROM public.organizations WHERE id IN (:'oa_id'::uuid,:'ob_id'::uuid))<>1 THEN RAISE EXCEPTION 'organization isolation failed'; END IF;
- IF (SELECT count(*) FROM public.registrations WHERE id IN (:'rega_id'::uuid,:'regb_id'::uuid))<>1 THEN RAISE EXCEPTION 'registration isolation failed'; END IF;
- IF (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))<>1 THEN RAISE EXCEPTION 'vehicle isolation failed'; END IF;
- IF (SELECT count(*) FROM public.persons WHERE id IN (:'pa_id'::uuid,:'pb_id'::uuid))<>1 THEN RAISE EXCEPTION 'person/driver isolation failed'; END IF;
- IF EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) THEN RAISE EXCEPTION 'customer saw credentials'; END IF;
- IF EXISTS(SELECT 1 FROM public.entity_resolution_cases WHERE id=:'er_id'::uuid) THEN RAISE EXCEPTION 'customer saw entity resolution provenance'; END IF;
-END $$;
+SELECT tes_security.customer_context_authorized(ARRAY['ORGANIZATION_READ']) AS ok \gset
+\if :ok \else \echo 'authorized customer context rejected' \quit 36 \endif
+SELECT (SELECT count(*) FROM public.organizations WHERE id IN (:'oa_id'::uuid,:'ob_id'::uuid))=1 AS ok \gset
+\if :ok \else \echo 'organization isolation failed' \quit 37 \endif
+SELECT (SELECT count(*) FROM public.registrations WHERE id IN (:'rega_id'::uuid,:'regb_id'::uuid))=1 AS ok \gset
+\if :ok \else \echo 'registration isolation failed' \quit 38 \endif
+SELECT (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))=1 AS ok \gset
+\if :ok \else \echo 'vehicle isolation failed' \quit 39 \endif
+SELECT (SELECT count(*) FROM public.persons WHERE id IN (:'pa_id'::uuid,:'pb_id'::uuid))=1 AS ok \gset
+\if :ok \else \echo 'person/driver isolation failed' \quit 40 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
+\if :ok \else \echo 'customer saw credentials' \quit 41 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.entity_resolution_cases WHERE id=:'er_id'::uuid) AS ok \gset
+\if :ok \else \echo 'customer saw entity resolution provenance' \quit 42 \endif
 
--- Historical graph remains visible to the owning customer after relationship end.
+-- Historical relationship visibility is preserved.
 RESET ROLE;
 UPDATE public.organization_vehicle_relationships SET effective_to=now()-interval '1 day' WHERE vehicle_id=:'va_id';
 SET LOCAL ROLE "tes-backend@tes-production-510007.iam";
 SELECT set_config('tes.customer_id',:'ca_id',true);
 SELECT set_config('tes.customer_actor_id',:'actor_id',true);
 SELECT set_config('tes.customer_capability','ORGANIZATION_READ',true);
-DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM public.vehicles WHERE id=:'va_id'::uuid) THEN RAISE EXCEPTION 'historical owned vehicle disappeared'; END IF;
-END $$;
+SELECT EXISTS(SELECT 1 FROM public.vehicles WHERE id=:'va_id'::uuid) AS ok \gset
+\if :ok \else \echo 'historical owned vehicle disappeared' \quit 43 \endif
 
--- SYSTEM access is capability-bound, not a universal bypass.
+-- SYSTEM access is capability-bound, not universal.
 SELECT set_config('tes.customer_id','',true);
 SELECT set_config('tes.customer_actor_id','',true);
 SELECT set_config('tes.customer_capability','',true);
 SELECT set_config('tes.system_actor_id',:'actor_id',true);
 SELECT set_config('tes.system_capability','VEHICLE_READ',true);
-DO $$ BEGIN
- IF NOT tes_security.system_context_authorized(ARRAY['VEHICLE_READ']) THEN RAISE EXCEPTION 'valid system context rejected'; END IF;
- IF (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))<>2 THEN RAISE EXCEPTION 'system vehicle read failed'; END IF;
- IF EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) THEN RAISE EXCEPTION 'VEHICLE_READ bypassed credential boundary'; END IF;
-END $$;
+SELECT tes_security.system_context_authorized(ARRAY['VEHICLE_READ']) AS ok \gset
+\if :ok \else \echo 'valid system context rejected' \quit 44 \endif
+SELECT (SELECT count(*) FROM public.vehicles WHERE id IN (:'va_id'::uuid,:'vb_id'::uuid))=2 AS ok \gset
+\if :ok \else \echo 'system vehicle read failed' \quit 45 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
+\if :ok \else \echo 'VEHICLE_READ bypassed credential boundary' \quit 46 \endif
 SELECT set_config('tes.system_capability','CREDENTIAL_READ',true);
-DO $$ BEGIN
- IF tes_security.system_context_authorized(ARRAY['CREDENTIAL_READ']) THEN RAISE EXCEPTION 'ungranted system capability accepted'; END IF;
- IF EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) THEN RAISE EXCEPTION 'ungranted credential capability leaked'; END IF;
-END $$;
+SELECT NOT tes_security.system_context_authorized(ARRAY['CREDENTIAL_READ']) AS ok \gset
+\if :ok \else \echo 'ungranted system capability accepted' \quit 47 \endif
+SELECT NOT EXISTS(SELECT 1 FROM public.credential_systems WHERE id=:'cs_id'::uuid) AS ok \gset
+\if :ok \else \echo 'ungranted credential capability leaked' \quit 48 \endif
 
 RESET ROLE;
 ROLLBACK;

@@ -57,6 +57,8 @@ export const TES_CAPABILITY_SCOPES = {
   DRIVER_MANAGE: "SYSTEM",
   IDENTITY_RESOLUTION_READ: "SYSTEM",
   IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
+  // Master Register enumeration is explicit; ordinary authorized operations may append without gaining read access.
+  MASTER_REGISTER_READ: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

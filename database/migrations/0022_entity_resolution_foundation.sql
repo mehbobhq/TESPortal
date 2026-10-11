@@ -73,7 +73,7 @@ CREATE UNIQUE INDEX entity_resolution_candidate_vehicle_uq ON public.entity_reso
 
 CREATE OR REPLACE FUNCTION tes_security.guard_entity_resolution_case_update() RETURNS trigger
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
-DECLARE
+BEGIN
  IF OLD.resolution_state IN ('RESOLVED','REJECTED','INVALIDATED') THEN
    RAISE EXCEPTION 'Final entity-resolution cases are immutable; create a new case to correct provenance' USING ERRCODE='23514';
  END IF;

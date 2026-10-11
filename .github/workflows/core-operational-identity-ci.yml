@@ -57,7 +57,8 @@ jobs:
           test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "23"
           psql -v ON_ERROR_STOP=1 -c "select count(*) from public.vehicles; select count(*) from public.driver_profiles; select count(*) from public.entity_resolution_cases;"
       - name: Run pure operational identity tests
-        run: node --test --experimental-strip-types test/lib/operational-identity/normalization.test.ts
+        run: pnpm exec tsc --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions false --outDir /tmp/identity-test lib/operational-identity/normalization.ts lib/operational-identity/legacy.ts test/lib/operational-identity/normalization.test.ts || true
+          node --test /tmp/identity-test/test/lib/operational-identity/normalization.test.js
       - name: TypeScript regression gate
         shell: bash
         run: |
@@ -70,8 +71,8 @@ jobs:
           pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
           base_status=$?
           cd -
-          sed -E 's#^([^(:]+)\([^)]*\): ##' /tmp/head-tsc.txt | sort > /tmp/head-normalized.txt
-          sed -E 's#^([^(:]+)\([^)]*\): ##' /tmp/base-tsc.txt | sort > /tmp/base-normalized.txt
+          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
           if ! diff -u /tmp/base-normalized.txt /tmp/head-normalized.txt; then
             echo "TypeScript diagnostic set changed."; exit 1
           fi

@@ -173,12 +173,12 @@ INSERT INTO public.capabilities(code,display_name,description,is_active,sort_ord
  ('DRIVER_MANAGE','Driver manage','Manage canonical Driver role, licence and Organization relationships. Intended scope: SYSTEM.',true,203);
 
 REVOKE ALL ON public.driver_profiles,public.driver_licences,public.organization_driver_relationships,public.driver_medical_qualification_periods FROM PUBLIC;
-GRANT SELECT ON public.driver_profiles,public.driver_licences,public.organization_driver_relationships,public.driver_medical_qualification_periods TO tes_app_runtime;
-GRANT INSERT(person_id) ON public.driver_profiles TO tes_app_runtime;
-GRANT UPDATE(record_status,archived_at,updated_at) ON public.driver_profiles TO tes_app_runtime;
-GRANT INSERT(id,person_id,jurisdiction_country,jurisdiction_region,licence_number_display,licence_number_normalized,licence_class,issue_date,expiry_date,effective_from,effective_to) ON public.driver_licences TO tes_app_runtime;
-GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.driver_licences TO tes_app_runtime;
-GRANT INSERT(id,organization_id,person_id,relationship_type,driver_number_display,driver_number_normalized,status,effective_from,effective_to) ON public.organization_driver_relationships TO tes_app_runtime;
-GRANT UPDATE(status,effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.organization_driver_relationships TO tes_app_runtime;
-GRANT INSERT(id,person_id,jurisdiction_country,jurisdiction_region,qualification_type,issued_on,expires_on,effective_from,effective_to) ON public.driver_medical_qualification_periods TO tes_app_runtime;
-GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.driver_medical_qualification_periods TO tes_app_runtime;
+GRANT SELECT ON public.driver_profiles,public.driver_licences,public.organization_driver_relationships,public.driver_medical_qualification_periods TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(person_id) ON public.driver_profiles TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(record_status,archived_at,updated_at) ON public.driver_profiles TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,person_id,jurisdiction_country,jurisdiction_region,licence_number_display,licence_number_normalized,licence_class,issue_date,expiry_date,effective_from,effective_to) ON public.driver_licences TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.driver_licences TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,organization_id,person_id,relationship_type,driver_number_display,driver_number_normalized,status,effective_from,effective_to) ON public.organization_driver_relationships TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(status,effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.organization_driver_relationships TO "tes-backend@tes-production-510007.iam";
+GRANT INSERT(id,person_id,jurisdiction_country,jurisdiction_region,qualification_type,issued_on,expires_on,effective_from,effective_to) ON public.driver_medical_qualification_periods TO "tes-backend@tes-production-510007.iam";
+GRANT UPDATE(effective_to,record_status,corrected_at,superseded_by_id,updated_at) ON public.driver_medical_qualification_periods TO "tes-backend@tes-production-510007.iam";

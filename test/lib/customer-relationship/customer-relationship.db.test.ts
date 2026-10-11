@@ -238,11 +238,11 @@ describe("Customer Relationship (real authorization, real transactions, real Mas
 
     scenario("capabilities: the eight earlier ones are unchanged and exactly two SYSTEM capabilities were added; nothing is granted", async () => {
       const rows = (await pools.admin.query<{ code: string; description: string }>(`SELECT code, description FROM public.capabilities ORDER BY sort_order`)).rows;
-      assert.deepEqual(rows.map((row) => row.code), [
+      assert.deepEqual(rows.slice(0, 10).map((row) => row.code), [
         "ORGANIZATION_READ", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_CREATE", "ORGANIZATION_UPDATE", "ORGANIZATION_ARCHIVE", "CUSTOMER_ESTABLISH",
         "PERSON_REGISTRY_READ", "CONTACT_MANAGE", "CUSTOMER_RELATIONSHIP_READ", "CUSTOMER_RELATIONSHIP_MANAGE",
       ]);
-      for (const row of rows.slice(8)) assert.match(row.description, /Intended scope: SYSTEM only\.$/);
+      for (const row of rows.slice(8, 10)) assert.match(row.description, /Intended scope: SYSTEM only\.$/);
       assert.match(rows[5].description, /Establish the TES Customer relationship for an existing canonical Organization and begin the Customer engagement/, "CUSTOMER_ESTABLISH keeps its meaning");
       assert.equal(await rowCount(`SELECT count(*) FROM public.relationship_capability_grants g JOIN public.capabilities c ON c.id = g.capability_id WHERE c.code LIKE 'CUSTOMER_RELATIONSHIP_%' AND g.created_at < now() - interval '1 day'`), 0);
     });

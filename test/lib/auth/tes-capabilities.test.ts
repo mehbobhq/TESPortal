@@ -20,7 +20,7 @@ import {
 } from "../../../lib/auth/tes-authorization-sql.ts";
 
 describe("TES capability references", () => {
-  it("lists exactly the approved capabilities (six Companies foundation + two Contacts + two Customer Relationship) with their approved scopes", () => {
+  it("lists exactly the approved capabilities (six Companies foundation + two Contacts + two Customer Relationship + eight Tax / Insurance / Credentials / Company Profile) with their approved scopes", () => {
     assert.deepEqual(
       { ...TES_CAPABILITY_SCOPES },
       {
@@ -34,9 +34,17 @@ describe("TES capability references", () => {
         CONTACT_MANAGE: "SYSTEM",
         CUSTOMER_RELATIONSHIP_READ: "SYSTEM",
         CUSTOMER_RELATIONSHIP_MANAGE: "SYSTEM",
+        TAX_REGISTRATION_READ: "SYSTEM",
+        TAX_REGISTRATION_MANAGE: "SYSTEM",
+        INSURANCE_READ: "SYSTEM",
+        INSURANCE_MANAGE: "SYSTEM",
+        CREDENTIAL_READ: "SYSTEM",
+        CREDENTIAL_MANAGE: "SYSTEM",
+        COMPANY_PROFILE_READ: "SYSTEM",
+        COMPANY_PROFILE_MANAGE: "SYSTEM",
       },
     );
-    assert.equal(TES_CAPABILITY_CODES.length, 10);
+    assert.equal(TES_CAPABILITY_CODES.length, 18);
   });
 
   it("has no delete capability and no CUSTOMER_CREATE", () => {

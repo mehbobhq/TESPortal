@@ -76,7 +76,7 @@ describe("Customer Relationship boundaries", () => {
   it("migrations 0001-0014 are byte-identical to their closed hashes; 0015 is additive", () => {
     const migrationsDir = path.join(ROOT, "database/migrations");
     const present = readdirSync(migrationsDir).filter((file) => file.endsWith(".sql")).sort();
-    assert.deepEqual(present, [...Object.keys(APPLIED_MIGRATIONS), MIGRATION].sort(), "no migration besides 0015 was added or renamed");
+    assert.deepEqual(present.slice(0, 15), [...Object.keys(APPLIED_MIGRATIONS), MIGRATION].sort(), "no migration among 0001-0015 was added or renamed (later migrations are covered by their own boundary tests)");
     for (const [file, hash] of Object.entries(APPLIED_MIGRATIONS)) {
       assert.equal(createHash("sha256").update(readFileSync(path.join(migrationsDir, file))).digest("hex"), hash, `${file} is CLOSED and must not change`);
     }

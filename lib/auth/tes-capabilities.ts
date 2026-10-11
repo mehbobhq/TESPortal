@@ -38,6 +38,18 @@ export const TES_CAPABILITY_SCOPES = {
   // Customer Relationship foundation (migration 0015). CUSTOMER_ESTABLISH (0011) keeps establishing / re-engaging.
   CUSTOMER_RELATIONSHIP_READ: "SYSTEM",
   CUSTOMER_RELATIONSHIP_MANAGE: "SYSTEM",
+  // Tax / Registration foundation (migration 0016).
+  TAX_REGISTRATION_READ: "SYSTEM",
+  TAX_REGISTRATION_MANAGE: "SYSTEM",
+  // Insurance foundation (migration 0017).
+  INSURANCE_READ: "SYSTEM",
+  INSURANCE_MANAGE: "SYSTEM",
+  // Company Credentials foundation (migration 0018). No capability reveals a secret: no secret value exists in PostgreSQL.
+  CREDENTIAL_READ: "SYSTEM",
+  CREDENTIAL_MANAGE: "SYSTEM",
+  // Company Operating Profile foundation (migration 0019).
+  COMPANY_PROFILE_READ: "SYSTEM",
+  COMPANY_PROFILE_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

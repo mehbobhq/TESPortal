@@ -23,3 +23,5 @@ These global registries are SYSTEM-scope foundations. The existing authorization
 ## Downstream boundaries
 
 Legitimate downstream boundaries only: physical GCS evidence storage/link records; OCR/document processing; Rules/DQF compliance interpretation; trip/dispatch-specific vehicle-driver assignment; system-wide RLS closure; one-time execution of the browser-to-PostgreSQL import job. None of those systems owns or redefines canonical Vehicle/Person/Driver identity.
+
+CI validates the complete migration history on PostgreSQL 17 and compares TypeScript diagnostics against the protected base commit before merge.

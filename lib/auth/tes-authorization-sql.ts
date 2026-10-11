@@ -156,19 +156,10 @@ export function authorizationDecisionSql(
  * $3 is a defensive row cap.
  */
 export function accessibleCustomersSql(asOfSql: string = DEFAULT_AS_OF_SQL): string {
-  return `WITH accessible AS (
-       SELECT DISTINCT ra.customer_id
-       ${authorizationPathsSql({ scope: "CUSTOMER", customerFilter: false, asOfSql })}
-     )
-     SELECT
-       cu.id AS customer_id,
-       o.id AS organization_id,
-       o.legal_name,
-       o.display_name,
-       o.status AS organization_status
-     FROM accessible AS a
-     INNER JOIN public.customers AS cu ON cu.id = a.customer_id
-     INNER JOIN public.organizations AS o ON o.id = cu.organization_id
-     ORDER BY lower(coalesce(o.display_name, o.legal_name)), cu.id
-     LIMIT $3`
+  // Customer discovery runs before one tenant is selected. The SECURITY DEFINER
+  // gateway reproduces the authorization-path predicate while bypassing business
+  // RLS only for the rows that actor is already assigned to.
+  void asOfSql
+  return `SELECT customer_id, organization_id, legal_name, display_name, organization_status
+          FROM tes_security.accessible_customers_for_actor($1::uuid,$2,$3)`
 }

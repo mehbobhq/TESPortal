@@ -68,6 +68,14 @@ export async function withAuthorizedCustomer<T>(
     withPostgresTransaction(async (client) => {
       await assertNoTenantContext(client)
 
+      // Establish the requested tenant only as a narrowing context before authorization.
+      // RLS may expose the requested customer anchor so the evaluator can prove it exists;
+      // no business-row policy accepts this value until actor + capability are also proven.
+      await client.query(
+        `SELECT set_config('tes.customer_id', $1, true)`,
+        [normalizedCustomerId],
+      )
+
       const decision = await requireTesAuthorizationWithClient(client, {
         capability,
         scope: {
@@ -77,8 +85,8 @@ export async function withAuthorizedCustomer<T>(
       })
 
       await client.query(
-        `SELECT set_config('tes.customer_id', $1, true)`,
-        [normalizedCustomerId],
+        `SELECT set_config('tes.customer_actor_id', $1, true), set_config('tes.customer_capability', $2, true)`,
+        [decision.actor.id, capability],
       )
 
       const context = await client.query<{ customer_id: string | null }>(
@@ -88,6 +96,12 @@ export async function withAuthorizedCustomer<T>(
       if (context.rows[0]?.customer_id !== normalizedCustomerId) {
         throw new TesCustomerContextError()
       }
+
+      const rls = await client.query<{ allowed: boolean }>(
+        `SELECT tes_security.customer_context_authorized(ARRAY[$1]::text[]) AS allowed`,
+        [capability],
+      )
+      if (rls.rows[0]?.allowed !== true) throw new TesCustomerContextError()
 
       return work(client, decision as CustomerAuthorizationDecision)
     }),

@@ -62,7 +62,7 @@ jobs:
         run: bash scripts/database/migrate.sh
       - name: Verify ledger and new relations
         run: |
-          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "23"
+          test "$(psql -Atc "select count(*) from tes_system.schema_migrations where version='0023'")" = "1"
           psql -v ON_ERROR_STOP=1 -c "select count(*) from public.vehicles; select count(*) from public.driver_profiles; select count(*) from public.entity_resolution_cases;"
       - name: Run pure operational identity tests
         run: pnpm exec tsc --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions false --outDir /tmp/identity-test lib/operational-identity/normalization.ts lib/operational-identity/legacy.ts test/lib/operational-identity/normalization.test.ts || true

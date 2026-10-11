@@ -118,7 +118,10 @@ RETURNS TABLE(customer_id uuid,organization_id uuid,legal_name text,display_name
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp
 AS $access$
-  SELECT DISTINCT cu.id,o.id,o.legal_name,o.display_name,o.status
+  SELECT q.customer_id,q.organization_id,q.legal_name,q.display_name,q.organization_status
+  FROM (
+    SELECT DISTINCT cu.id AS customer_id,o.id AS organization_id,o.legal_name,o.display_name,o.status AS organization_status,
+           lower(coalesce(o.display_name,o.legal_name)) AS sort_name
   FROM public.actor_relationships ar
   JOIN public.relationship_assignments ra ON ra.relationship_id=ar.id
   JOIN public.relationship_capability_grants rcg ON rcg.relationship_id=ar.id
@@ -134,7 +137,8 @@ AS $access$
     AND (rcg.ended_at IS NULL OR rcg.ended_at>statement_timestamp())
     AND (rcg.assignment_id IS NULL OR rcg.assignment_id=ra.id)
     AND c.code=p_capability AND c.is_active
-  ORDER BY lower(coalesce(o.display_name,o.legal_name)),cu.id
+  ) q
+  ORDER BY q.sort_name,q.customer_id
   LIMIT p_limit
 $access$;
 

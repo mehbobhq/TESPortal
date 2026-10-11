@@ -60,6 +60,19 @@ export async function withAuthorizedSystem<T>(
         throw new TesCapabilityScopeError()
       }
 
+      // RLS SYSTEM policies re-prove this exact actor/capability from the authorization
+      // kernel. These transaction-local values are context, never authority by themselves.
+      await client.query(
+        `SELECT set_config('tes.system_actor_id', $1, true), set_config('tes.system_capability', $2, true)`,
+        [decision.actor.id, capability],
+      )
+
+      const rls = await client.query<{ allowed: boolean }>(
+        `SELECT tes_security.system_context_authorized(ARRAY[$1]::text[]) AS allowed`,
+        [capability],
+      )
+      if (rls.rows[0]?.allowed !== true) throw new TesAuthorizationDeniedError()
+
       return work(client, decision as SystemAuthorizationDecision)
     }),
   )

@@ -139,7 +139,8 @@ CREATE OR REPLACE FUNCTION tes_security.guard_driver_history_update() RETURNS tr
 LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$
 BEGIN
  IF OLD.record_status<>'active' THEN RAISE EXCEPTION 'Historical/corrected row is frozen' USING ERRCODE='23514'; END IF;
- IF NEW.id<>OLD.id OR NEW.person_id<>OLD.person_id OR NEW.effective_from<>OLD.effective_from THEN
+ IF NEW.id<>OLD.id OR NEW.person_id<>OLD.person_id OR NEW.effective_from<>OLD.effective_from
+    OR (TG_TABLE_NAME='organization_driver_relationships' AND NEW.organization_id<>OLD.organization_id) THEN
    RAISE EXCEPTION 'Identity/business start is immutable; correct by supersession' USING ERRCODE='23514';
  END IF;
  IF OLD.effective_to IS NOT NULL AND NEW.effective_to IS DISTINCT FROM OLD.effective_to THEN

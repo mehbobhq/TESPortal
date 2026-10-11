@@ -50,6 +50,13 @@ export const TES_CAPABILITY_SCOPES = {
   // Company Operating Profile foundation (migration 0019).
   COMPANY_PROFILE_READ: "SYSTEM",
   COMPANY_PROFILE_MANAGE: "SYSTEM",
+  // Core Operational Identity Graph (migrations 0020-0023).
+  VEHICLE_READ: "SYSTEM",
+  VEHICLE_MANAGE: "SYSTEM",
+  DRIVER_READ: "SYSTEM",
+  DRIVER_MANAGE: "SYSTEM",
+  IDENTITY_RESOLUTION_READ: "SYSTEM",
+  IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

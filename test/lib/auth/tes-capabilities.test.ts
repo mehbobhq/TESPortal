@@ -20,7 +20,7 @@ import {
 } from "../../../lib/auth/tes-authorization-sql.ts";
 
 describe("TES capability references", () => {
-  it("lists exactly the approved capabilities (six Companies foundation + two Contacts) with their approved scopes", () => {
+  it("lists exactly the approved capabilities (six Companies foundation + two Contacts + two Customer Relationship) with their approved scopes", () => {
     assert.deepEqual(
       { ...TES_CAPABILITY_SCOPES },
       {
@@ -32,9 +32,11 @@ describe("TES capability references", () => {
         CUSTOMER_ESTABLISH: "SYSTEM",
         PERSON_REGISTRY_READ: "SYSTEM",
         CONTACT_MANAGE: "SYSTEM",
+        CUSTOMER_RELATIONSHIP_READ: "SYSTEM",
+        CUSTOMER_RELATIONSHIP_MANAGE: "SYSTEM",
       },
     );
-    assert.equal(TES_CAPABILITY_CODES.length, 8);
+    assert.equal(TES_CAPABILITY_CODES.length, 10);
   });
 
   it("has no delete capability and no CUSTOMER_CREATE", () => {

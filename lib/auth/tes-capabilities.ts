@@ -35,6 +35,9 @@ export const TES_CAPABILITY_SCOPES = {
   // Contacts / People foundation (migration 0014).
   PERSON_REGISTRY_READ: "SYSTEM",
   CONTACT_MANAGE: "SYSTEM",
+  // Customer Relationship foundation (migration 0015). CUSTOMER_ESTABLISH (0011) keeps establishing / re-engaging.
+  CUSTOMER_RELATIONSHIP_READ: "SYSTEM",
+  CUSTOMER_RELATIONSHIP_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

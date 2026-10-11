@@ -209,7 +209,7 @@ describe("Contacts (real authorization, real transactions, real Master Register)
     });
 
     scenario("capabilities: the six originals are unchanged and exactly two SYSTEM capabilities were added", async () => {
-      const rows = (await pools.admin.query<{ code: string; description: string; sort_order: number }>(`SELECT code, description, sort_order FROM public.capabilities ORDER BY sort_order`)).rows;
+      const rows = (await pools.admin.query<{ code: string; description: string; sort_order: number }>(`SELECT code, description, sort_order FROM public.capabilities WHERE sort_order <= 80 ORDER BY sort_order`)).rows;
       assert.deepEqual(rows.map((row) => row.code), [
         "ORGANIZATION_READ", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_CREATE", "ORGANIZATION_UPDATE", "ORGANIZATION_ARCHIVE", "CUSTOMER_ESTABLISH",
         "PERSON_REGISTRY_READ", "CONTACT_MANAGE",

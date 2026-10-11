@@ -55,11 +55,12 @@ BEGIN
  SELECT array_agg(c.relname ORDER BY c.relname) INTO actual
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity;
- SELECT array_agg(x ORDER BY x) INTO expected FROM unnest(expected) x;
  IF phase='pre' THEN
    IF coalesce(cardinality(actual),0)<>0 THEN RAISE EXCEPTION 'PRE expected zero RLS tables, got %',actual; END IF;
  ELSE
-   IF actual IS DISTINCT FROM expected THEN RAISE EXCEPTION 'RLS table set mismatch. actual=% expected=%',actual,expected; END IF;
+   IF EXISTS (SELECT unnest(actual) EXCEPT SELECT unnest(expected))
+      OR EXISTS (SELECT unnest(expected) EXCEPT SELECT unnest(actual))
+      THEN RAISE EXCEPTION 'RLS table set mismatch. actual=% expected=%',actual,expected; END IF;
    IF EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relforcerowsecurity)
      THEN RAISE EXCEPTION 'FORCE RLS unexpectedly enabled; owner/runtime separation contract changed'; END IF;
  END IF;

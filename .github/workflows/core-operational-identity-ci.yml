@@ -81,7 +81,10 @@ jobs:
           cd -
           grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
           grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
-          if ! diff -u /tmp/base-normalized.txt /tmp/head-normalized.txt; then
-            echo "TypeScript diagnostic set changed."; exit 1
+          # Regression gate: the head may fix baseline diagnostics but must not introduce any new one.
+          comm -13 /tmp/base-normalized.txt /tmp/head-normalized.txt > /tmp/new-diagnostics.txt
+          if [ -s /tmp/new-diagnostics.txt ]; then
+            echo "New TypeScript diagnostics introduced:"; cat /tmp/new-diagnostics.txt; exit 1
           fi
-          echo "TypeScript diagnostics exactly match baseline (base status $base_status, head status $head_status)."
+          fixed=$(comm -23 /tmp/base-normalized.txt /tmp/head-normalized.txt | wc -l)
+          echo "No new TypeScript diagnostics versus baseline ($fixed baseline diagnostics no longer present; base status $base_status, head status $head_status)."

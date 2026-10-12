@@ -1,10 +1,19 @@
 import "server-only"
 
 import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
-import { createOrganization } from "@/lib/corporate-identity/service"
+import {
+  addAlias,
+  addIdentifier,
+  correctIdentifier,
+  createOrganization,
+  deactivateAlias,
+  getOrganization,
+  supersedeIdentifier,
+  updateLegalIdentity,
+} from "@/lib/corporate-identity/service"
 import { establishCustomerRelationship } from "@/lib/customer-relationship/service"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
-import type { ClassificationInput, CreateOrganizationInput } from "@/lib/corporate-identity/types"
+import type { ClassificationInput, CreateOrganizationInput, OrganizationRecord } from "@/lib/corporate-identity/types"
 
 type CompanyDirectoryRow = {
   id: string
@@ -84,6 +93,27 @@ export type CreateCompanyDirectoryInput = {
   startDate?: unknown
   status?: unknown
 }
+
+export type UpdateCompanyDirectoryInput = {
+  companyName?: unknown
+  dba?: unknown
+  incorpNo?: unknown
+  businessNo?: unknown
+  ein?: unknown
+}
+
+export type CompanyEditRecord = {
+  id: string
+  companyName: string
+  dba: string
+  incorpNo: string
+  businessNo: string
+  ein: string
+  formationCountry: string | null
+  formationRegion: string | null
+}
+
+export class CompanyDirectoryValidationError extends Error {}
 
 export type CreateCompanyDirectoryResult = {
   company: CompanyDirectoryRecord
@@ -333,6 +363,17 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
       status: identifier.status,
     }))
 
+    const aliases = await client.query<{ alias: string }>(
+      `SELECT alias
+         FROM public.organization_aliases
+        WHERE organization_id = $1
+          AND alias_type = 'TRADE_NAME'
+          AND status = 'active'
+        ORDER BY created_at, id
+        LIMIT 1`,
+      [organizationId],
+    )
+
     return {
       id: row.id,
       name: row.display_name ?? row.legal_name,
@@ -340,7 +381,7 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
       region: region(row.country_code, row.region_code),
       status: statusLabel(row.status),
       createdAt: row.created_at.toISOString(),
-      dba: null,
+      dba: aliases.rows[0]?.alias ?? null,
       contact: null,
       phone: null,
       website: null,
@@ -359,4 +400,87 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
       carrierCode: identifierValue(ids, ["CARRIER_CODE"]),
     }
   })
+}
+
+function toEditRecord(organization: OrganizationRecord): CompanyEditRecord {
+  const active = organization.identifiers.filter((identifier) => identifier.status === "active")
+  const valueOf = (kind: string) => active.find((identifier) => identifier.kind === kind)?.value ?? ""
+  const trade = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType === "TRADE_NAME")
+  return {
+    id: organization.id,
+    companyName: organization.legalName,
+    dba: trade?.alias ?? "",
+    incorpNo: valueOf("INCORPORATION"),
+    businessNo: valueOf("CRA_BN"),
+    ein: valueOf("IRS_EIN"),
+    formationCountry: organization.formationCountry,
+    formationRegion: organization.formationRegion,
+  }
+}
+
+export async function getCompanyEditRecord(organizationId: string): Promise<CompanyEditRecord> {
+  return toEditRecord(await getOrganization(organizationId))
+}
+
+/**
+ * Edits only the canonical corporate-identity fields: legal name, trade-name alias and the INCORPORATION / CRA_BN / IRS_EIN
+ * identifiers. A field that is omitted is left alone; an empty string ends the current value. Every step is an existing
+ * corporate-identity operation (its own authorized transaction and Master Register event).
+ */
+export async function updateCompanyDirectoryRecord(
+  organizationId: string,
+  input: UpdateCompanyDirectoryInput,
+): Promise<CompanyEditRecord> {
+  let organization = await getOrganization(organizationId)
+  const current = toEditRecord(organization)
+  const has = (value: unknown) => typeof value === "string"
+
+  if (has(input.companyName)) {
+    const legalName = text(input.companyName)
+    if (!legalName) throw new CompanyDirectoryValidationError("Company Name is required.")
+    if (legalName !== organization.legalName) {
+      const keepDisplay = organization.displayName === organization.legalName
+      organization = (await updateLegalIdentity(organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName })).organization
+    }
+  }
+
+  if (has(input.dba)) {
+    const dba = text(input.dba)
+    if (dba !== current.dba) {
+      const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType === "TRADE_NAME")
+      if (existing) organization = (await deactivateAlias(organizationId, existing.id)).organization
+      if (dba) organization = (await addAlias(organizationId, { alias: dba, aliasType: "TRADE_NAME" })).organization
+    }
+  }
+
+  const applyIdentifier = async (
+    kind: "INCORPORATION" | "CRA_BN" | "IRS_EIN",
+    raw: unknown,
+    previous: string,
+  ) => {
+    if (!has(raw)) return
+    const value = text(raw)
+    if (value === previous) return
+    const existing = organization.identifiers.find((identifier) => identifier.status === "active" && identifier.kind === kind)
+    let replacement: CorporateIdentifierInput | null = null
+    if (value) {
+      if (kind === "INCORPORATION") {
+        if (!organization.formationCountry) {
+          throw new CompanyDirectoryValidationError("Incorporation number needs a recorded formation jurisdiction.")
+        }
+        replacement = { kind, value, country: organization.formationCountry, region: organization.formationRegion }
+      } else {
+        replacement = { kind, value }
+      }
+    }
+    if (existing && replacement) organization = (await correctIdentifier(organizationId, existing.id, replacement)).organization
+    else if (existing) organization = (await supersedeIdentifier(organizationId, existing.id)).organization
+    else if (replacement) organization = (await addIdentifier(organizationId, replacement)).organization
+  }
+
+  await applyIdentifier("INCORPORATION", input.incorpNo, current.incorpNo)
+  await applyIdentifier("CRA_BN", input.businessNo, current.businessNo)
+  await applyIdentifier("IRS_EIN", input.ein, current.ein)
+
+  return toEditRecord(organization)
 }

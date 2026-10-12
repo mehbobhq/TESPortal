@@ -15,7 +15,6 @@ import {
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
-import { readActivity, type ActivityEntry } from "@/lib/activity-log"
 
 type CompanyProfile = {
   id: string
@@ -129,6 +128,8 @@ function useNavigationRouter() {
   }
 }
 
+type ActivityEntry = { id: string; action: string; entityLabel?: string; detail?: string; t: number }
+
 export default function CompanyProfilePage() {
   const params = useRouteParams()
   const router = useNavigationRouter()
@@ -173,10 +174,8 @@ export default function CompanyProfilePage() {
     }
   }, [params?.id])
 
-  const activity = useMemo(
-    () => readActivity(company?.id || "", activityFilter === "all" ? undefined : activityFilter),
-    [company?.id, activityFilter]
-  )
+  // Deferred: no canonical activity read service exists yet; the browser-stored feed was removed.
+  const activity: ActivityEntry[] = []
 
   if (loading) {
     return (
@@ -542,7 +541,7 @@ export default function CompanyProfilePage() {
           </div>
 
           {activity.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-6 text-center">No activity recorded yet.</p>
+            <p className="text-xs text-muted-foreground py-6 text-center">Activity history is unavailable until a canonical activity read service exists.</p>
           ) : (
             <div className="flex flex-col divide-y divide-border">
               {activity.slice(0, activityLimit).map((entry: ActivityEntry) => (

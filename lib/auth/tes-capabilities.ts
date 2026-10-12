@@ -59,6 +59,9 @@ export const TES_CAPABILITY_SCOPES = {
   IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
   // Master Register enumeration is explicit; ordinary authorized operations may append without gaining read access.
   MASTER_REGISTER_READ: "SYSTEM",
+  // Canonical Data Cutover / browser authority retirement (migration 0029).
+  LEGACY_IMPORT_READ: "SYSTEM",
+  LEGACY_IMPORT_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

@@ -4,7 +4,7 @@ import type { PoolClient } from "pg"
 import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import * as operations from "@/lib/insurance/operations"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
-import type { OrganizationInsuranceView, PolicyNumberCheckResult, PolicyView } from "@/lib/insurance/types"
+import type { CoverageScheduleView, OrganizationInsuranceView, PolicyNumberCheckResult, PolicyView, VehicleInsuranceView } from "@/lib/insurance/types"
 
 export * from "@/lib/insurance/errors"
 export * from "@/lib/insurance/definitions"
@@ -17,8 +17,10 @@ export type * from "@/lib/insurance/types"
  *                                                                         \-> Master Register, same transaction
  *
  * Capabilities enforced (all SYSTEM scope; there is no CUSTOMER-facing path in this foundation):
- *   INSURANCE_READ    getOrganizationInsurance, checkPolicyNumber
- *   INSURANCE_MANAGE  everything else: policies, renewals, cancellation, endorsements, corrections, broker of record, archive
+ *   INSURANCE_READ    getOrganizationInsurance, checkPolicyNumber, getCoverageSchedule, getVehicleInsurance
+ *   INSURANCE_MANAGE  everything else: policies, renewals, cancellation, endorsements, corrections, broker of record, archive,
+ *                     and the scheduled vehicles of a vehicle-scheduled coverage
+ *   VEHICLE_READ      getVehicleInsurance only, in addition to INSURANCE_READ (it follows vehicles.merged_into_vehicle_id)
  *
  * Each capability is checked once, by the wrapper, in the same transaction as the work. A policy-number collision names the
  * colliding policy and Organization only when the caller ALSO holds INSURANCE_READ (evaluated lazily on the SAME
@@ -47,6 +49,23 @@ export async function checkPolicyNumber(insurerOrganizationId: string, policyNum
   return withAuthorizedSystem("INSURANCE_READ", (client) => operations.checkPolicyNumber(client, insurerOrganizationId, policyNumber))
 }
 
+/** The vehicles a vehicle-scheduled coverage insures on a calendar date, with the whole history of the schedule. */
+export async function getCoverageSchedule(coverageId: string, options?: { asOf?: string }): Promise<CoverageScheduleView> {
+  return withAuthorizedSystem("INSURANCE_READ", (client) => operations.readCoverageSchedule(client, coverageId, options))
+}
+
+/**
+ * The scheduled coverages of a vehicle on a calendar date. A merged-away vehicle answers for its surviving vehicle, and the
+ * survivor's answer includes what was scheduled on the vehicles merged into it. Vehicle rows are protected by VEHICLE_*
+ * policies, so the merge chain is resolved in its own VEHICLE_READ transaction first (the caller needs both capabilities;
+ * the wrappers cannot be nested) and the schedule is then read in an INSURANCE_READ transaction. The two reads are not one
+ * snapshot, which is acceptable for a read of history.
+ */
+export async function getVehicleInsurance(vehicleId: string, options?: { asOf?: string }): Promise<VehicleInsuranceView> {
+  const family = await withAuthorizedSystem("VEHICLE_READ", (client) => operations.readVehicleFamily(client, vehicleId))
+  return withAuthorizedSystem("INSURANCE_READ", (client) => operations.readVehicleInsurance(client, family, options))
+}
+
 // --- mutations (INSURANCE_MANAGE) -----------------------------------------------------------------------------------
 
 function manage<T>(work: (ctx: operations.OperationContext) => Promise<T>): Promise<T> {
@@ -73,3 +92,12 @@ export const correctBroker = (input: unknown): Promise<PolicyView> => manage((ct
 
 export const archivePolicy = (input: unknown): Promise<PolicyView> => manage((ctx) => operations.archivePolicy(ctx, input))
 export const restorePolicy = (input: unknown): Promise<PolicyView> => manage((ctx) => operations.restorePolicy(ctx, input))
+
+/** Starts a vehicle on a vehicle-scheduled coverage (the vehicle must be active and operated by the insured Organization). */
+export const scheduleVehicle = (input: unknown): Promise<CoverageScheduleView> => manage((ctx) => operations.scheduleVehicle(ctx, input))
+/** REAL-WORLD end of a scheduled vehicle's open window (the entry stays as history). */
+export const removeScheduledVehicle = (input: unknown): Promise<CoverageScheduleView> => manage((ctx) => operations.removeScheduledVehicle(ctx, input))
+/** REAL-WORLD change of a window: the open window ends and the next one starts the same day. */
+export const changeSchedule = (input: unknown): Promise<CoverageScheduleView> => manage((ctx) => operations.changeSchedule(ctx, input))
+/** CORRECTION of the vehicle of a wrongly recorded entry, open or ended (the wrong entry is kept and flagged). */
+export const correctSchedule = (input: unknown): Promise<CoverageScheduleView> => manage((ctx) => operations.correctSchedule(ctx, input))

@@ -41,6 +41,7 @@ import type { PoolClient } from "pg"
 import {
   COVERAGE_TYPE_DEFINITIONS,
   coverageInForce,
+  coverageWindowEnd,
   isCancellationReason,
   isCoverageType,
   isCurrency,
@@ -51,6 +52,7 @@ import {
   parseAmount,
   parseCalendarDate,
   prepareNumber,
+  scheduleInForce,
   termStateOn,
   type CancellationReason,
   type CoverageType,
@@ -72,13 +74,17 @@ import * as repo from "@/lib/insurance/repository"
 import type {
   BrokerPeriodRecord,
   CoverageRecord,
+  CoverageScheduleView,
   EndorsementRecord,
   OrganizationInsuranceView,
   PolicyNumberCheckResult,
   PolicyRecord,
   PolicyView,
+  ScheduledVehicleRecord,
   TermRecord,
   TermView,
+  VehicleFamily,
+  VehicleInsuranceView,
 } from "@/lib/insurance/types"
 import { recordEvent } from "@/lib/master-register/record-event"
 import type { MasterRegisterRepository } from "@/lib/master-register/repository"
@@ -290,6 +296,14 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
     if (constraint === repo.BROKER_CONTACT_ACTIVE_CONSTRAINT) throw new InsuranceValidationError("brokerPersonId", "The broker contact must hold an active relationship with the brokerage firm.")
     if ((repo.REQUIRED_STATE_CONSTRAINTS as readonly string[]).includes(constraint)) throw new InsuranceStateError("The change would leave the policy without an active term or coverage; nothing was changed.")
     if ((repo.CHECK_CONSTRAINTS as readonly string[]).includes(constraint)) throw new InsuranceValidationError("input", "The values are not consistent with the insurance rules.")
+    if (constraint === repo.SCHEDULE_COVERAGE_ACTIVE_CONSTRAINT) throw new InsuranceStateError("The coverage or its term was corrected or is not active; schedule the vehicle on the genuine coverage.")
+    if (constraint === repo.SCHEDULE_SAME_ORGANIZATION_CONSTRAINT) throw new InsuranceNotFoundError("Coverage")
+    if (constraint === repo.SCHEDULE_COVERAGE_SCHEDULED_CONSTRAINT) throw new InsuranceStateError("This coverage applies to the whole fleet; it does not list vehicles.")
+    if (constraint === repo.SCHEDULE_INSIDE_COVERAGE_CONSTRAINT) throw new InsuranceValidationError("effectiveFrom", "The schedule must lie inside the coverage period.")
+    if (constraint === repo.SCHEDULE_VEHICLE_ACTIVE_CONSTRAINT) throw new InsuranceStateError("The vehicle does not exist or is archived or merged, and cannot be newly scheduled.")
+    if (constraint === repo.SCHEDULE_VEHICLE_OPERATED_CONSTRAINT) throw new InsuranceValidationError("vehicleId", "The vehicle must be operated by the insured Organization when the schedule starts.")
+    if ((repo.SCHEDULE_OVERLAP_CONSTRAINTS as readonly string[]).includes(constraint)) throw new InsuranceConflictError("This vehicle is already scheduled on the coverage for that period, or a concurrent change was made.")
+    if ((repo.SCHEDULE_CHECK_CONSTRAINTS as readonly string[]).includes(constraint)) throw new InsuranceValidationError("input", "The values are not consistent with the insurance rules.")
     throw error
   }
 }
@@ -337,7 +351,7 @@ type EventTypeName = "RECORD_CREATED" | "RECORD_UPDATED" | "RECORD_CORRECTED" | 
 const literal = (value: string | number | boolean | null): { kind: "LITERAL"; value: string | number | boolean | null } => ({ kind: "LITERAL", value })
 const reference = (table: string, id: string): { kind: "REFERENCE"; reference: string } => ({ kind: "REFERENCE", reference: `${table}:${id}` })
 
-type ResourceType = "insurance_policy" | "insurance_policy_term" | "insurance_endorsement" | "insurance_coverage" | "insurance_broker_period"
+type ResourceType = "insurance_policy" | "insurance_policy_term" | "insurance_endorsement" | "insurance_coverage" | "insurance_broker_period" | "insurance_coverage_vehicle"
 
 /**
  * Policy numbers, amounts, dates and insurer names are never copied into the Master Register: events reference the rows,
@@ -627,6 +641,10 @@ function coverageInsert(id: string, termId: string, policyId: string, organizati
  * Records a renewal as a new term of the SAME policy. The number may change (when omitted the previous term's number is
  * kept). A new term can start only when the previous one has ended - on or after its stated end, or on or after its
  * cancellation date when it was cancelled - so the terms of a policy never overlap.
+ *
+ * A renewal does NOT carry the vehicle schedule: it is a new period with new coverage rows, and the vehicles it insures are
+ * scheduled on them again, explicitly (scheduleVehicle). The previous term's schedule stays attached to its own coverage rows
+ * as history.
  */
 export async function renewPolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
   const input = requireObject(rawInput, "input", ["policyId", "policyNumber", "termStart", "termEnd", "coverages"])
@@ -792,6 +810,7 @@ export async function addEndorsement(ctx: OperationContext, rawInput: unknown): 
     ])
   }
   if (startedId) await recordCoverageCreated(ctx, "addEndorsement", organizationId, startedId, termId, spec)
+  if (kind === "COVERAGE_CHANGED" && current && startedId) await continueSchedule(ctx, organizationId, current, startedId, spec.scheduledVehiclesOnly, effectiveOn)
   return loadPolicy(ctx, policy.id)
 }
 
@@ -806,7 +825,8 @@ type CancellationPatch = undefined | null | { cancelledOn: string; reason: Cance
  * replacement belongs to the same policy and inherits everything not corrected. The endorsements and genuine coverage rows
  * of the old term are carried onto the replacement (the original rows stay attached to the corrected term, which is why a
  * coverage counts only while its term is genuine); dates that were the term start move with it, endorsement dates never do
- * and must still fall inside the corrected period.
+ * and must still fall inside the corrected period. The vehicle schedule of each carried coverage row follows it (see
+ * carrySchedule); when the corrected period cannot hold a scheduled window the whole correction is refused.
  */
 export async function correctTerm(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
   const input = requireObject(rawInput, "input", ["termId", "policyNumber", "termStart", "termEnd", "cancellation"])
@@ -903,6 +923,8 @@ export async function correctTerm(ctx: OperationContext, rawInput: unknown): Pro
     carried.push({ from: row, id })
   }
   if (cancellation !== null) await guarded(() => repo.setTermCancellation(ctx.client, replacementId, cancellation.cancelledOn, cancellation.reason))
+  // the schedules follow their coverage rows, checked against the corrected period (cancellation included)
+  for (const { from, id } of carried) await carrySchedule(ctx, "correctTerm", organizationId, from, id, from.scheduledVehiclesOnly)
 
   await record(ctx, "RECORD_CORRECTED", "correctTerm", { resourceType: "insurance_policy_term", resourceId: replacementId, organizationId }, [
     { field: "term", before: reference("insurance_policy_terms", termId), after: reference("insurance_policy_terms", replacementId) },
@@ -922,10 +944,81 @@ export async function correctTerm(ctx: OperationContext, rawInput: unknown): Pro
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Vehicle schedule carry-forward (migration 0025)
+// ---------------------------------------------------------------------------------------------------------------
+
+const scheduleCarryRefusal = (reason: string): InsuranceStateError =>
+  new InsuranceStateError(`The vehicle schedule of the coverage cannot be carried forward (${reason}); nothing was changed.`)
+
+const SCHEDULE_CARRY_BLOCKED = "a scheduled vehicle is no longer active or operated by the insured Organization, or the coverage period no longer contains its window"
+
+/** Domain errors the schedule guard raises become one refusal of the whole correction or endorsement; anything else propagates. */
+function refuseCarry(error: unknown): never {
+  if (error instanceof InsuranceValidationError || error instanceof InsuranceStateError || error instanceof InsuranceNotFoundError) throw scheduleCarryRefusal(SCHEDULE_CARRY_BLOCKED)
+  throw error
+}
+
+/**
+ * A change endorsement replaces a coverage state by a new one on the same term. The vehicles scheduled on the state it ends
+ * stay scheduled: each OPEN entry ends on the endorsement date and the same vehicle starts on the new state the same day
+ * (reason CHANGE, one RECORD_UPDATED each). An entry that cannot be split cleanly (it starts on or after the endorsement date,
+ * or is bounded beyond it) or a new state that no longer lists vehicles refuses the whole endorsement; nothing is clamped.
+ */
+async function continueSchedule(ctx: OperationContext, organizationId: string, from: CoverageRecord, toId: string, toSchedules: boolean, date: string): Promise<void> {
+  const rows = (await repo.listCoverageSchedule(ctx.client, from.id)).filter((row) => row.recordStatus === "active" && (row.effectiveTo === null || row.effectiveTo > date))
+  if (rows.length === 0) return
+  if (!toSchedules) throw scheduleCarryRefusal("the new coverage state would no longer list vehicles")
+  for (const row of rows) {
+    if (row.effectiveTo !== null || row.effectiveFrom >= date) {
+      throw scheduleCarryRefusal("a scheduled entry starts on or after the endorsement date or ends after it; end or correct that entry first")
+    }
+    const nextId = randomUUID()
+    try {
+      await guarded(() => repo.endSchedule(ctx.client, row.id, date))
+      await guarded(() => repo.insertSchedule(ctx.client, { id: nextId, coverageId: toId, vehicleId: row.vehicleId, organizationId, reason: "CHANGE", effectiveFrom: date, effectiveTo: null }))
+    } catch (error) {
+      refuseCarry(error)
+    }
+    await recordSchedule(ctx, "RECORD_UPDATED", "addEndorsement", organizationId, nextId, [
+      { field: "scheduledVehicle", before: reference("insurance_coverage_vehicles", row.id), after: reference("insurance_coverage_vehicles", nextId) },
+      { field: "vehicle", before: reference("vehicles", row.vehicleId), after: reference("vehicles", row.vehicleId) },
+    ])
+  }
+}
+
+/**
+ * The vehicle schedule of a corrected coverage moves to its replacement in the same transaction. The corrected coverage keeps
+ * its rows as frozen history; every GENUINE row (open or ended, same vehicle, same window) is created again on the replacement
+ * as a new row (the supersession link is coverage-scoped, so these are new rows, not corrections), each with its own
+ * RECORD_CREATED event. Nothing is clamped: when the replacement cannot take a row exactly as it was (it no longer lists
+ * vehicles, or a vehicle is no longer active or operated, or its period no longer contains the window), the whole correction
+ * is refused.
+ */
+async function carrySchedule(ctx: OperationContext, operation: string, organizationId: string, from: CoverageRecord, replacementId: string, replacementSchedules: boolean): Promise<void> {
+  const rows = (await repo.listCoverageSchedule(ctx.client, from.id)).filter((row) => row.recordStatus === "active")
+  if (rows.length === 0) return
+  if (!replacementSchedules) throw scheduleCarryRefusal("the new coverage would no longer list vehicles")
+  for (const row of rows) {
+    const carriedId = randomUUID()
+    try {
+      await guarded(() =>
+        repo.insertSchedule(ctx.client, { id: carriedId, coverageId: replacementId, vehicleId: row.vehicleId, organizationId, reason: "CORRECTION", effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo }),
+      )
+    } catch (error) {
+      refuseCarry(error)
+    }
+    await recordSchedule(ctx, "RECORD_CREATED", operation, organizationId, carriedId, [
+      { field: "scheduledVehicle", before: literal(null), after: reference("insurance_coverage_vehicles", carriedId) },
+      { field: "vehicle", before: literal(null), after: reference("vehicles", row.vehicleId) },
+    ])
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // correctCoverage
 // ---------------------------------------------------------------------------------------------------------------
 
-/** CORRECTS a wrongly recorded coverage row (kept and flagged; the replacement keeps the same term and dates). */
+/** CORRECTS a wrongly recorded coverage row (kept and flagged; the replacement keeps the same term and dates and takes over its vehicle schedule). */
 export async function correctCoverage(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
   const input = requireObject(rawInput, "input", ["coverageId", ...COVERAGE_KEYS])
   const coverageId = parseUuid(input.coverageId, "coverageId")
@@ -963,6 +1056,7 @@ export async function correctCoverage(ctx: OperationContext, rawInput: unknown):
     { field: "coverage", before: reference("insurance_coverages", target.id), after: reference("insurance_coverages", replacementId) },
     { field: "coverageType", before: literal(target.coverageType), after: literal(merged.coverageType) },
   ])
+  await carrySchedule(ctx, "correctCoverage", organizationId, target, replacementId, merged.scheduledVehiclesOnly)
   return loadPolicy(ctx, policy.id)
 }
 
@@ -1045,9 +1139,11 @@ export async function correctEndorsement(ctx: OperationContext, rawInput: unknow
   if (ended && endedId) {
     await guarded(() => repo.insertCoverage(ctx.client, coverageInsert(endedId, termId, policy.id, organizationId, policy.family, specOf(ended), ended.effectiveFrom, ended.endorsementId)))
     await guarded(() => repo.endCoverage(ctx.client, endedId, date, replacementId))
+    await carrySchedule(ctx, "correctEndorsement", organizationId, ended, endedId, ended.scheduledVehiclesOnly)
   }
   if (started && startedId && startedSpec) {
     await guarded(() => repo.insertCoverage(ctx.client, coverageInsert(startedId, termId, policy.id, organizationId, policy.family, startedSpec, date, replacementId)))
+    await carrySchedule(ctx, "correctEndorsement", organizationId, started, startedId, startedSpec.scheduledVehiclesOnly)
   }
 
   await record(ctx, "RECORD_CORRECTED", "correctEndorsement", { resourceType: "insurance_endorsement", resourceId: replacementId, organizationId }, [
@@ -1169,4 +1265,254 @@ export async function restorePolicy(ctx: OperationContext, rawInput: unknown): P
     { field: "lifecycle", before: literal("archived"), after: literal("active") },
   ])
   return loadPolicy(ctx, policyId)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scheduled vehicles (migration 0025)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Which vehicles a vehicle-scheduled coverage insures, over time. A schedule row is a calendar-date window
+ * [effectiveFrom, effectiveTo) on ONE coverage for ONE vehicle; an open window runs until the coverage itself ends.
+ *
+ *   scheduleVehicle         starts a window (the vehicle must be ACTIVE and operated by the insured Organization that day);
+ *   removeScheduledVehicle  REAL-WORLD end of an open window;
+ *   changeSchedule          REAL-WORLD change of the window: the open window ends at T and a bounded one starts at T;
+ *   correctSchedule         the recorded VEHICLE was wrong: the row (open or already ended) is kept, flagged and frozen, and
+ *                           its replacement inherits the window; the coverage cannot change (the supersession link is
+ *                           coverage-scoped). A wrong coverage is corrected with correctCoverage / correctTerm /
+ *                           correctEndorsement, which carry the schedule to the replacement atomically.
+ *
+ * renewPolicy does NOT carry a schedule: a renewal is a new period of the policy, and the vehicles it insures are scheduled
+ * again, explicitly, on the new term's coverages (scheduleVehicle).
+ *
+ * Lock order: insured Organization, policy, term, coverage, then the vehicle (shared: archiving or merging a vehicle needs
+ * it exclusively) and then the schedule row. The vehicle and its Organization relationship are read, and the vehicle locked,
+ * by the database guard (a SECURITY DEFINER trigger) when a row is inserted, because the transaction carries an INSURANCE
+ * capability and cannot read VEHICLE tables itself; this layer therefore does not pre-check the vehicle and translates the
+ * guard's constraint names instead. An operation on an existing row (changeSchedule, correctSchedule) has locked that row
+ * before the guard takes the vehicle lock; no vehicle writer ever waits on a schedule row, so the two orders cannot deadlock.
+ * Whether a schedule is enough for a fleet is a Rules determination and is never stored here.
+ */
+
+type LockedCoverage = { organizationId: string; policy: PolicyRecord; term: TermRecord; coverage: CoverageRecord }
+
+/**
+ * Locks the insured Organization (the named one when `expectedOrganizationId` is given: a coverage that belongs to another
+ * Organization is then simply not found, and nothing of the other Organization is disclosed), the policy, the term and the
+ * coverage. A corrected term or coverage is frozen history and cannot take schedule changes.
+ */
+async function lockCoverage(ctx: OperationContext, coverageId: string, expectedOrganizationId: string | null): Promise<LockedCoverage> {
+  const termId = await repo.findCoverageTerm(ctx.client, coverageId)
+  if (!termId) throw new InsuranceNotFoundError("Coverage")
+  const policyId = await repo.findTermPolicy(ctx.client, termId)
+  if (!policyId) throw new InsuranceNotFoundError("Coverage")
+  const insuredId = await repo.findPolicyOrganization(ctx.client, policyId)
+  if (!insuredId) throw new InsuranceNotFoundError("Coverage")
+  const lockedOrganizationId = expectedOrganizationId ?? insuredId
+  await lockActiveOrganization(ctx, lockedOrganizationId)
+  if (insuredId !== lockedOrganizationId) throw new InsuranceNotFoundError("Coverage")
+  const policy = await repo.getPolicy(ctx.client, policyId, true)
+  if (!policy) throw new InsuranceNotFoundError("Policy")
+  if (policy.recordStatus !== "active") throw new InsuranceStateError("This policy is archived; restore it before changing it.")
+  const term = await repo.getTerm(ctx.client, termId, true)
+  const coverage = await repo.getCoverage(ctx.client, coverageId, true)
+  if (!term || !coverage) throw new InsuranceNotFoundError("Coverage")
+  if (term.recordStatus !== "active" || coverage.recordStatus !== "active") {
+    throw new InsuranceStateError("This coverage was corrected; its schedule is history. Work with the replacement coverage.")
+  }
+  return { organizationId: insuredId, policy, term, coverage }
+}
+
+type LockedSchedule = LockedCoverage & { schedule: ScheduledVehicleRecord }
+
+/** Locks the coverage context of an existing schedule row, then the row itself; the row must be genuine. */
+async function lockSchedule(ctx: OperationContext, scheduleId: string): Promise<LockedSchedule> {
+  const coverageId = await repo.findScheduleCoverage(ctx.client, scheduleId)
+  if (!coverageId) throw new InsuranceNotFoundError("Scheduled vehicle")
+  const locked = await lockCoverage(ctx, coverageId, null)
+  const schedule = await repo.getSchedule(ctx.client, scheduleId, true)
+  if (!schedule) throw new InsuranceNotFoundError("Scheduled vehicle")
+  if (schedule.recordStatus !== "active") throw new InsuranceStateError("This schedule entry was already corrected; work with its replacement.")
+  return { ...locked, schedule }
+}
+
+function assertOpen(schedule: ScheduledVehicleRecord): void {
+  if (schedule.effectiveTo !== null) throw new InsuranceStateError("This schedule entry has already ended.")
+}
+
+/** The window lies inside the coverage: not before it starts, not past its end (its own, its term's or the cancellation). */
+function assertInsideCoverage(locked: LockedCoverage, from: string, to: string | null): void {
+  const end = coverageWindowEnd({ coverageEnd: locked.coverage.effectiveTo, termEnd: locked.term.termEnd, cancelledOn: locked.term.cancelledOn })
+  if (from < locked.coverage.effectiveFrom) throw new InsuranceValidationError("effectiveFrom", "effectiveFrom cannot be before the coverage starts.")
+  if (end !== null && from >= end) throw new InsuranceValidationError("effectiveFrom", "effectiveFrom must be before the coverage ends.")
+  if (to !== null && to <= from) throw new InsuranceValidationError("effectiveTo", "effectiveTo must be after effectiveFrom.")
+  if (to !== null && end !== null && to > end) throw new InsuranceValidationError("effectiveTo", "effectiveTo cannot be after the coverage ends.")
+}
+
+async function recordSchedule(ctx: OperationContext, eventType: EventTypeName, operation: string, organizationId: string, scheduleId: string, fieldChanges: FieldChange[]): Promise<void> {
+  await record(ctx, eventType, operation, { resourceType: "insurance_coverage_vehicle", resourceId: scheduleId, organizationId }, fieldChanges)
+}
+
+/** Starts a window: the vehicle becomes scheduled on the coverage from `effectiveFrom` (an `effectiveTo` records an already ended window). */
+export async function scheduleVehicle(ctx: OperationContext, rawInput: unknown): Promise<CoverageScheduleView> {
+  const input = requireObject(rawInput, "input", ["organizationId", "coverageId", "vehicleId", "effectiveFrom", "effectiveTo"])
+  const organizationId = parseUuid(input.organizationId, "organizationId")
+  const coverageId = parseUuid(input.coverageId, "coverageId")
+  const vehicleId = parseUuid(input.vehicleId, "vehicleId")
+  const effectiveFrom = parseCalendarDate(input.effectiveFrom, "effectiveFrom")
+  const effectiveTo = optionalDate(input.effectiveTo, "effectiveTo")
+
+  const locked = await lockCoverage(ctx, coverageId, organizationId)
+  if (!locked.coverage.scheduledVehiclesOnly) throw new InsuranceStateError("This coverage applies to the whole fleet; it does not list vehicles.")
+  await assertNotFutureDate(ctx, effectiveFrom, "effectiveFrom")
+  if (effectiveTo !== null) await assertNotFutureDate(ctx, effectiveTo, "effectiveTo")
+  assertInsideCoverage(locked, effectiveFrom, effectiveTo)
+
+  const scheduleId = randomUUID()
+  await guarded(() => repo.insertSchedule(ctx.client, { id: scheduleId, coverageId, vehicleId, organizationId, reason: "INITIAL", effectiveFrom, effectiveTo }))
+  await recordSchedule(ctx, "RECORD_CREATED", "scheduleVehicle", organizationId, scheduleId, [
+    { field: "scheduledVehicle", before: literal(null), after: reference("insurance_coverage_vehicles", scheduleId) },
+    { field: "vehicle", before: literal(null), after: reference("vehicles", vehicleId) },
+  ])
+  return readCoverageSchedule(ctx.client, coverageId)
+}
+
+/** REAL-WORLD removal: ends the open window on `effectiveTo` (the database date by default). The row stays as history. */
+export async function removeScheduledVehicle(ctx: OperationContext, rawInput: unknown): Promise<CoverageScheduleView> {
+  const input = requireObject(rawInput, "input", ["scheduleId", "effectiveTo"])
+  const scheduleId = parseUuid(input.scheduleId, "scheduleId")
+  const explicit = optionalDate(input.effectiveTo, "effectiveTo")
+
+  const locked = await lockSchedule(ctx, scheduleId)
+  assertOpen(locked.schedule)
+  const effectiveTo = explicit ?? (await repo.databaseToday(ctx.client))
+  await assertNotFutureDate(ctx, effectiveTo, "effectiveTo")
+  assertInsideCoverage(locked, locked.schedule.effectiveFrom, effectiveTo)
+
+  await guarded(() => repo.endSchedule(ctx.client, scheduleId, effectiveTo))
+  await recordSchedule(ctx, "RECORD_UPDATED", "removeScheduledVehicle", locked.organizationId, scheduleId, [
+    { field: "scheduledVehicle", before: reference("insurance_coverage_vehicles", scheduleId), after: literal("ended") },
+    { field: "vehicle", before: reference("vehicles", locked.schedule.vehicleId), after: literal(null) },
+  ])
+  return readCoverageSchedule(ctx.client, locked.coverage.id)
+}
+
+/**
+ * REAL-WORLD change of the window: the open window ends on `effectiveFrom` and the next one, bounded by `effectiveTo`, starts
+ * on the same day (an open window replaced by another open one would change nothing, so the new end is required).
+ */
+export async function changeSchedule(ctx: OperationContext, rawInput: unknown): Promise<CoverageScheduleView> {
+  const input = requireObject(rawInput, "input", ["scheduleId", "effectiveFrom", "effectiveTo"])
+  const scheduleId = parseUuid(input.scheduleId, "scheduleId")
+  const effectiveFrom = parseCalendarDate(input.effectiveFrom, "effectiveFrom")
+  const effectiveTo = parseCalendarDate(input.effectiveTo, "effectiveTo")
+
+  const locked = await lockSchedule(ctx, scheduleId)
+  assertOpen(locked.schedule)
+  await assertNotFutureDate(ctx, effectiveFrom, "effectiveFrom")
+  await assertNotFutureDate(ctx, effectiveTo, "effectiveTo")
+  if (effectiveFrom <= locked.schedule.effectiveFrom) throw new InsuranceValidationError("effectiveFrom", "The change must be after the current window began.")
+  assertInsideCoverage(locked, effectiveFrom, effectiveTo)
+
+  const nextId = randomUUID()
+  await guarded(() => repo.endSchedule(ctx.client, scheduleId, effectiveFrom))
+  await guarded(() =>
+    repo.insertSchedule(ctx.client, {
+      id: nextId,
+      coverageId: locked.coverage.id,
+      vehicleId: locked.schedule.vehicleId,
+      organizationId: locked.organizationId,
+      reason: "CHANGE",
+      effectiveFrom,
+      effectiveTo,
+    }),
+  )
+  await recordSchedule(ctx, "RECORD_UPDATED", "changeSchedule", locked.organizationId, nextId, [
+    { field: "scheduledVehicle", before: reference("insurance_coverage_vehicles", scheduleId), after: reference("insurance_coverage_vehicles", nextId) },
+    { field: "vehicle", before: reference("vehicles", locked.schedule.vehicleId), after: reference("vehicles", locked.schedule.vehicleId) },
+  ])
+  return readCoverageSchedule(ctx.client, locked.coverage.id)
+}
+
+/** CORRECTS the vehicle of a wrongly recorded entry (open or already ended); the replacement inherits the window. */
+export async function correctSchedule(ctx: OperationContext, rawInput: unknown): Promise<CoverageScheduleView> {
+  const input = requireObject(rawInput, "input", ["scheduleId", "vehicleId"])
+  const scheduleId = parseUuid(input.scheduleId, "scheduleId")
+  const vehicleId = parseUuid(input.vehicleId, "vehicleId")
+
+  const locked = await lockSchedule(ctx, scheduleId)
+  const old = locked.schedule
+  if (vehicleId === old.vehicleId) throw new InsuranceValidationError("vehicleId", "The schedule entry is unchanged.")
+  assertInsideCoverage(locked, old.effectiveFrom, old.effectiveTo)
+
+  const replacementId = randomUUID()
+  await guarded(() =>
+    repo.insertSchedule(ctx.client, {
+      id: replacementId,
+      coverageId: old.coverageId,
+      vehicleId,
+      organizationId: locked.organizationId,
+      reason: "CORRECTION",
+      effectiveFrom: old.effectiveFrom,
+      effectiveTo: old.effectiveTo,
+    }),
+  )
+  await guarded(() => repo.supersedeSchedule(ctx.client, scheduleId, replacementId))
+  await recordSchedule(ctx, "RECORD_CORRECTED", "correctSchedule", locked.organizationId, replacementId, [
+    { field: "scheduledVehicle", before: reference("insurance_coverage_vehicles", scheduleId), after: reference("insurance_coverage_vehicles", replacementId) },
+    { field: "vehicle", before: reference("vehicles", old.vehicleId), after: reference("vehicles", vehicleId) },
+  ])
+  return readCoverageSchedule(ctx.client, old.coverageId)
+}
+
+/** The vehicles a coverage schedules on a calendar date (the database date by default) and the whole history of the schedule. */
+export async function readCoverageSchedule(client: PoolClient, rawCoverageId: unknown, options: { asOf?: string } = {}): Promise<CoverageScheduleView> {
+  const coverageId = parseUuid(rawCoverageId, "coverageId")
+  const requested = options.asOf === undefined ? null : parseCalendarDate(options.asOf, "asOf")
+  const coverage = await repo.getCoverage(client, coverageId)
+  if (!coverage) throw new InsuranceNotFoundError("Coverage")
+  const term = await repo.getTerm(client, coverage.termId)
+  const policyId = await repo.findTermPolicy(client, coverage.termId)
+  const organizationId = policyId ? await repo.findPolicyOrganization(client, policyId) : undefined
+  if (!term || !organizationId) throw new InsuranceNotFoundError("Coverage")
+  const asOfDate = requested ?? (await repo.databaseToday(client))
+  const history = await repo.listCoverageSchedule(client, coverageId)
+  const genuine = coverage.recordStatus === "active" && term.recordStatus === "active"
+  // an open window runs only until the coverage ends
+  const end = coverageWindowEnd({ coverageEnd: coverage.effectiveTo, termEnd: term.termEnd, cancelledOn: term.cancelledOn })
+  const coverageInForceOnDate = genuine && (end === null || asOfDate < end)
+  const scheduled = coverageInForceOnDate ? history.filter((row) => row.recordStatus === "active" && scheduleInForce(row, asOfDate)) : []
+  return { coverageId, organizationId, asOfDate, coverage, scheduled, history }
+}
+
+/**
+ * Step one of a vehicle read, on a transaction that can read vehicles (VEHICLE_READ): the vehicle a (possibly merged-away)
+ * vehicle answers for, found by following vehicles.merged_into_vehicle_id, and every vehicle merged into that survivor.
+ */
+export async function readVehicleFamily(client: PoolClient, rawVehicleId: unknown): Promise<VehicleFamily> {
+  const vehicleId = parseUuid(rawVehicleId, "vehicleId")
+  const found = await repo.findVehicleSurvivor(client, vehicleId)
+  if (!found.exists) throw new InsuranceNotFoundError("Vehicle")
+  if (found.survivorId === null) throw new InsuranceStateError("The merge history of this vehicle has no surviving vehicle; it cannot be resolved.")
+  return { vehicleId, resolvedVehicleId: found.survivorId, vehicleIds: await repo.listVehicleFamily(client, found.survivorId) }
+}
+
+/**
+ * Step two, on an INSURANCE_READ transaction: the scheduled coverages of a vehicle family on a calendar date. Asking about a
+ * vehicle that was merged away answers for the surviving vehicle, and the survivor's answer includes what was scheduled on
+ * the vehicles merged into it (each row still names the vehicle it was recorded on).
+ */
+export async function readVehicleInsurance(client: PoolClient, family: VehicleFamily, options: { asOf?: string } = {}): Promise<VehicleInsuranceView> {
+  const requested = options.asOf === undefined ? null : parseCalendarDate(options.asOf, "asOf")
+  const asOfDate = requested ?? (await repo.databaseToday(client))
+  const inForce = await repo.listVehicleScheduleInForce(client, family.vehicleIds, asOfDate)
+  const history = await repo.listVehicleSchedule(client, family.vehicleIds)
+  const coverages = await repo.getCoverages(client, [...new Set(inForce.map((row) => row.schedule.coverageId))])
+  const scheduled = inForce.map(({ schedule, policyId }) => {
+    const coverage = coverages.get(schedule.coverageId)
+    if (!coverage) throw new InsuranceNotFoundError("Coverage")
+    return { schedule, coverage, policyId, organizationId: schedule.organizationId }
+  })
+  return { vehicleId: family.vehicleId, resolvedVehicleId: family.resolvedVehicleId, asOfDate, scheduled, history }
 }

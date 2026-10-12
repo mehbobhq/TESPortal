@@ -105,7 +105,7 @@ BEGIN
     END IF;
   END LOOP;
 
-  IF to_regproc('tes_security.prevent_legacy_import_delete_or_truncate()') IS NULL THEN
+  IF to_regprocedure('tes_security.prevent_legacy_import_delete_or_truncate()') IS NULL THEN
     RAISE EXCEPTION 'missing no-delete/no-truncate trigger function';
   END IF;
 

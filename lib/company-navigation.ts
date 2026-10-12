@@ -10,6 +10,7 @@ export type CompanyNavigationItem = {
  */
 export const COMPANY_NAVIGATION_ITEMS: readonly CompanyNavigationItem[] = [
   { title: "Profile", segment: "profile" },
+  { title: "Onboarding", segment: "onboarding" },
   { title: "Business", segment: "business", customerOnly: true },
   { title: "Contacts", segment: "contacts" },
   { title: "Insurance", segment: "insurance", customerOnly: true },

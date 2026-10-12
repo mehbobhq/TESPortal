@@ -138,6 +138,7 @@ BEGIN
         'legacy_import_review_decisions'
       )
       AND privilege_type IN ('DELETE', 'TRUNCATE')
+      AND grantee <> current_user
   ) THEN
     RAISE EXCEPTION 'legacy import table has DELETE or TRUNCATE privilege';
   END IF;

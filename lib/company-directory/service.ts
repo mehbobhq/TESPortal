@@ -367,7 +367,7 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
       `SELECT alias
          FROM public.organization_aliases
         WHERE organization_id = $1
-          AND alias_type = 'TRADE_NAME'
+          AND upper(alias_type) = 'TRADE_NAME'
           AND status = 'active'
         ORDER BY created_at, id
         LIMIT 1`,
@@ -405,7 +405,7 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
 function toEditRecord(organization: OrganizationRecord): CompanyEditRecord {
   const active = organization.identifiers.filter((identifier) => identifier.status === "active")
   const valueOf = (kind: string) => active.find((identifier) => identifier.kind === kind)?.value ?? ""
-  const trade = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType === "TRADE_NAME")
+  const trade = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType?.toUpperCase() === "TRADE_NAME")
   return {
     id: organization.id,
     companyName: organization.legalName,
@@ -447,7 +447,7 @@ export async function updateCompanyDirectoryRecord(
   if (has(input.dba)) {
     const dba = text(input.dba)
     if (dba !== current.dba) {
-      const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType === "TRADE_NAME")
+      const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType?.toUpperCase() === "TRADE_NAME")
       if (existing) organization = (await deactivateAlias(organizationId, existing.id)).organization
       if (dba) organization = (await addAlias(organizationId, { alias: dba, aliasType: "TRADE_NAME" })).organization
     }

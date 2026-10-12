@@ -5,7 +5,7 @@ import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 /**
  * Additive read services over the existing operational-identity tables (migrations 0014, 0020, 0021). They only SELECT
  * and run under the same VEHICLE_READ / DRIVER_READ capabilities the row-level security policies already name; they
- * never join public.organizations (invisible to those capabilities) and never return a row another capability owns.
+ * never join the organizations table (invisible to those capabilities) and never return a row another capability owns.
  */
 
 export type OrganizationVehicleRecord = {

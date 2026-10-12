@@ -1,6 +1,10 @@
 import "server-only"
 
 import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import { createOrganization } from "@/lib/corporate-identity/service"
+import { establishCustomerRelationship } from "@/lib/customer-relationship/service"
+import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
+import type { ClassificationInput, CreateOrganizationInput } from "@/lib/corporate-identity/types"
 
 type CompanyDirectoryRow = {
   id: string
@@ -65,6 +69,91 @@ export type CompanyProfileRecord = {
   mvid: string | null
   scac: string | null
   carrierCode: string | null
+}
+
+export type CreateCompanyDirectoryInput = {
+  companyName?: unknown
+  dba?: unknown
+  companyType?: unknown
+  opRegion?: unknown
+  regCorpState?: unknown
+  regCorpCountry?: unknown
+  incorpNo?: unknown
+  businessNo?: unknown
+  ein?: unknown
+  startDate?: unknown
+  status?: unknown
+}
+
+export type CreateCompanyDirectoryResult = {
+  company: CompanyDirectoryRecord
+}
+
+const CLASSIFICATION_BY_COMPANY_TYPE: Record<string, string | null> = {
+  Customer: null,
+  Prospect: "other",
+  "Owner Operator": "owner_operator",
+  "Service Provider": "service_provider",
+  "Finance/ Leasing Company": "finance_leasing_company",
+  "Insurance Broker": "insurance_broker",
+  "Insurance Company": "insurance_company",
+  "Workers Insurance": "workers_insurance",
+  "Employee Reference": "employee_reference",
+  "Government Agency": "government_agency",
+  "Sub Contractor": "sub_contractor",
+  Other: "other",
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function countryCode(value: unknown): "CA" | "US" | null {
+  const raw = text(value).toUpperCase()
+  if (raw === "CA" || raw === "CANADA") return "CA"
+  if (raw === "US" || raw === "USA" || raw === "UNITED STATES") return "US"
+  return null
+}
+
+function dateToInstant(value: unknown): string {
+  const date = text(value)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return `${date}T00:00:00.000Z`
+  return new Date().toISOString()
+}
+
+function buildCreateOrganizationInput(input: CreateCompanyDirectoryInput): CreateOrganizationInput {
+  const legalName = text(input.companyName)
+  if (!legalName) throw new Error("Company Name is required.")
+
+  const type = text(input.companyType)
+  if (!type) throw new Error("Company Record Type is required.")
+
+  const country = countryCode(input.regCorpCountry)
+  const regionCode = text(input.regCorpState)
+  const formation = country === null ? null : { country, region: regionCode || null }
+  const identifiers: CorporateIdentifierInput[] = []
+  const incorporation = text(input.incorpNo)
+  const businessNumber = text(input.businessNo)
+  const ein = text(input.ein)
+
+  if (incorporation && formation) {
+    identifiers.push({ kind: "INCORPORATION", value: incorporation, country: formation.country, region: formation.region })
+  }
+  if (businessNumber && country !== "US") identifiers.push({ kind: "CRA_BN", value: businessNumber })
+  if (ein) identifiers.push({ kind: "IRS_EIN", value: ein })
+
+  const aliases = text(input.dba) ? [{ alias: text(input.dba), aliasType: "TRADE_NAME" as const }] : []
+  const classificationCode = CLASSIFICATION_BY_COMPANY_TYPE[type]
+  const classifications: ClassificationInput[] = classificationCode ? [{ code: classificationCode, isPrimary: true }] : []
+
+  return {
+    legalName,
+    displayName: legalName,
+    formation,
+    identifiers,
+    aliases,
+    classifications,
+  }
 }
 
 const statusLabel = (status: "active" | "archived" | "merged") =>
@@ -160,6 +249,34 @@ export async function listCustomerDirectory(): Promise<CustomerDirectoryRecord[]
       }
     })
   })
+}
+
+export async function createCompanyDirectoryRecord(input: CreateCompanyDirectoryInput): Promise<CreateCompanyDirectoryResult> {
+  const type = text(input.companyType)
+  const result = await createOrganization(buildCreateOrganizationInput(input))
+  const organization = result.organization
+  const isCustomer = type === "Customer"
+
+  if (isCustomer) {
+    await establishCustomerRelationship({
+      organizationId: organization.id,
+      engagementType: "RECURRING",
+      stage: "ONBOARDING",
+      plannedEndAt: null,
+      startedAt: dateToInstant(input.startDate),
+    })
+  }
+
+  return {
+    company: {
+      id: organization.id,
+      name: organization.displayName ?? organization.legalName,
+      kind: primaryKind(organization.classifications.find((classification) => classification.isPrimary)?.code ?? null, isCustomer),
+      region: region(organization.formationCountry, organization.formationRegion),
+      status: statusLabel(organization.status),
+      tone: statusTone(organization.status),
+    },
+  }
 }
 
 export async function getCompanyProfile(organizationId: string): Promise<CompanyProfileRecord | null> {

@@ -9,7 +9,7 @@ const source = (relative: string) => readFileSync(path.join(ROOT, relative), "ut
 
 describe("company directory PostgreSQL cutover boundaries", () => {
   it("keeps Companies, Customers and Company Profile identity views off browser persistence", () => {
-    for (const file of ["app/companies/page.tsx", "app/customers/page.tsx", "app/companies/[id]/profile/page.tsx"]) {
+    for (const file of ["app/companies/page.tsx", "app/customers/page.tsx", "app/companies/[id]/profile/page.tsx", "app/companies/new/page.tsx"]) {
       const code = source(file)
       assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB/i, file)
       assert.match(code, /fetch\([`"]\/api\/(?:companies|customers)/, file)
@@ -28,6 +28,8 @@ describe("company directory PostgreSQL cutover boundaries", () => {
     const code = source("lib/company-directory/service.ts")
     assert.match(code, /withAuthorizedSystem\("ORGANIZATION_REGISTRY_READ"/)
     assert.match(code, /withAuthorizedSystem\("CUSTOMER_RELATIONSHIP_READ"/)
+    assert.match(code, /createOrganization/)
+    assert.match(code, /establishCustomerRelationship/)
     assert.match(code, /getCompanyProfile/)
     assert.match(code, /public\.organizations/)
     assert.match(code, /public\.customers/)

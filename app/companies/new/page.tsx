@@ -226,7 +226,7 @@ const STRICT_DUPLICATE_RULES: DuplicateRule[] = [
   which is dangerous because registration jurisdiction drives other
   company pages.
 */
-const REGIONS: Region[] = [
+const REGIONS = ([
   // Canada
   { code: "AB", name: "Alberta", country: "Canada" },
   { code: "BC", name: "British Columbia", country: "Canada" },
@@ -294,7 +294,7 @@ const REGIONS: Region[] = [
   { code: "WV", name: "West Virginia", country: "United States" },
   { code: "WI", name: "Wisconsin", country: "United States" },
   { code: "WY", name: "Wyoming", country: "United States" },
-].sort((a, b) => a.name.localeCompare(b.name))
+] satisfies Region[]).sort((a, b) => a.name.localeCompare(b.name))
 
 /* =========================================================
    NORMALIZATION
@@ -400,68 +400,8 @@ function getSimilarity(a: string, b: string) {
   return ((maxLength - distance) / maxLength) * 100
 }
 
-/* =========================================================
-   PORTAL RECORD DISCOVERY
-
-   During the localStorage prototype stage, this allows the
-   duplicate engine to inspect TES stores rather than only
-   tes_companies.
-
-   Production replacement:
-   this becomes one server-side identity/uniqueness service.
-========================================================= */
-
-function collectObjects(
-  value: unknown,
-  source: string,
-  output: PortalRecord[]
-) {
-  if (!value || typeof value !== "object") return
-
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectObjects(item, source, output))
-    return
-  }
-
-  const object = value as Record<string, any>
-
-  output.push({
-    data: object,
-    source,
-  })
-
-  Object.values(object).forEach((child) => {
-    if (child && typeof child === "object") {
-      collectObjects(child, source, output)
-    }
-  })
-}
-
 function getPortalRecords(): PortalRecord[] {
-  const records: PortalRecord[] = []
-
-  try {
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index)
-
-      if (!key || !key.startsWith("tes_")) continue
-
-      const raw = localStorage.getItem(key)
-
-      if (!raw) continue
-
-      try {
-        const parsed = JSON.parse(raw)
-        collectObjects(parsed, key, records)
-      } catch {
-        // Ignore non-JSON prototype storage entries.
-      }
-    }
-  } catch {
-    return []
-  }
-
-  return records
+  return []
 }
 
 function getRecordName(record: Record<string, any>) {
@@ -849,35 +789,6 @@ function evaluateDuplicates(form: HTMLFormElement) {
 }
 
 /* =========================================================
-   RECORD ID
-========================================================= */
-
-function generateCompanyRecordId(existingIds: Set<string>) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    let randomNumber: number
-
-    if (
-      typeof crypto !== "undefined" &&
-      "getRandomValues" in crypto
-    ) {
-      const values = new Uint32Array(1)
-      crypto.getRandomValues(values)
-
-      randomNumber = 10000 + (values[0] % 90000)
-    } else {
-      randomNumber =
-        10000 + Math.floor(Math.random() * 90000)
-    }
-
-    const id = `CMP-${randomNumber}`
-
-    if (!existingIds.has(id)) return id
-  }
-
-  return `CMP-${Date.now()}`
-}
-
-/* =========================================================
    ADDRESS BLOCK
 ========================================================= */
 
@@ -959,7 +870,9 @@ function SmartAddressBlock({
 
           <Select
             value={region}
-            onValueChange={handleRegionChange}
+            onValueChange={(value) => {
+              if (value) handleRegionChange(value)
+            }}
           >
             <SelectTrigger
               className={isAdditional ? "bg-background" : ""}
@@ -1171,7 +1084,7 @@ export default function NewCompanyPage() {
 
   const [credentialsContext, setCredentialsContext] = useState(false)
   const [contextReady, setContextReady] = useState(false)
-  const [recordId, setRecordId] = useState("")
+  const [recordId] = useState("Assigned on save")
   const [selectedType, setSelectedType] = useState("")
   const [companyName, setCompanyName] = useState("")
 
@@ -1223,24 +1136,6 @@ export default function NewCompanyPage() {
     }
 
     setContextReady(true)
-  }, [])
-
-  useEffect(() => {
-    try {
-      const companies = JSON.parse(
-        localStorage.getItem("tes_companies") || "[]"
-      )
-
-      const ids = new Set<string>(
-        companies
-          .map((company: any) => company.id)
-          .filter(Boolean)
-      )
-
-      setRecordId(generateCompanyRecordId(ids))
-    } catch {
-      setRecordId(generateCompanyRecordId(new Set()))
-    }
   }, [])
 
   /* ---------------------------------------------------------
@@ -1367,7 +1262,7 @@ export default function NewCompanyPage() {
      CREATE
   --------------------------------------------------------- */
 
-  const handleCreateCompany = (
+  const handleCreateCompany = async (
     event: React.FormEvent<HTMLFormElement>
   ) => {
     event.preventDefault()
@@ -1425,166 +1320,34 @@ export default function NewCompanyPage() {
         formData.entries()
       )
 
-      /*
-        US-ONLY COMPATIBILITY:
+      const response = await fetch("/api/companies", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...formEntries,
+          companyName: companyName.trim(),
+          companyType: selectedType,
+          opRegion,
+          regCorpState: businessRegion,
+          regCorpCountry: businessCountry,
+          businessNo:
+            opRegion === "US Only"
+              ? einNumber
+              : businessNumber,
+          ein: einNumber,
+          cargoTypes: selectedCargo,
+        }),
+      })
 
-        Existing TES pages currently read businessNo as the
-        combined BN/EIN field.
+      const result = await response.json()
 
-        We preserve that connection while also storing EIN
-        explicitly under `ein`.
-
-        Cross-Border:
-        businessNo = Canadian BN
-        ein        = US EIN
-      */
-      const compatibleBusinessNumber =
-        opRegion === "US Only"
-          ? einNumber
-          : businessNumber
-
-      const timestamp = new Date().toISOString()
-
-      const newCompany = {
-        ...formEntries,
-
-        /* Permanent TES record identity */
-        id: recordId,
-
-        /* Existing directory contracts */
-        name: companyName.trim(),
-        companyName: companyName.trim(),
-        kind: selectedType,
-
-        /*
-          IMPORTANT:
-          Keep BOTH because current portal code contains consumers
-          of each. `region` remains the operational source contract.
-        */
-        region: opRegion,
-        opRegion,
-
-        /*
-          Existing contact-directory compatibility.
-        */
-        contact:
-          String(formEntries.contactPerson || "").trim() ||
-          "N/A",
-
-        status:
-          String(formEntries.status || "").trim() ||
-          "Active",
-
-        tone: "ok",
-
-        /*
-          Preserve exact registration contract.
-        */
-        regCorpState: businessRegion,
-        regCorpCountry: businessCountry,
-
-        /*
-          Preserve current company schema.
-        */
-        businessNo: compatibleBusinessNumber,
-
-        /*
-          Explicit EIN adds precision while keeping old readers working.
-        */
-        ein: einNumber,
-
-        cargoTypes: selectedCargo,
-
-        /*
-          Lifecycle / traceability metadata.
-        */
-        schemaVersion: 2,
-        isArchived: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-
-        /*
-          Preserve human duplicate-review evidence.
-          This is NOT the immutable Master Register; it is useful
-          prototype metadata until the server-side audit layer is wired.
-        */
-        duplicateReview:
-          duplicateResult.review.length > 0
-            ? {
-                reviewed: true,
-                reviewedAt: timestamp,
-                findings: duplicateResult.review.map(
-                  (finding) => ({
-                    field: finding.field,
-                    label: finding.label,
-                    matchedRecordId:
-                      finding.matchedRecordId || null,
-                    matchedRecordName:
-                      finding.matchedRecordName || null,
-                  })
-                ),
-              }
-            : null,
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to create company.")
       }
 
-      const existingCompanies = JSON.parse(
-        localStorage.getItem("tes_companies") || "[]"
-      )
-
-      /*
-        FINAL COLLISION CHECK immediately before writing.
-
-        This protects against a second browser action occurring after
-        the first generated record ID.
-      */
-      if (
-        existingCompanies.some(
-          (company: any) => company.id === recordId
-        )
-      ) {
-        const replacementId =
-          generateCompanyRecordId(
-            new Set(
-              existingCompanies
-                .map((company: any) => company.id)
-                .filter(Boolean)
-            )
-          )
-
-        newCompany.id = replacementId
-      }
-
-      localStorage.setItem(
-        "tes_companies",
-        JSON.stringify([
-          newCompany,
-          ...existingCompanies,
-        ])
-      )
-
-      /*
-        Compatibility mirror.
-
-        We preserve tes_customers because current portal pages still
-        consume it. Later this should become a derived relationship,
-        not a second authoritative copy of the company.
-      */
-      if (selectedType === "Customer") {
-        const existingCustomers = JSON.parse(
-          localStorage.getItem("tes_customers") || "[]"
-        )
-
-        localStorage.setItem(
-          "tes_customers",
-          JSON.stringify([
-            newCompany,
-            ...existingCustomers.filter(
-              (customer: any) =>
-                customer.id !== newCompany.id
-            ),
-          ])
-        )
-      }
+      const newCompany = result.company
 
       if (credentialsContext && window.parent !== window) {
         window.parent.postMessage(
@@ -1593,7 +1356,7 @@ export default function NewCompanyPage() {
             company: {
               id: newCompany.id,
               name: newCompany.name,
-              companyName: newCompany.companyName,
+              companyName: newCompany.name,
               kind: newCompany.kind,
               region: newCompany.region,
               status: newCompany.status,
@@ -1696,7 +1459,7 @@ export default function NewCompanyPage() {
 
               <Select
               value={selectedType}
-              onValueChange={setSelectedType}
+              onValueChange={(value) => setSelectedType(value ?? "")}
               >
                 <SelectTrigger className="border-primary/30">
                   <SelectValue placeholder="Select entity type..." />
@@ -1852,7 +1615,7 @@ export default function NewCompanyPage() {
 
               <Select
                 value={opRegion}
-                onValueChange={setOpRegion}
+                onValueChange={(value) => setOpRegion(value ?? "Canada Only")}
               >
                 <SelectTrigger className="border-primary/30">
                   <SelectValue />
@@ -1914,7 +1677,9 @@ export default function NewCompanyPage() {
 
               <Select
                 value={businessRegion}
-                onValueChange={handleBusinessRegionChange}
+                onValueChange={(value) => {
+                  if (value) handleBusinessRegionChange(value)
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select jurisdiction" />

@@ -63,3 +63,21 @@ check allows only those two single-statement `USING` alterations; the PRE phase 
 tables to equal the 0024 definitions; the POST phase requires the complete post-0027 policy sets (so an extra, missing or
 altered policy fails) and RLS enabled, not forced. The expected definitions are generated from a database migrated through
 0026 (pre) and through 0027 (post) with the same catalogue query the verifier runs.
+
+## Migration 0028: SYSTEM policy closure (policy-only)
+
+0028 is also policy-only (seven `ALTER POLICY` statements; no table, function, trigger, capability or seed row; nothing is
+granted). It supersedes the `organizations_system` list of 0027 (final list; `VEHICLE_READ` and `DRIVER_READ` are removed
+again because no existing operation reads an Organization under them) and closes four policies whose existing operations
+failed: `customer_engagement_stages_system`, `organization_identifiers_system`, `organization_aliases_system` and
+`organization_classifications_system` (USING and WITH CHECK), and widens the USING of `registrations_system` and
+`registration_status_periods_system` by `COMPANY_PROFILE_READ` (WITH CHECK unchanged; `registration_versions_system` is untouched, and the verifier checks its policy set exactly so a stray change fails).
+`organizations_system` keeps its WITH CHECK.
+
+Production verification (fragment `0028.sql`): the static check allows exactly those seven single-statement alterations with
+`tes_security.system_context_authorized(ARRAY[...])` expressions only. PRE requires the complete policy sets of all seven tables
+to equal their state after 0027; POST requires the complete post-0028 sets. A policy that a later migration changes again is
+gated: the 0027 post section for `organizations` runs only when THROUGH is 0027 (a THROUGH 0028 run verifies the table through
+the 0028 section), and the 0028 pre section for `organizations` runs only when FROM is above 0027 (otherwise the database is
+legitimately in the pre-0027 state). The generator derives each state from databases migrated through the previous migration
+(`PRE_PGPORT_0026`, `PRE_PGPORT_0027`) and through the migration itself.

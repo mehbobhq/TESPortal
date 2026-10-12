@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
 Generates the production verification fragments for the Companies foundation migrations 0016-0019 and the Core Operational
-Identity additions 0025 (insurance scheduled vehicles), 0026 (vehicle merge ledger) and 0027 (organization access policies).
+Identity additions 0025 (insurance scheduled vehicles), 0026 (vehicle merge ledger), 0027 and 0028 (policy-only RLS closure).
 
-0027 is POLICY-ONLY: it creates no table, function, trigger, capability or seed row and only ALTERs the USING expression of
-existing policies. Its fragment therefore has no table sections; it verifies the exact policy sets of the tables whose policies
-it alters. The PRE phase compares them with the pre-0027 (0024) definitions, the POST phase with the post-0027 definitions.
-The pre-0027 expressions are produced by running the very same catalogue query on a database migrated only through 0026
-(PRE_PGPORT, same host / database / user as the main connection); the post-0027 ones on the fully migrated database.
-
-Migrations 0020-0024 (Core Operational Identity and the system-wide RLS closure) are verified by their own scripts and get no
-fragment here. Their tables, tes_security functions and capabilities are still parsed from the migration SQL so they are known
-"external later objects": the cumulative exact-set sections of 0016-0019 exclude them (the 0016-0019 slice still verifies on a
-pre-0020 database) while a through=0025 / through=0026 run verifies the full current catalogue.
+0027 and 0028 are POLICY-ONLY: they create no table, function, trigger, capability or seed row and only ALTER existing policies
+(0027: USING of organizations_system and organization_person_relationships_system; 0028: USING of organizations_system again,
+USING and WITH CHECK of four more SYSTEM policies). Their fragments have no table sections; they verify the exact, complete policy
+sets of the tables whose policies they alter. PRE phase: the sets as they are before the migration; POST phase: after it.
+The "before" and "after" expressions are produced by running the very same catalogue query on databases migrated only through the
+previous migration (env PRE_PGPORT_<previous version>, e.g. PRE_PGPORT_0026 for 0027, PRE_PGPORT_0027 for 0028) and through the
+migration itself (PRE_PGPORT_<version> if a later policy-only migration exists, else the main connection). A policy that a later
+migration changes again (organizations_system: 0027 then 0028) is checked in the 0027 post section only when THROUGH = 0027; a
+pre section of table T only runs when no earlier migration of the batch alters T's policies (FROM greater than that migration).
 
 The expected catalogue is NOT hand-written. It is produced by running, against a LOCAL disposable database migrated with the
 repository's migrations, the very same catalogue queries the production verifier runs, and embedding the results. The
@@ -20,8 +19,8 @@ production verifier then compares production's catalogue to them EXACTLY. Which 
 from the migration SQL text itself (CREATE TABLE / CREATE FUNCTION / INSERT INTO), so a migration cannot add an object this
 generator does not notice.
 
-Usage:  PGHOST=... PGPORT=... PGDATABASE=tes_prod PGUSER=<migrator> PRE_PGPORT=<port of a database migrated through 0026 only> \
-          generate-expectations.py <migrations-dir> <output-dir>
+Usage:  PGHOST=... PGPORT=... PGDATABASE=tes_prod PGUSER=<migrator> PRE_PGPORT_0026=<port, db migrated through 0026 only> \
+          PRE_PGPORT_0027=<port, db migrated through 0027 only> generate-expectations.py <migrations-dir> <output-dir>
 The main database must have every migration in <migrations-dir> applied.
 """
 import os
@@ -38,8 +37,12 @@ MIGRATIONS = {
     "0025": "0025_insurance_scheduled_vehicles_foundation.sql",
     "0026": "0026_vehicle_merge_ledger.sql",
     "0027": "0027_operational_identity_organization_access_policies.sql",
+    "0028": "0028_system_rls_policy_closure.sql",
 }
-POLICY_ONLY = ("0027",)
+POLICY_ONLY = ("0027", "0028")
+# Tables whose policies a policy-only migration deliberately does NOT touch although they sit next to touched ones: their
+# complete policy sets are asserted unchanged (identical before and after) and verified exactly, so a stray change is caught.
+GUARDED_UNTOUCHED = {"0028": ["registration_versions"]}
 RT = "tes-backend@tes-production-510007.iam"
 MIGRATOR = "tes-database-migrator@tes-production-510007.iam"
 
@@ -107,12 +110,14 @@ def q(s):
     return s.replace("'", "''")
 
 
-def section(label, actual_sql, expected_lines, phase="post", through=None):
+def section(label, actual_sql, expected_lines, phase="post", through=None, from_gt=None):
     expected = "\n".join(expected_lines)
     assert "$exp$" not in expected
     gate = f"  IF current_setting('tes.verify_phase') <> '{phase}' THEN RETURN; END IF;\n"
     if through:
         gate += f"  IF current_setting('tes.verify_through') <> '{through}' THEN RETURN; END IF;\n"
+    if from_gt:
+        gate += f"  IF current_setting('tes.verify_from') <= '{from_gt}' THEN RETURN; END IF;\n"
     return f"""
 DO $verify$
 DECLARE
@@ -433,50 +438,105 @@ $verify$;
 """
 
 
+
+def prev_version(version):
+    return f"{int(version) - 1:04d}"
+
+
+def policy_lines_by_key(lines):
+    return {" ".join(l.split(" ", 2)[:2]): l for l in lines}
+
+
+def touched_tables(version):
+    return {t for _, t in OBJ[version]["altered_policies"]}
+
+
 def policy_only_fragment(version):
-    """A migration that only ALTERs existing policies (0027): no table / function / trigger / capability / seed of its own."""
+    """
+    A migration that only ALTERs existing policies (0027, 0028): no table / function / trigger / capability / seed of its own.
+
+    The state BEFORE the migration is read from a database migrated through the previous migration (env PRE_PGPORT_<prev>), the
+    state AFTER it from the database migrated through THIS migration: PRE_PGPORT_<this> when a later policy-only migration exists,
+    otherwise the main connection (PGPORT). This is what makes the exact-set checks of a policy that a LATER migration changes
+    gateable: such a table's post-<version> section only runs when THROUGH = <version>; the sections of tables no later migration
+    touches run for every THROUGH >= <version>. A pre-<version> section of table T only runs when no earlier migration of the
+    batch (FROM <= m < <version>) alters T's policies, because the database then is not in the state just before <version>.
+    """
     o = OBJ[version]
     name = MIGRATIONS[version]
     assert not (o["tables"] or o["functions"] or o["seeds"] or o["caps"] or o["ext_triggers"] or o["rls"]), f"{version} is not policy-only"
     altered = o["altered_policies"]
     assert altered, f"{version} alters no policy"
-    # nothing but the ALTER POLICY statements may remain in the migration
-    rest = re.sub(r"ALTER POLICY [a-z_0-9]+ ON public\.[a-z_0-9]+\s+USING \(.*?\);", "", o["sql"], flags=re.S)
-    assert rest.strip() == "", f"{version} contains more than ALTER POLICY ... USING: {rest.strip()[:200]}"
-    assert "WITH CHECK" not in o["sql"].upper(), f"{version} must not change WITH CHECK"
+    # nothing but the ALTER POLICY statements may remain in the migration; WITH CHECK only where a statement has it
+    rest = re.sub(r"ALTER POLICY [a-z_0-9]+ ON public\.[a-z_0-9]+\s+USING \(.*?\)(?:\s+WITH CHECK \(.*?\))?;", "", o["sql"], flags=re.S)
+    assert rest.strip() == "", f"{version} contains more than ALTER POLICY ... USING [WITH CHECK]: {rest.strip()[:200]}"
+    with_check = {}
+    for stmt in o["sql"].split(";"):
+        m = re.match(r"\s*ALTER POLICY ([a-z_0-9]+) ON public\.([a-z_0-9]+)", stmt)
+        if m:
+            with_check[(m.group(1), m.group(2))] = "WITH CHECK" in stmt
+    assert set(with_check) == set(altered)
     tables = list(dict.fromkeys(t for _, t in altered))
-    pre_port = os.environ.get("PRE_PGPORT")
+    pre_port = os.environ.get(f"PRE_PGPORT_{prev_version(version)}")
     if not pre_port:
-        raise SystemExit(f"PRE_PGPORT (a database migrated through {int(version) - 1:04d} only) is required to derive the pre-{version} policy definitions")
-    pre_ledger = run("SELECT max(version) FROM tes_system.schema_migrations", pre_port)[0]
-    assert pre_ledger == f"{int(version) - 1:04d}", f"PRE_PGPORT database is at {pre_ledger}, expected {int(version) - 1:04d}"
+        raise SystemExit(f"PRE_PGPORT_{prev_version(version)} (a database migrated through {prev_version(version)} only) is required to derive the pre-{version} policy definitions")
+    assert run("SELECT max(version) FROM tes_system.schema_migrations", pre_port)[0] == prev_version(version), f"PRE_PGPORT_{prev_version(version)} database is not at {prev_version(version)}"
+    later = [v for v in POLICY_ONLY if v > version]
+    if later:
+        post_port = os.environ.get(f"PRE_PGPORT_{version}")
+        if not post_port:
+            raise SystemExit(f"PRE_PGPORT_{version} (a database migrated through {version} only) is required to derive the post-{version} policy definitions")
+        assert run("SELECT max(version) FROM tes_system.schema_migrations", post_port)[0] == version, f"PRE_PGPORT_{version} database is not at {version}"
+    else:
+        post_port = None
+        assert run("SELECT max(version) FROM tes_system.schema_migrations")[0] == version, f"the main database is not at {version}"
     pre_lines = run(q_policies(tables), pre_port)
-    post_lines = run(q_policies(tables))
-    pre_by = {l.split(" ", 2)[0] + " " + l.split(" ", 2)[1]: l for l in pre_lines}
-    post_by = {l.split(" ", 2)[0] + " " + l.split(" ", 2)[1]: l for l in post_lines}
+    post_lines = run(q_policies(tables), post_port)
+    pre_by, post_by = policy_lines_by_key(pre_lines), policy_lines_by_key(post_lines)
     assert set(pre_by) == set(post_by), f"the policy NAMES on {tables} differ between pre and post {version}"
     changed = sorted(k for k in post_by if pre_by[k] != post_by[k])
     assert changed == sorted(f"{t} {n}" for n, t in altered), f"policies changed {changed}, migration alters {altered}"
-    for k in changed:  # only USING changed: everything else, WITH CHECK included, is identical
-        a, b = pre_by[k], post_by[k]
-        assert a.split(" using=")[0] == b.split(" using=")[0] and a.split(" check=")[1] == b.split(" check=")[1], f"{k}: more than USING changed"
-        assert a.split(" using=")[1] != b.split(" using=")[1]
-    # ROW LEVEL SECURITY flags are unchanged by this migration
+    for (n, t), has_check in with_check.items():
+        a, b = pre_by[f"{t} {n}"], post_by[f"{t} {n}"]
+        assert a.split(" using=")[0] == b.split(" using=")[0], f"{t} {n}: command / roles / permissive changed"
+        a_using, a_check = a.split(" using=")[1].split(" check=")
+        b_using, b_check = b.split(" using=")[1].split(" check=")
+        assert a_using != b_using, f"{t} {n}: USING unchanged"
+        assert (a_check != b_check) == has_check, f"{t} {n}: WITH CHECK change does not match the migration text"
     pre_flags = run(q_owner(tables), pre_port)
-    post_flags = run(q_owner(tables))
+    post_flags = run(q_owner(tables), post_port)
     assert pre_flags == post_flags, "RLS flags / owners differ between pre and post"
 
+    # table-level gating (see docstring)
+    later_touch = {t for v in later for t in touched_tables(v)}
+    earlier_touch = {t: [v for v in POLICY_ONLY if v < version and t in touched_tables(v)] for t in tables}
     labels = ", ".join(tables)
     out = [f"""
 -- ============================================================================================================
--- Migration {version} ({name}) - policy-only: ALTER POLICY ... USING on {", ".join(f"{n}" for n, _ in altered)}
+-- Migration {version} ({name}) - policy-only: ALTER POLICY on {", ".join(n for n, _ in altered)}
 -- ============================================================================================================
 """]
-    out.append(section(f"{version}: pre-{version} (0024) row-level security policies of {labels} (name, command, permissive, roles, USING, WITH CHECK)", q_policies(tables), pre_lines, phase="pre"))
-    out.append(section(f"{version}: RLS flags and owners of {labels} (enabled, not forced)", q_owner(tables), pre_flags, phase="pre"))
+
+    def tbl_lines(lines, t):
+        return [l for l in lines if l.split(" ", 1)[0] == t]
+
+    for t in tables:
+        gate_from = max(earlier_touch[t]) if earlier_touch[t] else None
+        out.append(section(f"{version}: pre-{version} row-level security policies of {t} (complete set: name, command, permissive, roles, USING, WITH CHECK)",
+                           q_policies([t]), tbl_lines(pre_lines, t), phase="pre", from_gt=gate_from))
+    guarded = GUARDED_UNTOUCHED.get(version, [])
+    for t in guarded:
+        g_pre, g_post = run(q_policies([t]), pre_port), run(q_policies([t]), post_port)
+        assert g_pre == g_post and g_pre, f"{version} must leave the policies of {t} untouched"
+        assert t not in tables
+        out.append(section(f"{version}: pre-{version} policies of untouched {t} (complete set)", q_policies([t]), g_pre, phase="pre"))
+        out.append(section(f"{version}: policies of untouched {t} (complete set, unchanged by {version})", q_policies([t]), g_post))
+    out.append(section(f"{version}: pre-{version} RLS flags and owners of {labels} (enabled, not forced)", q_owner(tables), pre_flags, phase="pre"))
     out.append(ledger_section(version))
     out.append(cumulative_sections(version))
-    out.append(section(f"{version}: row-level security policies of {labels} - the complete policy set (name, command, permissive, roles, USING, WITH CHECK)", q_policies(tables), post_lines))
+    for t in tables:
+        out.append(section(f"{version}: row-level security policies of {t} - the complete policy set (name, command, permissive, roles, USING, WITH CHECK)",
+                           q_policies([t]), tbl_lines(post_lines, t), through=(version if t in later_touch else None)))
     out.append(section(f"{version}: RLS flags and owners of {labels} (enabled, not forced)", q_owner(tables), post_flags))
     out.append(f"""
 DO $verify$
@@ -675,7 +735,7 @@ BEGIN
     tbl := split_part(pair, '=', 1);
     expected := split_part(pair, '=', 2)::bigint;
     IF tbl IN ({names(all_new_tables)}) THEN
-      RAISE EXCEPTION 'baseline list names a generator-verified foundation table (0016-0019, 0025-0027): %', tbl;
+      RAISE EXCEPTION 'baseline list names a generator-verified foundation table (0016-0019, 0025-0028): %', tbl;
     END IF;
     EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO actual;
     IF actual <> expected THEN

@@ -2,13 +2,16 @@
 set -euo pipefail
 
 # Read-only verification for the Companies foundation migrations 0016-0019 and the Core Operational Identity additions
-# 0025, 0026 and 0027:
+# 0025, 0026, 0027 and 0028:
 #   0016 Tax / Registration, 0017 Insurance, 0018 Company Credentials, 0019 Company Operating Profile,
 #   0025 Insurance scheduled vehicles (insurance_coverage_vehicles), 0026 Vehicle merge ledger (vehicle_merges),
 #   0027 Organization access policies (POLICY-ONLY: widens the USING expression of organizations_system and
-#        organization_person_relationships_system; creates no table, function, trigger, capability or seed row).
+#        organization_person_relationships_system; creates no table, function, trigger, capability or seed row),
+#   0028 SYSTEM policy closure (POLICY-ONLY: USING of organizations_system again, USING and WITH CHECK of
+#        customer_engagement_stages_system, organization_identifiers_system, organization_aliases_system and
+#        organization_classifications_system, USING of registrations_system and registration_status_periods_system).
 # Migrations 0020-0024 (Core Operational Identity, system-wide RLS closure) are verified by their own scripts; they are not
-# selectable here, but their objects are known to the expectations, so a run THROUGH 0025 / 0026 / 0027 verifies the full current
+# selectable here, but their objects are known to the expectations, so a run THROUGH 0025 / 0026 / 0027 / 0028 verifies the full current
 # catalogue (relations, tes_security functions, SECURITY DEFINER functions, capabilities) exactly.
 #
 # ONE shared script verifies the whole pending batch or any contiguous slice of it. Each migration stays independently
@@ -19,13 +22,13 @@ set -euo pipefail
 # ends with ROLLBACK. Runtime privileges are verified through catalog functions and ACLs, not by switching roles.
 #
 # TES_VERIFY_FROM     first migration of the batch under verification (default 0025)
-# TES_VERIFY_THROUGH  last migration of the batch under verification (default 0027)
-#                     Each of the two is one of 0016 0017 0018 0019 0025 0026 0027.
+# TES_VERIFY_THROUGH  last migration of the batch under verification (default 0028)
+#                     Each of the two is one of 0016 0017 0018 0019 0025 0026 0027 0028.
 #
 # TES_VERIFY_PHASE=pre   Before the batch is applied: the ledger holds EXACTLY the repository's checksums for every migration
 #                        below FROM (so 0001-0015 are unchanged) and nothing at or above FROM; none of the tables, trigger
-#                        functions or capabilities of FROM..THROUGH exists; for 0027 the complete policy sets of public.organizations
-#                        and public.organization_person_relationships are EXACTLY the 0024 definitions; baseline row counts are logged.
+#                        functions or capabilities of FROM..THROUGH exists; for 0027 / 0028 the complete policy sets of the tables
+#                        they alter are EXACTLY the definitions before the migration; baseline row counts are logged.
 # TES_VERIFY_PHASE=post  After the batch is applied (default): the ledger holds exactly 0001..THROUGH with the repository
 #                        checksums; for each migration in FROM..THROUGH its tables exist with exactly the designed columns,
 #                        constraints, indexes, triggers (with arguments) and trigger functions (SECURITY INVOKER, fixed
@@ -64,11 +67,11 @@ case "$PHASE" in
 esac
 
 FROM="${TES_VERIFY_FROM:-0025}"
-THROUGH="${TES_VERIFY_THROUGH:-0027}"
+THROUGH="${TES_VERIFY_THROUGH:-0028}"
 for value in "$FROM" "$THROUGH"; do
   case "$value" in
-    0016|0017|0018|0019|0025|0026|0027) ;;
-    *) echo "TES_VERIFY_FROM / TES_VERIFY_THROUGH must each be one of 0016 0017 0018 0019 0025 0026 0027." >&2; exit 1 ;;
+    0016|0017|0018|0019|0025|0026|0027|0028) ;;
+    *) echo "TES_VERIFY_FROM / TES_VERIFY_THROUGH must each be one of 0016 0017 0018 0019 0025 0026 0027 0028." >&2; exit 1 ;;
   esac
 done
 if [[ "$FROM" > "$THROUGH" ]]; then
@@ -99,6 +102,7 @@ declare -A MIGRATION_FILE=(
   [0025]="0025_insurance_scheduled_vehicles_foundation.sql"
   [0026]="0026_vehicle_merge_ledger.sql"
   [0027]="0027_operational_identity_organization_access_policies.sql"
+  [0028]="0028_system_rls_policy_closure.sql"
 )
 # The only tables a migration may INSERT into (catalogue seeds; capabilities are always allowed).
 declare -A SEED_TABLES=(
@@ -109,6 +113,7 @@ declare -A SEED_TABLES=(
   [0025]="-"
   [0026]="-"
   [0027]="-"
+  [0028]="-"
 )
 # The only table a migration may ENABLE ROW LEVEL SECURITY on / create policies for (0016-0019: none).
 declare -A RLS_TABLE=(
@@ -120,8 +125,14 @@ declare -A DEFINER_FUNCTION=(
   [0025]="guard_insurance_schedule_vehicle"
 )
 
+# Policy-only migrations: the exact ALTER POLICY statements they may contain, as policy:table:mode (u = USING only, b = USING and WITH CHECK).
+declare -A POLICY_ONLY_STATEMENTS=(
+  [0027]="organizations_system:organizations:u organization_person_relationships_system:organization_person_relationships:u"
+  [0028]="organizations_system:organizations:u customer_engagement_stages_system:customer_engagement_stages:b organization_identifiers_system:organization_identifiers:b organization_aliases_system:organization_aliases:b organization_classifications_system:organization_classifications:b registrations_system:registrations:u registration_status_periods_system:registration_status_periods:u"
+)
+
 selected=()
-for version in 0016 0017 0018 0019 0025 0026 0027; do
+for version in 0016 0017 0018 0019 0025 0026 0027 0028; do
   if [[ ! "$version" < "$FROM" && ! "$version" > "$THROUGH" ]]; then
     selected+=("$version")
   fi
@@ -130,7 +141,7 @@ done
 # Every selected migration must stay additive: no destructive or data-changing statement except its catalogue seeds and
 # capability rows, no ALTER of an existing object, no DELETE / TRUNCATE / ALL grant, no tenant context, capability grant, or
 # structure outside the approved domain.
-# 0027 is policy-only and is checked separately below (exactly two ALTER POLICY ... USING statements, nothing else).
+# 0027 / 0028 are policy-only and are checked separately below (only their approved ALTER POLICY statements, nothing else).
 # 0016-0019 additionally contain no SECURITY DEFINER, RLS or policy at all. 0025 and 0026 enable RLS on their own table and add
 # its policies (nothing else is allowed to ALTER anything), and 0025 alone has exactly one SECURITY DEFINER function.
 for version in "${selected[@]}"; do
@@ -141,26 +152,35 @@ for version in "${selected[@]}"; do
   fi
   sql_only="$(grep -Ev '^[[:space:]]*--' "$file")"
 
-  if [[ "$version" == "0027" ]]; then
-    # Policy-only: exactly one single-line ALTER POLICY ... USING (...) per policy, on the two approved policies, calling only
-    # tes_security.system_context_authorized(ARRAY[...]); every other statement (and any WITH CHECK, DROP, UPDATE, DELETE,
-    # INSERT, CREATE, GRANT, other ALTER, SECURITY DEFINER) is forbidden.
+  if [[ -n "${POLICY_ONLY_STATEMENTS[$version]:-}" ]]; then
+    # Policy-only (0027, 0028): single-line ALTER POLICY statements, exactly the approved policies, each with USING and, where
+    # approved, WITH CHECK, calling only tes_security.system_context_authorized(ARRAY[...]); every other statement or clause
+    # (DROP, UPDATE, DELETE, INSERT, CREATE, GRANT, other ALTER, SECURITY DEFINER, ...) is forbidden.
     statements="$(grep -Ev '^[[:space:]]*$' <<<"$sql_only" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/; /;\n/g')"
-    expected_statements=2
-    if [[ "$(grep -c '' <<<"$statements")" != "$expected_statements" ]]; then
-      echo "Migration 0027 must contain exactly $expected_statements statements." >&2
+    read -r -a approved <<<"${POLICY_ONLY_STATEMENTS[$version]}"
+    if [[ "$(grep -c '' <<<"$statements")" != "${#approved[@]}" ]]; then
+      echo "Migration $version must contain exactly ${#approved[@]} statements." >&2
       exit 1
     fi
     system_helper="tes_security\.system_context_authorized\(ARRAY\[('[A-Z_]+')(,'[A-Z_]+')*\]\)"
-    organizations_policy="^ALTER POLICY organizations_system ON public\.organizations USING \(${system_helper}\);\$"
-    relationships_policy="^ALTER POLICY organization_person_relationships_system ON public\.organization_person_relationships USING \(${system_helper}\);\$"
-    if [[ "$(grep -Ec "$organizations_policy" <<<"$statements")" != "1" ]] || [[ "$(grep -Ec "$relationships_policy" <<<"$statements")" != "1" ]]; then
-      echo "Migration 0027 must contain exactly one ALTER POLICY ... USING for organizations_system and one for organization_person_relationships_system, and nothing else." >&2
+    for entry in "${approved[@]}"; do
+      IFS=: read -r policy table mode <<<"$entry"
+      pattern="^ALTER POLICY ${policy} ON public\.${table} USING \(${system_helper}\)"
+      [[ "$mode" == "b" ]] && pattern+=" WITH CHECK \(${system_helper}\)"
+      pattern+=";\$"
+      if [[ "$(grep -Ec "$pattern" <<<"$statements")" != "1" ]]; then
+        echo "Migration $version must contain exactly one single-statement ALTER POLICY ${policy} ON public.${table} with ($([[ "$mode" == "b" ]] && echo 'USING and WITH CHECK' || echo 'USING only')) system_context_authorized expressions." >&2
+        exit 1
+      fi
+    done
+    # capability codes such as ORGANIZATION_CREATE live inside quoted literals: scan with the literals removed
+    forbidden='\b(SECURITY[[:space:]]+DEFINER|DROP|UPDATE|DELETE|INSERT|CREATE|GRANT|REVOKE|TRUNCATE|set_config|relationship_capability_grants|relationship_assignments|actor_relationships)\b'
+    if sed -E "s/'[^']*'//g" <<<"$sql_only" | grep -Eiq "$forbidden"; then
+      echo "Migration $version contains a statement or clause other than the approved ALTER POLICY statements." >&2
       exit 1
     fi
-    # capability codes such as ORGANIZATION_CREATE live inside quoted literals: scan with the literals removed
-    if sed -E "s/'[^']*'//g" <<<"$sql_only" | grep -Eiq '\b(WITH[[:space:]]+CHECK|SECURITY[[:space:]]+DEFINER|DROP|UPDATE|DELETE|INSERT|CREATE|GRANT|REVOKE|TRUNCATE|set_config|relationship_capability_grants|relationship_assignments|actor_relationships)\b'; then
-      echo "Migration 0027 contains a statement or clause other than the two ALTER POLICY ... USING statements." >&2
+    if [[ "$(grep -Eic 'WITH[[:space:]]+CHECK' <<<"$sql_only")" != "$(grep -o ':b' <<<"${POLICY_ONLY_STATEMENTS[$version]}" | grep -c '')" ]]; then
+      echo "Migration $version has an unapproved WITH CHECK." >&2
       exit 1
     fi
     continue

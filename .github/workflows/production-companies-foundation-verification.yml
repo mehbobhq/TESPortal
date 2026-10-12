@@ -12,7 +12,7 @@ on:
           - pre
           - post
       from_migration:
-        description: "first migration of the batch under verification (0016 Tax/Registration, 0017 Insurance, 0018 Credentials, 0019 Company Operating Profile, 0025 Insurance scheduled vehicles, 0026 Vehicle merge ledger, 0027 Organization access policies)"
+        description: "first migration of the batch under verification (0016 Tax/Registration, 0017 Insurance, 0018 Credentials, 0019 Company Operating Profile, 0025 Insurance scheduled vehicles, 0026 Vehicle merge ledger, 0027 Organization access policies, 0028 SYSTEM policy closure)"
         required: true
         default: "0025"
         type: choice
@@ -24,10 +24,11 @@ on:
           - "0025"
           - "0026"
           - "0027"
+          - "0028"
       through_migration:
-        description: "last migration of the batch under verification (a run through 0025 / 0026 / 0027 also verifies the full current catalogue; 0020-0024 have their own scripts)"
+        description: "last migration of the batch under verification (a run through 0025 / 0026 / 0027 / 0028 also verifies the full current catalogue; 0020-0024 have their own scripts)"
         required: true
-        default: "0027"
+        default: "0028"
         type: choice
         options:
           - "0016"
@@ -37,6 +38,7 @@ on:
           - "0025"
           - "0026"
           - "0027"
+          - "0028"
       expect_empty:
         description: "post phase: require every business table of the batch to be empty (right after the migrations); choose 0 for a live system"
         required: true
@@ -61,7 +63,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify production Companies foundation and identity additions (0016-0019, 0025-0027)
+    name: Verify production Companies foundation and identity additions (0016-0019, 0025-0028)
     runs-on: ubuntu-24.04
     environment: production-database
 

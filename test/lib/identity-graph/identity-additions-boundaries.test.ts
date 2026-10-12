@@ -1,5 +1,6 @@
-// Static boundary checks for the Core Operational Identity additions: migration 0025 (insurance scheduled vehicles) and
-// migration 0026 (vehicle merge ledger), and the shared production verifier that covers them. No database needed.
+// Static boundary checks for the Core Operational Identity additions: migration 0025 (insurance scheduled vehicles),
+// migration 0026 (vehicle merge ledger) and migration 0027 (organization access policies, policy-only), and the shared
+// production verifier that covers them. No database needed.
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -44,14 +45,19 @@ const ADDED = {
   "0025_insurance_scheduled_vehicles_foundation.sql": { table: "insurance_coverage_vehicles", definer: ["guard_insurance_schedule_vehicle"] },
   "0026_vehicle_merge_ledger.sql": { table: "vehicle_merges", definer: [] as string[] },
 } as const;
+const POLICY_ONLY = "0027_operational_identity_organization_access_policies.sql";
+const ALTERED_POLICIES = [
+  "ALTER POLICY organizations_system ON public.organizations",
+  "ALTER POLICY organization_person_relationships_system ON public.organization_person_relationships",
+];
 
 describe("Identity graph additions: migrations", () => {
-  it("migrations 0001-0024 are byte-for-byte identical to origin/main and 0025 / 0026 follow contiguously", () => {
+  it("migrations 0001-0024 are byte-for-byte identical to origin/main and 0025 / 0026 / 0027 follow contiguously", () => {
     const present = readdirSync(MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     for (const [name, expected] of Object.entries(CLOSED_MIGRATIONS)) {
       assert.equal(createHash("sha256").update(readFileSync(path.join(MIGRATIONS_DIR, name))).digest("hex"), expected, name);
     }
-    assert.deepEqual(present, [...Object.keys(CLOSED_MIGRATIONS), ...Object.keys(ADDED)]);
+    assert.deepEqual(present, [...Object.keys(CLOSED_MIGRATIONS), ...Object.keys(ADDED), POLICY_ONLY]);
   });
 
   for (const [name, spec] of Object.entries(ADDED)) {
@@ -105,44 +111,87 @@ describe("Identity graph additions: migrations", () => {
       });
     });
   }
+
+  describe(POLICY_ONLY, () => {
+    const raw = readFileSync(path.join(MIGRATIONS_DIR, POLICY_ONLY), "utf8");
+    const sql = codeOnly(raw);
+    // the statements with quoted literals (capability codes such as ORGANIZATION_CREATE) removed
+    const unquoted = sql.replace(/'[^']*'/g, "''");
+
+    it("is policy-only: no CREATE / DROP / INSERT / UPDATE / DELETE / GRANT / TRUNCATE and no other ALTER", () => {
+      assert.doesNotMatch(unquoted, /\b(CREATE|DROP|INSERT|UPDATE|DELETE|GRANT|REVOKE|TRUNCATE)\b/i);
+      assert.doesNotMatch(sql, /set_config|tes_set_tenant|master_account/i);
+      assert.doesNotMatch(sql, /relationship_capability_grants|relationship_assignments|actor_relationships/i, "nothing is granted to anyone");
+      assert.doesNotMatch(sql, /ROW\s+LEVEL|FORCE|DISABLE|ENABLE/i);
+      const statements = sql.split(";").map((statement) => statement.replace(/\s+/g, " ").trim()).filter(Boolean);
+      assert.equal(statements.length, 2);
+    });
+
+    it("alters exactly organizations_system and organization_person_relationships_system, USING only", () => {
+      const alters = [...sql.matchAll(/^\s*ALTER\s.*$/gim)].map((m) => m[0].trim());
+      assert.deepEqual(alters, ALTERED_POLICIES);
+      const statements = sql.split(";").map((statement) => statement.replace(/\s+/g, " ").trim()).filter(Boolean);
+      for (const [index, statement] of statements.entries()) {
+        assert.match(statement, new RegExp(`^${ALTERED_POLICIES[index].replace(/\./g, "\\.")} USING \\(tes_security\\.system_context_authorized\\(ARRAY\\[('[A-Z_]+')(,'[A-Z_]+')*\\]\\)\\)$`));
+      }
+      assert.doesNotMatch(sql, /WITH\s+CHECK/i, "WITH CHECK is not changed");
+    });
+
+    it("has no SECURITY DEFINER and no function, and the context helper appears only inside the two USING expressions", () => {
+      assert.doesNotMatch(sql, /SECURITY\s+DEFINER|FUNCTION|TRIGGER/i);
+      assert.equal((sql.match(/system_context_authorized/g) ?? []).length, 2);
+      assert.doesNotMatch(sql, /customer_context_authorized|current_customer_id/);
+    });
+
+    it("no line is rejected by the migration runner (transaction control, psql meta-commands)", () => {
+      for (const line of raw.split("\n")) {
+        assert.doesNotMatch(line, /^\s*(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION)\b/i, line);
+        assert.doesNotMatch(line, /^\s*\\/, line);
+      }
+    });
+  });
 });
 
 describe("Identity graph additions: shared production verification", () => {
   const fragmentsDir = path.join(ROOT, "scripts/database/verification/companies");
 
-  it("the fragments directory holds exactly 0016-0019, 0025, 0026, the baseline and the generator (no 0020-0024 fragment)", () => {
-    assert.deepEqual(readdirSync(fragmentsDir).sort(), ["0016.sql", "0017.sql", "0018.sql", "0019.sql", "0025.sql", "0026.sql", "baseline.sql", "generate-expectations.py"]);
+  it("the fragments directory holds exactly 0016-0019, 0025-0027, the baseline and the generator (no 0020-0024 fragment)", () => {
+    assert.deepEqual(readdirSync(fragmentsDir).sort(), ["0016.sql", "0017.sql", "0018.sql", "0019.sql", "0025.sql", "0026.sql", "0027.sql", "baseline.sql", "generate-expectations.py"]);
   });
 
-  it("the script allows exactly 0016-0019, 0025 and 0026, defaults to 0025..0026, and maps both new migrations", () => {
+  it("the script allows exactly 0016-0019 and 0025-0027, defaults to 0025..0027, and maps the new migrations", () => {
     const script = read("scripts/database/verify-production-companies-foundation.sh");
-    assert.match(script, /0016\|0017\|0018\|0019\|0025\|0026\) ;;/);
+    assert.match(script, /0016\|0017\|0018\|0019\|0025\|0026\|0027\) ;;/);
     assert.doesNotMatch(script, /\b002[0-4]\|/);
     assert.match(script, /TES_VERIFY_FROM:-0025/);
-    assert.match(script, /TES_VERIFY_THROUGH:-0026/);
-    assert.match(script, /for version in 0016 0017 0018 0019 0025 0026; do/);
+    assert.match(script, /TES_VERIFY_THROUGH:-0027/);
+    assert.match(script, /for version in 0016 0017 0018 0019 0025 0026 0027; do/);
     assert.match(script, /\[0025\]="0025_insurance_scheduled_vehicles_foundation\.sql"/);
     assert.match(script, /\[0026\]="0026_vehicle_merge_ledger\.sql"/);
+    assert.match(script, /\[0027\]="0027_operational_identity_organization_access_policies\.sql"/);
+    assert.match(script, /if \[\[ "\$version" == "0027" \]\]; then/);
+    assert.match(script, /ALTER POLICY organizations_system ON public\\\.organizations USING/);
+    assert.match(script, /ALTER POLICY organization_person_relationships_system ON public\\\.organization_person_relationships USING/);
     assert.match(script, /\[0025\]="guard_insurance_schedule_vehicle"/);
     assert.match(script, /BEGIN READ ONLY;/);
     assert.match(script, /\nROLLBACK;/);
   });
 
-  it("the workflow offers exactly 0016-0019, 0025 and 0026, defaults 0025 -> 0026, and stays manual and read-only", () => {
+  it("the workflow offers exactly 0016-0019 and 0025-0027, defaults 0025 -> 0027, and stays manual and read-only", () => {
     const workflow = read(".github/workflows/production-companies-foundation-verification.yml");
     for (const input of ["from_migration", "through_migration"]) {
       const block = workflow.match(new RegExp(`${input}:[\\s\\S]*?options:\\n((?:\\s+- "[0-9]{4}"\\n)+)`));
       assert.ok(block, input);
-      assert.deepEqual([...block[1].matchAll(/"(\d{4})"/g)].map((m) => m[1]), ["0016", "0017", "0018", "0019", "0025", "0026"], input);
+      assert.deepEqual([...block[1].matchAll(/"(\d{4})"/g)].map((m) => m[1]), ["0016", "0017", "0018", "0019", "0025", "0026", "0027"], input);
     }
     assert.match(workflow, /from_migration:[\s\S]*?default: "0025"/);
-    assert.match(workflow, /through_migration:[\s\S]*?default: "0026"/);
+    assert.match(workflow, /through_migration:[\s\S]*?default: "0027"/);
     assert.match(workflow, /^on:\s*\n\s+workflow_dispatch:/m);
     assert.doesNotMatch(workflow, /migrate\.sh|psql[^\n]*-c/);
   });
 
   it("the new fragments write nothing and verify RLS flags, policies and the SECURITY DEFINER function exactly", () => {
-    for (const version of ["0025", "0026"]) {
+    for (const version of ["0025", "0026", "0027"]) {
       const raw = read("scripts/database/verification/companies", `${version}.sql`);
       const sql = raw.replace(/\$exp\$[\s\S]*?\$exp\$/g, "");
       assert.doesNotMatch(sql, /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE)\b/im, version);
@@ -151,5 +200,18 @@ describe("Identity graph additions: shared production verification", () => {
       assert.doesNotMatch(raw, /\bIN \(\)/, version);
     }
     assert.match(read("scripts/database/verification/companies/0025.sql"), /guard_insurance_schedule_vehicle secdef=true/);
+  });
+
+  it("the 0027 fragment is table-less: pre = exact 0024 policy sets, post = exact post-0027 policy sets of both tables", () => {
+    const raw = read("scripts/database/verification/companies/0027.sql");
+    assert.match(raw, /current_setting\('tes\.verify_phase'\) <> 'pre'/);
+    assert.match(raw, /current_setting\('tes\.verify_phase'\) <> 'post'/);
+    assert.match(raw, /pre-0027 \(0024\) row-level security policies of organizations, organization_person_relationships/);
+    assert.match(raw, /the complete policy set/);
+    assert.match(raw, /organizations_system cmd=\* permissive=true roles=PUBLIC using=tes_security\.system_context_authorized\(ARRAY\[[^\]]*'IDENTITY_RESOLUTION_MANAGE'::text\]\) check=/);
+    assert.match(raw, /organization_person_relationships_system cmd=\* permissive=true roles=PUBLIC using=tes_security\.system_context_authorized\(ARRAY\['PERSON_REGISTRY_READ'::text, 'CONTACT_MANAGE'::text, 'INSURANCE_MANAGE'::text\]\) check=tes_security\.system_context_authorized\(ARRAY\['CONTACT_MANAGE'::text\]\)/);
+    assert.match(raw, /RLS flags and owners/);
+    assert.doesNotMatch(raw, /columns \(name, data type|0027 (constraints|indexes|triggers|functions|table ACL|column ACL)|seed rows/);
+    assert.doesNotMatch(raw, /\bIN \(\)/);
   });
 });

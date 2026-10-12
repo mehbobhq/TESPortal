@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
 Generates the production verification fragments for the Companies foundation migrations 0016-0019 and the Core Operational
-Identity additions 0025 (insurance scheduled vehicles) and 0026 (vehicle merge ledger).
+Identity additions 0025 (insurance scheduled vehicles), 0026 (vehicle merge ledger) and 0027 (organization access policies).
+
+0027 is POLICY-ONLY: it creates no table, function, trigger, capability or seed row and only ALTERs the USING expression of
+existing policies. Its fragment therefore has no table sections; it verifies the exact policy sets of the tables whose policies
+it alters. The PRE phase compares them with the pre-0027 (0024) definitions, the POST phase with the post-0027 definitions.
+The pre-0027 expressions are produced by running the very same catalogue query on a database migrated only through 0026
+(PRE_PGPORT, same host / database / user as the main connection); the post-0027 ones on the fully migrated database.
 
 Migrations 0020-0024 (Core Operational Identity and the system-wide RLS closure) are verified by their own scripts and get no
 fragment here. Their tables, tes_security functions and capabilities are still parsed from the migration SQL so they are known
@@ -14,9 +20,11 @@ production verifier then compares production's catalogue to them EXACTLY. Which 
 from the migration SQL text itself (CREATE TABLE / CREATE FUNCTION / INSERT INTO), so a migration cannot add an object this
 generator does not notice.
 
-Usage:  PGHOST=... PGPORT=... PGDATABASE=tes_prod PGUSER=<migrator> generate-expectations.py <migrations-dir> <output-dir>
-The database must have every migration in <migrations-dir> applied.
+Usage:  PGHOST=... PGPORT=... PGDATABASE=tes_prod PGUSER=<migrator> PRE_PGPORT=<port of a database migrated through 0026 only> \
+          generate-expectations.py <migrations-dir> <output-dir>
+The main database must have every migration in <migrations-dir> applied.
 """
+import os
 import re
 import subprocess
 import sys
@@ -29,7 +37,9 @@ MIGRATIONS = {
     "0019": "0019_company_operating_profile_foundation.sql",
     "0025": "0025_insurance_scheduled_vehicles_foundation.sql",
     "0026": "0026_vehicle_merge_ledger.sql",
+    "0027": "0027_operational_identity_organization_access_policies.sql",
 }
+POLICY_ONLY = ("0027",)
 RT = "tes-backend@tes-production-510007.iam"
 MIGRATOR = "tes-database-migrator@tes-production-510007.iam"
 
@@ -38,10 +48,13 @@ out_dir = Path(sys.argv[2])
 out_dir.mkdir(parents=True, exist_ok=True)
 
 
-def run(sql):
+def run(sql, port=None):
+    env = dict(os.environ)
+    if port:
+        env["PGPORT"] = port
     result = subprocess.run(
         ["psql", "--no-psqlrc", "--no-password", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
-        capture_output=True, text=True)
+        capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise SystemExit(result.stderr)
     return [line for line in result.stdout.split("\n") if line != ""]
@@ -76,8 +89,9 @@ def objects(version):
     for tname, table in re.findall(r"^CREATE (?:CONSTRAINT )?TRIGGER ([a-z_0-9]+)\s[^;]*?\bON public\.([a-z_0-9]+)", sql, re.M | re.S):
         if table not in tables:
             ext_triggers.setdefault(table, []).append(tname)
+    altered = re.findall(r"^ALTER POLICY ([a-z_0-9]+) ON public\.([a-z_0-9]+)", sql, re.M)
     return {"tables": tables, "functions": functions, "seeds": seeds, "caps": caps, "ext_triggers": ext_triggers,
-            "rls": bool(re.search(r"ENABLE ROW LEVEL SECURITY", sql))}
+            "rls": bool(re.search(r"ENABLE ROW LEVEL SECURITY", sql)), "altered_policies": altered, "sql": sql}
 
 
 ALL_OBJ = {v: objects(v) for v in ALL_FILES}
@@ -381,6 +395,103 @@ INVARIANTS = {
 }
 
 
+def cumulative_sections(version):
+    """Exact-set sections evaluated only when `version` is the highest migration being verified."""
+    parts = []
+
+    def add(text):
+        parts.append(text)
+
+    later_tables = ALL_TABLES_AFTER[version]
+    rel_expected = [l for l in run(q_relations) if l not in later_tables]
+    add(section(f"public relations through {version}", q_relations + (f" AND c.relname NOT IN ({names(sorted(later_tables))})" if later_tables else ""), rel_expected, through=version))
+    cap_rows = run(q_caps + " ORDER BY sort_order")
+    later_caps = ALL_CAPS_AFTER[version]
+    cap_expected = [l for l in cap_rows if l.split("|")[0] not in later_caps]
+    add(section(f"capability catalogue through {version} (full rows)", q_caps + (f" WHERE code NOT IN ({names(sorted(later_caps))})" if later_caps else ""), cap_expected, through=version))
+    later_funcs = ALL_FUNCS_AFTER[version]
+    fn_expected = [l for l in run(q_tesfn) if l not in later_funcs]
+    add(section(f"tes_security function set through {version}", q_tesfn + (f" AND p.proname NOT IN ({names(sorted(later_funcs))})" if later_funcs else ""), fn_expected, through=version))
+    later_secdef = {k for k, w in FIRST_FUNC_VERSION.items() if w > version}
+    secdef_expected = [l for l in run(q_secdef) if l not in later_secdef]
+    add(section(f"SECURITY DEFINER function set through {version}", q_secdef + (f" AND n.nspname || '.' || pp.proname NOT IN ({names(sorted(later_secdef))})" if later_secdef else ""), secdef_expected, through=version))
+    return "".join(parts)
+
+
+def ledger_section(version):
+    name = MIGRATIONS[version]
+    return f"""
+DO $verify$
+BEGIN
+  IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM tes_system.schema_migrations WHERE version = '{version}' AND filename = '{name}') THEN
+    RAISE EXCEPTION 'ledger has no {version} entry with the expected filename';
+  END IF;
+  RAISE NOTICE 'OK ledger records {name}';
+END
+$verify$;
+"""
+
+
+def policy_only_fragment(version):
+    """A migration that only ALTERs existing policies (0027): no table / function / trigger / capability / seed of its own."""
+    o = OBJ[version]
+    name = MIGRATIONS[version]
+    assert not (o["tables"] or o["functions"] or o["seeds"] or o["caps"] or o["ext_triggers"] or o["rls"]), f"{version} is not policy-only"
+    altered = o["altered_policies"]
+    assert altered, f"{version} alters no policy"
+    # nothing but the ALTER POLICY statements may remain in the migration
+    rest = re.sub(r"ALTER POLICY [a-z_0-9]+ ON public\.[a-z_0-9]+\s+USING \(.*?\);", "", o["sql"], flags=re.S)
+    assert rest.strip() == "", f"{version} contains more than ALTER POLICY ... USING: {rest.strip()[:200]}"
+    assert "WITH CHECK" not in o["sql"].upper(), f"{version} must not change WITH CHECK"
+    tables = list(dict.fromkeys(t for _, t in altered))
+    pre_port = os.environ.get("PRE_PGPORT")
+    if not pre_port:
+        raise SystemExit(f"PRE_PGPORT (a database migrated through {int(version) - 1:04d} only) is required to derive the pre-{version} policy definitions")
+    pre_ledger = run("SELECT max(version) FROM tes_system.schema_migrations", pre_port)[0]
+    assert pre_ledger == f"{int(version) - 1:04d}", f"PRE_PGPORT database is at {pre_ledger}, expected {int(version) - 1:04d}"
+    pre_lines = run(q_policies(tables), pre_port)
+    post_lines = run(q_policies(tables))
+    pre_by = {l.split(" ", 2)[0] + " " + l.split(" ", 2)[1]: l for l in pre_lines}
+    post_by = {l.split(" ", 2)[0] + " " + l.split(" ", 2)[1]: l for l in post_lines}
+    assert set(pre_by) == set(post_by), f"the policy NAMES on {tables} differ between pre and post {version}"
+    changed = sorted(k for k in post_by if pre_by[k] != post_by[k])
+    assert changed == sorted(f"{t} {n}" for n, t in altered), f"policies changed {changed}, migration alters {altered}"
+    for k in changed:  # only USING changed: everything else, WITH CHECK included, is identical
+        a, b = pre_by[k], post_by[k]
+        assert a.split(" using=")[0] == b.split(" using=")[0] and a.split(" check=")[1] == b.split(" check=")[1], f"{k}: more than USING changed"
+        assert a.split(" using=")[1] != b.split(" using=")[1]
+    # ROW LEVEL SECURITY flags are unchanged by this migration
+    pre_flags = run(q_owner(tables), pre_port)
+    post_flags = run(q_owner(tables))
+    assert pre_flags == post_flags, "RLS flags / owners differ between pre and post"
+
+    labels = ", ".join(tables)
+    out = [f"""
+-- ============================================================================================================
+-- Migration {version} ({name}) - policy-only: ALTER POLICY ... USING on {", ".join(f"{n}" for n, _ in altered)}
+-- ============================================================================================================
+"""]
+    out.append(section(f"{version}: pre-{version} (0024) row-level security policies of {labels} (name, command, permissive, roles, USING, WITH CHECK)", q_policies(tables), pre_lines, phase="pre"))
+    out.append(section(f"{version}: RLS flags and owners of {labels} (enabled, not forced)", q_owner(tables), pre_flags, phase="pre"))
+    out.append(ledger_section(version))
+    out.append(cumulative_sections(version))
+    out.append(section(f"{version}: row-level security policies of {labels} - the complete policy set (name, command, permissive, roles, USING, WITH CHECK)", q_policies(tables), post_lines))
+    out.append(section(f"{version}: RLS flags and owners of {labels} (enabled, not forced)", q_owner(tables), post_flags))
+    out.append(f"""
+DO $verify$
+BEGIN
+  IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
+  IF NOT (SELECT bool_and(relrowsecurity AND NOT relforcerowsecurity) FROM pg_class WHERE oid IN ({regclasses(tables)})) THEN
+    RAISE EXCEPTION 'a {version} table does not have RLS enabled (and not forced)';
+  END IF;
+  RAISE NOTICE 'OK {version} policy-only: no table, function, trigger, capability or seed row of its own; RLS enabled (not forced) on {labels}';
+END
+$verify$;
+""")
+    return "".join(out)
+
+
 def fragment(version):
     o = OBJ[version]
     tables, funcs, seeds, caps = o["tables"], o["functions"], o["seeds"], o["caps"]
@@ -436,31 +547,8 @@ END
 $verify$;
 """)
     # post phase: ledger row
-    add(f"""
-DO $verify$
-BEGIN
-  IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
-  IF NOT EXISTS (SELECT 1 FROM tes_system.schema_migrations WHERE version = '{version}' AND filename = '{name}') THEN
-    RAISE EXCEPTION 'ledger has no {version} entry with the expected filename';
-  END IF;
-  RAISE NOTICE 'OK ledger records {name}';
-END
-$verify$;
-""")
-    # cumulative sections, evaluated only when this is the highest migration being verified
-    later_tables = ALL_TABLES_AFTER[version]
-    rel_expected = [l for l in run(q_relations) if l not in later_tables]
-    add(section(f"public relations through {version}", q_relations + (f" AND c.relname NOT IN ({names(sorted(later_tables))})" if later_tables else ""), rel_expected, through=version))
-    cap_rows = run(q_caps + " ORDER BY sort_order")
-    later_caps = ALL_CAPS_AFTER[version]
-    cap_expected = [l for l in cap_rows if l.split("|")[0] not in later_caps]
-    add(section(f"capability catalogue through {version} (full rows)", q_caps + (f" WHERE code NOT IN ({names(sorted(later_caps))})" if later_caps else ""), cap_expected, through=version))
-    later_funcs = ALL_FUNCS_AFTER[version]
-    fn_expected = [l for l in run(q_tesfn) if l not in later_funcs]
-    add(section(f"tes_security function set through {version}", q_tesfn + (f" AND p.proname NOT IN ({names(sorted(later_funcs))})" if later_funcs else ""), fn_expected, through=version))
-    later_secdef = {k for k, w in FIRST_FUNC_VERSION.items() if w > version}
-    secdef_expected = [l for l in run(q_secdef) if l not in later_secdef]
-    add(section(f"SECURITY DEFINER function set through {version}", q_secdef + (f" AND n.nspname || '.' || pp.proname NOT IN ({names(sorted(later_secdef))})" if later_secdef else ""), secdef_expected, through=version))
+    add(ledger_section(version))
+    add(cumulative_sections(version))
     # exact structure of this migration's objects
     for t in tables:
         add(section(f"{t} columns (name, data type, nullability, default)", q_columns(t), run(q_columns(t))))
@@ -565,7 +653,7 @@ $verify$;
 
 
 for version in MIGRATIONS:
-    (out_dir / f"{version}.sql").write_text(fragment(version))
+    (out_dir / f"{version}.sql").write_text(policy_only_fragment(version) if version in POLICY_ONLY else fragment(version))
     print(version, (out_dir / f"{version}.sql").stat().st_size)
 
 all_new_tables = [t for v in MIGRATIONS for t in OBJ[v]["tables"]]
@@ -587,7 +675,7 @@ BEGIN
     tbl := split_part(pair, '=', 1);
     expected := split_part(pair, '=', 2)::bigint;
     IF tbl IN ({names(all_new_tables)}) THEN
-      RAISE EXCEPTION 'baseline list names a generator-verified foundation table (0016-0019, 0025, 0026): %', tbl;
+      RAISE EXCEPTION 'baseline list names a generator-verified foundation table (0016-0019, 0025-0027): %', tbl;
     END IF;
     EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO actual;
     IF actual <> expected THEN

@@ -47,3 +47,19 @@ nothing is granted to anyone.
 * Under 0024 the `organizations` policy excludes VEHICLE_* and the `organization_person_relationships` policy excludes
   INSURANCE_MANAGE, so `establishOrganizationVehicle` and insurance policies with a broker contact fail. These need a policy
   change in a reviewed migration and are not altered here.
+
+## Migration 0027: organization access policies (policy-only)
+
+0027 resolves the two defects listed above. It creates no table, column, function, trigger, capability or seed row and grants
+nothing. It runs exactly two `ALTER POLICY ... USING` statements; `WITH CHECK` and the CUSTOMER policies are untouched, so the
+added capabilities can read and lock rows but never insert, update or re-parent them:
+
+* `organizations_system` (`public.organizations`) additionally sees rows for `VEHICLE_READ`, `VEHICLE_MANAGE`, `DRIVER_READ`,
+  `DRIVER_MANAGE` and `IDENTITY_RESOLUTION_MANAGE`.
+* `organization_person_relationships_system` additionally sees rows for `INSURANCE_MANAGE`.
+
+Production verification (shared script, fragment `0027.sql`, selectable as FROM / THROUGH, default THROUGH 0027): the static
+check allows only those two single-statement `USING` alterations; the PRE phase requires the complete policy sets of both
+tables to equal the 0024 definitions; the POST phase requires the complete post-0027 policy sets (so an extra, missing or
+altered policy fails) and RLS enabled, not forced. The expected definitions are generated from a database migrated through
+0026 (pre) and through 0027 (post) with the same catalogue query the verifier runs.

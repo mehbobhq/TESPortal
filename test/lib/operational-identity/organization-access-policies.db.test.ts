@@ -36,18 +36,20 @@ if (!enabled && process.env.TES_REQUIRE_DB_TESTS === "1") {
   });
 }
 
-// The USING / WITH CHECK capability sets of the two policies after migration 0027.
+// The USING / WITH CHECK capability sets of the two policies in their final state (migration 0027, superseded for organizations_system by 0028).
 const ORGANIZATIONS_USING = [
-  "CREDENTIAL_MANAGE", "CREDENTIAL_READ", "CUSTOMER_ESTABLISH", "DRIVER_MANAGE", "DRIVER_READ", "IDENTITY_RESOLUTION_MANAGE", "INSURANCE_MANAGE",
-  "INSURANCE_READ", "ORGANIZATION_ARCHIVE", "ORGANIZATION_CREATE", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_UPDATE", "VEHICLE_MANAGE", "VEHICLE_READ",
+  "COMPANY_PROFILE_MANAGE", "COMPANY_PROFILE_READ", "CONTACT_MANAGE", "CREDENTIAL_MANAGE", "CREDENTIAL_READ", "CUSTOMER_ESTABLISH",
+  "CUSTOMER_RELATIONSHIP_MANAGE", "CUSTOMER_RELATIONSHIP_READ", "DRIVER_MANAGE", "IDENTITY_RESOLUTION_MANAGE", "INSURANCE_MANAGE", "INSURANCE_READ",
+  "ORGANIZATION_ARCHIVE", "ORGANIZATION_CREATE", "ORGANIZATION_REGISTRY_READ", "ORGANIZATION_UPDATE", "PERSON_REGISTRY_READ",
+  "TAX_REGISTRATION_MANAGE", "TAX_REGISTRATION_READ", "VEHICLE_MANAGE",
 ];
 const ORGANIZATIONS_CHECK = ["CREDENTIAL_MANAGE", "CUSTOMER_ESTABLISH", "INSURANCE_MANAGE", "ORGANIZATION_ARCHIVE", "ORGANIZATION_CREATE", "ORGANIZATION_UPDATE"];
 const RELATIONSHIPS_USING = ["CONTACT_MANAGE", "INSURANCE_MANAGE", "PERSON_REGISTRY_READ"];
 const RELATIONSHIPS_CHECK = ["CONTACT_MANAGE"];
 
-// The capabilities whose operations must see an Organization (the six added by 0027 plus the unchanged ones that matter here).
-const SEES_ORGANIZATIONS = ["VEHICLE_READ", "VEHICLE_MANAGE", "DRIVER_READ", "DRIVER_MANAGE", "IDENTITY_RESOLUTION_MANAGE", "INSURANCE_MANAGE"] as const;
-const BLIND_TO_ORGANIZATIONS = ["IDENTITY_RESOLUTION_READ", "MASTER_REGISTER_READ", "TAX_REGISTRATION_READ"] as const;
+// The capabilities whose operations must see an Organization (operational identity and insurance; no operation reads an Organization under VEHICLE_READ or DRIVER_READ).
+const SEES_ORGANIZATIONS = ["VEHICLE_MANAGE", "DRIVER_MANAGE", "IDENTITY_RESOLUTION_MANAGE", "INSURANCE_MANAGE"] as const;
+const BLIND_TO_ORGANIZATIONS = ["VEHICLE_READ", "DRIVER_READ", "IDENTITY_RESOLUTION_READ", "MASTER_REGISTER_READ"] as const;
 
 const AL = () => ({ coverageType: "AUTO_LIABILITY", limitAmount: "1000000", currency: "CAD", limitBasis: "COMBINED_SINGLE_LIMIT" });
 
@@ -451,7 +453,7 @@ describe("Organization access policies of migration 0027 (real authorization, re
       ).rows;
     }
 
-    it("organizations_system: USING widened by exactly the six capabilities, WITH CHECK unchanged, FOR ALL and permissive", async () => {
+    it("organizations_system: USING is exactly the final (0028) capability list, WITH CHECK unchanged, FOR ALL and permissive", async () => {
       const rows = await policiesOf("organizations");
       assert.deepEqual(rows.map((r) => r.policyname), ["organizations_customer_read", "organizations_system"]);
       const system = rows.find((r) => r.policyname === "organizations_system");

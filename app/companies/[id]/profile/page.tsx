@@ -128,7 +128,7 @@ function useNavigationRouter() {
   }
 }
 
-type ActivityEntry = { id: string; action: string; entityLabel?: string; detail?: string; t: number }
+type ActivityEntry = { id: string; action: string; entityLabel?: string; detail?: string; t: string }
 
 export default function CompanyProfilePage() {
   const params = useRouteParams()

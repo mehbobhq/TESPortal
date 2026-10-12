@@ -108,15 +108,15 @@ DECLARE
   present text;
 BEGIN
   IF phase = 'pre' THEN
-    SELECT string_agg(table_name, ',' ORDER BY table_name) INTO present
+    SELECT string_agg(expected.object_name, ',' ORDER BY expected.object_name) INTO present
     FROM (VALUES
       ('legacy_import_batches'),
       ('legacy_canonical_record_map'),
       ('legacy_import_records'),
       ('legacy_import_checkpoints'),
       ('legacy_import_review_decisions')
-    ) AS expected(table_name)
-    WHERE to_regclass('public.' || expected.table_name) IS NOT NULL;
+    ) AS expected(object_name)
+    WHERE to_regclass('public.' || expected.object_name) IS NOT NULL;
     IF present IS NOT NULL THEN
       RAISE EXCEPTION 'pre phase found 0029 table(s) already present: %', present;
     END IF;

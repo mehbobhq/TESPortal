@@ -17,6 +17,62 @@ import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import { readActivity, type ActivityEntry } from "@/lib/activity-log"
 
+type CompanyProfile = {
+  id: string
+  name: string
+  kind: string
+  region: string
+  status: string
+  createdAt: string
+  dba: string | null
+  contact: string | null
+  phone: string | null
+  website: string | null
+  email: string | null
+  billingEmail: string | null
+  opRegion: "Canada Only" | "US Only" | "Cross-Border"
+  incorpNo: string | null
+  businessNo: string | null
+  gstHst: string | null
+  regCorpState: string | null
+  usdot: string | null
+  mc: string | null
+  nsc: string | null
+  mvid: string | null
+  scac: string | null
+  carrierCode: string | null
+  assessmentDate?: string | null
+  svcType?: string | null
+  startDate?: string | null
+  endDate?: string | null
+  payMethod?: string | null
+  cargoInfo?: string | null
+  accIrp?: string | null
+  accIfta?: string | null
+  accNyhut?: string | null
+  accNm?: string | null
+  accKyu?: string | null
+  accOr?: string | null
+  accCt?: string | null
+  gpsProvider?: string | null
+  fuelProvider?: string | null
+  reg_street?: string | null
+  reg_city?: string | null
+  reg_state?: string | null
+  reg_zip?: string | null
+  reg_country?: string | null
+  mail_street?: string | null
+  mail_city?: string | null
+  mail_state?: string | null
+  mail_zip?: string | null
+  mail_country?: string | null
+  yard_street?: string | null
+  yard_city?: string | null
+  yard_state?: string | null
+  yard_zip?: string | null
+  yard_country?: string | null
+}
+
 const ACTIVITY_FILTERS: { label: string; value: string }[] = [
   { label: "All", value: "all" },
   { label: "Vehicles", value: "vehicles" },
@@ -76,21 +132,44 @@ function useNavigationRouter() {
 export default function CompanyProfilePage() {
   const params = useRouteParams()
   const router = useNavigationRouter()
-  const [company, setCompany] = useState<any>(null)
+  const [company, setCompany] = useState<CompanyProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activityFilter, setActivityFilter] = useState<string>("all")
   const [activityLimit, setActivityLimit] = useState(20)
 
   useEffect(() => {
     const id = params?.id as string
-    try {
-      const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-      const found = savedCompanies.find((c: any) => c.id === id)
-      setCompany(found || null)
-    } catch {
+    if (!id) {
       setCompany(null)
-    } finally {
       setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    fetch(`/api/companies/${encodeURIComponent(id)}/profile`, { cache: "no-store" })
+      .then(async (response) => {
+        if (response.status === 404) return { company: null }
+        if (!response.ok) throw new Error("Unable to load company profile.")
+        return response.json() as Promise<{ company: CompanyProfile | null }>
+      })
+      .then((payload) => {
+        if (!cancelled) {
+          setCompany(payload.company)
+          setError(null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCompany(null)
+          setError("Company profile could not be loaded from PostgreSQL.")
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
   }, [params?.id])
 
@@ -112,8 +191,8 @@ export default function CompanyProfilePage() {
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-6">
         <EmptyState
           icon={<Building2 className="size-10 text-muted-foreground/60" />}
-          title="Company Not Found"
-          description="The requested company record could not be found in the directory."
+          title={error ? "Company Profile Unavailable" : "Company Not Found"}
+          description={error ?? "The requested company record could not be found in the PostgreSQL directory."}
           action={{
             label: "Back to Directory",
             onClick: () => router.push("/companies"),
@@ -126,12 +205,12 @@ export default function CompanyProfilePage() {
 
   // --- Dynamic Visibility Logic ---
   const isCustomer = company.kind === "Customer"
-  const opRegion = company.region || "Canada Only"
+  const opRegion = company.opRegion || "Canada Only"
   const isCanada = opRegion === "Canada Only" || opRegion === "Cross-Border"
   const isUS = opRegion === "US Only" || opRegion === "Cross-Border"
   const showCustoms = opRegion === "Cross-Border"
 
-  const formatAddress = (prefix: string) => {
+  const formatAddress = (prefix: "reg" | "mail" | "yard") => {
     const street = company[`${prefix}_street`]
     const city = company[`${prefix}_city`]
     const state = company[`${prefix}_state`]

@@ -39,12 +39,13 @@ const NEW_MIGRATIONS = [
 ] as const;
 
 describe("Companies foundation completion: migrations", () => {
-  it("applied migrations 0001-0015 are byte-for-byte unchanged and 0016-0019 follow them contiguously (no 0020)", () => {
+  it("applied migrations 0001-0015 are byte-for-byte unchanged and 0016-0019 follow them contiguously (0020 and later are owned by the identity graph tests)", () => {
     const present = readdirSync(MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     for (const [name, expected] of Object.entries(CLOSED_MIGRATIONS)) {
       assert.equal(createHash("sha256").update(readFileSync(path.join(MIGRATIONS_DIR, name))).digest("hex"), expected, name);
     }
-    assert.deepEqual(present, [...Object.keys(CLOSED_MIGRATIONS), ...NEW_MIGRATIONS]);
+    assert.deepEqual(present.slice(0, Object.keys(CLOSED_MIGRATIONS).length + NEW_MIGRATIONS.length), [...Object.keys(CLOSED_MIGRATIONS), ...NEW_MIGRATIONS]);
+    assert.match(present[Object.keys(CLOSED_MIGRATIONS).length + NEW_MIGRATIONS.length] ?? "0020_", /^0020_/);
   });
 
   it("every new migration is additive: no DROP/ALTER/UPDATE/DELETE/TRUNCATE, no DELETE/TRUNCATE/ALL grant, no SECURITY DEFINER, no RLS, no tenant context, no capability grant", () => {
@@ -110,6 +111,9 @@ describe("Companies foundation completion: one shared production verification", 
   it("the script is read-only (BEGIN READ ONLY ... ROLLBACK), pre/post aware, parameterized by FROM/THROUGH", () => {
     const script = readFileSync(scriptPath, "utf8");
     assert.match(script, /BEGIN READ ONLY;/);
+    assert.match(script, /0016\|0017\|0018\|0019\|0025\|0026\|0027\|0028\) ;;/);
+    assert.match(script, /TES_VERIFY_FROM:-0025/);
+    assert.match(script, /TES_VERIFY_THROUGH:-0028/);
     assert.match(script, /\nROLLBACK;/);
     for (const variable of ["TES_VERIFY_PHASE", "TES_VERIFY_EXPECT_EMPTY", "TES_VERIFY_BASELINE_COUNTS", "TES_VERIFY_FROM", "TES_VERIFY_THROUGH"]) {
       assert.match(script, new RegExp(variable));
@@ -118,7 +122,7 @@ describe("Companies foundation completion: one shared production verification", 
 
   it("each migration has its own expectation fragment, and no fragment writes anything", () => {
     const files = readdirSync(fragmentsDir).filter((name) => name.endsWith(".sql")).sort();
-    assert.deepEqual(files, ["0016.sql", "0017.sql", "0018.sql", "0019.sql", "baseline.sql"]);
+    assert.deepEqual(files, ["0016.sql", "0017.sql", "0018.sql", "0019.sql", "0025.sql", "0026.sql", "0027.sql", "0028.sql", "baseline.sql"]);
     for (const file of files) {
       const sql = readFileSync(path.join(fragmentsDir, file), "utf8").replace(/\$exp\$[\s\S]*?\$exp\$/g, "");
       assert.doesNotMatch(sql, /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE)\b/im, file);

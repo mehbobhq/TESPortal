@@ -331,7 +331,7 @@ describe("Insurance (real authorization, real transactions, real Master Register
     scenario("no SECURITY DEFINER, no RLS, no policy on the new tables; every new function is invoker with a fixed search_path and no PUBLIC execute", async () => {
       const functions = (await pools.admin.query<{ proname: string; prosecdef: boolean; proconfig: string[] | null; public_execute: boolean }>(
         `SELECT p.proname, p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE') AS public_execute
-           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname ~ '(insurance)'`,
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname ~ '(insurance)' AND p.proname !~ 'insurance_schedule'`,
       )).rows;
       assert.equal(functions.length, 12);
       for (const fn of functions) {
@@ -457,7 +457,8 @@ describe("Insurance (real authorization, real transactions, real Master Register
     });
 
     scenario("the service exposes no delete, remove, merge or customer-scope function and no status setter", async () => {
-      assert.deepEqual(Object.keys(K.i).filter((key) => /delete|remove|destroy|merge|withAuthorizedCustomer|customerContext|setStatus|expire/i.test(key)), []);
+      // removeScheduledVehicle (0025) ends a schedule window; it deletes nothing and is the only "remove" the service exposes
+      assert.deepEqual(Object.keys(K.i).filter((key) => /delete|remove|destroy|merge|withAuthorizedCustomer|customerContext|setStatus|expire/i.test(key)), ["removeScheduledVehicle"]);
     });
   });
 

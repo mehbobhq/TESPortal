@@ -1,4 +1,4 @@
-import type { CancellationReason, Currency, EndorsementKind, InsuranceFamily, LimitBasis, TermReason, TermState, CoverageType } from "@/lib/insurance/definitions"
+import type { CancellationReason, Currency, EndorsementKind, InsuranceFamily, LimitBasis, ScheduleReason, TermReason, TermState, CoverageType } from "@/lib/insurance/definitions"
 import type { PolicyNumberHolder } from "@/lib/insurance/errors"
 
 export type CorrectableStatus = "active" | "corrected"
@@ -115,4 +115,58 @@ export type PolicyNumberCheckResult = {
   number: { display: string; normalized: string; ruleVersion: string }
   registered: boolean
   holder: PolicyNumberHolder | null
+}
+
+/** One vehicle on a vehicle-scheduled coverage. The window is calendar dates, half-open [effectiveFrom, effectiveTo). */
+export type ScheduledVehicleRecord = Correctable & {
+  id: string
+  coverageId: string
+  vehicleId: string
+  /** The insured Organization (always the coverage's). */
+  organizationId: string
+  scheduleReason: ScheduleReason
+  effectiveFrom: string
+  /** null = until the coverage ends. */
+  effectiveTo: string | null
+}
+
+export type CoverageScheduleView = {
+  coverageId: string
+  organizationId: string
+  asOfDate: string
+  coverage: CoverageRecord
+  /** The genuine schedule rows in force on the as-of date (empty when the coverage or its term was corrected, or the coverage had ended by then). */
+  scheduled: ScheduledVehicleRecord[]
+  /** Every schedule row of the coverage, corrected ones included (flagged), earliest first. */
+  history: ScheduledVehicleRecord[]
+}
+
+export type VehicleScheduledCoverage = {
+  schedule: ScheduledVehicleRecord
+  coverage: CoverageRecord
+  policyId: string
+  /** The insured Organization. */
+  organizationId: string
+}
+
+/** A vehicle and the vehicles that answer for it: its survivor after following vehicles.merged_into_vehicle_id, and everything merged into that survivor. */
+export type VehicleFamily = {
+  /** The vehicle that was asked about. */
+  vehicleId: string
+  /** The surviving vehicle (equal to vehicleId when it was never merged away). */
+  resolvedVehicleId: string
+  /** The survivor and every vehicle merged into it, directly or through other merged vehicles, in id order. */
+  vehicleIds: string[]
+}
+
+export type VehicleInsuranceView = {
+  /** The vehicle that was asked about. */
+  vehicleId: string
+  /** The surviving vehicle after following the merges (equal to vehicleId when it was never merged away). */
+  resolvedVehicleId: string
+  asOfDate: string
+  /** The genuine coverages that schedule the vehicle (or a vehicle merged into it) on the as-of date. */
+  scheduled: VehicleScheduledCoverage[]
+  /** Every schedule row of the vehicle family, corrected ones included (flagged), earliest first. */
+  history: ScheduledVehicleRecord[]
 }

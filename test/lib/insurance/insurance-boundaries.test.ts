@@ -51,9 +51,10 @@ describe("Insurance boundaries", () => {
     assert.doesNotMatch(service, /withAuthorizedCustomer|tes-customer-context/, "no CUSTOMER-facing path");
     const caps = new Set([...service.matchAll(/"([A-Z]+_[A-Z_]+)"/g)].map((match) => match[1]).filter((code) => /^(ORGANIZATION|CUSTOMER|PERSON|CONTACT|INSURANCE|TAX|CREDENTIAL|COMPANY)_/.test(code)));
     assert.deepEqual([...caps].sort(), ["INSURANCE_MANAGE", "INSURANCE_READ"]);
-    assert.equal((service.match(/withAuthorizedSystem\("INSURANCE_READ"/g) ?? []).length, 2, "getOrganizationInsurance and checkPolicyNumber");
+    assert.equal((service.match(/withAuthorizedSystem\("INSURANCE_READ"/g) ?? []).length, 4, "getOrganizationInsurance, checkPolicyNumber, getCoverageSchedule and getVehicleInsurance (0025 added the last two)");
+    assert.equal((service.match(/withAuthorizedSystem\("VEHICLE_READ"/g) ?? []).length, 1, "getVehicleInsurance resolves the vehicle merge chain in its own VEHICLE_READ transaction (0025)");
     assert.equal((service.match(/withAuthorizedSystem\("INSURANCE_MANAGE"/g) ?? []).length, 1, "every mutation goes through the one manage() helper");
-    assert.equal((service.match(/withAuthorizedSystem\(/g) ?? []).length, 3, "no other authorization entry exists");
+    assert.equal((service.match(/withAuthorizedSystem\(/g) ?? []).length, 6, "no other authorization entry exists");
     assert.equal((service.match(/hasAdditionalSystemCapability\(client, decision, "INSURANCE_READ"\)/g) ?? []).length, 1, "collision disclosure is gated on INSURANCE_READ, once");
   });
 
@@ -61,10 +62,11 @@ describe("Insurance boundaries", () => {
     const service = codeOnly(source("service.ts"));
     const exported = [...service.matchAll(/^export (?:async function|const) (\w+)/gm)].map((match) => match[1]).sort();
     assert.deepEqual(exported, [
-      "addEndorsement", "archivePolicy", "cancelTerm", "changeBroker", "checkPolicyNumber", "correctBroker", "correctCoverage", "correctEndorsement", "correctTerm",
-      "createPolicy", "getOrganizationInsurance", "renewPolicy", "restorePolicy",
+      "addEndorsement", "archivePolicy", "cancelTerm", "changeBroker", "changeSchedule", "checkPolicyNumber", "correctBroker", "correctCoverage", "correctEndorsement", "correctSchedule",
+      "correctTerm", "createPolicy", "getCoverageSchedule", "getOrganizationInsurance", "getVehicleInsurance", "removeScheduledVehicle", "renewPolicy", "restorePolicy", "scheduleVehicle",
     ]);
-    assert.doesNotMatch(service, /delete|remove|destroy|merge|reopen|undo/i);
+    // removeScheduledVehicle (0025) ends a schedule window and deletes nothing; it is the only permitted "remove"
+    assert.doesNotMatch(service.replace(/removeScheduledVehicle/g, ""), /delete|remove|destroy|merge|reopen|undo/i);
   });
 
   it("no DELETE/TRUNCATE SQL; no browser storage or Google Cloud storage; no UI imports", () => {
@@ -93,9 +95,9 @@ describe("Insurance boundaries", () => {
     const allowed = /^(null|"[A-Za-z_]+"|family|kind|reason|spec\.coverageType|current\.coverageType|old\.kind|endorsement\.kind|from\.coverageType|target\.coverageType|merged\.coverageType|coverageType)$/;
     for (const argument of literals) assert.match(argument, allowed, `literal(${argument}) must be controlled vocabulary`);
     assert.doesNotMatch(operations, /literal\([^)]*(number|amount|limit|deductible|Date|termStart|termEnd|cancelledOn|effectiveOn|legalName|display)/i, "no numbers, amounts, dates or names reach the register");
-    // resource types are the five designed ones
+    // resource types are the six designed ones (insurance_coverage_vehicle was added by 0025)
     const resources = new Set([...operations.matchAll(/resourceType: "(\w+)"/g)].map((match) => match[1]));
-    assert.deepEqual([...resources].sort(), ["insurance_broker_period", "insurance_coverage", "insurance_endorsement", "insurance_policy", "insurance_policy_term"]);
+    assert.deepEqual([...resources].sort(), ["insurance_broker_period", "insurance_coverage", "insurance_coverage_vehicle", "insurance_endorsement", "insurance_policy", "insurance_policy_term"]);
     assert.match(operations, /subjectReferences: \[`organization:\$\{target\.organizationId\}`\]/);
   });
 
@@ -117,8 +119,8 @@ describe("Insurance boundaries", () => {
     }
   });
 
-  it("out of scope is absent: no certificates, evidence, URLs, filings, scheduled vehicles, sufficiency verdicts or stored status", () => {
-    const forbiddenWord = /certificate|\bcoi\b|evidence|document|\burl\b|\bocr\b|filing|bmc[-_ ]?91|scheduled_vehicles\b|vehicle_id|sufficien|verdict|compliant/i;
+  it("out of scope is absent: no certificates, evidence, URLs, filings, sufficiency verdicts or stored status (the vehicle schedule of 0025 is in scope)", () => {
+    const forbiddenWord = /certificate|\bcoi\b|evidence|document|\burl\b|\bocr\b|filing|bmc[-_ ]?91|sufficien|verdict|compliant/i;
     for (const file of files) {
       const code = codeOnly(source(file));
       if (file === "legacy.ts") continue; // legacy.ts names the legacy fields it deliberately does not migrate

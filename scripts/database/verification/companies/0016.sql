@@ -17,7 +17,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.capabilities WHERE code IN ('TAX_REGISTRATION_READ','TAX_REGISTRATION_MANAGE')) THEN
     RAISE EXCEPTION 'a 0016 capability already exists before 0016';
   END IF;
-  RAISE NOTICE 'OK no 0016 table, function or capability exists before 0016';
+  RAISE NOTICE 'OK no 0016 table, function, capability exists before 0016';
 END
 $verify$;
 
@@ -40,14 +40,13 @@ BEGIN
   IF current_setting('tes.verify_through') <> '0016' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$organizations
-organization_identifiers
-organization_aliases
-organization_classification_types
-organization_classifications
+    SELECT unnest(string_to_array($exp$organization_classification_types
+organizations
 customers
+organization_identifiers
 actors
 authentication_identities
+organization_aliases
 master_account_authority
 actor_relationships
 relationship_assignments
@@ -64,13 +63,13 @@ operating_authorities
 operating_authority_versions
 operating_authority_status_periods
 contact_purpose_types
-persons
-person_name_versions
-person_channels
 organization_channels
 organization_person_relationships
 organization_person_titles
 contact_purpose_assignments
+persons
+person_name_versions
+person_channels
 customer_engagements
 engagement_types
 engagement_stage_types
@@ -79,28 +78,28 @@ service_catalogue
 engagement_end_reasons
 customer_engagement_stages
 customer_engagement_terminations
-engagement_service_scopes
-engagement_responsibility_periods
 customer_agreements
 customer_agreement_versions
-registration_programs
+engagement_service_scopes
+engagement_responsibility_periods
 registrations
+registration_programs
 registration_versions
-registration_status_periods$exp$, E'\n')) AS l
+registration_status_periods
+organization_classifications$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = 'public' AND c.relkind IN ('r','p','v','m','S','f') AND c.relname NOT IN ('company_credentials','company_driver_requirement_periods','company_operating_scope_periods','company_profile_rules','company_rule_applicability_periods','credential_categories','credential_secret_slots','credential_status_periods','credential_system_aliases','credential_systems','credential_verifications','insurance_broker_periods','insurance_coverage_types','insurance_coverages','insurance_endorsements','insurance_policies','insurance_policy_terms')) AS a(l)
+    SELECT l FROM (SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = 'public' AND c.relkind IN ('r','p','v','m','S','f') AND c.relname NOT IN ('company_credentials','company_driver_requirement_periods','company_operating_scope_periods','company_profile_rules','company_rule_applicability_periods','credential_categories','credential_secret_slots','credential_status_periods','credential_system_aliases','credential_systems','credential_verifications','driver_licences','driver_medical_qualification_periods','driver_profiles','entity_resolution_candidates','entity_resolution_cases','entity_resolution_signals','insurance_broker_periods','insurance_coverage_types','insurance_coverage_vehicles','insurance_coverages','insurance_endorsements','insurance_policies','insurance_policy_terms','organization_driver_relationships','organization_vehicle_relationships','vehicle_merges','vehicle_registration_periods','vehicle_types','vehicles')) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = 'public' AND c.relkind IN ('r','p','v','m','S','f') AND c.relname NOT IN ('company_credentials','company_driver_requirement_periods','company_operating_scope_periods','company_profile_rules','company_rule_applicability_periods','credential_categories','credential_secret_slots','credential_status_periods','credential_system_aliases','credential_systems','credential_verifications','insurance_broker_periods','insurance_coverage_types','insurance_coverages','insurance_endorsements','insurance_policies','insurance_policy_terms')) AS a(l)
+    SELECT l FROM (SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = 'public' AND c.relkind IN ('r','p','v','m','S','f') AND c.relname NOT IN ('company_credentials','company_driver_requirement_periods','company_operating_scope_periods','company_profile_rules','company_rule_applicability_periods','credential_categories','credential_secret_slots','credential_status_periods','credential_system_aliases','credential_systems','credential_verifications','driver_licences','driver_medical_qualification_periods','driver_profiles','entity_resolution_candidates','entity_resolution_cases','entity_resolution_signals','insurance_broker_periods','insurance_coverage_types','insurance_coverage_vehicles','insurance_coverages','insurance_endorsements','insurance_policies','insurance_policy_terms','organization_driver_relationships','organization_vehicle_relationships','vehicle_merges','vehicle_registration_periods','vehicle_types','vehicles')) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$organizations
-organization_identifiers
-organization_aliases
-organization_classification_types
-organization_classifications
+    SELECT unnest(string_to_array($exp$organization_classification_types
+organizations
 customers
+organization_identifiers
 actors
 authentication_identities
+organization_aliases
 master_account_authority
 actor_relationships
 relationship_assignments
@@ -117,13 +116,13 @@ operating_authorities
 operating_authority_versions
 operating_authority_status_periods
 contact_purpose_types
-persons
-person_name_versions
-person_channels
 organization_channels
 organization_person_relationships
 organization_person_titles
 contact_purpose_assignments
+persons
+person_name_versions
+person_channels
 customer_engagements
 engagement_types
 engagement_stage_types
@@ -132,14 +131,15 @@ service_catalogue
 engagement_end_reasons
 customer_engagement_stages
 customer_engagement_terminations
-engagement_service_scopes
-engagement_responsibility_periods
 customer_agreements
 customer_agreement_versions
-registration_programs
+engagement_service_scopes
+engagement_responsibility_periods
 registrations
+registration_programs
 registration_versions
-registration_status_periods$exp$, E'\n'))
+registration_status_periods
+organization_classifications$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
     RAISE EXCEPTION 'public relations through 0016 differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
@@ -170,10 +170,10 @@ CUSTOMER_RELATIONSHIP_MANAGE|Manage Customer Relationship|Manage an already-esta
 TAX_REGISTRATION_READ|Read Tax Registrations|SYSTEM-wide read access to Organization tax, fuel-tax, highway-use, weight-distance and carrier-code registrations, their number / jurisdiction history and status history, and to the registration-number collision registry. Intended scope: SYSTEM only.|true|110
 TAX_REGISTRATION_MANAGE|Manage Tax Registrations|Create, change, correct, archive and restore Organization registrations and record their status history. Does not file returns or store credentials. Intended scope: SYSTEM only.|true|120$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT code || '|' || display_name || '|' || description || '|' || is_active || '|' || sort_order FROM public.capabilities WHERE code NOT IN ('COMPANY_PROFILE_MANAGE','COMPANY_PROFILE_READ','CREDENTIAL_MANAGE','CREDENTIAL_READ','INSURANCE_MANAGE','INSURANCE_READ')) AS a(l)
+    SELECT l FROM (SELECT code || '|' || display_name || '|' || description || '|' || is_active || '|' || sort_order FROM public.capabilities WHERE code NOT IN ('COMPANY_PROFILE_MANAGE','COMPANY_PROFILE_READ','CREDENTIAL_MANAGE','CREDENTIAL_READ','DRIVER_MANAGE','DRIVER_READ','IDENTITY_RESOLUTION_MANAGE','IDENTITY_RESOLUTION_READ','INSURANCE_MANAGE','INSURANCE_READ','MASTER_REGISTER_READ','VEHICLE_MANAGE','VEHICLE_READ')) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT code || '|' || display_name || '|' || description || '|' || is_active || '|' || sort_order FROM public.capabilities WHERE code NOT IN ('COMPANY_PROFILE_MANAGE','COMPANY_PROFILE_READ','CREDENTIAL_MANAGE','CREDENTIAL_READ','INSURANCE_MANAGE','INSURANCE_READ')) AS a(l)
+    SELECT l FROM (SELECT code || '|' || display_name || '|' || description || '|' || is_active || '|' || sort_order FROM public.capabilities WHERE code NOT IN ('COMPANY_PROFILE_MANAGE','COMPANY_PROFILE_READ','CREDENTIAL_MANAGE','CREDENTIAL_READ','DRIVER_MANAGE','DRIVER_READ','IDENTITY_RESOLUTION_MANAGE','IDENTITY_RESOLUTION_READ','INSURANCE_MANAGE','INSURANCE_READ','MASTER_REGISTER_READ','VEHICLE_MANAGE','VEHICLE_READ')) AS a(l)
     EXCEPT
     SELECT unnest(string_to_array($exp$ORGANIZATION_READ|Read Organization|Read the canonical Organization behind an already-authorized Customer. Does not authorize Organization directory listing or search. Intended scope: CUSTOMER only.|true|10
 ORGANIZATION_REGISTRY_READ|Read Organization Registry|SYSTEM-wide Organization registry access: list and search Organizations, read any Organization, view duplicate-match details, and list Customers. Intended scope: SYSTEM only.|true|20
@@ -255,10 +255,10 @@ guard_registration_status_period_update
 require_registration_current_state
 guard_active_organization$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname NOT IN ('guard_company_credential_insert','guard_company_credential_update','guard_company_driver_requirement_update','guard_company_operating_scope_update','guard_company_rule_applicability_insert','guard_company_rule_applicability_update','guard_credential_alias','guard_credential_secret_slot_insert','guard_credential_secret_slot_update','guard_credential_status_period_insert','guard_credential_status_period_update','guard_credential_system_name','guard_credential_verification_insert','guard_credential_verification_update','guard_insurance_broker_period_insert','guard_insurance_broker_period_update','guard_insurance_coverage_insert','guard_insurance_coverage_update','guard_insurance_endorsement_insert','guard_insurance_endorsement_update','guard_insurance_policy_update','guard_insurance_term_insert','guard_insurance_term_update','prevent_company_profile_data_removal','prevent_credential_data_removal','prevent_insurance_data_removal','require_credential_current_state','require_insurance_policy_state','require_insurance_term_coverage')) AS a(l)
+    SELECT l FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname NOT IN ('accessible_customers_for_actor','current_customer_actor_id','current_customer_capability','current_system_actor_id','current_system_capability','customer_context_authorized','guard_company_credential_insert','guard_company_credential_update','guard_company_driver_requirement_update','guard_company_operating_scope_update','guard_company_rule_applicability_insert','guard_company_rule_applicability_update','guard_credential_alias','guard_credential_secret_slot_insert','guard_credential_secret_slot_update','guard_credential_status_period_insert','guard_credential_status_period_update','guard_credential_system_name','guard_credential_verification_insert','guard_credential_verification_update','guard_driver_history_update','guard_driver_operational_insert','guard_entity_resolution_case_update','guard_insurance_broker_period_insert','guard_insurance_broker_period_update','guard_insurance_coverage_insert','guard_insurance_coverage_update','guard_insurance_endorsement_insert','guard_insurance_endorsement_update','guard_insurance_policy_update','guard_insurance_schedule_insert','guard_insurance_schedule_update','guard_insurance_schedule_vehicle','guard_insurance_term_insert','guard_insurance_term_update','guard_vehicle_history_update','guard_vehicle_merge_insert','guard_vehicle_merge_update','guard_vehicle_operational_insert','prevent_company_profile_data_removal','prevent_credential_data_removal','prevent_driver_identity_removal','prevent_entity_resolution_removal','prevent_insurance_data_removal','prevent_insurance_schedule_data_removal','prevent_person_archive_with_driver_relationship','prevent_vehicle_identity_removal','prevent_vehicle_merge_cycle','prevent_vehicle_merge_data_removal','require_credential_current_state','require_insurance_policy_state','require_insurance_term_coverage','require_vehicle_merge_consistency','system_context_authorized')) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname NOT IN ('guard_company_credential_insert','guard_company_credential_update','guard_company_driver_requirement_update','guard_company_operating_scope_update','guard_company_rule_applicability_insert','guard_company_rule_applicability_update','guard_credential_alias','guard_credential_secret_slot_insert','guard_credential_secret_slot_update','guard_credential_status_period_insert','guard_credential_status_period_update','guard_credential_system_name','guard_credential_verification_insert','guard_credential_verification_update','guard_insurance_broker_period_insert','guard_insurance_broker_period_update','guard_insurance_coverage_insert','guard_insurance_coverage_update','guard_insurance_endorsement_insert','guard_insurance_endorsement_update','guard_insurance_policy_update','guard_insurance_term_insert','guard_insurance_term_update','prevent_company_profile_data_removal','prevent_credential_data_removal','prevent_insurance_data_removal','require_credential_current_state','require_insurance_policy_state','require_insurance_term_coverage')) AS a(l)
+    SELECT l FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'tes_security' AND p.proname NOT IN ('accessible_customers_for_actor','current_customer_actor_id','current_customer_capability','current_system_actor_id','current_system_capability','customer_context_authorized','guard_company_credential_insert','guard_company_credential_update','guard_company_driver_requirement_update','guard_company_operating_scope_update','guard_company_rule_applicability_insert','guard_company_rule_applicability_update','guard_credential_alias','guard_credential_secret_slot_insert','guard_credential_secret_slot_update','guard_credential_status_period_insert','guard_credential_status_period_update','guard_credential_system_name','guard_credential_verification_insert','guard_credential_verification_update','guard_driver_history_update','guard_driver_operational_insert','guard_entity_resolution_case_update','guard_insurance_broker_period_insert','guard_insurance_broker_period_update','guard_insurance_coverage_insert','guard_insurance_coverage_update','guard_insurance_endorsement_insert','guard_insurance_endorsement_update','guard_insurance_policy_update','guard_insurance_schedule_insert','guard_insurance_schedule_update','guard_insurance_schedule_vehicle','guard_insurance_term_insert','guard_insurance_term_update','guard_vehicle_history_update','guard_vehicle_merge_insert','guard_vehicle_merge_update','guard_vehicle_operational_insert','prevent_company_profile_data_removal','prevent_credential_data_removal','prevent_driver_identity_removal','prevent_entity_resolution_removal','prevent_insurance_data_removal','prevent_insurance_schedule_data_removal','prevent_person_archive_with_driver_relationship','prevent_vehicle_identity_removal','prevent_vehicle_merge_cycle','prevent_vehicle_merge_data_removal','require_credential_current_state','require_insurance_policy_state','require_insurance_term_coverage','require_vehicle_merge_consistency','system_context_authorized')) AS a(l)
     EXCEPT
     SELECT unnest(string_to_array($exp$prevent_location_data_removal
 current_customer_id
@@ -329,17 +329,17 @@ BEGIN
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
     SELECT unnest(string_to_array($exp$tes_security.resolve_legacy_company$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT n.nspname || '.' || pp.proname FROM pg_proc pp JOIN pg_namespace n ON n.oid = pp.pronamespace WHERE pp.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')) AS a(l)
+    SELECT l FROM (SELECT n.nspname || '.' || pp.proname FROM pg_proc pp JOIN pg_namespace n ON n.oid = pp.pronamespace WHERE pp.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname || '.' || pp.proname NOT IN ('tes_security.accessible_customers_for_actor','tes_security.current_customer_actor_id','tes_security.current_customer_capability','tes_security.current_system_actor_id','tes_security.current_system_capability','tes_security.customer_context_authorized','tes_security.guard_company_credential_insert','tes_security.guard_company_credential_update','tes_security.guard_company_driver_requirement_update','tes_security.guard_company_operating_scope_update','tes_security.guard_company_rule_applicability_insert','tes_security.guard_company_rule_applicability_update','tes_security.guard_credential_alias','tes_security.guard_credential_secret_slot_insert','tes_security.guard_credential_secret_slot_update','tes_security.guard_credential_status_period_insert','tes_security.guard_credential_status_period_update','tes_security.guard_credential_system_name','tes_security.guard_credential_verification_insert','tes_security.guard_credential_verification_update','tes_security.guard_driver_history_update','tes_security.guard_driver_operational_insert','tes_security.guard_entity_resolution_case_update','tes_security.guard_insurance_broker_period_insert','tes_security.guard_insurance_broker_period_update','tes_security.guard_insurance_coverage_insert','tes_security.guard_insurance_coverage_update','tes_security.guard_insurance_endorsement_insert','tes_security.guard_insurance_endorsement_update','tes_security.guard_insurance_policy_update','tes_security.guard_insurance_schedule_insert','tes_security.guard_insurance_schedule_update','tes_security.guard_insurance_schedule_vehicle','tes_security.guard_insurance_term_insert','tes_security.guard_insurance_term_update','tes_security.guard_vehicle_history_update','tes_security.guard_vehicle_merge_insert','tes_security.guard_vehicle_merge_update','tes_security.guard_vehicle_operational_insert','tes_security.prevent_company_profile_data_removal','tes_security.prevent_credential_data_removal','tes_security.prevent_driver_identity_removal','tes_security.prevent_entity_resolution_removal','tes_security.prevent_insurance_data_removal','tes_security.prevent_insurance_schedule_data_removal','tes_security.prevent_person_archive_with_driver_relationship','tes_security.prevent_vehicle_identity_removal','tes_security.prevent_vehicle_merge_cycle','tes_security.prevent_vehicle_merge_data_removal','tes_security.require_credential_current_state','tes_security.require_insurance_policy_state','tes_security.require_insurance_term_coverage','tes_security.require_vehicle_merge_consistency','tes_security.system_context_authorized')) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT n.nspname || '.' || pp.proname FROM pg_proc pp JOIN pg_namespace n ON n.oid = pp.pronamespace WHERE pp.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')) AS a(l)
+    SELECT l FROM (SELECT n.nspname || '.' || pp.proname FROM pg_proc pp JOIN pg_namespace n ON n.oid = pp.pronamespace WHERE pp.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname || '.' || pp.proname NOT IN ('tes_security.accessible_customers_for_actor','tes_security.current_customer_actor_id','tes_security.current_customer_capability','tes_security.current_system_actor_id','tes_security.current_system_capability','tes_security.customer_context_authorized','tes_security.guard_company_credential_insert','tes_security.guard_company_credential_update','tes_security.guard_company_driver_requirement_update','tes_security.guard_company_operating_scope_update','tes_security.guard_company_rule_applicability_insert','tes_security.guard_company_rule_applicability_update','tes_security.guard_credential_alias','tes_security.guard_credential_secret_slot_insert','tes_security.guard_credential_secret_slot_update','tes_security.guard_credential_status_period_insert','tes_security.guard_credential_status_period_update','tes_security.guard_credential_system_name','tes_security.guard_credential_verification_insert','tes_security.guard_credential_verification_update','tes_security.guard_driver_history_update','tes_security.guard_driver_operational_insert','tes_security.guard_entity_resolution_case_update','tes_security.guard_insurance_broker_period_insert','tes_security.guard_insurance_broker_period_update','tes_security.guard_insurance_coverage_insert','tes_security.guard_insurance_coverage_update','tes_security.guard_insurance_endorsement_insert','tes_security.guard_insurance_endorsement_update','tes_security.guard_insurance_policy_update','tes_security.guard_insurance_schedule_insert','tes_security.guard_insurance_schedule_update','tes_security.guard_insurance_schedule_vehicle','tes_security.guard_insurance_term_insert','tes_security.guard_insurance_term_update','tes_security.guard_vehicle_history_update','tes_security.guard_vehicle_merge_insert','tes_security.guard_vehicle_merge_update','tes_security.guard_vehicle_operational_insert','tes_security.prevent_company_profile_data_removal','tes_security.prevent_credential_data_removal','tes_security.prevent_driver_identity_removal','tes_security.prevent_entity_resolution_removal','tes_security.prevent_insurance_data_removal','tes_security.prevent_insurance_schedule_data_removal','tes_security.prevent_person_archive_with_driver_relationship','tes_security.prevent_vehicle_identity_removal','tes_security.prevent_vehicle_merge_cycle','tes_security.prevent_vehicle_merge_data_removal','tes_security.require_credential_current_state','tes_security.require_insurance_policy_state','tes_security.require_insurance_term_coverage','tes_security.require_vehicle_merge_consistency','tes_security.system_context_authorized')) AS a(l)
     EXCEPT
     SELECT unnest(string_to_array($exp$tes_security.resolve_legacy_company$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
-    RAISE EXCEPTION 'SECURITY DEFINER function set (nothing in the Companies foundation is SECURITY DEFINER) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
+    RAISE EXCEPTION 'SECURITY DEFINER function set through 0016 differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK SECURITY DEFINER function set (nothing in the Companies foundation is SECURITY DEFINER) (1 entries) match the design exactly';
+  RAISE NOTICE 'OK SECURITY DEFINER function set through 0016 (1 entries) match the design exactly';
 END
 $verify$;
 
@@ -773,9 +773,9 @@ require_registration_current_state secdef=false config=search_path=pg_catalog vo
 guard_active_organization secdef=false config=search_path=pg_catalog volatility=v language=plpgsql returns=trigger args= body=c8d389cb28be7e20ab55c6a6cb14eda9 owner=tes-database-migrator@tes-production-510007.iam public_execute=false runtime_execute=false$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
-    RAISE EXCEPTION '0016 trigger functions (SECURITY INVOKER, fixed search_path, body checksum, no PUBLIC/runtime execute) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
+    RAISE EXCEPTION '0016 functions (fixed search_path, body checksum, SECURITY DEFINER only where designed, no PUBLIC/runtime execute) differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK 0016 trigger functions (SECURITY INVOKER, fixed search_path, body checksum, no PUBLIC/runtime execute) (8 entries) match the design exactly';
+  RAISE NOTICE 'OK 0016 functions (fixed search_path, body checksum, SECURITY DEFINER only where designed, no PUBLIC/runtime execute) (8 entries) match the design exactly';
 END
 $verify$;
 
@@ -787,25 +787,25 @@ BEGIN
   IF current_setting('tes.verify_phase') <> 'post' THEN RETURN; END IF;
 
   SELECT string_agg(l, E'\n' ORDER BY l) INTO missing FROM (
-    SELECT unnest(string_to_array($exp$registration_programs owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registrations owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registration_versions owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registration_status_periods owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false$exp$, E'\n')) AS l
+    SELECT unnest(string_to_array($exp$registration_programs owner=tes-database-migrator@tes-production-510007.iam
+registrations owner=tes-database-migrator@tes-production-510007.iam
+registration_versions owner=tes-database-migrator@tes-production-510007.iam
+registration_status_periods owner=tes-database-migrator@tes-production-510007.iam$exp$, E'\n')) AS l
     EXCEPT
-    SELECT l FROM (SELECT c.relname || ' owner=' || pg_get_userbyid(c.relowner) || ' rls=' || c.relrowsecurity || ' forcerls=' || c.relforcerowsecurity FROM pg_class c WHERE c.oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass)) AS a(l)
+    SELECT l FROM (SELECT c.relname || ' owner=' || pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass)) AS a(l)
   ) d;
   SELECT string_agg(l, E'\n' ORDER BY l) INTO extra FROM (
-    SELECT l FROM (SELECT c.relname || ' owner=' || pg_get_userbyid(c.relowner) || ' rls=' || c.relrowsecurity || ' forcerls=' || c.relforcerowsecurity FROM pg_class c WHERE c.oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass)) AS a(l)
+    SELECT l FROM (SELECT c.relname || ' owner=' || pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass)) AS a(l)
     EXCEPT
-    SELECT unnest(string_to_array($exp$registration_programs owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registrations owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registration_versions owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false
-registration_status_periods owner=tes-database-migrator@tes-production-510007.iam rls=false forcerls=false$exp$, E'\n'))
+    SELECT unnest(string_to_array($exp$registration_programs owner=tes-database-migrator@tes-production-510007.iam
+registrations owner=tes-database-migrator@tes-production-510007.iam
+registration_versions owner=tes-database-migrator@tes-production-510007.iam
+registration_status_periods owner=tes-database-migrator@tes-production-510007.iam$exp$, E'\n'))
   ) d;
   IF missing IS NOT NULL OR extra IS NOT NULL THEN
-    RAISE EXCEPTION '0016 table ownership and RLS flags differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
+    RAISE EXCEPTION '0016 table ownership differ from the design. MISSING: % EXTRA: %', coalesce(missing, '-'), coalesce(extra, '-');
   END IF;
-  RAISE NOTICE 'OK 0016 table ownership and RLS flags (4 entries) match the design exactly';
+  RAISE NOTICE 'OK 0016 table ownership (4 entries) match the design exactly';
 END
 $verify$;
 
@@ -1006,12 +1006,13 @@ BEGIN
   END IF;
   IF migrator_role = runtime_role THEN RAISE EXCEPTION 'migrator and runtime identities are the same'; END IF;
 
-  IF EXISTS (SELECT 1 FROM pg_class WHERE oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass) AND (relrowsecurity OR relforcerowsecurity))
-     OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass)) THEN
-    RAISE EXCEPTION 'RLS or a policy exists on a 0016 table (not part of the approved design)';
+  IF current_setting('tes.verify_through') < '0020' AND (
+       EXISTS (SELECT 1 FROM pg_class WHERE oid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass) AND (relrowsecurity OR relforcerowsecurity))
+       OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid IN ('public.registration_programs'::regclass,'public.registrations'::regclass,'public.registration_versions'::regclass,'public.registration_status_periods'::regclass))) THEN
+    RAISE EXCEPTION 'RLS or a policy exists on a 0016 table (not part of the approved design before 0020)';
   END IF;
 
-  RAISE NOTICE 'OK 0016 runtime: SELECT + column-specific INSERT/UPDATE only; no DELETE, TRUNCATE, REFERENCES or TRIGGER; no PUBLIC privilege; no RLS / policy';
+  RAISE NOTICE 'OK 0016 runtime: SELECT + column-specific INSERT/UPDATE only; no DELETE, TRUNCATE, REFERENCES or TRIGGER; no PUBLIC privilege; no RLS / policy before 0020 (RLS closure of 0024 is verified by its own script)';
 END
 $verify$;
 

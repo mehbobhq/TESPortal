@@ -9,13 +9,14 @@
  * money as two-decimal strings, because a JS Date or float would truncate or round.
  *
  * Lock order (used by every operation): the insured Organization row, then the policy row, then dependent rows (terms,
- * endorsements, coverages, broker periods).
+ * endorsements, coverages, broker periods). A schedule write continues the order with the vehicle row (shared, taken by the
+ * database guard) and then the schedule row.
  */
 
 import type { PoolClient } from "pg"
-import type { CancellationReason, CoverageType, Currency, EndorsementKind, InsuranceFamily, LimitBasis, TermReason } from "@/lib/insurance/definitions"
+import type { CancellationReason, CoverageType, Currency, EndorsementKind, InsuranceFamily, LimitBasis, ScheduleReason, TermReason } from "@/lib/insurance/definitions"
 import type { PolicyNumberHolder } from "@/lib/insurance/errors"
-import type { BrokerPeriodRecord, CoverageRecord, EndorsementRecord, PolicyRecord, TermRecord } from "@/lib/insurance/types"
+import type { BrokerPeriodRecord, CoverageRecord, EndorsementRecord, PolicyRecord, ScheduledVehicleRecord, TermRecord } from "@/lib/insurance/types"
 
 export type Queryable = Pick<PoolClient, "query">
 
@@ -578,5 +579,161 @@ export async function supersedeBrokerPeriod(client: Queryable, periodId: string,
   await client.query(
     `UPDATE public.insurance_broker_periods SET record_status = 'corrected', corrected_at = clock_timestamp(), superseded_by_period_id = $2, updated_at = clock_timestamp() WHERE id = $1`,
     [periodId, replacementId],
+  )
+}
+
+// --- scheduled vehicles (migration 0025) ------------------------------------------------------------------------------
+
+// Constraint names raised by the insurance_coverage_vehicles table and its guard triggers, translated into domain errors.
+export const SCHEDULE_COVERAGE_ACTIVE_CONSTRAINT = "insurance_coverage_vehicles_coverage_active"
+export const SCHEDULE_SAME_ORGANIZATION_CONSTRAINT = "insurance_coverage_vehicles_same_organization"
+export const SCHEDULE_COVERAGE_SCHEDULED_CONSTRAINT = "insurance_coverage_vehicles_coverage_is_scheduled"
+export const SCHEDULE_INSIDE_COVERAGE_CONSTRAINT = "insurance_coverage_vehicles_inside_coverage"
+export const SCHEDULE_VEHICLE_ACTIVE_CONSTRAINT = "insurance_coverage_vehicles_vehicle_active"
+export const SCHEDULE_VEHICLE_OPERATED_CONSTRAINT = "insurance_coverage_vehicles_vehicle_operated"
+export const SCHEDULE_OVERLAP_CONSTRAINTS = ["insurance_coverage_vehicles_no_overlap"] as const
+export const SCHEDULE_CHECK_CONSTRAINTS = [
+  "insurance_coverage_vehicles_reason_valid",
+  "insurance_coverage_vehicles_effective_window_valid",
+  "insurance_coverage_vehicles_record_status_valid",
+  "insurance_coverage_vehicles_correction_state_consistent",
+  "insurance_coverage_vehicles_not_superseded_by_self",
+] as const
+
+const SCHEDULE_COLUMNS = `s.id, s.coverage_id, s.vehicle_id, s.organization_id, s.schedule_reason, ${DATE_NULL("s.effective_from")} AS effective_from,
+  ${DATE_NULL("s.effective_to")} AS effective_to, s.record_status, ${MICRO_ISO_NULL("s.corrected_at")} AS corrected_at, s.superseded_by_schedule_id`
+type ScheduleRow = {
+  id: string
+  coverage_id: string
+  vehicle_id: string
+  organization_id: string
+  schedule_reason: ScheduleReason
+  effective_from: string
+  effective_to: string | null
+  record_status: "active" | "corrected"
+  corrected_at: string | null
+  superseded_by_schedule_id: string | null
+}
+const toSchedule = (row: ScheduleRow): ScheduledVehicleRecord => ({
+  id: row.id,
+  coverageId: row.coverage_id,
+  vehicleId: row.vehicle_id,
+  organizationId: row.organization_id,
+  scheduleReason: row.schedule_reason,
+  effectiveFrom: row.effective_from,
+  effectiveTo: row.effective_to,
+  recordStatus: row.record_status,
+  correctedAt: row.corrected_at,
+  supersededById: row.superseded_by_schedule_id,
+})
+
+/**
+ * Follows vehicles.merged_into_vehicle_id from a (possibly merged-away) vehicle to the vehicle that answers for it. Runs on a
+ * transaction that can read vehicles (VEHICLE_READ). `exists` is false for an unknown vehicle; `survivorId` is null when the
+ * chain has no end (a loop, which the merge guard forbids). The recursion uses UNION, so it terminates even on a loop.
+ */
+export async function findVehicleSurvivor(client: Queryable, vehicleId: string): Promise<{ exists: boolean; survivorId: string | null }> {
+  const result = await client.query<{ exists: boolean; survivor_id: string | null }>(
+    `WITH RECURSIVE chain(id, merged_into_vehicle_id) AS (
+       SELECT v.id, v.merged_into_vehicle_id FROM public.vehicles AS v WHERE v.id = $1
+       UNION
+       SELECT v.id, v.merged_into_vehicle_id FROM public.vehicles AS v JOIN chain ON v.id = chain.merged_into_vehicle_id
+     )
+     SELECT EXISTS (SELECT 1 FROM chain) AS exists, (SELECT id FROM chain WHERE merged_into_vehicle_id IS NULL) AS survivor_id`,
+    [vehicleId],
+  )
+  return { exists: result.rows[0].exists, survivorId: result.rows[0].survivor_id }
+}
+
+/** The survivor and every vehicle merged into it, directly or through other merged vehicles, in id order (loop-safe like findVehicleSurvivor). */
+export async function listVehicleFamily(client: Queryable, survivorId: string): Promise<string[]> {
+  const result = await client.query<{ id: string }>(
+    `WITH RECURSIVE family(id) AS (
+       SELECT $1::uuid
+       UNION
+       SELECT v.id FROM public.vehicles AS v JOIN family ON v.merged_into_vehicle_id = family.id
+     )
+     SELECT id FROM family ORDER BY id`,
+    [survivorId],
+  )
+  return result.rows.map((row) => row.id)
+}
+
+/** Resolves a schedule row to its coverage without locking (used to find what to lock first). */
+export async function findScheduleCoverage(client: Queryable, scheduleId: string): Promise<string | undefined> {
+  const result = await client.query<{ coverage_id: string }>(`SELECT coverage_id FROM public.insurance_coverage_vehicles WHERE id = $1`, [scheduleId])
+  return result.rows[0]?.coverage_id
+}
+
+export async function getSchedule(client: Queryable, scheduleId: string, lock = false): Promise<ScheduledVehicleRecord | undefined> {
+  const result = await client.query<ScheduleRow>(`SELECT ${SCHEDULE_COLUMNS} FROM public.insurance_coverage_vehicles AS s WHERE s.id = $1${lock ? " FOR NO KEY UPDATE OF s" : ""}`, [scheduleId])
+  return result.rows[0] ? toSchedule(result.rows[0]) : undefined
+}
+
+/** Every schedule row of one coverage, corrected ones included, earliest first. */
+export async function listCoverageSchedule(client: Queryable, coverageId: string): Promise<ScheduledVehicleRecord[]> {
+  const result = await client.query<ScheduleRow>(
+    `SELECT ${SCHEDULE_COLUMNS} FROM public.insurance_coverage_vehicles AS s WHERE s.coverage_id = $1 ORDER BY s.effective_from, s.created_at, s.id`,
+    [coverageId],
+  )
+  return result.rows.map(toSchedule)
+}
+
+/** Every schedule row of the given vehicles, corrected ones included, earliest first. */
+export async function listVehicleSchedule(client: Queryable, vehicleIds: string[]): Promise<ScheduledVehicleRecord[]> {
+  const result = await client.query<ScheduleRow>(
+    `SELECT ${SCHEDULE_COLUMNS} FROM public.insurance_coverage_vehicles AS s WHERE s.vehicle_id = ANY($1::uuid[]) ORDER BY s.effective_from, s.created_at, s.id`,
+    [vehicleIds],
+  )
+  return result.rows.map(toSchedule)
+}
+
+/**
+ * The genuine schedule rows of the given vehicles in force on a date, with the policy each belongs to. The coverage and its term
+ * must be genuine, and an open window runs only until the coverage ends: the earliest of its own end, its term's end and its
+ * term's cancellation (the same rule as coverageWindowEnd).
+ */
+export async function listVehicleScheduleInForce(client: Queryable, vehicleIds: string[], date: string): Promise<{ schedule: ScheduledVehicleRecord; policyId: string }[]> {
+  const result = await client.query<ScheduleRow & { policy_id: string }>(
+    `SELECT ${SCHEDULE_COLUMNS}, c.policy_id
+       FROM public.insurance_coverage_vehicles AS s
+       JOIN public.insurance_coverages AS c ON c.id = s.coverage_id
+       JOIN public.insurance_policy_terms AS t ON t.id = c.term_id
+      WHERE s.vehicle_id = ANY($1::uuid[]) AND s.record_status = 'active' AND c.record_status = 'active' AND t.record_status = 'active'
+        AND s.effective_from <= $2::date AND (s.effective_to IS NULL OR $2::date < s.effective_to)
+        AND (LEAST(c.effective_to, t.term_end, t.cancelled_on) IS NULL OR $2::date < LEAST(c.effective_to, t.term_end, t.cancelled_on))
+      ORDER BY s.effective_from, s.created_at, s.id`,
+    [vehicleIds, date],
+  )
+  return result.rows.map((row) => ({ schedule: toSchedule(row), policyId: row.policy_id }))
+}
+
+/** The coverage rows with the given ids, by id. */
+export async function getCoverages(client: Queryable, coverageIds: string[]): Promise<Map<string, CoverageRecord>> {
+  const result = await client.query<CoverageRow>(`SELECT ${COVERAGE_COLUMNS} FROM public.insurance_coverages WHERE id = ANY($1::uuid[])`, [coverageIds])
+  return new Map(result.rows.map((row) => [row.id, toCoverage(row)]))
+}
+
+export async function insertSchedule(
+  client: Queryable,
+  input: { id: string; coverageId: string; vehicleId: string; organizationId: string; reason: ScheduleReason; effectiveFrom: string; effectiveTo: string | null },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO public.insurance_coverage_vehicles (id, coverage_id, vehicle_id, organization_id, schedule_reason, effective_from, effective_to)
+     VALUES ($1, $2, $3, $4, $5, $6::date, $7::date)`,
+    [input.id, input.coverageId, input.vehicleId, input.organizationId, input.reason, input.effectiveFrom, input.effectiveTo],
+  )
+}
+
+/** A REAL-WORLD end: sets effective_to on a genuine, open schedule row. */
+export async function endSchedule(client: Queryable, scheduleId: string, effectiveTo: string): Promise<void> {
+  await client.query(`UPDATE public.insurance_coverage_vehicles SET effective_to = $2::date, updated_at = clock_timestamp() WHERE id = $1`, [scheduleId, effectiveTo])
+}
+
+/** A CORRECTION: flags the row (never ends it) and links its replacement. */
+export async function supersedeSchedule(client: Queryable, scheduleId: string, replacementId: string): Promise<void> {
+  await client.query(
+    `UPDATE public.insurance_coverage_vehicles SET record_status = 'corrected', corrected_at = clock_timestamp(), superseded_by_schedule_id = $2, updated_at = clock_timestamp() WHERE id = $1`,
+    [scheduleId, replacementId],
   )
 }

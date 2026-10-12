@@ -180,3 +180,29 @@ export type CoverageRowInput = { recordStatus: "active" | "corrected"; effective
 export function coverageInForce(row: CoverageRowInput, termState: TermState, date: string): boolean {
   return termState === "IN_FORCE" && row.recordStatus === "active" && row.effectiveFrom <= date && (row.effectiveTo === null || date < row.effectiveTo)
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scheduled vehicles (migration 0025, insurance_coverage_vehicles)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Why a schedule row exists. The database CHECK (insurance_coverage_vehicles_reason_valid) holds the same list. */
+export const SCHEDULE_REASONS = ["INITIAL", "CHANGE", "CORRECTION"] as const
+export type ScheduleReason = (typeof SCHEDULE_REASONS)[number]
+
+export const isScheduleReason = (value: unknown): value is ScheduleReason => includes(SCHEDULE_REASONS, value)
+
+export type CoverageWindowInput = { coverageEnd: string | null; termEnd: string | null; cancelledOn: string | null }
+
+/**
+ * The first calendar date a coverage is NO LONGER in force: the earliest of its own end, its term's end and its term's
+ * cancellation (absent values ignored), or null when none of them is stated. A schedule window lies inside
+ * [coverage.effectiveFrom, coverageWindowEnd); an open schedule runs "until the coverage ends".
+ */
+export function coverageWindowEnd(input: CoverageWindowInput): string | null {
+  const stated = [input.coverageEnd, input.termEnd, input.cancelledOn].filter((value): value is string => value !== null)
+  return stated.length === 0 ? null : stated.reduce((earliest, value) => (value < earliest ? value : earliest))
+}
+
+/** A schedule window is half-open [from, to): in force on `date` from its first day up to, not including, its end. */
+export const scheduleInForce = (window: { effectiveFrom: string; effectiveTo: string | null }, date: string): boolean =>
+  window.effectiveFrom <= date && (window.effectiveTo === null || date < window.effectiveTo)

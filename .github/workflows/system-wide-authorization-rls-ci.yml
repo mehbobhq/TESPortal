@@ -49,15 +49,64 @@ jobs:
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
       - name: Apply complete migration history
         run: bash scripts/database/migrate.sh
-      - name: Ledger and RLS catalogue
+      - name: Ledger and RLS catalogue (complete chain 0001-0028)
         run: |
-          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "24"
-          test "$(psql -Atc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")" = "53"
-          test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "98"
-      - name: Post-state production verifier against PostgreSQL 17
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "28"
+          test "$(psql -Atc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")" = "55"
+          test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "101"
+      - name: Build production-shaped databases (migrator-owned; complete chain and 0001-0024 only)
         env:
+          CI_MIGRATOR: "tes-database-migrator@tes-production-510007.iam"
+          CI_MIGRATOR_PASSWORD: ci-migrator
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"$CI_MIGRATOR\" LOGIN PASSWORD '$CI_MIGRATOR_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE tes_ci_chain OWNER \"$CI_MIGRATOR\""
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE tes_ci_0024 OWNER \"$CI_MIGRATOR\""
+          first24="$(mktemp -d)"
+          for f in database/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+            version="$(basename "$f")"; version="${version%%_*}"
+            if [[ "$version" < "0025" ]]; then cp "$f" "$first24/"; fi
+          done
+          test "$(ls "$first24" | wc -l)" = "24"
+          PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_0024 MIGRATIONS_DIR="$first24" bash scripts/database/migrate.sh
+          PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_chain bash scripts/database/migrate.sh
+          test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_0024 psql -Atc 'select count(*) from tes_system.schema_migrations')" = "24"
+          test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_chain psql -Atc 'select count(*) from tes_system.schema_migrations')" = "28"
+      - name: Frozen 0024 closure verifier on a 0001-0024 database against PostgreSQL 17
+        env:
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+          PGDATABASE: tes_ci_0024
           TES_VERIFY_PHASE: post
         run: bash scripts/database/verify-production-system-wide-authorization-rls.sh
+      - name: Additive verifier 0025-0028, PRE phase on the 0001-0024 database
+        env:
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+          PGDATABASE: tes_ci_0024
+          TES_VERIFY_PHASE: pre
+          TES_VERIFY_FROM: "0025"
+          TES_VERIFY_THROUGH: "0028"
+        run: bash scripts/database/verify-production-companies-foundation.sh
+      - name: Additive verifier 0025-0028, POST phase on the complete-chain database
+        env:
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+          PGDATABASE: tes_ci_chain
+          TES_VERIFY_PHASE: post
+          TES_VERIFY_FROM: "0025"
+          TES_VERIFY_THROUGH: "0028"
+        run: bash scripts/database/verify-production-companies-foundation.sh
+      - name: Shared verifier POST 0016-0028 on the complete-chain database
+        env:
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+          PGDATABASE: tes_ci_chain
+          TES_VERIFY_PHASE: post
+          TES_VERIFY_FROM: "0016"
+          TES_VERIFY_THROUGH: "0028"
+        run: bash scripts/database/verify-production-companies-foundation.sh
       - name: Adversarial cross-tenant matrix
         run: psql -v ON_ERROR_STOP=1 -f test/database/system-wide-authorization-rls.sql
       - name: RLS mutation-kill suite

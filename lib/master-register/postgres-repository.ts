@@ -69,6 +69,14 @@ function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value)
 }
 
+/** The event as the database stores it: JSON members round-trip through JSON, timestamps are normalised to UTC milliseconds. */
+function storedEvent(event: MasterRegisterEvent): MasterRegisterEvent {
+  const stored = JSON.parse(JSON.stringify(event)) as MasterRegisterEvent
+  stored.occurredAt = new Date(event.occurredAt).toISOString()
+  stored.recordedAt = new Date(event.recordedAt).toISOString()
+  return stored
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -109,7 +117,9 @@ export class PostgresMasterRegisterRepository implements MasterRegisterRepositor
     const executor = await this.executor()
 
     try {
-      const result = await executor.query<MasterRegisterRow>(
+      // No RETURNING: reading the inserted row back would need a SELECT policy (migration 0024 grants SELECT only to
+      // MASTER_REGISTER_READ), so recording an event would fail for every other capability. The stored event is the input event.
+      await executor.query(
         `INSERT INTO public.master_register_events (
           event_id, event_type, event_family, schema_version, catalogue_version,
           actor_type, actor_id, occurred_at, recorded_at,
@@ -120,8 +130,7 @@ export class PostgresMasterRegisterRepository implements MasterRegisterRepositor
           $6, $7::uuid, $8::timestamptz, $9::timestamptz,
           $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15::jsonb,
           $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb
-        )
-        RETURNING ${SELECT_COLUMNS}`,
+        )`,
         [
           event.eventId, event.eventType, event.eventFamily,
           event.schemaVersion, event.catalogueVersion,
@@ -134,9 +143,7 @@ export class PostgresMasterRegisterRepository implements MasterRegisterRepositor
         ],
       )
 
-      const row = result.rows[0]
-      if (!row) throw new Error("Master Register append returned no row.")
-      return rowToEvent(row)
+      return storedEvent(event)
     } catch (error) {
       if (isUniqueViolation(error)) throw new DuplicateEventError(event.eventId)
       throw error

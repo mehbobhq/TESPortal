@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Building2, Plus, Search, Trash2, Users } from "lucide-react"
+import { Building2, Plus, Search, Users } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
@@ -15,37 +15,43 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type Customer = {
   id: string;
+  organizationId: string;
   name: string;
-  contact: string;
   region: string;
   status: string;
-  tone: "ok" | "warn" | "danger" | "default" | "info" | "neutral";
+  tone: "ok" | "warn" | "danger" | "info" | "neutral";
 }
 
 export default function CustomersPage() {
   const router = useRouter()
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const savedCustomers = localStorage.getItem("tes_customers")
-    if (savedCustomers) {
-      setCustomers(JSON.parse(savedCustomers))
+    let cancelled = false
+    setLoading(true)
+    fetch("/api/customers", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load customers.")
+        return response.json() as Promise<{ customers: Customer[] }>
+      })
+      .then((payload) => {
+        if (!cancelled) {
+          setCustomers(payload.customers)
+          setError(null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Customers could not be loaded from PostgreSQL.")
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
   }, [])
-
-  // DEV-MODE ONLY: Hard delete function
-  const handleDelete = (e: React.MouseEvent, idToDelete: string) => {
-    e.stopPropagation(); 
-    if (!confirm("DEV MODE: Are you sure you want to permanently delete this customer?")) return;
-
-    const updatedCustomers = customers.filter(c => c.id !== idToDelete);
-    setCustomers(updatedCustomers);
-    localStorage.setItem("tes_customers", JSON.stringify(updatedCustomers));
-
-    const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]");
-    const updatedCompanies = savedCompanies.filter((c: any) => c.id !== idToDelete);
-    localStorage.setItem("tes_companies", JSON.stringify(updatedCompanies));
-  }
 
   const activeCustomers = customers.filter((c) => c.status === "Active").length
 
@@ -92,16 +98,26 @@ export default function CustomersPage() {
               <TableRow className="border-slate-100 hover:bg-transparent">
                 <TableHead className="pl-6 text-slate-500 font-medium">Record ID</TableHead>
                 <TableHead className="text-slate-500 font-medium">Customer Name</TableHead>
-                <TableHead className="text-slate-500 font-medium">Primary Contact</TableHead>
                 <TableHead className="text-slate-500 font-medium">Region</TableHead>
                 <TableHead className="text-slate-500 font-medium">Status</TableHead>
-                <TableHead className="pr-6 text-right text-slate-500 font-medium">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {customers.length === 0 ? (
+              {loading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-32 text-center text-slate-500">
+                  <TableCell colSpan={4} className="h-32 text-center text-slate-500">
+                    Loading customers from PostgreSQL...
+                  </TableCell>
+                </TableRow>
+              ) : error ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-32 text-center text-red-600">
+                    {error}
+                  </TableCell>
+                </TableRow>
+              ) : customers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-32 text-center text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Users className="size-8 text-slate-300 mb-2" />
                       <p>No customers found.</p>
@@ -115,8 +131,7 @@ export default function CustomersPage() {
                 customers.map((c, idx) => (
                   <TableRow 
                     key={idx}
-                    // Routing remains untouched so it functions perfectly in your dev environment
-                    onClick={() => router.push(`/companies/${c.id}/profile`)}
+                    onClick={() => router.push(`/companies/${c.organizationId}/profile`)}
                     className="cursor-pointer hover:bg-slate-50/80 border-slate-100 transition-colors"
                   >
                     <TableCell className="pl-6 font-mono text-xs text-slate-400">{c.id}</TableCell>
@@ -128,16 +143,9 @@ export default function CustomersPage() {
                         {c.name}
                       </div>
                     </TableCell>
-                    <TableCell className="text-slate-600">{c.contact}</TableCell>
                     <TableCell className="text-slate-600">{c.region}</TableCell>
                     <TableCell>
                       <StatusBadge tone={c.tone}>{c.status}</StatusBadge>
-                    </TableCell>
-                    <TableCell className="pr-6 text-right">
-                      {/* Subdued the delete button slightly to fit the calm theme, but kept the functionality intact */}
-                      <Button variant="ghost" size="icon" onClick={(e) => handleDelete(e, c.id)} className="hover:bg-red-50 hover:text-red-600 text-slate-300 transition-colors">
-                        <Trash2 className="size-4" />
-                      </Button>
                     </TableCell>
                   </TableRow>
                 ))

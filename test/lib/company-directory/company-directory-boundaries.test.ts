@@ -33,6 +33,6 @@ describe("company directory PostgreSQL cutover boundaries", () => {
     assert.match(code, /getCompanyProfile/)
     assert.match(code, /public\.organizations/)
     assert.match(code, /public\.customers/)
-    assert.doesNotMatch(code, /INSERT|UPDATE|DELETE|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
+    assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
   })
 })

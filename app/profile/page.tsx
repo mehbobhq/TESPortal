@@ -17,11 +17,28 @@ export default function CompanyProfilePage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const id = params.id as string
-    const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-    const found = savedCompanies.find((c: any) => c.id === id)
-    setCompany(found || null)
-    setLoading(false)
+    const id = params.id as string | undefined
+    if (!id) {
+      setCompany(null)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/companies/${encodeURIComponent(id)}/profile`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null
+        const body = await response.json()
+        return body?.company ?? null
+      })
+      .catch(() => null)
+      .then((found) => {
+        if (cancelled) return
+        setCompany(found && found.id ? found : null)
+        setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [params.id])
 
   if (loading) return <div className="p-10 text-center">Loading...</div>

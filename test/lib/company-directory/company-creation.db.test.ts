@@ -16,8 +16,8 @@ async function loadKit() {
     db: await import("@/test/helpers/auth-db"),
     dir: await import("@/lib/company-directory/service"),
     create: await import("@/lib/company-directory/create-company"),
-    input: await import("@/lib/company-directory/creation-input"),
     authz: await import("@/lib/auth/tes-authorization"),
+    input: await import("@/lib/company-directory/creation-input"),
     corp: await import("@/lib/corporate-identity/errors"),
     authErrors: await import("@/lib/operating-authorities/errors"),
   };
@@ -332,7 +332,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
       withAuthorizedSystem("ORGANIZATION_CREATE", async (client) => {
         await enterSystemCapability(client, "CONTACT_MANAGE");
       }),
-      (error: unknown) => error instanceof K.authz.TesAuthorizationDeniedError,
+      (error: unknown) => error instanceof K.create.CompanyCreationCapabilityError && (error as { missing: string[] }).missing[0] === "CONTACT_MANAGE",
     );
     // the app-level pre-check refuses first, and a refused creation leaves nothing and records nothing
     const beforeOrgs = await orgCount();

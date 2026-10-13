@@ -1,7 +1,6 @@
 import "server-only"
 
 import type { PoolClient } from "pg"
-import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import { hasAdditionalSystemCapability, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
@@ -12,10 +11,20 @@ import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres
  * capability for RLS on the SAME connection. It never grants anything: the actor must already hold the capability (the caller
  * checks hasAdditionalSystemCapability first, or relies on the transaction wrapper), and a denial throws.
  */
+/** A submission needs capabilities beyond the one the transaction was opened with; the caller is told exactly which are missing. */
+export class CompanyCreationCapabilityError extends Error {
+  readonly missing: TesSystemCapability[]
+  constructor(missing: TesSystemCapability[]) {
+    super(`Not authorized to record every submitted field. Missing capability: ${missing.join(", ")}.`)
+    this.name = "CompanyCreationCapabilityError"
+    this.missing = missing
+  }
+}
+
 export async function enterSystemCapability(client: PoolClient, capability: TesSystemCapability): Promise<void> {
   await client.query("SELECT set_config('tes.system_capability', $1, true)", [capability])
   const rls = await client.query<{ allowed: boolean }>("SELECT tes_security.system_context_authorized(ARRAY[$1]::text[]) AS allowed", [capability])
-  if (rls.rows[0]?.allowed !== true) throw new TesAuthorizationDeniedError()
+  if (rls.rows[0]?.allowed !== true) throw new CompanyCreationCapabilityError([capability])
 }
 
 /** An operations context whose registry-disclosure check is lazily evaluated for `registryCapability` on the same transaction. */

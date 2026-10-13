@@ -1,7 +1,7 @@
 # Browser verification evidence (company recovery)
 
 Run on the final code of `claude/company-recovery-clean`: real Chromium → real Next.js dev server → real route handlers, services,
-authorization wrappers and Master Register → real PostgreSQL 17-era schema (all migrations applied) as the **runtime role**.
+authorization wrappers and Master Register → real PostgreSQL (all repository migrations applied) as the **runtime role**.
 Stubbed (test-only, in `scripts/verification/company-recovery-browser/`): the Clerk session (a file names the signed-in subject) and the
 Cloud SQL connector (a local connection string). **This is not a Vercel preview and does not exercise Clerk, WIF or Cloud SQL.**
 

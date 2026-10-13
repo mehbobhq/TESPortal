@@ -2,7 +2,7 @@ import "server-only"
 
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
-import { domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
+import { CompanyCreationCapabilityError, domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
 import * as profileOperations from "@/lib/company-profile/operations"
 import * as contactOperations from "@/lib/contacts/operations"
 import * as corporateOperations from "@/lib/corporate-identity/operations"
@@ -13,15 +13,7 @@ import * as locationOperations from "@/lib/organization-locations/operations"
 import * as taxOperations from "@/lib/tax-registrations/operations"
 import { parseCreateCompanyInput, type CompanyCreationPlan } from "@/lib/company-directory/creation-input"
 
-/** A new record needs capabilities beyond ORGANIZATION_CREATE for the fields it carries; the caller is told exactly which are missing. */
-export class CompanyCreationCapabilityError extends Error {
-  readonly missing: TesSystemCapability[]
-  constructor(missing: TesSystemCapability[]) {
-    super(`Not authorized to record every submitted field. Missing capability: ${missing.join(", ")}.`)
-    this.name = "CompanyCreationCapabilityError"
-    this.missing = missing
-  }
-}
+export { CompanyCreationCapabilityError }
 
 export type CompanyCreationRecorded = {
   identifiers: number

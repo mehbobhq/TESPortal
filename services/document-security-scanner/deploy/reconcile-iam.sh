@@ -179,9 +179,10 @@ verify)
     bad=0
     for b in Q I E; do for who in backend scanner ai; do for perm in ${DENIED_PERMS}; do
       out="$(read_g policy-troubleshoot iam "//storage.googleapis.com/projects/_/buckets/${BUCKET[$b]}" --principal-email="${MEMBER[$who]}" --permission="${perm}" --format='value(access)' 2>/dev/null || true)"
-      if [[ "${out}" == GRANTED ]]; then echo "   FAIL ${who} STILL has ${perm} on ${BUCKET[$b]}"; bad=1; else echo "   PASS ${who} denied ${perm} on ${BUCKET[$b]}"; fi
+      # Only an explicit NOT_GRANTED proves denial. GRANTED, UNKNOWN_CONDITIONAL, UNKNOWN_INFO_DENIED or no answer all fail closed.
+      if [[ "${out}" == NOT_GRANTED ]]; then echo "   PASS ${who} denied ${perm} on ${BUCKET[$b]}"; else echo "   FAIL ${who} ${perm} on ${BUCKET[$b]} is not proven denied (got '${out:-no answer}')"; bad=1; fi
     done; done; done
-    [[ $bad -eq 0 ]] || { echo "Final verification failed: excess permission remains (check inherited project/folder/org roles)." >&2; exit 1; }
+    [[ $bad -eq 0 ]] || { echo "Final verification failed: an excess permission remains or denial could not be proven (check inherited project/folder/org roles and your Policy Troubleshooter access)." >&2; exit 1; }
     echo "Final state verified: delete/update/setIamPolicy are denied for backend, scanner and ai on all three buckets."
   fi ;;
 remove)

@@ -63,6 +63,7 @@ if args[:2] == ["policy-troubleshoot", "iam"]:
     b = args[2].rsplit("/", 1)[1]
     email, perm = opt("--principal-email"), opt("--permission")
     granted = any(f"serviceAccount:{email}" in x["members"] and perm in role_perms(x["role"]) for x in state["buckets"][b])
+    if os.environ.get("FAKE_UNKNOWN"): print("UNKNOWN_INFO_DENIED"); sys.exit(0)
     print("GRANTED" if granted else "NOT_GRANTED"); sys.exit(0)
 sys.stderr.write(f"fake gcloud: unhandled command: {cmd}\n")
 sys.exit(99)

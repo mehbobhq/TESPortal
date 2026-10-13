@@ -62,6 +62,7 @@ for bucket in quarantine intake evidence; do notcheck has_role tes-production-$b
 run "verify still passes after all removals" 0 --phase verify
 : > "${FAKE_LOG}"
 run "final verify passes once excess is gone" 0 --phase verify --final
+FAKE_UNKNOWN=1 run "final verify fails closed when denial cannot be proven" 1 --phase verify --final
 run "remove is idempotent" 0 --phase remove --only ai --confirm "${P}:remove:ai"; [[ -z "$(mutations)" ]] || { echo "FAIL idempotent remove mutated"; FAIL=1; }
 
 : > "${FAKE_LOG}"; run "rollback ai" 0 --phase rollback --only ai --confirm "${P}:rollback:ai"

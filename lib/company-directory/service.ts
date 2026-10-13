@@ -292,7 +292,7 @@ export async function createCompanyDirectoryRecord(input: CreateCompanyDirectory
       organizationId: organization.id,
       engagementType: "RECURRING",
       stage: "ONBOARDING",
-      plannedEndAt: null,
+      // ONBOARDING is open-ended; omit plannedEndAt (null is not a valid instant).
       startedAt: dateToInstant(input.startDate),
     })
   }

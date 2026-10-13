@@ -3,6 +3,11 @@
 Reproducible and least-privilege. **Nothing here has been applied.** `deploy.sh` defaults to a read-only PLAN, and `--apply` is an owner
 action that needs an exact confirmation string.
 
+## Existing production (read this first)
+The service (`document-security-scanner`, us-central1), the Eventarc trigger (`tes-quarantine-document-scanner`, location `us`), the trigger identity (`tes-eventarc-scanner-trigger`)
+and the scanner identity already exist, and the script's defaults match them, so a plan reuses them and creates nothing. Bucket IAM has drifted from the table below;
+reconcile it first with `reconcile-iam.sh` and `docs/gcs-iam-reconciliation-plan.md` (the deploy plan reports the drift as blockers until then).
+
 ## What the script does and refuses
 - **Discovers before changing.** It reads the real state of: enabled APIs, the quarantine bucket's location (to choose the Eventarc trigger
   location: a single region maps to itself, a multi-region to that multi-region, and a dual-region is refused for the owner to decide), Eventarc

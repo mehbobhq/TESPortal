@@ -43,11 +43,14 @@ export function LegacyWorkspaceGate({
   companyId,
   title,
   description,
+  canonical,
   children,
 }: {
   companyId: string
   title: string
   description: string
+  /** The canonical (PostgreSQL-backed) workspace, when one exists; otherwise a canonical company gets the deferred notice. */
+  canonical?: React.ReactNode
   children: React.ReactNode
 }) {
   const [state, setState] = useState<Resolution>("loading")
@@ -81,6 +84,7 @@ export function LegacyWorkspaceGate({
       </div>
     )
   }
+  if (state === "canonical" && canonical) return <>{canonical}</>
   if (state === "canonical") return <DeferredWorkspace companyId={companyId} title={title} description={description} />
   return <>{children}</>
 }

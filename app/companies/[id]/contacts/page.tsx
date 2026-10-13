@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate";
+import { CanonicalContacts } from "./canonical-contacts";
 import {
   Building2,
   CheckCircle2,
@@ -89,7 +91,7 @@ export {
 // MAIN CONTACTS PAGE COMPONENT
 // =========================================================================
 
-export default function ContactsPage() {
+function LegacyContactsPage() {
   const params = useParams<{ id: string }>();
   const companyId = params?.id;
 
@@ -931,4 +933,19 @@ export default function ContactsPage() {
       <ContactEvidenceViewer {...{previewEvidence,setPreviewEvidence,previewEvidenceLoading}} />
     </div>
   );
+}
+
+export default function ContactsPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Contacts"
+      description="Contacts"
+      canonical={<CanonicalContacts companyId={companyId} />}
+    >
+      <LegacyContactsPage />
+    </LegacyWorkspaceGate>
+  )
 }

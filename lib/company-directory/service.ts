@@ -2,6 +2,7 @@ import "server-only"
 
 import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 import { createCompanyRecord, type CompanyCreationResult } from "@/lib/company-directory/create-company"
+import { hasDetailsToUpdate, planCompanyDetails, updateCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
 import { readCompanyProfile, type CompanyProfileRecord } from "@/lib/company-directory/read-profile"
 import {
   addAlias,
@@ -326,4 +327,25 @@ export async function updateCompanyDirectoryRecord(
   await applyIdentifier("IRS_EIN", input.ein, current.ein)
 
   return toEditRecord(organization)
+}
+
+const IDENTITY_KEYS = ["companyName", "dba", "incorpNo", "businessNo", "ein"] as const
+
+export type CompanyEditResult = { company: CompanyEditRecord; details: CompanyDetailsUpdate | null }
+
+/**
+ * The whole edit: identity (corporate-identity operations) and details (operating region and the three addresses). Both parts
+ * are validated BEFORE anything is written, so a bad submission changes nothing. The two parts are separate canonical
+ * transactions, so the result says exactly what was saved (see `details`).
+ */
+export async function editCompany(organizationId: string, raw: unknown): Promise<CompanyEditResult> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CompanyDirectoryValidationError("A JSON object is required.")
+  const body = raw as Record<string, unknown>
+  const wantsDetails = hasDetailsToUpdate(body)
+  planCompanyDetails(body) // always: also refuses any field that cannot be edited, so nothing is silently discarded
+  const identity: UpdateCompanyDirectoryInput = {}
+  for (const key of IDENTITY_KEYS) if (key in body) identity[key] = body[key]
+  const company = await updateCompanyDirectoryRecord(organizationId, identity)
+  const details = wantsDetails ? await updateCompanyDetails(organizationId, body) : null
+  return { company, details }
 }

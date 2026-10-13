@@ -162,6 +162,30 @@ function regionCountry(code: string): "CA" | "US" | null {
 const NSC_KINDS = ["NSC", "CVOR"] as const
 const MVID_KINDS = ["MVID", "RIN"] as const
 
+const ADDRESS_ROLES = { reg: "REGISTERED", mail: "MAILING", yard: "HOME_YARD" } as const
+
+/**
+ * Validates ONE address block (`reg_`, `mail_` or `yard_` fields) that has at least one value: street, city and a recognised
+ * province/state are required, and the country (when given) must agree with the province/state. Shared by creation and editing.
+ */
+export function planAddressBlock(input: Record<string, unknown>, prefix: (typeof ADDRESS_PREFIXES)[number]): PlannedAddress | CompanyCreationIssue {
+  const part = (name: (typeof ADDRESS_PARTS)[number]) => text(input[`${prefix}_${name}`])
+  const label = prefix === "reg" ? "registered" : prefix === "mail" ? "mailing" : "yard"
+  const missing = (["street", "city", "state"] as const).filter((name) => part(name) === "")
+  if (missing.length > 0) return { field: `${prefix}_${missing[0]}`, message: `The ${label} address is incomplete: street, city and province/state are required (missing ${missing.join(", ")}).` }
+  const region = part("state").toUpperCase()
+  const country = regionCountry(region)
+  if (!country) return { field: `${prefix}_state`, message: `'${part("state")}' is not a recognised province or state.` }
+  const declared = part("country") ? countryOf(part("country")) : null
+  if (part("country") && declared !== country) return { field: `${prefix}_country`, message: "The address country does not match its province/state." }
+  return { role: ADDRESS_ROLES[prefix], address: { country, region, locality: part("city"), postalCode: part("zip") || null, addressLine1: part("street") } }
+}
+
+/** True when any field of the address block carries a value. */
+export function addressBlockPresent(input: Record<string, unknown>, prefix: (typeof ADDRESS_PREFIXES)[number]): boolean {
+  return ADDRESS_PARTS.some((name) => text(input[`${prefix}_${name}`]) !== "")
+}
+
 /** Parses and validates a creation payload. Throws CompanyCreationValidationError listing every problem found. */
 export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
   const issues: CompanyCreationIssue[] = []
@@ -254,23 +278,12 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
       issue(`${prefix}_street`, `${prefix === "mail" ? "A mailing" : "A yard"} address applies to Customer records only.`)
       continue
     }
-    const missing = (["street", "city", "state"] as const).filter((name) => part(name) === "")
-    if (missing.length > 0) {
-      issue(`${prefix}_${missing[0]}`, `The ${prefix === "reg" ? "registered" : prefix === "mail" ? "mailing" : "yard"} address is incomplete: street, city and province/state are required (missing ${missing.join(", ")}).`)
+    const planned = planAddressBlock(input, prefix)
+    if ("field" in planned) {
+      issue(planned.field, planned.message)
       continue
     }
-    const region = part("state").toUpperCase()
-    const country = regionCountry(region)
-    if (!country) {
-      issue(`${prefix}_state`, `'${part("state")}' is not a recognised province or state.`)
-      continue
-    }
-    const declared = part("country") ? countryOf(part("country")) : null
-    if (part("country") && declared !== country) {
-      issue(`${prefix}_country`, "The address country does not match its province/state.")
-      continue
-    }
-    addresses.push({ role: roles[prefix], address: { country, region, locality: part("city"), postalCode: part("zip") || null, addressLine1: part("street") } })
+    addresses.push(planned)
   }
 
   // --- authorities ------------------------------------------------------------------------------------------------------

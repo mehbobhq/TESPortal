@@ -28,11 +28,19 @@ describe("company directory PostgreSQL cutover boundaries", () => {
     const code = source("lib/company-directory/service.ts")
     assert.match(code, /withAuthorizedSystem\("ORGANIZATION_REGISTRY_READ"/)
     assert.match(code, /withAuthorizedSystem\("CUSTOMER_RELATIONSHIP_READ"/)
-    assert.match(code, /createOrganization/)
-    assert.match(code, /establishCustomerRelationship/)
-    assert.match(code, /getCompanyProfile/)
+    assert.match(code, /createCompanyRecord/)
+    assert.match(code, /readCompanyProfile/)
     assert.match(code, /public\.organizations/)
     assert.match(code, /public\.customers/)
+    assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
+  })
+
+  it("creates companies only through the existing canonical domain operations in one transaction", () => {
+    const code = source("lib/company-directory/create-company.ts")
+    for (const op of ["createOrganization", "establishCustomerRelationship", "setOperatingScope", "createLocation", "createContact", "addOrganizationChannel", "createAuthority", "createRegistration"]) {
+      assert.match(code, new RegExp(op), op)
+    }
+    assert.equal((code.match(/withAuthorizedSystem\(/g) ?? []).length, 1, "exactly one transaction")
     assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
   })
 })

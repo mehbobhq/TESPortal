@@ -91,7 +91,7 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
 
   it("adds no migration in this pass", () => {
     const migrations = readdirSync(path.join(ROOT, "database/migrations")).filter((name) => name.endsWith(".sql")).sort()
-    assert.ok(migrations[migrations.length - 1].startsWith("0029_"), migrations[migrations.length - 1])
+    assert.ok(migrations[migrations.length - 1].startsWith("0032_"), migrations[migrations.length - 1])
   })
 
   it("makes deferred modules explicit instead of persisting them in the browser", () => {

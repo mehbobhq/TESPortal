@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
+type Details = Record<string, string | null> & { kind?: string; opRegion?: string | null }
+
 type EditableCompany = {
   id: string
   companyName: string
@@ -19,9 +21,15 @@ type EditableCompany = {
   ein: string
 }
 
+const ADDRESS_BLOCKS = [
+  { prefix: "reg", title: "Registered Address", customerOnly: false },
+  { prefix: "mail", title: "Mailing Address", customerOnly: true },
+  { prefix: "yard", title: "Yard / Home Terminal Address", customerOnly: true },
+] as const
+
 const DEFERRED_SECTIONS = [
-  "Contact person, phone, website and email addresses",
-  "Registered, mailing and yard addresses",
+  "Contact person, phone and email — managed in the Contacts workspace",
+  "Website (no canonical storage yet)",
   "Customer service type, status, dates, payment method and cargo types",
   "Carrier numbers (USDOT, MC, NSC, MVID) — managed in Authorities",
   "Tax programme accounts — managed in Tax Filing registrations",
@@ -32,6 +40,8 @@ export default function EditCompanyPage() {
   const params = useParams()
   const router = useRouter()
   const [company, setCompany] = useState<EditableCompany | null>(null)
+  const [details, setDetails] = useState<Details>({})
+  const [issues, setIssues] = useState<Array<{ field: string; message: string }>>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,14 +49,19 @@ export default function EditCompanyPage() {
   useEffect(() => {
     const id = params.id as string
     let cancelled = false
-    fetch(`/api/companies/${encodeURIComponent(id)}`, { cache: "no-store" })
-      .then(async (response) => (response.ok ? (await response.json()).company : null))
-      .catch(() => null)
-      .then((found) => {
-        if (cancelled) return
-        setCompany(found ?? null)
-        setLoading(false)
-      })
+    Promise.all([
+      fetch(`/api/companies/${encodeURIComponent(id)}`, { cache: "no-store" })
+        .then(async (response) => (response.ok ? (await response.json()).company : null))
+        .catch(() => null),
+      fetch(`/api/companies/${encodeURIComponent(id)}/profile`, { cache: "no-store" })
+        .then(async (response) => (response.ok ? (await response.json()).company : null))
+        .catch(() => null),
+    ]).then(([found, profile]) => {
+      if (cancelled) return
+      setCompany(found ?? null)
+      setDetails(profile ?? {})
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }
@@ -59,6 +74,11 @@ export default function EditCompanyPage() {
     const field = (name: string) => String(form.get(name) ?? "")
     setSaving(true)
     setError(null)
+    setIssues([])
+    const detailFields: Record<string, string> = { addressMode: field("addressMode") || "change", opRegion: field("opRegion") }
+    for (const block of ADDRESS_BLOCKS) {
+      for (const part of ["street", "city", "state", "zip", "country"]) detailFields[`${block.prefix}_${part}`] = field(`${block.prefix}_${part}`)
+    }
     try {
       const response = await fetch(`/api/companies/${encodeURIComponent(company.id)}`, {
         method: "PATCH",
@@ -69,11 +89,13 @@ export default function EditCompanyPage() {
           incorpNo: field("incorpNo"),
           businessNo: field("businessNo"),
           ein: field("ein"),
+          ...detailFields,
         }),
       })
       if (!response.ok) {
         const body = await response.json().catch(() => null)
         setError(body?.error ?? "Unable to update company.")
+        setIssues(Array.isArray(body?.issues) ? body.issues : [])
         return
       }
       router.push(`/companies/${company.id}/profile`)
@@ -140,6 +162,54 @@ export default function EditCompanyPage() {
 
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm">Operating Region</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <Label htmlFor="opRegion">Operating Region</Label>
+              <select id="opRegion" name="opRegion" defaultValue={details.opRegion ?? ""} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                <option value="">{details.opRegion ? "(unchanged)" : "Not recorded"}</option>
+                <option value="Canada Only">Canada Only</option>
+                <option value="US Only">US Only</option>
+                <option value="Cross-Border">Cross-Border</option>
+              </select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {ADDRESS_BLOCKS.filter((block) => !block.customerOnly || details.kind === "Customer").map((block) => (
+          <Card key={block.prefix}>
+            <CardHeader className="bg-muted/30 py-3 border-b">
+              <CardTitle className="text-sm">{block.title}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {(["street", "city", "state", "zip", "country"] as const).map((part) => (
+                <div className="space-y-2" key={part}>
+                  <Label htmlFor={`${block.prefix}_${part}`}>{part === "zip" ? "Postal / ZIP" : part === "state" ? "Province / State (code)" : part[0].toUpperCase() + part.slice(1)}</Label>
+                  <Input id={`${block.prefix}_${part}`} name={`${block.prefix}_${part}`} defaultValue={details[`${block.prefix}_${part}`] ?? ""} />
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ))}
+
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm">When an address is edited</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 text-sm space-y-2">
+            <label className="flex items-center gap-2">
+              <input type="radio" name="addressMode" value="change" defaultChecked /> The address changed (the company moved) — keep the old address as history
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="addressMode" value="correct" /> The recorded address was wrong — correct it
+            </label>
+            <p className="text-xs text-muted-foreground">An address block cannot be cleared here; leave it as is. An unchanged address is not re-saved.</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
             <CardTitle className="text-sm">Not yet available</CardTitle>
           </CardHeader>
           <CardContent className="pt-4 text-xs text-muted-foreground">
@@ -152,7 +222,18 @@ export default function EditCompanyPage() {
           </CardContent>
         </Card>
 
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? (
+          <div role="alert" className="text-sm text-red-600">
+            <p>{error}</p>
+            {issues.length > 0 ? (
+              <ul className="list-disc pl-5">
+                {issues.map((item) => (
+                  <li key={`${item.field}-${item.message}`}>{item.message}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex justify-end">
           <Button type="submit" disabled={saving}>
             <Save className="mr-2 size-4" /> {saving ? "Saving..." : "Save Changes"}

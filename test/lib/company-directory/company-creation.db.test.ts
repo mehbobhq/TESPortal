@@ -276,4 +276,49 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     assert.equal(profile?.reg_city, "Toronto", "an identity edit leaves addresses, contacts and registrations untouched");
     assert.equal(profile?.contact, "Jane Roe");
   });
+
+  it("edits operating region and addresses independently: change keeps history, correct flags the wrong version, unchanged is not re-saved", async () => {
+    await signInWith(...ALL);
+    const id = (await K.dir.createCompanyDirectoryRecord(fullPayload("K"))).company.id;
+
+    const moved = await K.dir.editCompany(id, { opRegion: "Canada Only", reg_street: "200 Bay St", reg_city: "Toronto", reg_state: "ON", reg_zip: "M5J 2J2", reg_country: "Canada", addressMode: "change" });
+    assert.equal(moved.details?.operatingScope.changed, true);
+    assert.deepEqual(moved.details?.addresses, [{ role: "REGISTERED", action: "changed" }]);
+    let profile = await K.dir.getCompanyProfile(id);
+    assert.equal(profile?.opRegion, "Canada Only");
+    assert.equal(profile?.reg_street, "200 Bay St");
+    assert.equal(profile?.mail_street, "PO Box 12", "mailing address untouched");
+    assert.equal(profile?.yard_city, "Chicago", "yard address untouched");
+    assert.equal(await count(`SELECT count(*) AS n FROM public.location_addresses la JOIN public.organization_location_assignments a ON a.location_id = la.location_id WHERE a.organization_id = $1 AND a.role = 'REGISTERED'`, [id]), 2, "the previous registered address stays as history");
+
+    const corrected = await K.dir.editCompany(id, { mail_street: "PO Box 99", mail_city: "Ottawa", mail_state: "ON", mail_zip: "K1P 5G3", mail_country: "Canada", addressMode: "correct" });
+    assert.deepEqual(corrected.details?.addresses, [{ role: "MAILING", action: "corrected" }]);
+    assert.equal((await K.dir.getCompanyProfile(id))?.mail_street, "PO Box 99");
+    assert.equal(await count(`SELECT count(*) AS n FROM public.location_addresses la JOIN public.organization_location_assignments a ON a.location_id = la.location_id WHERE a.organization_id = $1 AND a.role = 'MAILING' AND la.status = 'corrected'`, [id]), 1);
+
+    const same = await K.dir.editCompany(id, { opRegion: "Canada Only", mail_street: "PO Box 99", mail_city: "Ottawa", mail_state: "ON", mail_zip: "K1P 5G3", mail_country: "Canada" });
+    assert.equal(same.details?.operatingScope.changed, false);
+    assert.deepEqual(same.details?.addresses, [{ role: "MAILING", action: "unchanged" }]);
+
+    const events = await count(`SELECT count(*) AS n FROM master_register.events WHERE record_text::text LIKE $1`, [`%${id}%`]).catch(() => -1);
+    assert.notEqual(events, 0);
+  });
+
+  it("validates an edit before writing anything: an invalid address or unsupported field changes nothing, identity included", async () => {
+    await signInWith(...ALL);
+    const created = await K.dir.createCompanyDirectoryRecord(fullPayload("L"));
+    const id = created.company.id;
+    await assert.rejects(K.dir.editCompany(id, { companyName: `Recovery ${run} L${digits(4)} Nope`, reg_street: "1 Main", reg_city: "Toronto" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
+    await assert.rejects(K.dir.editCompany(id, { companyName: `Recovery ${run} L${digits(4)} Nope`, website: "https://x.test" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
+    await assert.rejects(K.dir.editCompany(id, { opRegion: "Mars Only" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
+    assert.equal((await K.dir.getCompanyProfile(id))?.name, created.company.name, "identity unchanged after a refused edit");
+  });
+
+  it("refuses a mailing address on a non-Customer and an edit without the needed capability", async () => {
+    await signInWith(...ALL);
+    const supplier = await K.dir.createCompanyDirectoryRecord(fullPayload("M", { companyType: "Sub Contractor", startDate: "", mail_street: "", mail_city: "", mail_state: "", mail_zip: "", mail_country: "", yard_street: "", yard_city: "", yard_state: "", yard_zip: "", yard_country: "", ein: "" }));
+    await assert.rejects(K.dir.editCompany(supplier.company.id, { mail_street: "PO Box 1", mail_city: "Ottawa", mail_state: "ON" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
+    await signInWith("ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ");
+    await assert.rejects(K.dir.editCompany(supplier.company.id, { opRegion: "US Only" }), (e: unknown) => e instanceof K.create.CompanyCreationCapabilityError);
+  });
 });

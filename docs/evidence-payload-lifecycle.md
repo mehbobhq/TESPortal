@@ -148,13 +148,17 @@ re-hashes every stored object.
   business/driver/audit UIs. The new lifecycle never touches them, and a boundary test ratchets their importers so the set can only
   shrink. Migrating those screens is a separate block.
 - `/api/document-ai` and `/api/business-document-ocr` are **not** part of the payload lifecycle: they take bytes from the browser and
-  send them to Document AI without quarantine or malware scanning, and they persist nothing. They are temporarily restricted
-  (`lib/legacy-ocr/`): `EVIDENCE_MANAGE` is required (previously any signed-in user), the file must be a PDF/JPEG/PNG/WebP of at most
-  25 MB (20 MB for corporate OCR) whose leading bytes match its declared type, and setting `TES_LEGACY_OCR_DISABLED=true` in the
-  deployment turns both routes off (503) without a code change. Workflows that depend on them (Corporate Documents OCR in
-  `src/components/business/CorporateDocumentsSection.tsx`, roadside/driver OCR through `lib/roadside-machine-client.ts`) keep working
-  for staff holding `EVIDENCE_MANAGE`; they must move to OCR-of-cleared-evidence (not implemented; nothing writes `processed/`) before
-  these routes can be retired. Neither route is tenant-scoped, so there is no cross-tenant surface to test; they never read stored evidence.
+  send them to Document AI without quarantine or malware scanning, and they persist nothing. Magic-byte checks are input hygiene, not
+  malware clearance, and `EVIDENCE_MANAGE` is not a reason to skip quarantine. Both routes are therefore **closed by default**
+  (`lib/legacy-ocr/`): they answer 503 before reading the upload, authorizing, or contacting Google. Continued use needs an explicit,
+  temporary owner exception, `TES_LEGACY_OCR_UNSCANNED_EXCEPTION_UNTIL=YYYY-MM-DD` (a future date at most 30 days away; it expires by
+  itself), and then still requires `EVIDENCE_MANAGE`, a PDF/JPEG/PNG/WebP of at most 25 MB (20 MB for corporate OCR) whose leading bytes
+  match its declared type. `TES_LEGACY_OCR_DISABLED=true` closes them regardless.
+  **Affected screens (manual review fallback while closed):** Corporate Documents OCR (`src/components/business/CorporateDocumentsSection.tsx`:
+  the OCR button shows the message and the reviewer enters the company facts manually, as the screen already supports) and roadside/driver
+  OCR (`src/components/drivers/DriverWorkspace.tsx` through `lib/roadside-machine-client.ts`: the OCR error is shown and the roadside
+  record is entered manually). The permanent replacement is OCR of scanner-cleared, stored evidence, which is not implemented (nothing
+  writes `processed/`). Neither route is tenant-scoped and neither reads stored evidence.
 - Uploads are proxied through the Next.js server, so the hosting platform's request-body limit can be lower than the 25 MB product
   limit; large files need a chunked server-side upload (not a direct-to-GCS URL, which this design forbids).
 - No watermarking, no download/print policy beyond "inline only", no customer-facing evidence access, no e-signature.

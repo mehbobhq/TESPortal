@@ -29,6 +29,8 @@ export interface ScanRequest {
   generation?: string;
   contentType?: string;
   size?: number;
+  /** GCS `timeCreated` of the finalized object (ISO 8601); used only to bound redelivery. */
+  timeCreated?: string;
 }
 
 /**

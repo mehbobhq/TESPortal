@@ -406,6 +406,7 @@ bucket (e.g. Storage Object Creator) - no read, list, update, or delete on
 Quarantine, and no write access to Intake.
 
 | `SCANNER_MAX_OBJECT_BYTES` | no (default 26214400 / 25 MiB) | Maximum object size the scanner will process |
+| `SCANNER_MAX_RETRY_AGE_MS` | no (default 21600000 / 6 h; allowed 1 min - 24 h) | A transient failure asks Eventarc to redeliver only while the object is younger than this |
 | `SCANNER_CLAMSCAN_TIMEOUT_MS` | no (default 60000) | Per-invocation ClamAV wall-clock timeout |
 | `PORT` | no (default 8080, Cloud Run sets this automatically) | HTTP listen port |
 
@@ -415,6 +416,9 @@ authentication is Application Default Credentials via the Cloud Run
 service's attached identity.
 
 ## Deployment requirements (not performed by this task)
+
+A reproducible definition (service YAML, least-privilege IAM, trigger, readiness, retry, logs, rollback) is in `deploy/DEPLOYMENT.md`
+and `deploy/deploy.sh` (dry run by default).
 
 - Deploy as a **private** Cloud Run service (`--no-allow-unauthenticated`).
 - Attach the `tes-security-scanner@tes-production-510007.iam.gserviceaccount.com`

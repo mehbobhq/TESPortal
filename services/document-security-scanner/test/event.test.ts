@@ -65,3 +65,10 @@ test("an event for the INTAKE bucket cannot be used to trigger a scan/promotion 
   );
   assert.equal(result.ok, false);
 });
+
+test("the object's creation time is carried through for bounding redelivery, and is optional", () => {
+  const withTime = parseGcsFinalizeEvent(JSON.stringify({ ...gcsObject(), timeCreated: "2026-10-13T11:59:00.000Z" }), true, QUARANTINE_BUCKET);
+  assert.equal(withTime.ok && withTime.request.timeCreated, "2026-10-13T11:59:00.000Z");
+  const without = parseGcsFinalizeEvent(JSON.stringify(gcsObject()), true, QUARANTINE_BUCKET);
+  assert.equal(without.ok && without.request.timeCreated, undefined);
+});

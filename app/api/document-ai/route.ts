@@ -7,7 +7,7 @@ import { getGoogleAccessToken } from "@/lib/google/auth"
 import { canonicalFailure } from "@/lib/api/canonical-response"
 import { MAX_PAYLOAD_BYTES } from "@/lib/evidence-payload/definitions"
 import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize"
-import { LegacyOcrUploadError, legacyOcrDisabled, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy"
+import { LEGACY_OCR_CLOSED_MESSAGE, LegacyOcrUploadError, legacyOcrAvailability, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy"
 import { documentAiLocation, googleProjectId, roadsideDocumentAiProcessorId } from "@/lib/google/config"
 
 // ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ function mergeChunkResults(
 
 export async function POST(req: NextRequest) {
   try {
-    if (legacyOcrDisabled()) return NextResponse.json({ error: "Document AI processing is temporarily unavailable." }, { status: 503 })
+    if (!legacyOcrAvailability().open) return NextResponse.json({ error: LEGACY_OCR_CLOSED_MESSAGE }, { status: 503 })
     await authorizeLegacyOcr()
 
     const formData = await req.formData()

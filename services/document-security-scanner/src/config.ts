@@ -66,3 +66,18 @@ export function clamScanTimeoutMs(): number {
   }
   return parsed;
 }
+
+/**
+ * How long after an object was created the scanner will still ask for redelivery of a transient failure, in milliseconds.
+ * Default 6 hours; bounded to 1 minute - 24 hours. This is the scanner's own cap, independent of the transport's retry window:
+ * a file that deterministically crashes the scan engine must not be retried for as long as the transport would allow.
+ */
+export function maxRetryAgeMs(): number {
+  const raw = process.env.SCANNER_MAX_RETRY_AGE_MS?.trim();
+  if (!raw) return 6 * 60 * 60 * 1000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 60_000 || parsed > 24 * 60 * 60 * 1000) {
+    throw new ScannerConfigError("SCANNER_MAX_RETRY_AGE_MS");
+  }
+  return parsed;
+}

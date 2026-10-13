@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canonicalFailure } from "@/lib/api/canonical-response";
 import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize";
-import { LegacyOcrUploadError, legacyOcrDisabled, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy";
+import { LEGACY_OCR_CLOSED_MESSAGE, LegacyOcrUploadError, legacyOcrAvailability, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy";
 import { getGoogleAccessToken } from "@/lib/google/auth";
 import { businessDocumentAiProcessorId, documentAiLocation, googleProjectId } from "@/lib/google/config";
 
@@ -13,7 +13,7 @@ type DocumentResult = { document?: { text?: string; entities?: Entity[]; pages?:
 const first = (text: string, patterns: RegExp[]) => patterns.map((pattern) => text.match(pattern)?.[1]?.trim()).find(Boolean) || "";
 export async function POST(request: NextRequest) {
   try {
-    if (legacyOcrDisabled()) return NextResponse.json({ error: "Corporate OCR is temporarily unavailable. The evidence remains available for manual review." }, { status: 503 });
+    if (!legacyOcrAvailability().open) return NextResponse.json({ error: LEGACY_OCR_CLOSED_MESSAGE }, { status: 503 });
     await authorizeLegacyOcr();
     const form = await request.formData();
     const file = form.get("file");

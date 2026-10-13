@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { assessQuarantineObject, scannerEngineReady } from "./assessment.js";
-import { port, quarantineBucketName } from "./config.js";
+import { maxRetryAgeMs, port, quarantineBucketName } from "./config.js";
 import { parseGcsFinalizeEvent } from "./event.js";
 import { logger } from "./logger.js";
 import { isRetryableAssessment } from "./retry.js";
@@ -67,7 +67,7 @@ async function handleEvent(req: IncomingMessage, res: ServerResponse): Promise<v
   // The exception is a transient infrastructure failure (scan engine or signatures unavailable, source read failed,
   // promotion or its read-back failed): acknowledging that would leave a clean document stuck in quarantine forever, so it
   // returns 503 and Eventarc redelivers. Redelivery is idempotent (same pinned generation, create-only promotion).
-  const retryable = isRetryableAssessment(assessment);
+  const retryable = isRetryableAssessment(assessment, { timeCreated: parsed.request.timeCreated, now: Date.now(), maxAgeMs: maxRetryAgeMs() });
   if (retryable) logger.warn({ securityAssessmentId: assessment.securityAssessmentId, message: "transient scan failure; requesting redelivery" });
   sendJson(res, retryable ? 503 : 200, {
     securityAssessmentId: assessment.securityAssessmentId,

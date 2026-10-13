@@ -7,10 +7,13 @@ const REPLACEMENTS = new Map([
   ["server-only", stub("server-only.mjs")],
   ["@clerk/nextjs/server", stub("clerk.mjs")],
   ["@/lib/database/postgres", stub("postgres.mjs")],
+  ["@/lib/google-document-ai-provider", stub("document-ai-provider.mjs")],
 ]);
 
 export async function resolve(specifier, context, next) {
   const replacement = REPLACEMENTS.get(specifier);
   if (replacement) return { url: replacement, shortCircuit: true };
+  // `next/server` is extensionless in the app's bundler resolution; Node's ESM resolver needs the file.
+  if (specifier === "next/server") return next("next/server.js", context);
   return next(specifier, context);
 }

@@ -1,0 +1,35 @@
+import { launch, BASE, record, shot, pick, setActor, results } from "./lib.mjs"
+import fs from "node:fs"
+import { execFileSync } from "node:child_process"
+const A = JSON.parse(fs.readFileSync("/tmp/tes-e2e/created.json", "utf8"))
+const psql = (sql) => execFileSync("psql", ["--no-psqlrc", "-At", "-U", "tes-database-migrator@tes-production-510007.iam", "-h", "127.0.0.1", "-p", "55432", "-d", "tes_prod", "-c", sql], { encoding: "utf8" }).trim()
+setActor("user_e2e_staff")
+const { browser, page } = await launch()
+try {
+  const name = `E2E UI Duplicate ${Date.now().toString().slice(-6)} LLC`
+  await page.goto(`${BASE}/companies/new`, { waitUntil: "domcontentloaded", timeout: 120000 })
+  await page.waitForSelector("#companyName")
+  const before = psql("SELECT (SELECT count(*) FROM public.organizations) || '/' || (SELECT count(*) FROM public.persons) || '/' || (SELECT count(*) FROM public.locations) || '/' || (SELECT count(*) FROM public.master_register_events)")
+  await pick(page, page.locator("button:has-text('Select entity type')"), "Owner Operator")
+  await page.fill("#companyName", name)
+  await pick(page, page.locator("button:has-text('Canada Only')"), "US Only")
+  await pick(page, page.locator("button:has-text('Select jurisdiction')").first(), "Texas")
+  await page.fill("input[placeholder='12-3456789']", A.ein)
+  await page.fill("[name=contactGivenName]", "Dup"); await page.fill("[name=contactFamilyName]", "Test")
+  await page.fill("[name=phone]", "+1 512 555 0100")
+  await page.fill("[name=reg_street]", "1 Main St"); await page.fill("[name=reg_city]", "Austin")
+  await pick(page, page.locator("button:has-text('Select jurisdiction')").first(), "Texas")
+  await page.fill("[name=reg_zip]", "73301")
+  await page.waitForTimeout(1000)
+  await shot(page, "16-failed-submit-filled")
+  const create = page.locator("button:has-text('Create Record')")
+  await create.click({ force: true })
+  await page.waitForSelector("text=The record was not created. Nothing was saved.", { timeout: 30000 })
+  const alert = await page.locator("div[role=alert]:has-text('Nothing was saved')").first().innerText()
+  await shot(page, "17-failed-submit-alert")
+  const after = psql("SELECT (SELECT count(*) FROM public.organizations) || '/' || (SELECT count(*) FROM public.persons) || '/' || (SELECT count(*) FROM public.locations) || '/' || (SELECT count(*) FROM public.master_register_events)")
+  record("UI: a refused creation shows the reason and the form stays open", /not created|Nothing was saved|already/i.test(alert) && page.url().includes("/companies/new"), alert.replace(/\n/g, " ").slice(0, 160))
+  record("UI: refused creation left organizations, persons, locations and Master Register events unchanged", before === after, `${before} -> ${after}`)
+} catch (e) { record("scenario error", false, String(e).slice(0, 400)); await shot(page, "96-error-failed-ui") }
+fs.writeFileSync("/tmp/tes-e2e/results-failed-ui.json", JSON.stringify(results, null, 2))
+await browser.close()

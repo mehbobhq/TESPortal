@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-type StepStatus = "complete" | "available" | "blocked"
+type StepStatus = "complete" | "available" | "blocked" | "missing"
 type Scope = { id: string; productLevel: string; serviceCode: string | null }
 type Responsibility = { id: string; scopeId: string }
 type OnboardingView = {
@@ -30,14 +30,24 @@ type OnboardingView = {
   }
   counts: {
     authorities: number
+    contracts: number
     credentials: number
+    evidenceDocuments: number
+    evidenceRequirements: number
     drivers: number
     insurancePolicies: number
     taxRegistrations: number
     vehicles: number
   }
+  evidenceRequirements: Array<{ id: string; requirementCode: string; requirementLabel: string; requiredFor: string; requirementStatus: string }>
+  authorityRoles: { serviceDecisionAuthority: boolean; contractSignatory: boolean }
   steps: Array<{ key: string; label: string; status: StepStatus; detail: string; href?: string }>
-  readiness: { status: "ready" | "in_progress" | "blocked"; completed: number; total: number; blockers: string[] }
+  readiness: {
+    status: "ready" | "in_progress" | "blocked" | "missing_evidence" | "settings_required" | "ready_for_contract" | "ready_for_service_start"
+    completed: number
+    total: number
+    blockers: string[]
+  }
 }
 
 const PRODUCT_LEVELS = [
@@ -54,13 +64,13 @@ const OPERATING_SCOPES = [
 
 function statusVariant(status: StepStatus) {
   if (status === "complete") return "default"
-  if (status === "blocked") return "destructive"
+  if (status === "blocked" || status === "missing") return "destructive"
   return "outline"
 }
 
 function StepIcon({ status }: { status: StepStatus }) {
   if (status === "complete") return <CheckCircle2 className="size-4 text-emerald-600" />
-  if (status === "blocked") return <FileWarning className="size-4 text-destructive" />
+  if (status === "blocked" || status === "missing") return <FileWarning className="size-4 text-destructive" />
   return <Circle className="size-4 text-muted-foreground" />
 }
 
@@ -122,7 +132,20 @@ export default function OnboardingPage() {
   if (error && !data) return <div className="p-10 text-center text-sm text-destructive">{error}</div>
   if (!data) return <div className="p-10 text-center text-sm text-muted-foreground">Loading onboarding...</div>
 
-  const readinessLabel = data.readiness.status === "ready" ? "Ready" : data.readiness.status === "blocked" ? "Blocked" : "In progress"
+  const readinessLabel =
+    data.readiness.status === "ready_for_service_start"
+      ? "Ready for service start"
+      : data.readiness.status === "ready_for_contract"
+        ? "Ready for contract"
+        : data.readiness.status === "missing_evidence"
+          ? "Missing evidence"
+          : data.readiness.status === "settings_required"
+            ? "Settings required"
+            : data.readiness.status === "ready"
+              ? "Ready"
+              : data.readiness.status === "blocked"
+                ? "Blocked"
+                : "In progress"
 
   return (
     <div className="flex flex-col gap-6 pb-10">
@@ -294,6 +317,56 @@ export default function OnboardingPage() {
             >
               Set driver minimums
             </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <Card>
+          <CardHeader className="border-b bg-muted/30 py-3">
+            <CardTitle className="text-sm">Evidence requirements</CardTitle>
+          </CardHeader>
+          <CardContent className="divide-y p-0">
+            {data.evidenceRequirements.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">No evidence requirement records have been created yet.</div>
+            ) : (
+              data.evidenceRequirements.map((item) => (
+                <div key={item.id} className="flex items-start justify-between gap-4 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-medium">{item.requirementLabel}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {item.requirementCode} · {item.requiredFor.replaceAll("_", " ")}
+                    </div>
+                  </div>
+                  <Badge variant={item.requirementStatus === "verified" || item.requirementStatus === "waived" ? "default" : "outline"}>
+                    {item.requirementStatus.replaceAll("_", " ")}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="border-b bg-muted/30 py-3">
+            <CardTitle className="text-sm">Authority and contract gates</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-4 text-sm">
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <span>Service Decision Authority</span>
+              <Badge variant={data.authorityRoles.serviceDecisionAuthority ? "default" : "outline"}>
+                {data.authorityRoles.serviceDecisionAuthority ? "Assigned" : "Missing"}
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <span>Contract Signatory</span>
+              <Badge variant={data.authorityRoles.contractSignatory ? "default" : "outline"}>
+                {data.authorityRoles.contractSignatory ? "Assigned" : "Missing"}
+              </Badge>
+            </div>
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              Contract generation stays blocked until both authority roles and required evidence are present.
+            </div>
           </CardContent>
         </Card>
       </div>

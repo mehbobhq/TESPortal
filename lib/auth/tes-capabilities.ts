@@ -62,6 +62,11 @@ export const TES_CAPABILITY_SCOPES = {
   // Canonical Data Cutover / browser authority retirement (migration 0029).
   LEGACY_IMPORT_READ: "SYSTEM",
   LEGACY_IMPORT_MANAGE: "SYSTEM",
+  // Onboarding evidence, readiness, customer authority and contracts foundation (migration 0030).
+  EVIDENCE_READ: "SYSTEM",
+  EVIDENCE_MANAGE: "SYSTEM",
+  CONTRACT_READ: "SYSTEM",
+  CONTRACT_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

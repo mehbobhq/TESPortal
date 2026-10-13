@@ -24,6 +24,7 @@ test("onboarding orchestrates existing canonical services instead of adding para
   for (const required of [
     "customer-relationship/service",
     "company-profile/service",
+    "onboarding-foundation/service",
     "operating-authorities/service",
     "company-credentials/service",
     "insurance/service",
@@ -35,9 +36,10 @@ test("onboarding orchestrates existing canonical services instead of adding para
   assert.doesNotMatch(service, /INSERT INTO|UPDATE public|DELETE FROM|CREATE TABLE|ALTER TABLE/i)
 })
 
-test("documents and evidence stay blocked until the GCS evidence domain exists", () => {
+test("documents and evidence use the canonical onboarding foundation, never browser evidence stores", () => {
   const service = read("lib/customer-onboarding/service.ts")
   assert.match(service, /Documents\/evidence/)
-  assert.match(service, /Canonical GCS evidence storage is not built yet/)
+  assert.match(service, /evidenceRequirements/)
+  assert.match(service, /CUSTOMER_AUTHORITY_NOTICE/)
   assert.doesNotMatch(service, /evidence-payload-store|evidence-file-store|CorporateDocumentsSection|browser state/i)
 })

@@ -15,8 +15,15 @@ import { getOrganizationCredentials } from "@/lib/company-credentials/service"
 import { getOrganizationInsurance } from "@/lib/insurance/service"
 import { getOrganizationRegistrations } from "@/lib/tax-registrations/service"
 import { listOrganizationDrivers, listOrganizationVehicles } from "@/lib/operational-identity/reads"
+import {
+  assignCustomerAuthority,
+  createContractFoundation,
+  getOnboardingFoundation,
+  upsertEvidenceRequirement,
+  type EvidenceRequirementRecord,
+} from "@/lib/onboarding-foundation/service"
 
-type StepStatus = "complete" | "available" | "blocked"
+type StepStatus = "complete" | "available" | "blocked" | "missing"
 
 export type OnboardingStep = {
   key: string
@@ -27,7 +34,7 @@ export type OnboardingStep = {
 }
 
 export type OnboardingReadiness = {
-  status: "ready" | "in_progress" | "blocked"
+  status: "ready" | "in_progress" | "blocked" | "missing_evidence" | "settings_required" | "ready_for_contract" | "ready_for_service_start"
   completed: number
   total: number
   blockers: string[]
@@ -45,11 +52,19 @@ export type CustomerOnboardingView = {
   operatingProfile: Awaited<ReturnType<typeof getCompanyProfile>>
   counts: {
     authorities: number
+    contracts: number
     credentials: number
+    evidenceDocuments: number
+    evidenceRequirements: number
     drivers: number
     insurancePolicies: number
     taxRegistrations: number
     vehicles: number
+  }
+  evidenceRequirements: EvidenceRequirementRecord[]
+  authorityRoles: {
+    serviceDecisionAuthority: boolean
+    contractSignatory: boolean
   }
   steps: OnboardingStep[]
   readiness: OnboardingReadiness
@@ -59,23 +74,100 @@ function countRows<T>(rows: T[] | undefined): number {
   return rows?.length ?? 0
 }
 
-function readinessFrom(steps: OnboardingStep[]): OnboardingReadiness {
-  const scored = steps.filter((step) => step.status !== "blocked" || step.key === "documents")
+function readinessFrom(steps: OnboardingStep[], status: OnboardingReadiness["status"]): OnboardingReadiness {
+  const scored = steps
   const completed = scored.filter((step) => step.status === "complete").length
-  const blockers = steps.filter((step) => step.status === "blocked").map((step) => step.label)
+  const blockers = steps.filter((step) => step.status === "blocked" || step.status === "missing").map((step) => step.label)
   return {
-    status: blockers.length > 0 ? "blocked" : completed === scored.length ? "ready" : "in_progress",
+    status,
     completed,
     total: scored.length,
     blockers,
   }
 }
 
+type ComputedRequirement = {
+  code: string
+  label: string
+  requiredFor: string
+  documentType: string
+}
+
+function hasSatisfiedRequirement(requirements: EvidenceRequirementRecord[], code: string): boolean {
+  return requirements.some((item) => item.requirementCode === code && ["received", "verified", "waived", "not_applicable"].includes(item.requirementStatus))
+}
+
+function computedRequirements(input: {
+  hasOpenEngagement: boolean
+  hasScopes: boolean
+  hasResponsibilities: boolean
+  settingsComplete: boolean
+  needsAuthorityRoles: boolean
+}): ComputedRequirement[] {
+  const requirements: ComputedRequirement[] = [
+    {
+      code: "CUSTOMER_AUTHORITY_NOTICE",
+      label: "Written company notice naming Service Decision Authority and Contract Signatory",
+      requiredFor: "authority_roles",
+      documentType: "CUSTOMER_AUTHORITY_NOTICE",
+    },
+  ]
+  if (input.hasOpenEngagement) {
+    requirements.push({
+      code: "CUSTOMER_ONBOARDING_PACKAGE",
+      label: "Customer onboarding package or engagement instruction",
+      requiredFor: "organization",
+      documentType: "CUSTOMER_ONBOARDING_PACKAGE",
+    })
+  }
+  if (input.hasScopes) {
+    requirements.push({
+      code: "SERVICE_SCOPE_CONFIRMATION",
+      label: "Customer confirmation of selected TES service scope",
+      requiredFor: "service_scope",
+      documentType: "SERVICE_SCOPE_CONFIRMATION",
+    })
+  }
+  if (input.hasResponsibilities) {
+    requirements.push({
+      code: "RESPONSIBILITY_START_CONFIRMATION",
+      label: "Evidence of TES responsibility start boundary",
+      requiredFor: "responsibility",
+      documentType: "RESPONSIBILITY_START_CONFIRMATION",
+    })
+  }
+  if (input.settingsComplete) {
+    requirements.push({
+      code: "REQUIRED_SETTINGS_CONFIRMATION",
+      label: "Evidence supporting required onboarding settings",
+      requiredFor: "settings",
+      documentType: "REQUIRED_SETTINGS_CONFIRMATION",
+    })
+  }
+  return requirements
+}
+
+function readinessStatus(input: {
+  open: boolean
+  scopes: boolean
+  responsibilities: boolean
+  settingsComplete: boolean
+  evidenceComplete: boolean
+  authorityComplete: boolean
+  contractReady: boolean
+}): OnboardingReadiness["status"] {
+  if (!input.open || !input.scopes || !input.responsibilities) return "blocked"
+  if (!input.settingsComplete) return "settings_required"
+  if (!input.evidenceComplete || !input.authorityComplete) return "missing_evidence"
+  if (!input.contractReady) return "ready_for_contract"
+  return "ready_for_service_start"
+}
+
 export async function getCustomerOnboarding(organizationId: string): Promise<CustomerOnboardingView> {
   const company = await getCompanyDirectoryProfile(organizationId)
   if (!company) throw new Error("Company not found.")
 
-  const [relationship, operatingProfile, authorities, credentials, insurance, tax, vehicles, drivers] = await Promise.all([
+  const [relationship, operatingProfile, authorities, credentials, insurance, tax, vehicles, drivers, foundation] = await Promise.all([
     getCustomerRelationship(organizationId),
     getCompanyProfile(organizationId),
     getOrganizationAuthorities(organizationId),
@@ -84,6 +176,7 @@ export async function getCustomerOnboarding(organizationId: string): Promise<Cus
     getOrganizationRegistrations(organizationId),
     listOrganizationVehicles(organizationId),
     listOrganizationDrivers(organizationId),
+    getOnboardingFoundation(organizationId),
   ])
 
   const open = relationship.openEngagement
@@ -93,12 +186,39 @@ export async function getCustomerOnboarding(organizationId: string): Promise<Cus
   const settingsComplete = operatingProfile.operatingScope.assertion !== null && operatingProfile.driverRequirements.assertion !== null
   const moduleCounts = {
     authorities: countRows(authorities.authorities),
+    contracts: foundation.contracts.length,
     credentials: countRows(credentials.credentials),
+    evidenceDocuments: foundation.evidenceDocuments.length,
+    evidenceRequirements: foundation.evidenceRequirements.length,
     drivers: drivers.length,
     insurancePolicies: countRows(insurance.policies),
     taxRegistrations: countRows(tax.registrations),
     vehicles: vehicles.length,
   }
+  const requiredEvidence = computedRequirements({
+    hasOpenEngagement: Boolean(open),
+    hasScopes: currentScopes.length > 0,
+    hasResponsibilities: currentResponsibilities.length > 0,
+    settingsComplete,
+    needsAuthorityRoles: true,
+  })
+  const missingEvidence = requiredEvidence.filter((item) => !hasSatisfiedRequirement(foundation.evidenceRequirements, item.code))
+  const activeAuthorities = foundation.customerAuthorityAssignments.filter((item) => item.assignmentStatus === "active" && item.effectiveTo === null)
+  const authorityRoles = {
+    serviceDecisionAuthority: activeAuthorities.some((item) => item.authorityType === "SERVICE_DECISION_AUTHORITY"),
+    contractSignatory: activeAuthorities.some((item) => item.authorityType === "CONTRACT_SIGNATORY"),
+  }
+  const authorityComplete = authorityRoles.serviceDecisionAuthority && authorityRoles.contractSignatory && hasSatisfiedRequirement(foundation.evidenceRequirements, "CUSTOMER_AUTHORITY_NOTICE")
+  const contractReady = foundation.contracts.some((contract) => ["draft", "ready_for_signature", "signed"].includes(contract.contractStatus) && contract.lineItems.length >= currentScopes.length)
+  const computedReadiness = readinessStatus({
+    open: Boolean(open),
+    scopes: currentScopes.length > 0,
+    responsibilities: currentScopes.length > 0 && currentScopes.every((scope) => scopeIdsWithResponsibility.has(scope.id)),
+    settingsComplete,
+    evidenceComplete: missingEvidence.length === 0,
+    authorityComplete,
+    contractReady,
+  })
 
   const steps: OnboardingStep[] = [
     {
@@ -139,11 +259,25 @@ export async function getCustomerOnboarding(organizationId: string): Promise<Cus
     {
       key: "documents",
       label: "Documents/evidence",
-      status: "blocked",
-      detail: "Canonical GCS evidence storage is not built yet; evidence remains blocked.",
+      status: missingEvidence.length === 0 ? "complete" : "missing",
+      detail: missingEvidence.length === 0 ? "Required evidence is satisfied." : `${missingEvidence.length} evidence requirement${missingEvidence.length === 1 ? "" : "s"} still missing.`,
       href: `/companies/${organizationId}/business`,
     },
+    {
+      key: "authority_roles",
+      label: "Customer authority roles",
+      status: authorityComplete ? "complete" : open ? "available" : "blocked",
+      detail: authorityComplete ? "Service Decision Authority and Contract Signatory are assigned with evidence." : "Assign exactly one Service Decision Authority and one Contract Signatory.",
+    },
+    {
+      key: "contracts",
+      label: "Contracts foundation",
+      status: contractReady ? "complete" : authorityComplete && missingEvidence.length === 0 ? "available" : "blocked",
+      detail: contractReady ? "Contract shell has line items for current scope." : "Contract shell depends on relationship, scope, responsibility, evidence and authority roles.",
+    },
   ]
+
+  const readiness = readinessFrom(steps, computedReadiness)
 
   return {
     company: {
@@ -156,8 +290,10 @@ export async function getCustomerOnboarding(organizationId: string): Promise<Cus
     relationship,
     operatingProfile,
     counts: moduleCounts,
+    evidenceRequirements: foundation.evidenceRequirements,
+    authorityRoles,
     steps,
-    readiness: readinessFrom(steps),
+    readiness,
   }
 }
 
@@ -206,6 +342,43 @@ export async function applyCustomerOnboardingAction(organizationId: string, inpu
         minimumDriverAgeYears: Number(input.minimumDriverAgeYears),
         minimumDriverExperienceMonths: Number(input.minimumDriverExperienceMonths),
         effectiveFrom: typeof input.effectiveFrom === "string" && input.effectiveFrom ? input.effectiveFrom : now(),
+      })
+      break
+    }
+    case "upsertEvidenceRequirement": {
+      await upsertEvidenceRequirement({
+        organizationId,
+        engagementId: typeof input.engagementId === "string" ? input.engagementId : null,
+        scopeId: typeof input.scopeId === "string" ? input.scopeId : null,
+        requirementCode: String(input.requirementCode ?? ""),
+        requirementLabel: String(input.requirementLabel ?? ""),
+        requiredFor: input.requiredFor as Parameters<typeof upsertEvidenceRequirement>[0]["requiredFor"],
+        requiredDocumentType: String(input.requiredDocumentType ?? ""),
+        requirementStatus: input.requirementStatus as Parameters<typeof upsertEvidenceRequirement>[0]["requirementStatus"],
+        satisfiedByEvidenceDocumentId: typeof input.satisfiedByEvidenceDocumentId === "string" ? input.satisfiedByEvidenceDocumentId : null,
+      })
+      break
+    }
+    case "assignCustomerAuthority": {
+      await assignCustomerAuthority({
+        customerId: String(input.customerId ?? ""),
+        organizationId,
+        personId: String(input.personId ?? ""),
+        authorityType: input.authorityType as Parameters<typeof assignCustomerAuthority>[0]["authorityType"],
+        effectiveFrom: typeof input.effectiveFrom === "string" && input.effectiveFrom ? input.effectiveFrom : now(),
+        noticeEvidenceDocumentId: typeof input.noticeEvidenceDocumentId === "string" ? input.noticeEvidenceDocumentId : null,
+      })
+      break
+    }
+    case "createContractFoundation": {
+      await createContractFoundation({
+        customerId: String(input.customerId ?? ""),
+        organizationId,
+        engagementId: String(input.engagementId ?? ""),
+        scopeIds: Array.isArray(input.scopeIds) ? input.scopeIds.map(String) : [],
+        serviceDecisionAuthorityAssignmentId: typeof input.serviceDecisionAuthorityAssignmentId === "string" ? input.serviceDecisionAuthorityAssignmentId : null,
+        contractSignatoryAssignmentId: typeof input.contractSignatoryAssignmentId === "string" ? input.contractSignatoryAssignmentId : null,
+        contractReference: typeof input.contractReference === "string" ? input.contractReference : null,
       })
       break
     }

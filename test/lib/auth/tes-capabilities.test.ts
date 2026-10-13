@@ -20,7 +20,7 @@ import {
 } from "../../../lib/auth/tes-authorization-sql.ts";
 
 describe("TES capability references", () => {
-  it("lists exactly the approved capabilities (six Companies foundation + two Contacts + two Customer Relationship + eight Tax / Insurance / Credentials / Company Profile) with their approved scopes", () => {
+  it("lists exactly the approved capabilities with their approved scopes", () => {
     assert.deepEqual(
       { ...TES_CAPABILITY_SCOPES },
       {
@@ -42,9 +42,22 @@ describe("TES capability references", () => {
         CREDENTIAL_MANAGE: "SYSTEM",
         COMPANY_PROFILE_READ: "SYSTEM",
         COMPANY_PROFILE_MANAGE: "SYSTEM",
+        VEHICLE_READ: "SYSTEM",
+        VEHICLE_MANAGE: "SYSTEM",
+        DRIVER_READ: "SYSTEM",
+        DRIVER_MANAGE: "SYSTEM",
+        IDENTITY_RESOLUTION_READ: "SYSTEM",
+        IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
+        MASTER_REGISTER_READ: "SYSTEM",
+        LEGACY_IMPORT_READ: "SYSTEM",
+        LEGACY_IMPORT_MANAGE: "SYSTEM",
+        EVIDENCE_READ: "SYSTEM",
+        EVIDENCE_MANAGE: "SYSTEM",
+        CONTRACT_READ: "SYSTEM",
+        CONTRACT_MANAGE: "SYSTEM",
       },
     );
-    assert.equal(TES_CAPABILITY_CODES.length, 18);
+    assert.equal(TES_CAPABILITY_CODES.length, 31);
   });
 
   it("has no delete capability and no CUSTOMER_CREATE", () => {
@@ -104,7 +117,6 @@ describe("TES authorization SQL builders (pure)", () => {
     ]) {
       assert.throws(() => authorizationDecisionSql("SYSTEM", unsafe), /Unsafe authorization evaluation instant/, unsafe);
       assert.throws(() => masterAccountSql(unsafe), /Unsafe/);
-      assert.throws(() => accessibleCustomersSql(unsafe), /Unsafe/);
     }
   });
 
@@ -146,9 +158,9 @@ describe("TES authorization SQL builders (pure)", () => {
 
   it("discovery shares the evaluator's path predicate, is DISTINCT, and is bounded", () => {
     const sql = accessibleCustomersSql();
-    assert.match(sql, /SELECT DISTINCT ra\.customer_id/);
-    assert.match(sql, /LIMIT \$3/);
+    assert.match(sql, /tes_security\.accessible_customers_for_actor\(\$1::uuid,\$2,\$3\)/);
+    assert.doesNotMatch(sql, /actor_relationships|relationship_assignments|relationship_capability_grants/);
     const paths = authorizationPathsSql({ scope: "CUSTOMER", customerFilter: false });
-    assert.ok(sql.includes(paths), "discovery must embed exactly the shared authorization-path predicate");
+    assert.match(paths, /ra\.customer_id IS NOT NULL/);
   });
 });

@@ -1,5 +1,7 @@
 "use client"
 
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -40,6 +42,7 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<CompanyHeader | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [items, setItems] = useState<View[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -51,7 +54,11 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
         fetch(`${base}/profile`, { cache: "no-store" }),
         fetch(`${base}/${config.resource}`, { cache: "no-store" }),
       ])
-      setCompany(profile.ok ? (await profile.json()).company : null)
+      {
+        const lookup = await readCompanyLookup<CompanyHeader>(profile)
+        setCompany(lookup.company)
+        setLookupFailed(lookup.failed)
+      }
       if (list.ok) setItems((await list.json())[config.itemsKey] ?? [])
       else setError((await list.json().catch(() => null))?.error ?? "Unable to load records.")
     } catch {
@@ -101,7 +108,7 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   return (
     <div className="flex flex-col gap-6 pb-10">

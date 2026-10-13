@@ -45,8 +45,9 @@ describe("company directory PostgreSQL cutover boundaries", () => {
   })
 
   it("keeps workspace pages from reporting a failed lookup as a missing company", () => {
-    for (const page of ["business", "credentials", "drivers", "insurance", "vehicles", "edit"]) {
-      const code = source(`app/companies/[id]/${page}/page.tsx`)
+    for (const file of [...["business", "credentials", "drivers", "insurance", "vehicles", "edit"].map((page) => `app/companies/[id]/${page}/page.tsx`), "src/components/canonical/CanonicalRegistryPanel.tsx"]) {
+      const page = file
+      const code = source(file)
       assert.match(code, /CompanyMissing/, page)
       assert.doesNotMatch(code, /<div className="p-10 text-center">Company not found\.<\/div>/, page)
     }

@@ -36,11 +36,11 @@ type CanonicalCompany = { id: string; name: string; kind?: string; region?: stri
  * `tes_companies`. It only ADDS a missing entry (marked `source: "canonical-projection"`); an existing entry is never changed,
  * and nothing is ever deleted or copied back to PostgreSQL. The identity projected is the canonical one.
  */
-function projectCanonicalCompany(company: CanonicalCompany): void {
+function projectCanonicalCompany(company: CanonicalCompany): boolean {
   try {
     const raw = JSON.parse(localStorage.getItem("tes_companies") || "[]")
     const list = Array.isArray(raw) ? raw : []
-    if (list.some((entry: { id?: string }) => entry?.id === company.id)) return
+    if (list.some((entry: { id?: string }) => entry?.id === company.id)) return false
     list.push({
       id: company.id,
       name: company.name,
@@ -51,8 +51,25 @@ function projectCanonicalCompany(company: CanonicalCompany): void {
       source: "canonical-projection",
     })
     localStorage.setItem("tes_companies", JSON.stringify(list))
+    return true
   } catch {
     // Browser storage unavailable: the legacy workspace simply reports that it cannot find the company.
+    return false
+  }
+}
+
+/**
+ * Removes ONLY the marked projection this view added (never a user's own entry, never any other key), so the browser never keeps a
+ * second, stale copy of canonical company identity once the old workspace is closed.
+ */
+function removeCanonicalProjection(companyId: string): void {
+  try {
+    const raw = JSON.parse(localStorage.getItem("tes_companies") || "[]")
+    if (!Array.isArray(raw)) return
+    const kept = raw.filter((entry: { id?: string; source?: string }) => !(entry?.id === companyId && entry?.source === "canonical-projection"))
+    if (kept.length !== raw.length) localStorage.setItem("tes_companies", JSON.stringify(kept))
+  } catch {
+    // nothing to clean up
   }
 }
 
@@ -60,8 +77,11 @@ function projectCanonicalCompany(company: CanonicalCompany): void {
 function BrowserLocalWorkspace({ company, title, boundary, children }: { company: CanonicalCompany; title: string; boundary: string; children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    projectCanonicalCompany(company)
+    const added = projectCanonicalCompany(company)
     setReady(true)
+    return () => {
+      if (added) removeCanonicalProjection(company.id)
+    }
   }, [company])
   return (
     <div className="flex flex-col">

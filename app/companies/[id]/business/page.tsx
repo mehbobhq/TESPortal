@@ -1,5 +1,8 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyBusinessPage from "./legacy-business"
+
 import { CompanyMissing } from "@/components/company-missing"
 import { readCompanyLookup } from "@/lib/company-lookup"
 import { useEffect, useState } from "react"
@@ -26,7 +29,7 @@ const DEFERRED = [
   "Business history and audit cases",
 ]
 
-export default function BusinessPage() {
+function CanonicalBusiness() {
   const params = useParams()
   const companyId = params.id as string
   const [company, setCompany] = useState<Company | null>(null)
@@ -98,5 +101,20 @@ export default function BusinessPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function BusinessWorkspacePage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Business"
+      description="The original Business workspace (incorporation, corporate documents, shareholders, annual returns, CRA/EIN/GST/sales-tax cards, history and audit cases) saves only in this browser, keyed by company id; none of it is in the TES database, and canonical corporate identity under TES records is separate. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalBusiness />}
+    >
+      <LegacyBusinessPage />
+    </LegacyWorkspaceGate>
   )
 }

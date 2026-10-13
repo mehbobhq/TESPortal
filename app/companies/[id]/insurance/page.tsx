@@ -1,5 +1,8 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyInsurancePage from "./legacy-insurance"
+
 import { CompanyMissing } from "@/components/company-missing"
 import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
@@ -27,7 +30,7 @@ type Policy = {
 type Company = { id: string; name: string; kind: string; status: string }
 type Directory = { id: string; name: string }
 
-export default function InsurancePage() {
+function CanonicalInsurance() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
@@ -263,5 +266,20 @@ export default function InsurancePage() {
         Certificates, certificate evidence and OCR intake are deferred: they have no canonical PostgreSQL storage yet.
       </p>
     </div>
+  )
+}
+
+export default function InsuranceWorkspacePage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Insurance"
+      description="The original Insurance workspace (transportation, workers compensation and surety bond forms, broker update, evidence and OCR intake, renewal lineage) saves only in this browser; none of it is in the TES database, and canonical policies under TES records are separate. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalInsurance />}
+    >
+      <LegacyInsurancePage />
+    </LegacyWorkspaceGate>
   )
 }

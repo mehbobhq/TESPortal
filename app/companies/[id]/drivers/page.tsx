@@ -1,5 +1,7 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyDriversPage from "./legacy-drivers"
 import { CompanyMissing } from "@/components/company-missing"
 import { readCompanyLookup } from "@/lib/company-lookup"
 import { useEffect, useState } from "react"
@@ -19,7 +21,7 @@ type DriverRow = {
 }
 type Company = { id: string; name: string; kind: string; status: string }
 
-export default function DriversPage() {
+function CanonicalDrivers() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
@@ -91,5 +93,20 @@ export default function DriversPage() {
         they have no canonical PostgreSQL storage yet.
       </p>
     </div>
+  )
+}
+
+export default function DriversPage(props: { params: Promise<{ id: string }> }) {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Drivers"
+      description="The original driver register (Add Driver, existing-driver check, licence, filters, driver detail with qualifications, training, screening and performance) saves only in this browser; its drivers are separate from the canonical drivers listed under TES records and none of it is in the TES database. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalDrivers />}
+    >
+      <LegacyDriversPage params={props.params} />
+    </LegacyWorkspaceGate>
   )
 }

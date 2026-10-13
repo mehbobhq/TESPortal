@@ -1,5 +1,8 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyCredentialsPage from "./legacy-credentials"
+
 import { CompanyMissing } from "@/components/company-missing"
 import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
@@ -24,7 +27,7 @@ type CredentialView = {
 type System = { id: string; displayName: string }
 type Company = { id: string; name: string; kind: string; status: string }
 
-export default function CredentialsPage() {
+function CanonicalCredentials() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
@@ -248,5 +251,20 @@ export default function CredentialsPage() {
         attached by reference; storing them is deferred until the secret-handling workflow is approved.
       </p>
     </div>
+  )
+}
+
+export default function CredentialsWorkspacePage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Credentials"
+      description="The original Credentials workspace (portal registry, credential list, recovery details step) saves only in this browser. It never saved passwords or recovery secrets; none of it is in the TES database, and canonical credential metadata under TES records is separate. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalCredentials />}
+    >
+      <LegacyCredentialsPage />
+    </LegacyWorkspaceGate>
   )
 }

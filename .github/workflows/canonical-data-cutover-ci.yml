@@ -61,7 +61,14 @@ jobs:
           PGDATABASE: tes_ci_legacy_import
           PGUSER: "tes-database-migrator@tes-production-510007.iam"
           PGPASSWORD: ci-migrator
-        run: bash scripts/database/migrate.sh
+        run: |
+          first29="$(mktemp -d)"
+          for f in database/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+            version="$(basename "$f")"; version="${version%%_*}"
+            if [[ "$version" < "0030" ]]; then cp "$f" "$first29/"; fi
+          done
+          test "$(ls "$first29" | wc -l)" = "29"
+          MIGRATIONS_DIR="$first29" bash scripts/database/migrate.sh
       - name: Verify 0029 ledger and import infrastructure
         env:
           PGDATABASE: tes_ci_legacy_import

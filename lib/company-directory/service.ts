@@ -1,17 +1,19 @@
 import "server-only"
 
-import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
+import * as corporateOperations from "@/lib/corporate-identity/operations"
+import * as customerOperations from "@/lib/customer-relationship/operations"
+import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import {
   addAlias,
   addIdentifier,
   correctIdentifier,
-  createOrganization,
   deactivateAlias,
   getOrganization,
   supersedeIdentifier,
   updateLegalIdentity,
 } from "@/lib/corporate-identity/service"
-import { establishCustomerRelationship } from "@/lib/customer-relationship/service"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
 import type { ClassificationInput, CreateOrganizationInput, OrganizationRecord } from "@/lib/corporate-identity/types"
 
@@ -283,30 +285,58 @@ export async function listCustomerDirectory(): Promise<CustomerDirectoryRecord[]
 
 export async function createCompanyDirectoryRecord(input: CreateCompanyDirectoryInput): Promise<CreateCompanyDirectoryResult> {
   const type = text(input.companyType)
-  const result = await createOrganization(buildCreateOrganizationInput(input))
-  const organization = result.organization
   const isCustomer = type === "Customer"
+  const organizationInput = buildCreateOrganizationInput(input)
 
-  if (isCustomer) {
-    await establishCustomerRelationship({
-      organizationId: organization.id,
-      engagementType: "RECURRING",
-      stage: "ONBOARDING",
-      // ONBOARDING is open-ended; omit plannedEndAt (null is not a valid instant).
-      startedAt: dateToInstant(input.startDate),
-    })
-  }
+  // Both mutations and their Master Register events commit or roll back together.
+  // Check both capabilities before writing the Organization.
+  return withAuthorizedSystem("ORGANIZATION_CREATE", async (client, decision) => {
+    if (isCustomer && !(await hasAdditionalSystemCapability(client, decision, "CUSTOMER_ESTABLISH"))) {
+      throw new TesAuthorizationDeniedError()
+    }
 
-  return {
-    company: {
-      id: organization.id,
-      name: organization.displayName ?? organization.legalName,
-      kind: primaryKind(organization.classifications.find((classification) => classification.isPrimary)?.code ?? null, isCustomer),
-      region: region(organization.formationCountry, organization.formationRegion),
-      status: statusLabel(organization.status),
-      tone: statusTone(organization.status),
-    },
-  }
+    const masterRegister = new PostgresMasterRegisterRepository(client)
+    const actor = { id: decision.actor.id, actorType: decision.actor.actorType }
+    const result = await corporateOperations.createOrganization({
+      client,
+      actor,
+      masterRegister,
+      canViewRegistry: () => hasAdditionalSystemCapability(client, decision, "ORGANIZATION_REGISTRY_READ"),
+    }, organizationInput)
+    const organization = result.organization
+
+    if (isCustomer) {
+      // Re-prove CUSTOMER_ESTABLISH for RLS on the same transaction.
+      await client.query(
+        "SELECT set_config('tes.system_capability', $1, true)",
+        ["CUSTOMER_ESTABLISH"],
+      )
+      const rls = await client.query<{ allowed: boolean }>(
+        "SELECT tes_security.system_context_authorized(ARRAY[$1]::text[]) AS allowed",
+        ["CUSTOMER_ESTABLISH"],
+      )
+      if (rls.rows[0]?.allowed !== true) throw new TesAuthorizationDeniedError()
+
+      await customerOperations.establishCustomerRelationship({ client, actor, masterRegister }, {
+        organizationId: organization.id,
+        engagementType: "RECURRING",
+        stage: "ONBOARDING",
+        // Open-ended stages omit plannedEndAt; null fails instant validation.
+        startedAt: dateToInstant(input.startDate),
+      })
+    }
+
+    return {
+      company: {
+        id: organization.id,
+        name: organization.displayName ?? organization.legalName,
+        kind: primaryKind(organization.classifications.find((classification) => classification.isPrimary)?.code ?? null, isCustomer),
+        region: region(organization.formationCountry, organization.formationRegion),
+        status: statusLabel(organization.status),
+        tone: statusTone(organization.status),
+      },
+    }
+  })
 }
 
 export async function getCompanyProfile(organizationId: string): Promise<CompanyProfileRecord | null> {

@@ -1,5 +1,6 @@
 "use client"
 
+import { useCompanySummary } from "@/components/use-company-summary"
 import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
@@ -93,21 +94,7 @@ export function AppSidebar() {
     Boolean(pathSegments[1]) &&
     pathSegments[1] !== "new"
   const companyId = isCompanyContext ? pathSegments[1] : null
-  const [activeCompany, setActiveCompany] = useState<StoredCompany | null>(null)
-
-  useEffect(() => {
-    if (!companyId) {
-      setActiveCompany(null)
-      return
-    }
-
-    try {
-      const companies = JSON.parse(localStorage.getItem("tes_companies") || "[]") as StoredCompany[]
-      setActiveCompany(companies.find((company) => company.id === companyId) || null)
-    } catch {
-      setActiveCompany(null)
-    }
-  }, [companyId])
+  const activeCompany = useCompanySummary(companyId, pathSegments[2])
 
   const platformItems = useMemo(
     () =>

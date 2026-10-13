@@ -1,5 +1,6 @@
 "use client"
 
+import { useCompanySummary } from "@/components/use-company-summary"
 import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
@@ -104,24 +105,10 @@ function SiteHeaderBreadcrumbs() {
   const trainingRecordId = searchParams.get("trainingRecord")
   const performanceView = searchParams.get("performanceView")
 
-  const [companyName, setCompanyName] = useState<string | null>(null)
+  const companyName = useCompanySummary(companyId)?.name ?? null
   const [vehicleUnitNumber, setVehicleUnitNumber] = useState<string | null>(null)
   const [driverName, setDriverName] = useState<string | null>(null)
   const [trainingCourseTitle, setTrainingCourseTitle] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!companyId) {
-      setCompanyName(null)
-      return
-    }
-    try {
-      const savedCompanies = JSON.parse(localStorage.getItem("tes_companies") || "[]")
-      const found = savedCompanies.find((c: any) => c.id === companyId)
-      setCompanyName(found?.name || null)
-    } catch {
-      setCompanyName(null)
-    }
-  }, [companyId])
 
   useEffect(() => {
     if (!companyId || !vehicleId) {

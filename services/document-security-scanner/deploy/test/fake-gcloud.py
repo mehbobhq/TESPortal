@@ -7,7 +7,7 @@ flags = set(filter(None, os.environ.get("FAKE_FLAGS", "").split(",")))
 P = "tes-production-510007"
 NUM = "123456789012"
 SCN = f"tes-security-scanner@{P}.iam.gserviceaccount.com"
-INV = f"tes-scanner-invoker@{P}.iam.gserviceaccount.com"
+INV = f"tes-eventarc-scanner-trigger@{P}.iam.gserviceaccount.com"
 SHA = os.environ.get("FAKE_SHA", "0" * 40)
 DIGEST = "sha256:" + "a" * 64
 existing = "existing" in flags
@@ -35,9 +35,9 @@ if has("services", "list", "--enabled"):
 if has("projects", "describe"):
     out(NUM + "\n")
 if has("eventarc", "locations", "list"):
-    out([{"locationId": "us-east4"}, {"locationId": "us"}])
+    out([{"locationId": "us-central1"}, {"locationId": "us"}])
 if has("storage", "buckets", "describe"):
-    loc, typ = ("us-east4", "region")
+    loc, typ = ("us", "multi-region")
     if "dual_region" in flags: loc, typ = ("nam4", "dual-region")
     out({"location": loc.upper(), "location_type": typ})
 if has("iam", "service-accounts", "list"):
@@ -66,7 +66,7 @@ if has("projects", "get-iam-policy"):
               {"role": "roles/pubsub.publisher", "members": [f"serviceAccount:service-{NUM}@gs-project-accounts.iam.gserviceaccount.com"]}]
     out(policy(b))
 if has("artifacts", "repositories", "list"):
-    out([{"name": f"projects/{P}/locations/us-east4/repositories/tes-scanner"}] if existing else [])
+    out([{"name": f"projects/{P}/locations/us-central1/repositories/tes-scanner"}] if existing else [])
 if has("artifacts", "docker", "images", "list"):
     out([{"package": "x", "version": DIGEST, "tags": [SHA]}] if existing else [])
 if has("artifacts", "docker", "images", "describe"):
@@ -80,9 +80,9 @@ if has("run", "services", "get-iam-policy"):
 if has("eventarc", "triggers", "list"):
     if not existing: out([])
     bucket = "tes-production-other" if "trigger_mismatch" in flags else "tes-production-quarantine"
-    out([{"name": f"projects/{P}/locations/us-east4/triggers/scanner-quarantine-finalized",
+    out([{"name": f"projects/{P}/locations/us/triggers/tes-quarantine-document-scanner",
           "eventFilters": [{"attribute": "type", "value": "google.cloud.storage.object.v1.finalized"}, {"attribute": "bucket", "value": bucket}],
-          "destination": {"cloudRun": {"service": "document-security-scanner", "region": "us-east4"}}, "serviceAccount": INV}])
+          "destination": {"cloudRun": {"service": "document-security-scanner", "region": "us-central1"}}, "serviceAccount": INV}])
 if has("builds", "submit"):
     out([{"status": "SUCCESS", "results": {"images": [{"digest": DIGEST}]}}])
 if "replace" in args:

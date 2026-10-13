@@ -1,6 +1,6 @@
 import "server-only"
 
-import { getCompanyProfile as getCompanyDirectoryProfile } from "@/lib/company-directory/service"
+import { getCompanyIdentitySummary as getCompanyDirectoryProfile } from "@/lib/company-directory/service"
 import {
   addScope,
   assumeResponsibility,

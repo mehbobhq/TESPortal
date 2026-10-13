@@ -113,7 +113,7 @@ describe("Company Credentials boundaries", () => {
   it("the actor of a verification is the authenticated actor, never an input", () => {
     const operations = codeOnly(source("operations.ts"));
     assert.match(operations, /actorId: ctx\.actor\.id/);
-    assert.match(operations, /requireObject\(rawInput, "input", \["credentialId", "outcome", "method", "verifiedAt"\]\)/);
+    assert.match(operations, /requireObject\(rawInput, "input", \["credentialId", "organizationId", "outcome", "method", "verifiedAt"\]\)/);
   });
 
   it("migrations 0001-0015 are byte-identical to their closed hashes; 0018 is additive", () => {

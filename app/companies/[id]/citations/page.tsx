@@ -8,6 +8,7 @@ import {
 } from "react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
 import { getQueryParam } from "@/lib/deep-linking"
 import {
   AlertOctagon,
@@ -708,7 +709,7 @@ function CitationForm({
    MAIN COMPONENT PAGE
 ========================================================= */
 
-export default function CitationsPage() {
+function LegacyCitationsPage() {
   const params = useParams()
   const router = useRouter()
   const companyId = params.id as string
@@ -1262,5 +1263,19 @@ export default function CitationsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function CitationsPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Citations"
+      description="Citations and tickets are still held in a browser-local prototype store keyed by an older company id, so showing or saving them here would not be a real record. The citation records will appear here once they are moved to PostgreSQL. No data was deleted."
+    >
+      <LegacyCitationsPage />
+    </LegacyWorkspaceGate>
   )
 }

@@ -145,3 +145,70 @@ export async function moveIntakeObjectToEvidence(
 
   return { bucket: evidenceBucketName(), objectName: evidenceObjectName }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Evidence payload lifecycle primitives (lib/evidence-payload). Read, stat, list and a create-only copy. Nothing here
+// deletes, overwrites or makes anything public; no signed or public URL is ever produced.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type StorageBucketKind = "quarantine" | "intake" | "evidence"
+
+function bucketFor(kind: StorageBucketKind) {
+  return kind === "quarantine" ? quarantineBucket() : kind === "intake" ? intakeBucket() : evidenceBucket()
+}
+
+export function configuredBucketNames(): Record<StorageBucketKind, string> {
+  return { quarantine: quarantineBucketName(), intake: intakeBucketName(), evidence: evidenceBucketName() }
+}
+
+/** Generation and size of the live object, or null when it does not exist. */
+export async function statStorageObject(kind: StorageBucketKind, objectName: string): Promise<{ generation: string; size: number } | null> {
+  const file = bucketFor(kind).file(objectName)
+  const [exists] = await file.exists()
+  if (!exists) return null
+  const [metadata] = await file.getMetadata()
+  return { generation: String(metadata.generation), size: Number(metadata.size) }
+}
+
+/** Reads an object; when a generation is given the read is pinned to it (a replaced object fails rather than substituting). */
+export async function readStorageObject(kind: StorageBucketKind, objectName: string, generation?: string): Promise<Buffer> {
+  const file = generation ? bucketFor(kind).file(objectName, { generation }) : bucketFor(kind).file(objectName)
+  const [content] = await file.download()
+  return content
+}
+
+/**
+ * Copies the exact scanned intake generation into the evidence bucket. Create-only (`ifGenerationMatch: 0`): an existing
+ * evidence object is never overwritten, and the source is never deleted. Returns created=false when the destination already
+ * existed (the caller must then verify its hash before trusting it).
+ */
+export async function copyIntakeToEvidenceCreateOnly(
+  intakeObjectName: string,
+  intakeGeneration: string,
+  evidenceObjectName: string,
+): Promise<{ generation: string; created: boolean } | { created: false; generation: null }> {
+  const source = intakeBucket().file(intakeObjectName, { generation: intakeGeneration })
+  const destination = evidenceBucket().file(evidenceObjectName)
+  try {
+    const [, apiResponse] = await source.copy(destination, { preconditionOpts: { ifGenerationMatch: 0 } })
+    const generation = (apiResponse as { resource?: { generation?: string | number } } | undefined)?.resource?.generation
+    return { generation: String(generation ?? ""), created: true }
+  } catch (error) {
+    if ((error as { code?: number } | null)?.code === 412) return { created: false, generation: null }
+    throw error
+  }
+}
+
+/** One page of object names under a prefix (read-only; for the consistency audit). */
+export async function listStorageObjects(
+  kind: StorageBucketKind,
+  prefix: string,
+  pageToken?: string,
+  pageSize = 500,
+): Promise<{ objects: Array<{ name: string; generation: string; size: number }>; nextPageToken: string | null }> {
+  const [files, nextQuery] = await bucketFor(kind).getFiles({ prefix, maxResults: pageSize, pageToken, autoPaginate: false })
+  return {
+    objects: files.map((file) => ({ name: file.name, generation: String(file.metadata.generation), size: Number(file.metadata.size) })),
+    nextPageToken: (nextQuery as { pageToken?: string } | null)?.pageToken ?? null,
+  }
+}

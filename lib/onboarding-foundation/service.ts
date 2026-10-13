@@ -1,10 +1,7 @@
 import "server-only"
 
 import type { PoolClient } from "pg"
-import { randomUUID } from "node:crypto"
 import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
-import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
-import { recordEvent } from "@/lib/master-register/record-event"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -299,47 +296,6 @@ export async function getOnboardingFoundation(organizationId: string): Promise<O
   return { ...evidence, ...contracts }
 }
 
-export type EvidenceDocumentInput = {
-  organizationId: string
-  documentType: string
-  documentTitle: string
-  gcsBucket: string
-  gcsObjectName: string
-  gcsGeneration?: string | null
-  sha256: string
-  mimeType: string
-  byteSize: number
-  sourceChannel?: "intake" | "staff_upload" | "client_upload" | "system_generated" | "legacy_import"
-}
-
-export async function createEvidenceDocument(input: EvidenceDocumentInput): Promise<EvidenceDocumentRecord> {
-  return withAuthorizedSystem("EVIDENCE_MANAGE", async (client) => {
-    const result = await client.query<EvidenceDocumentRow>(
-      `INSERT INTO public.evidence_documents
-        (id, organization_id, document_type, document_title, gcs_bucket, gcs_object_name, gcs_generation, sha256, mime_type, byte_size, source_channel)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, lower($8), $9, $10, $11)
-       RETURNING id, organization_id, document_type, document_title, document_status, sensitivity, gcs_bucket, gcs_object_name,
-                 gcs_generation, sha256, mime_type, byte_size::text AS byte_size, issued_at::text AS issued_at,
-                 effective_from::text AS effective_from, expires_at::text AS expires_at, source_channel,
-                 ${MICRO_ISO("created_at")} AS created_at`,
-      [
-        randomUUID(),
-        input.organizationId,
-        input.documentType,
-        input.documentTitle,
-        input.gcsBucket,
-        input.gcsObjectName,
-        input.gcsGeneration ?? null,
-        input.sha256,
-        input.mimeType,
-        input.byteSize,
-        input.sourceChannel ?? "staff_upload",
-      ],
-    )
-    return toEvidenceDocument(result.rows[0])
-  })
-}
-
 export async function snapshotReadiness(input: {
   organizationId: string
   engagementId: string | null
@@ -397,52 +353,5 @@ export async function upsertEvidenceRequirement(input: {
       ],
     )
     return toEvidenceRequirement(result.rows[0])
-  })
-}
-
-export type EvidenceReviewDecision = "classified" | "verified" | "rejected"
-
-/**
- * Records a human review decision on evidence metadata. Only a verified, unexpired document can back an authority change,
- * a contract decision or a contract status change (migration 0031 enforces that in the database). The review is recorded in
- * the Master Register in the same transaction; the document payload itself is never read or modified.
- */
-export async function reviewEvidenceDocument(input: { documentId: string; decision: EvidenceReviewDecision }): Promise<EvidenceDocumentRecord> {
-  if (!["classified", "verified", "rejected"].includes(input.decision)) throw new Error("Unsupported evidence review decision.")
-  return withAuthorizedSystem("EVIDENCE_MANAGE", async (client, decision: SystemAuthorizationDecision) => {
-    const current = await client.query<EvidenceDocumentRow>(
-      `SELECT id, organization_id, document_type, document_title, document_status, sensitivity, gcs_bucket, gcs_object_name,
-              gcs_generation, sha256, mime_type, byte_size::text AS byte_size, issued_at::text AS issued_at,
-              effective_from::text AS effective_from, expires_at::text AS expires_at, source_channel,
-              ${MICRO_ISO("created_at")} AS created_at
-         FROM public.evidence_documents WHERE id = $1 FOR UPDATE`,
-      [input.documentId],
-    )
-    const row = current.rows[0]
-    if (!row) throw new Error("Evidence document was not found.")
-    if (row.document_status === "archived") throw new Error("An archived evidence document cannot be reviewed.")
-    await recordEvent(new PostgresMasterRegisterRepository(client), {
-      eventType: "REVIEW_DECISION_RECORDED",
-      actor: { actorType: decision.actor.actorType, actorId: decision.actor.id },
-      action: { operation: "review_evidence_document" },
-      target: { resourceType: "evidence_document", resourceId: row.id, subjectReferences: [`organization:${row.organization_id}`] },
-      source: { sourceType: "APPLICATION", component: "onboarding-foundation", workflow: "review_evidence_document" },
-      classification: { materiality: "MATERIAL" },
-      change: {
-        changedFields: ["documentStatus"],
-        fieldChanges: [{ field: "documentStatus", before: { kind: "LITERAL", value: row.document_status }, after: { kind: "LITERAL", value: input.decision } }],
-      },
-      evidence: { evidenceReferences: [`evidence_document:${row.id}`] },
-      outcome: { result: "SUCCESS" },
-    })
-    const updated = await client.query<EvidenceDocumentRow>(
-      `UPDATE public.evidence_documents SET document_status = $2, updated_at = clock_timestamp() WHERE id = $1
-       RETURNING id, organization_id, document_type, document_title, document_status, sensitivity, gcs_bucket, gcs_object_name,
-                 gcs_generation, sha256, mime_type, byte_size::text AS byte_size, issued_at::text AS issued_at,
-                 effective_from::text AS effective_from, expires_at::text AS expires_at, source_channel,
-                 ${MICRO_ISO("created_at")} AS created_at`,
-      [input.documentId, input.decision],
-    )
-    return toEvidenceDocument(updated.rows[0])
   })
 }

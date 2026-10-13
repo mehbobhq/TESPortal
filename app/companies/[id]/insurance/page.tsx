@@ -1,5 +1,7 @@
 "use client"
 
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -30,6 +32,7 @@ export default function InsurancePage() {
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [policies, setPolicies] = useState<Policy[]>([])
   const [directory, setDirectory] = useState<Directory[]>([])
   const [family, setFamily] = useState("INSURANCE")
@@ -44,7 +47,11 @@ export default function InsurancePage() {
         fetch(`${base}/insurance`, { cache: "no-store" }),
         fetch("/api/companies", { cache: "no-store" }),
       ])
-      setCompany(profile.ok ? (await profile.json()).company : null)
+      {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
       if (list.ok) setPolicies((await list.json()).policies ?? [])
       else setError((await list.json().catch(() => null))?.error ?? "Unable to load insurance.")
       if (companies.ok) setDirectory(((await companies.json()).companies ?? []) as Directory[])
@@ -115,7 +122,7 @@ export default function InsurancePage() {
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   const nameOf = (id: string) => directory.find((entry) => entry.id === id)?.name ?? id
 

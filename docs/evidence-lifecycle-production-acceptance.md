@@ -23,8 +23,10 @@ Nothing here has been executed in production.
 4. **Google Cloud > Storage > each bucket > Permissions:** portal backend SA: quarantine `storage.objects.create` only; intake `storage.objects.get`
    only; evidence `storage.objects.create` and `get`. Scanner SA: quarantine `get`; intake `create` and `get`. No project-level Storage Admin,
    Object Admin, Owner or Editor on either account; no `allUsers` / `allAuthenticatedUsers`.
-5. **Scanner deployment:** follow `services/document-security-scanner/deploy/DEPLOYMENT.md` (Cloud Run service, Eventarc trigger, IAM, readiness
-   probe, alerts). Run `deploy.sh` without `--apply` first and review the commands.
+5. **Scanner deployment:** follow the sequence in `services/document-security-scanner/deploy/DEPLOYMENT.md`. Merge PR #17, set `REVIEWED_COMMIT` to the merged
+   commit, run `deploy.sh` (read-only PLAN) and resolve every blocker by hand, confirm the discovered Eventarc location and your chosen Cloud Run `REGION`, then
+   run `--apply --confirm PROJECT_ID:<12 chars> [--grant-project-roles]`. The two project-level grants (`roles/eventarc.eventReceiver` for the trigger identity,
+   `roles/pubsub.publisher` for the Cloud Storage service agent) are the only project-wide roles and need that explicit flag. Enable any missing APIs first.
 6. **Alerts:** the log-based alerts listed in `DEPLOYMENT.md`.
 7. **Stalled-payload job:** decide who runs `auditEvidencePayloads` (it needs `storage.objects.list`, which the portal and scanner deliberately lack), with
    which identity, and who receives findings. Not implemented.

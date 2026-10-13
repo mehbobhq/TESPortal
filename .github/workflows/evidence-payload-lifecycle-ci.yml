@@ -14,6 +14,7 @@ on:
       - "app/api/business-document-ocr/**"
       - "lib/legacy-ocr/**"
       - "services/document-security-scanner/deploy/**"
+      - "docs/gcs-iam-reconciliation-plan.md"
       - "test/lib/legacy-ocr/**"
       - "app/companies/*/onboarding/**"
       - "test/lib/evidence-payload/**"
@@ -72,7 +73,9 @@ jobs:
           psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence OWNER \"$CI_MIGRATOR\""
           psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence_mutation OWNER \"$CI_MIGRATOR\""
       - name: Scanner deploy script (offline, fake gcloud; proves plan never mutates and mismatches block)
-        run: bash services/document-security-scanner/deploy/test/deploy.test.sh
+        run: |
+          bash services/document-security-scanner/deploy/test/deploy.test.sh
+          bash services/document-security-scanner/deploy/test/reconcile-iam.test.sh
       - name: Static boundary, key, validation, consistency and storage-config tests
         env:
           GOOGLE_CLOUD_PROJECT_ID: ci-project

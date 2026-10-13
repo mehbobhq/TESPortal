@@ -32,10 +32,11 @@ done
 : "${INTAKE_BUCKET:=tes-production-intake}"
 : "${EVIDENCE_BUCKET:=tes-production-evidence}"
 : "${SCANNER_SA:=tes-security-scanner@${PROJECT_ID}.iam.gserviceaccount.com}"
-: "${INVOKER_SA:=tes-scanner-invoker@${PROJECT_ID}.iam.gserviceaccount.com}"
+: "${INVOKER_SA:=tes-eventarc-scanner-trigger@${PROJECT_ID}.iam.gserviceaccount.com}"
 : "${REPOSITORY:=tes-scanner}"
 : "${SERVICE:=document-security-scanner}"
-: "${TRIGGER_NAME:=scanner-quarantine-finalized}"
+: "${TRIGGER_NAME:=tes-quarantine-document-scanner}"
+: "${REGION:=us-central1}"                  # Cloud Run region of the existing service
 : "${REVIEWED_COMMIT:?set REVIEWED_COMMIT to the full 40-character sha of the reviewed, merged commit being deployed}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/../../.." && pwd)"

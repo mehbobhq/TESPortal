@@ -187,6 +187,10 @@ verify)
   fi ;;
 remove)
   report
+  # Attestations that the read-only preflight (iam-preflight.py) cannot produce on its own; the operator sets them only after the evidence exists.
+  [[ "${ONLY}" != backend || "${MISSING_OBJECT_BEHAVIOR_EVIDENCE:-}" == 404 ]] || { echo "Refusing: removing the backend's broad roles needs evidence (separately approved test) that a get-only identity receives 404 for a missing object; set MISSING_OBJECT_BEHAVIOR_EVIDENCE=404 only with that evidence." >&2; exit 5; }
+  [[ "${ONLY}" != scanner || "${SCANNER_SOURCE_CONFIRMED:-}" == yes ]] || { echo "Refusing: removing the scanner's broad roles needs iam-preflight.py to report scanner verdict CONFIRMED_NO_DELETE; then set SCANNER_SOURCE_CONFIRMED=yes." >&2; exit 5; }
+  if [[ "${ONLY}" == ai && "${AI_RETIREMENT_APPROVED:-}" != yes ]]; then echo "Refusing: the AI processor's access is not retired until a separate dependency assessment is approved; set AI_RETIREMENT_APPROVED=yes only with that approval." >&2; exit 5; fi
   [[ "${CONFIRM}" == "${PROJECT_ID}:remove:${ONLY}" ]] || { echo "--phase remove requires --confirm ${PROJECT_ID}:remove:${ONLY}" >&2; exit 4; }
   for row in "${TARGET[@]}"; do IFS='|' read -r b who role <<<"$row"
     [[ "$who" == "$ONLY" ]] && ! has_binding "$b" "$who" "$role" && { echo "Precondition failed: target ${role} for ${who} on ${BUCKET[$b]} is not present; run --phase add first." >&2; exit 5; }

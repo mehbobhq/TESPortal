@@ -41,8 +41,8 @@ Predefined roles are broader than these: `objectAdmin` adds `delete`, `update`, 
 | project | Cloud Storage service agent | (unknown) | `roles/pubsub.publisher` | |
 
 Notes: the scanner is missing `get` on intake today, so its read-back cannot work (the README says it holds Object Viewer there; the observed state says Creator).
-Whether `get` alone is enough for a missing-object `exists()` to return false rather than 403 is standard GCS behavior but should be confirmed with the
-add-phase test below; the fallback is `roles/storage.objectViewer` (adds `list`) for the backend on intake/evidence, an owner decision.
+Whether `get` without `list` returns 404 (not 403) for a missing object is **unresolved**: it cannot be tested read-only, and the preflight blocks removing broad
+backend permissions until the owner supplies evidence from a separately approved test. **`roles/storage.objectViewer` is not a fallback** without its own approval.
 
 ## 3. Deployment script reconciled with the real names
 `deploy/deploy.sh` defaults now match production: trigger `tes-quarantine-document-scanner`, trigger identity `tes-eventarc-scanner-trigger`, service `document-security-scanner`,
@@ -74,38 +74,21 @@ Idempotent: a present binding or role is skipped; an absent excess binding is sk
 - Add-then-verify-then-remove: a permission is never absent. The remove phase refuses unless the target bindings exist **and** Policy Troubleshooter grants every required permission.
 - Backend: quarantine untouched; the only delete-capable function is dead code; intake/evidence reads and the create-only copy are covered by the targets.
 - Scanner: the narrower quarantine role still covers metadata, download and the copy source; the intake change **adds** `get`.
-- **Scanner removal precondition:** the deployed revision must be built from this repository (an older scanner that *moves* files would need `delete` on quarantine). Compare the revision's image digest and provenance (section 7) before `remove --only scanner`.
+- **Scanner removal precondition:** the exact source of the deployed image must be established from its digest, build provenance, a repository commit on `origin/main`, and code inspection of that commit
+  (`iam-preflight.py` section 6). If provenance cannot establish one source commit the verdict is UNKNOWN and scanner Admin-role removal stays blocked. Object counts in the buckets are **not** evidence of behavior.
 - AI processor: nothing in the repository uses it; removal waits for the owner's usage evidence. Document AI calls use the backend token.
 - Do the changes at a quiet time and run one portal evidence view and one test upload in a **non-customer** context afterwards (this repo's smoke plan), not before approval.
 
-## 7. Information the repository cannot give, and the read-only commands that answer it
-```
-P=tes-production-510007; R=us-central1
-# a. current bucket policies (confirm the observed drift; save the output)
-for b in quarantine intake evidence; do gcloud storage buckets get-iam-policy gs://tes-production-$b --project $P --format=json > before-$b.json; done
-# b. inherited and project-level access for the four accounts, and roles that carry storage permissions
-gcloud projects get-iam-policy $P --format=json > project-policy.json   # look for these members, and for roles/owner, roles/editor, roles/storage.admin, roles/storage.objectAdmin
-gcloud projects get-ancestors $P                                          # then: gcloud resource-manager folders get-iam-policy FOLDER_ID / gcloud organizations get-iam-policy ORG_ID
-gcloud projects get-iam-policy $P --format=json | python3 -c "import json,sys;print(json.dumps(json.load(sys.stdin).get('auditConfigs'),indent=1))"   # are Data Access logs on for storage?
-# c. effective (incl. inherited and deny) access, per permission
-gcloud policy-troubleshoot iam //storage.googleapis.com/projects/_/buckets/tes-production-evidence --principal-email=tes-backend@$P.iam.gserviceaccount.com --permission=storage.objects.delete
-gcloud asset analyze-iam-policy --project=$P --full-resource-name=//storage.googleapis.com/projects/_/buckets/tes-production-evidence --identity=serviceAccount:tes-ai-doc-processor@$P.iam.gserviceaccount.com --permissions=storage.objects.delete --expand-groups
-# d. the deployed scanner is the repository's scanner, and runs as the scanner account (not the default compute account)
-gcloud run services describe document-security-scanner --region $R --project $P --format='value(spec.template.spec.serviceAccountName,spec.template.spec.containers[0].image,status.latestReadyRevisionName)'
-gcloud artifacts docker images describe IMAGE_WITH_DIGEST --show-provenance          # compare with the merged commit that built it
-gcloud eventarc triggers describe tes-quarantine-document-scanner --location us --project $P --format=json   # filters, destination, serviceAccount
-# e. trigger identity and service-agent roles
-gcloud run services get-iam-policy document-security-scanner --region $R --project $P
-# f. is the AI processor used? (every command is read-only)
-gcloud iam service-accounts keys list --iam-account=tes-ai-doc-processor@$P.iam.gserviceaccount.com --managed-by=user --project $P
-gcloud policy-intelligence query-activity --activity-type=serviceAccountKeyLastAuthentication --project $P --limit 50
-gcloud policy-intelligence query-activity --activity-type=serviceAccountLastAuthentication --project $P --limit 50
-gcloud logging read 'protoPayload.authenticationInfo.principalEmail="tes-ai-doc-processor@'$P'.iam.gserviceaccount.com"' --project $P --freshness=30d --limit 20
-gcloud run services list --project $P --format='table(metadata.name,spec.template.spec.serviceAccountName)'
-gcloud functions list --project $P --format='table(name,serviceAccountEmail)'; gcloud scheduler jobs list --project $P --location $R
-# Vercel: Project > Settings > Environment Variables: is GOOGLE_APPLICATION_CREDENTIALS_JSON (or any key) set in Production, Preview or Development? Ask developers about local .env.local.
-```
-Commands are written for current gcloud releases; if a flag differs in your version, stop and ask rather than guess.
+## 7. Read-only preflight (owner, Cloud Shell)
+`deploy/iam-preflight.py` is strictly read-only (an allow-list refuses any other gcloud verb, including `config set`), stops on any gcloud command this Cloud Shell does not support (no substitution),
+and treats everything except GRANTED / NOT_GRANTED as UNKNOWN (never as denial). It prints the full identity x bucket x permission matrix (current / target), reads the bucket, project, folder and
+organization policies (bucket policies alone are never treated as the effective view), expands every role bound to the four accounts, checks the deployed scanner, and ends with four DECISION lines.
+Run: `git clone https://github.com/mehbobhq/TESPortal.git && cd TESPortal && git checkout <reviewed sha> && cd services/document-security-scanner/deploy && python3 iam-preflight.py --repo-dir ../../..`
+Decision criteria:
+- **Add replacement permissions (GO):** all bucket/project/ancestor policies readable; no public, conditional or unlisted binding for the four accounts; custom roles absent or exact; every backend/scanner matrix cell conclusive.
+- **Remove backend or scanner broad permissions (GO):** the add phase is done (target bindings present); every required permission is GRANTED; nothing inherited from project/folder/org keeps a prohibited permission; no UNKNOWN cell,
+  conditional or unreadable inherited grant, or group binding with storage permissions; the missing-object behavior has been evidenced (owner sets `MISSING_OBJECT_BEHAVIOR_EVIDENCE=404` only after a separately approved test); for the scanner also: the deployed source is `CONFIRMED_NO_DELETE` and it runs as its own account.
+- **Retire AI processor access:** never decided by this preflight; it needs a separate dependency assessment. Its access and key remain unchanged.
 
 ## 8. Classification
 **Immediately necessary security corrections (after the section 7 checks):**

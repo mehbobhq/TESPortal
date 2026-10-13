@@ -9,6 +9,7 @@ P=tes-production-510007
 B="serviceAccount:tes-backend@${P}.iam.gserviceaccount.com"; S="serviceAccount:tes-security-scanner@${P}.iam.gserviceaccount.com"; A="serviceAccount:tes-ai-doc-processor@${P}.iam.gserviceaccount.com"
 printf '#!/usr/bin/env bash\nexec python3 %s/fake-gcloud-iam.py "$@"\n' "${HERE}" > "${WORK}/gcloud"; chmod +x "${WORK}/gcloud"
 export FAKE_STATE="${WORK}/state.json" FAKE_LOG="${WORK}/calls.log" GCLOUD="${WORK}/gcloud"
+export MISSING_OBJECT_BEHAVIOR_EVIDENCE=404 SCANNER_SOURCE_CONFIRMED=yes AI_RETIREMENT_APPROVED=yes
 FAIL=0
 reset_state() { python3 - <<PY
 import json
@@ -69,6 +70,14 @@ run "remove is idempotent" 0 --phase remove --only ai --confirm "${P}:remove:ai"
 for bucket in quarantine intake evidence; do check has_role tes-production-$bucket roles/storage.objectAdmin "$A"; done
 check has_role tes-production-intake "${CR}/tesScannerIntakeWriter" "$S"   # rollback of one identity leaves the targets
 run "rollback needs confirmation" 4 --phase rollback --only ai
+
+# attestation guards
+reset_state; bash "${SCRIPT}" --phase add --confirm "${P}:add" >/dev/null 2>&1
+MISSING_OBJECT_BEHAVIOR_EVIDENCE= run "backend removal refused without missing-object evidence" 5 --phase remove --only backend --confirm "${P}:remove:backend"
+SCANNER_SOURCE_CONFIRMED= run "scanner removal refused without confirmed source" 5 --phase remove --only scanner --confirm "${P}:remove:scanner"
+AI_RETIREMENT_APPROVED= run "AI removal refused without separate approval" 5 --phase remove --only ai --confirm "${P}:remove:ai"
+check has_role tes-production-intake roles/storage.objectAdmin "$B"
+check has_role tes-production-evidence roles/storage.objectAdmin "$A"
 
 # safety blockers
 reset_state; python3 - <<PY

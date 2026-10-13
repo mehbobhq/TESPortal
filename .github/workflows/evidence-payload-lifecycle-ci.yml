@@ -76,6 +76,7 @@ jobs:
         run: |
           bash services/document-security-scanner/deploy/test/deploy.test.sh
           bash services/document-security-scanner/deploy/test/reconcile-iam.test.sh
+          bash services/document-security-scanner/deploy/test/iam-preflight.test.sh
       - name: Static boundary, key, validation, consistency and storage-config tests
         env:
           GOOGLE_CLOUD_PROJECT_ID: ci-project

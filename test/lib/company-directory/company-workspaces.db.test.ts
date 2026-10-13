@@ -159,4 +159,36 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
     assert.equal((await K.profile.getCompanyProfile(a)).rules.find((entry) => entry.rule.code === rule)?.assertion, null);
     assert.ok((await count(`SELECT count(*) FROM public.company_rule_applicability_periods WHERE organization_id = $1`, [a])) >= 1, "the cleared assertion stays as history");
   });
+
+  it("contacts: name change vs correction, titles, primary purpose and archive/restore keep history and stay inside the company", async () => {
+    await signInWith(...ALL);
+    const a = await organization("ContactOpsA");
+    const b = await organization("ContactOpsB");
+    const made = await K.contacts.createContact({ organizationId: a, name: { givenName: "Pat", familyName: `Ops${run}` }, titles: ["Dispatcher"], purposes: [{ purpose: "OPERATIONS" }] });
+    const personId = made.contact.person.id;
+    const relationshipId = made.contact.relationship.id;
+
+    await K.contacts.changePersonName({ organizationId: a, personId, givenName: "Patricia", familyName: `Ops${run}` });
+    await K.contacts.correctPersonName({ organizationId: a, personId, givenName: "Patricia", familyName: `Opsy${run}` });
+    assert.equal(await count(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1`, [personId]), 3, "every name version is kept");
+    assert.equal(await count(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1 AND record_status = 'corrected'`, [personId]), 1, "the wrong name is flagged, not deleted");
+
+    await K.contacts.assignPurpose({ organizationId: a, relationshipId, purpose: "PRIMARY", primary: true });
+    await K.contacts.makePrimary({ organizationId: a, relationshipId, purpose: "OPERATIONS" });
+    const view = (await K.contacts.getOrganizationContacts(a)).contacts[0];
+    assert.equal(view.current.purposes.find((p) => p.purpose === "OPERATIONS")?.isPrimary, true);
+    const title = view.current.titles[0];
+    await K.contacts.endTitle({ organizationId: a, titleId: title.id });
+    assert.equal((await K.contacts.getOrganizationContacts(a)).contacts[0].current.titles.length, 0);
+    assert.equal(await count(`SELECT count(*) FROM public.organization_person_titles WHERE relationship_id = $1`, [relationshipId]), 1, "the ended title is kept");
+
+    await assert.rejects(K.contacts.archivePerson({ organizationId: a, personId }), (e: unknown) => e instanceof Error && e.constructor.name === "ContactStateError", "a person with an open relationship cannot be archived");
+    await notFound(K.contacts.endRelationship({ organizationId: b, relationshipId }));
+    await K.contacts.endRelationship({ organizationId: a, relationshipId });
+    await notFound(K.contacts.archivePerson({ organizationId: b, personId }));
+    await K.contacts.archivePerson({ organizationId: a, personId });
+    assert.equal((await K.contacts.getOrganizationContacts(a)).contacts[0].person.recordStatus, "archived");
+    await K.contacts.restorePerson({ organizationId: a, personId });
+    assert.equal((await K.contacts.getOrganizationContacts(a)).contacts[0].person.recordStatus, "active");
+  });
 });

@@ -19,7 +19,7 @@ const STATUSES = ["ACTIVE", "NEEDS_VERIFICATION", "LOCKED", "DISABLED"]
 
 type CredentialView = {
   credential: { id: string; username: string; category: string; mfaMethod: string | null; recordStatus: string }
-  system: { id: string; displayName: string }
+  system: { id: string; displayName: string; loginUrl?: string | null }
   currentStatus: { status: string } | null
   lastVerification: { outcome: string; method: string; verifiedAt: string } | null
   slots: { id: string; slotKind: string; secretState: string }[]
@@ -37,6 +37,9 @@ function CanonicalCredentials() {
   const [systems, setSystems] = useState<System[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState("")
+  const [categoryFilter, setCategoryFilter] = useState("ALL")
+  const [verification, setVerification] = useState({ outcome: "VERIFIED", method: "MANUAL_LOGIN" })
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -99,7 +102,8 @@ function CanonicalCredentials() {
     const form = event.currentTarget
     const data = new FormData(form)
     const field = (name: string) => String(data.get(name) ?? "").trim()
-    const payload: Record<string, unknown> = { systemId: field("systemId"), category: field("category"), username: field("username") }
+    // A newly recorded login has not been verified yet (the original workspace started every credential as "Needs verification").
+    const payload: Record<string, unknown> = { systemId: field("systemId"), category: field("category"), username: field("username"), status: "NEEDS_VERIFICATION" }
     if (field("mfaMethod")) payload.mfaMethod = field("mfaMethod")
     if (await send(`${base}/credentials`, "POST", payload)) form.reset()
   }
@@ -117,11 +121,43 @@ function CanonicalCredentials() {
           <CardTitle className="text-sm">Credentials on record</CardTitle>
         </CardHeader>
         <CardContent className="pt-4">
+          <div className="flex flex-wrap items-center gap-2 pb-3">
+            <Input
+              aria-label="Search credentials"
+              placeholder="Search portal, username…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="max-w-xs"
+            />
+            {["ALL", ...CATEGORIES].map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setCategoryFilter(value)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${categoryFilter === value ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"}`}
+              >
+                {value === "ALL" ? "All" : value.charAt(0) + value.slice(1).toLowerCase()}
+              </button>
+            ))}
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              Verify as
+              <select aria-label="Verification outcome" className="rounded-md border bg-background px-1 py-0.5" value={verification.outcome} onChange={(event) => setVerification((current) => ({ ...current, outcome: event.target.value }))}>
+                {["VERIFIED", "FAILED", "LOCKED_OUT"].map((value) => <option key={value}>{value}</option>)}
+              </select>
+              via
+              <select aria-label="Verification method" className="rounded-md border bg-background px-1 py-0.5" value={verification.method} onChange={(event) => setVerification((current) => ({ ...current, method: event.target.value }))}>
+                {["MANUAL_LOGIN", "PORTAL_CHECK", "CLIENT_CONFIRMATION"].map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </span>
+          </div>
           {credentials.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">No credentials yet.</p>
           ) : (
             <div className="flex flex-col divide-y">
-              {credentials.map((view) => {
+              {credentials
+                .filter((view) => categoryFilter === "ALL" || view.credential.category === categoryFilter)
+                .filter((view) => !query.trim() || `${view.system.displayName} ${view.credential.username}`.toLowerCase().includes(query.trim().toLowerCase()))
+                .map((view) => {
                 const archived = view.credential.recordStatus === "archived"
                 const url = `${base}/credentials/${view.credential.id}`
                 return (
@@ -160,10 +196,15 @@ function CanonicalCredentials() {
                         size="sm"
                         variant="outline"
                         disabled={busy || archived}
-                        onClick={() => void send(url, "PATCH", { action: "verify", outcome: "VERIFIED", method: "MANUAL_LOGIN" })}
+                        onClick={() => void send(url, "PATCH", { action: "verify", outcome: verification.outcome, method: verification.method })}
                       >
-                        Mark verified
+                        Record check
                       </Button>
+                      {view.system.loginUrl ? (
+                        <a href={view.system.loginUrl} target="_blank" rel="noopener noreferrer" className="rounded-md border px-2 py-1 text-xs font-semibold hover:bg-muted">
+                          Open portal
+                        </a>
+                      ) : null}
                       <Button
                         type="button"
                         size="sm"

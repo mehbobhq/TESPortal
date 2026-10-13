@@ -1,0 +1,48 @@
+# Cloud Run service definition for the document security scanner (declarative, reproducible).
+# Render and apply with deploy/deploy.sh (dry-run by default); do not edit values in place - they come from the script's variables.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: document-security-scanner
+  labels:
+    app: document-security-scanner
+  annotations:
+    # Private service: no allUsers / allAuthenticatedUsers invoker, ever. Only the Eventarc invoker account may call it.
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"      # keeps clamd warm; a cold start must load signatures before it can scan
+        autoscaling.knative.dev/maxScale: "5"
+        run.googleapis.com/cpu-throttling: "false"  # clamd runs for the container's life, not only during requests
+    spec:
+      serviceAccountName: ${SCANNER_SA}
+      containerConcurrency: 1                       # one object per instance at a time (bounded memory)
+      timeoutSeconds: 300
+      containers:
+        - image: ${IMAGE}                           # pin by digest, never a floating tag
+          ports:
+            - containerPort: 8080
+          env:
+            - { name: GOOGLE_CLOUD_PROJECT_ID, value: "${PROJECT_ID}" }
+            - { name: GOOGLE_GCS_QUARANTINE_BUCKET, value: "${QUARANTINE_BUCKET}" }
+            - { name: GOOGLE_GCS_INTAKE_BUCKET, value: "${INTAKE_BUCKET}" }
+            - { name: SCANNER_MAX_RETRY_AGE_MS, value: "21600000" }   # stop asking for redelivery 6 h after the object was created
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi                           # clamd loads the signature database into memory
+          # Not ready until a real ClamAV scan of a test string succeeds, so no traffic reaches an instance that cannot scan.
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30                    # up to 5 minutes for signatures to load
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30

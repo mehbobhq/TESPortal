@@ -10,6 +10,11 @@ on:
       - "lib/onboarding-foundation/**"
       - "app/api/companies/*/evidence/**"
       - "app/api/document-intake/**"
+      - "app/api/document-ai/**"
+      - "app/api/business-document-ocr/**"
+      - "lib/legacy-ocr/**"
+      - "services/document-security-scanner/deploy/**"
+      - "test/lib/legacy-ocr/**"
       - "app/companies/*/onboarding/**"
       - "test/lib/evidence-payload/**"
       - "test/lib/contracts/**"
@@ -66,6 +71,8 @@ jobs:
           psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence_pre OWNER \"$CI_MIGRATOR\""
           psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence OWNER \"$CI_MIGRATOR\""
           psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence_mutation OWNER \"$CI_MIGRATOR\""
+      - name: Scanner deploy script (offline, fake gcloud; proves plan never mutates and mismatches block)
+        run: bash services/document-security-scanner/deploy/test/deploy.test.sh
       - name: Static boundary, key, validation, consistency and storage-config tests
         env:
           GOOGLE_CLOUD_PROJECT_ID: ci-project
@@ -80,6 +87,7 @@ jobs:
             test/lib/evidence-payload/consistency.test.ts \
             test/lib/evidence-payload/storage-config.test.ts \
             test/lib/ingestion/object-paths.test.ts \
+            test/lib/legacy-ocr/legacy-ocr.test.ts \
             test/lib/contracts/contracts-boundaries.test.ts
           # offline storage configuration verifier: passes a complete keyless environment, fails closed otherwise.
           # (PGPASSWORD belongs to this job's throwaway service container, so it is removed for these checks - the verifier
@@ -121,7 +129,7 @@ jobs:
           TES_REQUIRE_DB_TESTS: "1"
           TES_TEST_ADMIN_DATABASE_URL: "postgres://tes-database-migrator%40tes-production-510007.iam:ci-migrator@127.0.0.1:5432/tes_ci_evidence"
           TES_TEST_RUNTIME_DATABASE_URL: "postgres://tes-backend%40tes-production-510007.iam:ci-runtime@127.0.0.1:5432/tes_ci_evidence"
-        run: node --test --test-concurrency=1 test/lib/evidence-payload/lifecycle.db.test.ts test/lib/contracts/contracts.db.test.ts
+        run: node --test --test-concurrency=1 test/lib/evidence-payload/lifecycle.db.test.ts test/lib/contracts/contracts.db.test.ts test/lib/legacy-ocr/legacy-ocr.db.test.ts
       - name: Evidence payload RLS matrix (runtime role) and policy mutation check
         env:
           PGDATABASE: tes_ci_evidence
@@ -145,8 +153,8 @@ jobs:
           pnpm install --frozen-lockfile >/dev/null
           pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
           cd -
-          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
-          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          grep 'error TS' /tmp/head-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/base-normalized.txt
           # Regression gate: the head may fix baseline diagnostics but must not introduce any new one.
           comm -13 /tmp/base-normalized.txt /tmp/head-normalized.txt > /tmp/new-diagnostics.txt
           if [ -s /tmp/new-diagnostics.txt ]; then

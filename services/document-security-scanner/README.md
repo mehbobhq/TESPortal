@@ -52,6 +52,12 @@ it does so only for a `CLEARED` result.
   source-generation == scanned-generation AND destination-does-not-exist
   (`ifGenerationMatch: 0`); the post-copy SHA-256 re-verification below remains
   as defense in depth. No bucket versioning or retention is required for this.
+- **Transient failures are retried.** A final decision (including `THREAT_DETECTED`, `REVIEW_REQUIRED` and permanent
+  `UNABLE_TO_SCAN` reasons such as `FILE_TOO_LARGE` or `SOURCE_GENERATION_CHANGED`) is acknowledged with 200. A transient
+  infrastructure failure (`SCAN_ENGINE_ERROR`, `SIGNATURE_DATABASE_UNAVAILABLE`, `SOURCE_DOWNLOAD_FAILED`, or a failed promotion or
+  read-back with no hash comparison made) returns 503 so Eventarc redelivers (`src/retry.ts`). A hash mismatch is never retried.
+  The Eventarc trigger's retry window is a deployment setting; after it expires the payload stays `quarantined` and is reported by
+  `auditEvidencePayloads` as `SCAN_STALLED`.
 - **Eventarc is at-least-once.** A duplicate delivery re-scans the same bytes
   and attempts the same create-only copy; GCS answers 412 (destination exists),
   the existing Intake object is re-downloaded and SHA-256-compared against the
@@ -400,6 +406,7 @@ bucket (e.g. Storage Object Creator) - no read, list, update, or delete on
 Quarantine, and no write access to Intake.
 
 | `SCANNER_MAX_OBJECT_BYTES` | no (default 26214400 / 25 MiB) | Maximum object size the scanner will process |
+| `SCANNER_MAX_RETRY_AGE_MS` | no (default 21600000 / 6 h; allowed 1 min - 24 h) | A transient failure asks Eventarc to redeliver only while the object is younger than this |
 | `SCANNER_CLAMSCAN_TIMEOUT_MS` | no (default 60000) | Per-invocation ClamAV wall-clock timeout |
 | `PORT` | no (default 8080, Cloud Run sets this automatically) | HTTP listen port |
 
@@ -409,6 +416,9 @@ authentication is Application Default Credentials via the Cloud Run
 service's attached identity.
 
 ## Deployment requirements (not performed by this task)
+
+A reproducible definition (service YAML, least-privilege IAM, trigger, readiness, retry, logs, rollback) is in `deploy/DEPLOYMENT.md`
+and `deploy/deploy.sh` (dry run by default).
 
 - Deploy as a **private** Cloud Run service (`--no-allow-unauthenticated`).
 - Attach the `tes-security-scanner@tes-production-510007.iam.gserviceaccount.com`

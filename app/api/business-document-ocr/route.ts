@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { canonicalFailure } from "@/lib/api/canonical-response";
+import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize";
+import { LEGACY_OCR_CLOSED_MESSAGE, LegacyOcrUploadError, legacyOcrAvailability, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy";
 import { getGoogleAccessToken } from "@/lib/google/auth";
 import { businessDocumentAiProcessorId, documentAiLocation, googleProjectId } from "@/lib/google/config";
 
@@ -10,10 +13,12 @@ type DocumentResult = { document?: { text?: string; entities?: Entity[]; pages?:
 const first = (text: string, patterns: RegExp[]) => patterns.map((pattern) => text.match(pattern)?.[1]?.trim()).find(Boolean) || "";
 export async function POST(request: NextRequest) {
   try {
+    if (!legacyOcrAvailability().open) return NextResponse.json({ error: LEGACY_OCR_CLOSED_MESSAGE }, { status: 503 });
+    await authorizeLegacyOcr();
     const form = await request.formData();
     const file = form.get("file");
-    if (!(file instanceof File) || !["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(file.type)) return NextResponse.json({ error: "A supported PDF or image is required." }, { status: 400 });
-    if (file.size > 20 * 1024 * 1024) return NextResponse.json({ error: "Maximum OCR file size is 20 MB." }, { status: 413 });
+    if (!(file instanceof File)) return NextResponse.json({ error: "A supported PDF or image is required." }, { status: 400 });
+    const mimeType = validateLegacyOcrFile({ name: file.name, type: file.type, size: file.size, prefix: new Uint8Array(await file.slice(0, 16).arrayBuffer()) }, 20 * 1024 * 1024);
     let project: string, processor: string, location: string;
     try {
       project = googleProjectId();
@@ -26,7 +31,7 @@ export async function POST(request: NextRequest) {
     const content = Buffer.from(await file.arrayBuffer()).toString("base64");
     const response = await fetch(`https://${location}-documentai.googleapis.com/v1/projects/${project}/locations/${location}/processors/${processor}:process`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ rawDocument: { content, mimeType: file.type } }),
+      body: JSON.stringify({ rawDocument: { content, mimeType } }),
     });
     if (!response.ok) throw new Error(`Document AI returned ${response.status}.`);
     const result = await response.json() as DocumentResult;
@@ -45,6 +50,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof LegacyOcrUploadError) return NextResponse.json({ error: error.message }, { status: error.status });
+    const denied = error instanceof Error && (error.constructor.name === "TesAuthorizationDeniedError" || error.constructor.name === "TesIdentityRequiredError");
+    if (denied) return canonicalFailure(error, "Corporate OCR failed.");
     console.error("Corporate OCR failed:", error);
     return NextResponse.json({ error: "Corporate OCR failed. The evidence remains available for manual review." }, { status: 502 });
   }

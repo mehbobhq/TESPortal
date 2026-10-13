@@ -179,6 +179,6 @@ jobs:
           pnpm install --frozen-lockfile >/dev/null
           pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
           cd -
-          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
-          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          grep 'error TS' /tmp/head-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/base-normalized.txt
           diff -u /tmp/base-normalized.txt /tmp/head-normalized.txt

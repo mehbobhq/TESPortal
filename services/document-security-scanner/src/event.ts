@@ -19,6 +19,7 @@ interface GcsFinalizePayload {
   generation?: unknown;
   contentType?: unknown;
   size?: unknown;
+  timeCreated?: unknown;
 }
 
 export type EventParseResult =
@@ -40,6 +41,7 @@ function toScanRequest(payload: GcsFinalizePayload): ScanRequest | null {
     objectName: payload.name,
     generation: payload.generation !== undefined ? String(payload.generation) : undefined,
     contentType: typeof payload.contentType === "string" ? payload.contentType : undefined,
+    timeCreated: typeof payload.timeCreated === "string" ? payload.timeCreated : undefined,
     size: typeof payload.size === "string" || typeof payload.size === "number" ? Number(payload.size) : undefined,
   };
 }

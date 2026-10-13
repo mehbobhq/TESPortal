@@ -3,6 +3,8 @@ import "server-only"
 import type { PoolClient } from "pg"
 import { randomUUID } from "node:crypto"
 import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
+import { recordEvent } from "@/lib/master-register/record-event"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -398,93 +400,49 @@ export async function upsertEvidenceRequirement(input: {
   })
 }
 
-export async function assignCustomerAuthority(input: {
-  customerId: string
-  organizationId: string
-  personId: string
-  authorityType: AuthorityType
-  effectiveFrom: string
-  noticeEvidenceDocumentId?: string | null
-}): Promise<CustomerAuthorityAssignmentRecord> {
-  return withAuthorizedSystem("CONTRACT_MANAGE", async (client) => {
-    await client.query(
-      `UPDATE public.customer_authority_assignments
-          SET assignment_status = 'superseded',
-              effective_to = $3::timestamptz,
-              replacement_reason = 'Replaced by later verified company notice',
-              updated_at = clock_timestamp()
-        WHERE customer_id = $1
-          AND authority_type = $2
-          AND assignment_status = 'active'
-          AND effective_to IS NULL`,
-      [input.customerId, input.authorityType, input.effectiveFrom],
-    )
-    const result = await client.query<AuthorityRow>(
-      `INSERT INTO public.customer_authority_assignments
-        (id, customer_id, organization_id, person_id, authority_type, effective_from, notice_evidence_document_id)
-       VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)
-       RETURNING id, customer_id, organization_id, person_id, authority_type, assignment_status,
-                 ${MICRO_ISO("effective_from")} AS effective_from, ${MICRO_ISO_NULL("effective_to")} AS effective_to,
-                 notice_evidence_document_id`,
-      [randomUUID(), input.customerId, input.organizationId, input.personId, input.authorityType, input.effectiveFrom, input.noticeEvidenceDocumentId ?? null],
-    )
-    return toAuthority(result.rows[0])
-  })
-}
+export type EvidenceReviewDecision = "classified" | "verified" | "rejected"
 
-export async function createContractFoundation(input: {
-  customerId: string
-  organizationId: string
-  engagementId: string
-  scopeIds: string[]
-  serviceDecisionAuthorityAssignmentId?: string | null
-  contractSignatoryAssignmentId?: string | null
-  contractReference?: string | null
-}): Promise<CustomerContractRecord> {
-  return withAuthorizedSystem("CONTRACT_MANAGE", async (client) => {
-    const contractId = randomUUID()
-    const contract = await client.query<ContractRow>(
-      `INSERT INTO public.customer_contracts
-        (id, customer_id, organization_id, engagement_id, contract_reference, service_decision_authority_assignment_id, contract_signatory_assignment_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, customer_id, organization_id, engagement_id, contract_status, contract_reference,
-                 service_decision_authority_assignment_id, contract_signatory_assignment_id`,
-      [
-        contractId,
-        input.customerId,
-        input.organizationId,
-        input.engagementId,
-        input.contractReference ?? null,
-        input.serviceDecisionAuthorityAssignmentId ?? null,
-        input.contractSignatoryAssignmentId ?? null,
-      ],
+/**
+ * Records a human review decision on evidence metadata. Only a verified, unexpired document can back an authority change,
+ * a contract decision or a contract status change (migration 0031 enforces that in the database). The review is recorded in
+ * the Master Register in the same transaction; the document payload itself is never read or modified.
+ */
+export async function reviewEvidenceDocument(input: { documentId: string; decision: EvidenceReviewDecision }): Promise<EvidenceDocumentRecord> {
+  if (!["classified", "verified", "rejected"].includes(input.decision)) throw new Error("Unsupported evidence review decision.")
+  return withAuthorizedSystem("EVIDENCE_MANAGE", async (client, decision: SystemAuthorizationDecision) => {
+    const current = await client.query<EvidenceDocumentRow>(
+      `SELECT id, organization_id, document_type, document_title, document_status, sensitivity, gcs_bucket, gcs_object_name,
+              gcs_generation, sha256, mime_type, byte_size::text AS byte_size, issued_at::text AS issued_at,
+              effective_from::text AS effective_from, expires_at::text AS expires_at, source_channel,
+              ${MICRO_ISO("created_at")} AS created_at
+         FROM public.evidence_documents WHERE id = $1 FOR UPDATE`,
+      [input.documentId],
     )
-    for (const scopeId of input.scopeIds) {
-      await client.query(
-        `INSERT INTO public.customer_contract_line_items (contract_id, scope_id)
-         VALUES ($1, $2)
-         ON CONFLICT (contract_id, scope_id) WHERE line_status <> 'removed' DO NOTHING`,
-        [contractId, scopeId],
-      )
-    }
-    const lines = await client.query<LineRow>(
-      `SELECT id, contract_id, scope_id, line_status, pricing_basis, package_code, responsibility_boundary
-         FROM public.customer_contract_line_items
-        WHERE contract_id = $1
-        ORDER BY created_at, id`,
-      [contractId],
+    const row = current.rows[0]
+    if (!row) throw new Error("Evidence document was not found.")
+    if (row.document_status === "archived") throw new Error("An archived evidence document cannot be reviewed.")
+    await recordEvent(new PostgresMasterRegisterRepository(client), {
+      eventType: "REVIEW_DECISION_RECORDED",
+      actor: { actorType: decision.actor.actorType, actorId: decision.actor.id },
+      action: { operation: "review_evidence_document" },
+      target: { resourceType: "evidence_document", resourceId: row.id, subjectReferences: [`organization:${row.organization_id}`] },
+      source: { sourceType: "APPLICATION", component: "onboarding-foundation", workflow: "review_evidence_document" },
+      classification: { materiality: "MATERIAL" },
+      change: {
+        changedFields: ["documentStatus"],
+        fieldChanges: [{ field: "documentStatus", before: { kind: "LITERAL", value: row.document_status }, after: { kind: "LITERAL", value: input.decision } }],
+      },
+      evidence: { evidenceReferences: [`evidence_document:${row.id}`] },
+      outcome: { result: "SUCCESS" },
+    })
+    const updated = await client.query<EvidenceDocumentRow>(
+      `UPDATE public.evidence_documents SET document_status = $2, updated_at = clock_timestamp() WHERE id = $1
+       RETURNING id, organization_id, document_type, document_title, document_status, sensitivity, gcs_bucket, gcs_object_name,
+                 gcs_generation, sha256, mime_type, byte_size::text AS byte_size, issued_at::text AS issued_at,
+                 effective_from::text AS effective_from, expires_at::text AS expires_at, source_channel,
+                 ${MICRO_ISO("created_at")} AS created_at`,
+      [input.documentId, input.decision],
     )
-    const row = contract.rows[0]
-    return {
-      id: row.id,
-      customerId: row.customer_id,
-      organizationId: row.organization_id,
-      engagementId: row.engagement_id,
-      contractStatus: row.contract_status,
-      contractReference: row.contract_reference,
-      serviceDecisionAuthorityAssignmentId: row.service_decision_authority_assignment_id,
-      contractSignatoryAssignmentId: row.contract_signatory_assignment_id,
-      lineItems: lines.rows.map(toLine),
-    }
+    return toEvidenceDocument(updated.rows[0])
   })
 }

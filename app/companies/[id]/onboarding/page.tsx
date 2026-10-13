@@ -5,6 +5,7 @@ import { useParams } from "next/navigation"
 import { CheckCircle2, Circle, FileWarning, Loader2, ShieldCheck } from "lucide-react"
 
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import ContractsPanel from "./contracts-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -370,6 +371,8 @@ export default function OnboardingPage() {
           </CardContent>
         </Card>
       </div>
+
+      <ContractsPanel companyId={companyId} />
     </div>
   )
 }

@@ -1,0 +1,132 @@
+name: Contracts Foundation CI
+
+on:
+  pull_request:
+    paths:
+      - "database/migrations/0031_contracts_foundation.sql"
+      - "lib/contracts/**"
+      - "lib/onboarding-foundation/**"
+      - "lib/customer-onboarding/**"
+      - "app/api/companies/*/contracts/**"
+      - "app/companies/*/onboarding/**"
+      - "test/lib/contracts/**"
+      - "test/database/contracts-foundation-rls.sql"
+      - "scripts/database/verify-production-contracts-foundation.sh"
+      - "scripts/test/run-auth-tests.sh"
+      - ".github/workflows/contracts-foundation-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      CI_MIGRATOR: "tes-database-migrator@tes-production-510007.iam"
+      CI_MIGRATOR_PASSWORD: ci-migrator
+      CI_RUNTIME: "tes-backend@tes-production-510007.iam"
+      CI_RUNTIME_PASSWORD: ci-runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create production-shaped roles and databases
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_MIGRATOR\" LOGIN PASSWORD '$CI_MIGRATOR_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_RUNTIME\" LOGIN PASSWORD '$CI_RUNTIME_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_contracts_pre OWNER \"$CI_MIGRATOR\""
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_contracts OWNER \"$CI_MIGRATOR\""
+      - name: Static boundary and vocabulary tests
+        run: |
+          node --test \
+            test/lib/contracts/contracts-boundaries.test.ts \
+            test/lib/contracts/definitions.test.ts \
+            test/lib/onboarding-foundation/onboarding-foundation-boundaries.test.ts \
+            test/lib/customer-onboarding/onboarding-boundaries.test.ts
+      - name: Apply 0001-0030, verify PRE, then apply 0031 additively
+        env:
+          PGDATABASE: tes_ci_contracts_pre
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+        run: |
+          first30="$(mktemp -d)"
+          for f in database/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+            version="$(basename "$f")"; version="${version%%_*}"
+            if [[ "$version" < "0031" ]]; then cp "$f" "$first30/"; fi
+          done
+          test "$(ls "$first30" | wc -l)" = "30"
+          MIGRATIONS_DIR="$first30" bash scripts/database/migrate.sh
+          TES_VERIFY_PHASE=pre bash scripts/database/verify-production-contracts-foundation.sh
+          bash scripts/database/migrate.sh
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-contracts-foundation.sh
+      - name: Apply the complete chain to the test database and verify POST
+        env:
+          PGDATABASE: tes_ci_contracts
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+        run: |
+          bash scripts/database/migrate.sh
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "31"
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-contracts-foundation.sh
+      - name: Contracts DB tests (real authorization, RLS as the runtime role, real Master Register)
+        env:
+          TES_REQUIRE_DB_TESTS: "1"
+          TES_TEST_ADMIN_DATABASE_URL: "postgres://tes-database-migrator%40tes-production-510007.iam:ci-migrator@127.0.0.1:5432/tes_ci_contracts"
+          TES_TEST_RUNTIME_DATABASE_URL: "postgres://tes-backend%40tes-production-510007.iam:ci-runtime@127.0.0.1:5432/tes_ci_contracts"
+        run: node --test --test-concurrency=1 test/lib/contracts/contracts.db.test.ts
+      - name: Contracts RLS matrix (runtime role) and policy mutation check
+        env:
+          PGDATABASE: tes_ci_contracts
+        run: |
+          psql -v ON_ERROR_STOP=1 -f test/database/contracts-foundation-rls.sql
+          # a loosened policy must be caught by the matrix
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_contracts_mutation OWNER \"$CI_MIGRATOR\""
+          PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_contracts_mutation bash scripts/database/migrate.sh >/dev/null
+          psql -v ON_ERROR_STOP=1 -d tes_ci_contracts_mutation -c "ALTER POLICY contract_package_definitions_system_read ON public.contract_package_definitions USING (true)"
+          if psql -v ON_ERROR_STOP=1 -d tes_ci_contracts_mutation -f test/database/contracts-foundation-rls.sql >/tmp/contracts-rls-mutation.log 2>&1; then
+            cat /tmp/contracts-rls-mutation.log
+            echo "Mutation survived the contracts RLS matrix" >&2
+            exit 1
+          fi
+          echo "Mutation caught."
+      - name: TypeScript regression gate
+        shell: bash
+        run: |
+          set +e
+          pnpm exec tsc --noEmit --pretty false > /tmp/head-tsc.txt 2>&1
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha || github.sha }}"
+          cd /tmp/base
+          pnpm install --frozen-lockfile >/dev/null
+          pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
+          cd -
+          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          # Regression gate: the head may fix baseline diagnostics but must not introduce any new one.
+          comm -13 /tmp/base-normalized.txt /tmp/head-normalized.txt > /tmp/new-diagnostics.txt
+          if [ -s /tmp/new-diagnostics.txt ]; then
+            echo "New TypeScript diagnostics introduced:"; cat /tmp/new-diagnostics.txt; exit 1
+          fi
+          echo "No new TypeScript diagnostics versus baseline."

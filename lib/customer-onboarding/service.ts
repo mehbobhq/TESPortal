@@ -16,12 +16,12 @@ import { getOrganizationInsurance } from "@/lib/insurance/service"
 import { getOrganizationRegistrations } from "@/lib/tax-registrations/service"
 import { listOrganizationDrivers, listOrganizationVehicles } from "@/lib/operational-identity/reads"
 import {
-  assignCustomerAuthority,
-  createContractFoundation,
   getOnboardingFoundation,
+  reviewEvidenceDocument,
   upsertEvidenceRequirement,
   type EvidenceRequirementRecord,
 } from "@/lib/onboarding-foundation/service"
+import { applyContractsAction } from "@/lib/contracts/service"
 
 type StepStatus = "complete" | "available" | "blocked" | "missing"
 
@@ -359,27 +359,20 @@ export async function applyCustomerOnboardingAction(organizationId: string, inpu
       })
       break
     }
-    case "assignCustomerAuthority": {
-      await assignCustomerAuthority({
-        customerId: String(input.customerId ?? ""),
-        organizationId,
-        personId: String(input.personId ?? ""),
-        authorityType: input.authorityType as Parameters<typeof assignCustomerAuthority>[0]["authorityType"],
-        effectiveFrom: typeof input.effectiveFrom === "string" && input.effectiveFrom ? input.effectiveFrom : now(),
-        noticeEvidenceDocumentId: typeof input.noticeEvidenceDocumentId === "string" ? input.noticeEvidenceDocumentId : null,
+    case "reviewEvidenceDocument": {
+      await reviewEvidenceDocument({
+        documentId: String(input.documentId ?? ""),
+        decision: input.decision as Parameters<typeof reviewEvidenceDocument>[0]["decision"],
       })
       break
     }
+    // Authority changes and contract drafts go through the Contracts service only: it requires a verified written company
+    // notice and records the Master Register accountability path. There is no un-evidenced route.
+    case "assignCustomerAuthority":
+      await applyContractsAction(organizationId, { ...input, action: "assignAuthority" })
+      break
     case "createContractFoundation": {
-      await createContractFoundation({
-        customerId: String(input.customerId ?? ""),
-        organizationId,
-        engagementId: String(input.engagementId ?? ""),
-        scopeIds: Array.isArray(input.scopeIds) ? input.scopeIds.map(String) : [],
-        serviceDecisionAuthorityAssignmentId: typeof input.serviceDecisionAuthorityAssignmentId === "string" ? input.serviceDecisionAuthorityAssignmentId : null,
-        contractSignatoryAssignmentId: typeof input.contractSignatoryAssignmentId === "string" ? input.contractSignatoryAssignmentId : null,
-        contractReference: typeof input.contractReference === "string" ? input.contractReference : null,
-      })
+      await applyContractsAction(organizationId, { action: "createDraft", contractReference: input.contractReference })
       break
     }
     default:

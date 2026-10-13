@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server"
+import { canonicalFailure } from "@/lib/api/canonical-response"
+import { CompanyCreationCapabilityError } from "@/lib/company-directory/create-company"
+import { CompanyCreationValidationError } from "@/lib/company-directory/creation-input"
 import { createCompanyDirectoryRecord, listCompanyDirectory } from "@/lib/company-directory/service"
 
 export const runtime = "nodejs"
@@ -14,13 +17,24 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let body: unknown
   try {
-    const company = await createCompanyDirectoryRecord(await request.json())
-    return NextResponse.json(company, { status: 201 })
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: "The request body must be valid JSON." }, { status: 400 })
+  }
+
+  try {
+    const created = await createCompanyDirectoryRecord(body)
+    return NextResponse.json(created, { status: 201, headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to create company." },
-      { status: 400 },
-    )
+    if (error instanceof CompanyCreationValidationError) {
+      return NextResponse.json({ error: "Some submitted information could not be saved. Nothing was created.", issues: error.issues }, { status: 400 })
+    }
+    if (error instanceof CompanyCreationCapabilityError) {
+      return NextResponse.json({ error: error.message, missingCapabilities: error.missing }, { status: 403 })
+    }
+    // Domain errors keep their own meaning (validation 400, number already registered 409, authorization 403); nothing else leaks.
+    return canonicalFailure(error, "Unable to create company. Nothing was created.")
   }
 }

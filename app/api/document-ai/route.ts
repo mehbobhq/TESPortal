@@ -4,6 +4,10 @@ import { PDFDocument } from "pdf-lib"
 import { GoogleDocumentAIAcquisitionProvider } from "@/lib/google-document-ai-provider"
 import type { TESMachineDocumentResult } from "@/lib/machine-acquisition"
 import { getGoogleAccessToken } from "@/lib/google/auth"
+import { canonicalFailure } from "@/lib/api/canonical-response"
+import { MAX_PAYLOAD_BYTES } from "@/lib/evidence-payload/definitions"
+import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize"
+import { LegacyOcrUploadError, legacyOcrDisabled, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy"
 import { documentAiLocation, googleProjectId, roadsideDocumentAiProcessorId } from "@/lib/google/config"
 
 // ---------------------------------------------------------------------------
@@ -103,12 +107,16 @@ function mergeChunkResults(
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData()
-    const file = formData.get("file") as File | null
+    if (legacyOcrDisabled()) return NextResponse.json({ error: "Document AI processing is temporarily unavailable." }, { status: 503 })
+    await authorizeLegacyOcr()
 
-    if (!file) {
+    const formData = await req.formData()
+    const file = formData.get("file")
+
+    if (!(file instanceof File)) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
+    const declaredMimeType = validateLegacyOcrFile({ name: file.name, type: file.type, size: file.size, prefix: new Uint8Array(await file.slice(0, 16).arrayBuffer()) }, MAX_PAYLOAD_BYTES)
 
     const projectId = googleProjectId()
     const processorId = roadsideDocumentAiProcessorId()
@@ -123,7 +131,7 @@ export async function POST(req: NextRequest) {
     })
 
     const evidenceId = randomUUID()
-    const mimeType = file.type || "application/pdf"
+    const mimeType = declaredMimeType
     const arrayBuffer = await file.arrayBuffer()
     const isPdf = mimeType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
 
@@ -157,6 +165,9 @@ export async function POST(req: NextRequest) {
     const result = mergeChunkResults(evidenceId, chunkResults)
     return NextResponse.json({ result })
   } catch (error) {
+    if (error instanceof LegacyOcrUploadError) return NextResponse.json({ error: error.message }, { status: error.status })
+    const denied = error instanceof Error && (error.constructor.name === "TesAuthorizationDeniedError" || error.constructor.name === "TesIdentityRequiredError")
+    if (denied) return canonicalFailure(error, "Document AI processing failed. Please try again.")
     // Server-side only: the full error (which may include upstream Google
     // response text, e.g. from lib/google-document-ai-provider.ts) is logged
     // here for operators, but never contains credentials or tokens - Google's

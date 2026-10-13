@@ -147,9 +147,14 @@ re-hashes every stored object.
 - Legacy browser stores (`lib/evidence-payload-store.ts`, `lib/evidence-file-store.ts`: IndexedDB) are still used by the older
   business/driver/audit UIs. The new lifecycle never touches them, and a boundary test ratchets their importers so the set can only
   shrink. Migrating those screens is a separate block.
-- `/api/document-ai` and `/api/business-document-ocr` still accept browser uploads and call Document AI directly (authenticated by
-  Clerk only, as before). They are not part of the payload lifecycle and are unchanged; retiring them is follow-up work. OCR of
-  stored evidence (writing `processed/`) is not implemented.
+- `/api/document-ai` and `/api/business-document-ocr` are **not** part of the payload lifecycle: they take bytes from the browser and
+  send them to Document AI without quarantine or malware scanning, and they persist nothing. They are temporarily restricted
+  (`lib/legacy-ocr/`): `EVIDENCE_MANAGE` is required (previously any signed-in user), the file must be a PDF/JPEG/PNG/WebP of at most
+  25 MB (20 MB for corporate OCR) whose leading bytes match its declared type, and setting `TES_LEGACY_OCR_DISABLED=true` in the
+  deployment turns both routes off (503) without a code change. Workflows that depend on them (Corporate Documents OCR in
+  `src/components/business/CorporateDocumentsSection.tsx`, roadside/driver OCR through `lib/roadside-machine-client.ts`) keep working
+  for staff holding `EVIDENCE_MANAGE`; they must move to OCR-of-cleared-evidence (not implemented; nothing writes `processed/`) before
+  these routes can be retired. Neither route is tenant-scoped, so there is no cross-tenant surface to test; they never read stored evidence.
 - Uploads are proxied through the Next.js server, so the hosting platform's request-body limit can be lower than the 25 MB product
   limit; large files need a chunked server-side upload (not a direct-to-GCS URL, which this design forbids).
 - No watermarking, no download/print policy beyond "inline only", no customer-facing evidence access, no e-signature.

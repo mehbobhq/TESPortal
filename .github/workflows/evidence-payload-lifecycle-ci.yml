@@ -10,6 +10,10 @@ on:
       - "lib/onboarding-foundation/**"
       - "app/api/companies/*/evidence/**"
       - "app/api/document-intake/**"
+      - "app/api/document-ai/**"
+      - "app/api/business-document-ocr/**"
+      - "lib/legacy-ocr/**"
+      - "test/lib/legacy-ocr/**"
       - "app/companies/*/onboarding/**"
       - "test/lib/evidence-payload/**"
       - "test/lib/contracts/**"
@@ -80,6 +84,7 @@ jobs:
             test/lib/evidence-payload/consistency.test.ts \
             test/lib/evidence-payload/storage-config.test.ts \
             test/lib/ingestion/object-paths.test.ts \
+            test/lib/legacy-ocr/legacy-ocr.test.ts \
             test/lib/contracts/contracts-boundaries.test.ts
           # offline storage configuration verifier: passes a complete keyless environment, fails closed otherwise.
           # (PGPASSWORD belongs to this job's throwaway service container, so it is removed for these checks - the verifier
@@ -121,7 +126,7 @@ jobs:
           TES_REQUIRE_DB_TESTS: "1"
           TES_TEST_ADMIN_DATABASE_URL: "postgres://tes-database-migrator%40tes-production-510007.iam:ci-migrator@127.0.0.1:5432/tes_ci_evidence"
           TES_TEST_RUNTIME_DATABASE_URL: "postgres://tes-backend%40tes-production-510007.iam:ci-runtime@127.0.0.1:5432/tes_ci_evidence"
-        run: node --test --test-concurrency=1 test/lib/evidence-payload/lifecycle.db.test.ts test/lib/contracts/contracts.db.test.ts
+        run: node --test --test-concurrency=1 test/lib/evidence-payload/lifecycle.db.test.ts test/lib/contracts/contracts.db.test.ts test/lib/legacy-ocr/legacy-ocr.db.test.ts
       - name: Evidence payload RLS matrix (runtime role) and policy mutation check
         env:
           PGDATABASE: tes_ci_evidence

@@ -52,6 +52,12 @@ it does so only for a `CLEARED` result.
   source-generation == scanned-generation AND destination-does-not-exist
   (`ifGenerationMatch: 0`); the post-copy SHA-256 re-verification below remains
   as defense in depth. No bucket versioning or retention is required for this.
+- **Transient failures are retried.** A final decision (including `THREAT_DETECTED`, `REVIEW_REQUIRED` and permanent
+  `UNABLE_TO_SCAN` reasons such as `FILE_TOO_LARGE` or `SOURCE_GENERATION_CHANGED`) is acknowledged with 200. A transient
+  infrastructure failure (`SCAN_ENGINE_ERROR`, `SIGNATURE_DATABASE_UNAVAILABLE`, `SOURCE_DOWNLOAD_FAILED`, or a failed promotion or
+  read-back with no hash comparison made) returns 503 so Eventarc redelivers (`src/retry.ts`). A hash mismatch is never retried.
+  The Eventarc trigger's retry window is a deployment setting; after it expires the payload stays `quarantined` and is reported by
+  `auditEvidencePayloads` as `SCAN_STALLED`.
 - **Eventarc is at-least-once.** A duplicate delivery re-scans the same bytes
   and attempts the same create-only copy; GCS answers 412 (destination exists),
   the existing Intake object is re-downloaded and SHA-256-compared against the

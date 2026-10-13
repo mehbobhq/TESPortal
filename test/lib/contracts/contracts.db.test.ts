@@ -21,7 +21,8 @@ async function loadKit() {
     cr: await import("@/lib/customer-relationship/service"),
     cp: await import("@/lib/company-profile/service"),
     co: await import("@/lib/contacts/service"),
-    of: await import("@/lib/onboarding-foundation/service"),
+    ev: await import("@/lib/evidence-payload/service"),
+    fx: await import("@/test/helpers/evidence-payload-fixtures"),
   };
 }
 type Kit = Awaited<ReturnType<typeof loadKit>>;
@@ -634,14 +635,13 @@ describe("Contracts foundation (migration 0031, real authorization, real Master 
       await assert.rejects(workspace(w));
     });
 
-    it("lets a reviewer verify evidence through the Master Register, and refuses a document that is not verified", async () => {
+    it("lets a reviewer verify payload-backed evidence through the Master Register, and refuses a document that is not verified", async () => {
       await signInWith(...STAFF_CAPABILITIES);
       const w = await world();
-      const doc = await evidence(w.organizationId, "CUSTOMER_AUTHORITY_NOTICE", { status: "received" });
+      const doc = await K.fx.seedPayloadBackedDocument(pools.admin, { organizationId: w.organizationId, actorId: staffActorId, documentType: "CUSTOMER_AUTHORITY_NOTICE", status: "received" });
       await rejectsWith(assign(w, w.personA, "SERVICE_DECISION_AUTHORITY", doc), K.ct.ContractStateError);
-      const reviewed = await K.of.reviewEvidenceDocument({ documentId: doc, decision: "verified" });
-      assert.equal(reviewed.documentStatus, "verified");
-      assert.ok((await masterEvents("REVIEW_DECISION_RECORDED")) > 0);
+      await K.ev.reviewEvidence({ organizationId: w.organizationId, documentId: doc, decision: "verified" });
+      assert.ok((await masterEvents("VALIDATION_COMPLETED")) > 0);
       const created = await assign(w, w.personA, "SERVICE_DECISION_AUTHORITY", doc);
       assert.equal(created.assignmentStatus, "active");
     });

@@ -26,7 +26,7 @@ describe("company recovery assessment SQL", { skip: !enabled }, () => {
     await db.closePools();
   });
 
-  for (const file of ["company-recovery-assessment.sql", "creator-capability-check.sql"]) it(`${file}: executes every statement read-only and changes nothing`, async () => {
+  for (const file of ["company-recovery-assessment.sql", "creator-capability-check.sql", "power-way-identification.sql"]) it(`${file}: executes every statement read-only and changes nothing`, async () => {
     const sql = readFileSync(`scripts/database/assessment/${file}`, "utf8");
     const statements = sql
       .split(/^-- name: /m)

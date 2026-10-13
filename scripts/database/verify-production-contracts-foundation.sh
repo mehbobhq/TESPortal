@@ -101,8 +101,8 @@ BEGIN
   IF phase = 'post' AND NOT EXISTS (SELECT 1 FROM tes_system.schema_migrations WHERE version = '0031') THEN
     RAISE EXCEPTION 'post phase expected migration 0031 to be applied';
   END IF;
-  IF phase = 'post' AND (SELECT count(*) FROM tes_system.schema_migrations) <> 31 THEN
-    RAISE EXCEPTION 'post phase expected exactly 31 ledger rows';
+  IF phase = 'post' AND (SELECT count(*) FROM tes_system.schema_migrations WHERE version <= '0031') <> 31 THEN
+    RAISE EXCEPTION 'post phase expected exactly 31 ledger rows through 0031';
   END IF;
 
   RAISE NOTICE 'OK ledger matches repository checksums through % for phase %', upper_bound, phase;

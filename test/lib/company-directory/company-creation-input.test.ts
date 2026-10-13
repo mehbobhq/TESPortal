@@ -33,16 +33,25 @@ describe("company creation input contract", () => {
     for (const match of code.matchAll(/\bname="([A-Za-z0-9_]+)"/g)) names.add(match[1])
     for (const prefix of ["reg", "mail", "yard"]) for (const part of ["street", "city", "state", "zip", "country"]) names.add(`${prefix}_${part}`)
     assert.ok(names.size > 30, "the form fields were found")
+    // Every rendered field is exactly one of: persisted; kept-but-disabled because it has no canonical owner (never posted);
+    // or the UI-only full name whose confirmed given/family names are what is posted.
+    const UI_ONLY = new Set(["contactPerson"])
     for (const name of names) {
-      assert.ok(I.SUPPORTED_FIELD_KEYS.has(name), `form field '${name}' has no canonical owner in the creation contract`)
-      assert.ok(!(name in I.UNSUPPORTED_FIELDS), `form field '${name}' is declared unsupported but still rendered`)
+      const supported = I.SUPPORTED_FIELD_KEYS.has(name)
+      const unavailable = name in I.UNSUPPORTED_FIELDS
+      assert.ok(supported || unavailable || UI_ONLY.has(name), `form field '${name}' is neither persisted nor explicitly handled`)
+      if (unavailable && !UI_ONLY.has(name)) {
+        const at = code.indexOf(`name="${name}"`)
+        assert.match(code.slice(at, at + 700), /disabled/, `unavailable field '${name}' must be disabled on the form, not posted`)
+      }
     }
   })
 
   it("the page posts only what the form holds and never recomputes one identifier from another", () => {
     const code = source("app/companies/new/page.tsx")
     assert.doesNotMatch(code, /businessNo:\s*\n?\s*opRegion === "US Only"/)
-    assert.doesNotMatch(code, /cargoTypes/)
+    assert.doesNotMatch(code, /cargoTypes:\s*selectedCargo/, "unavailable cargo selections are never posted")
+    assert.match(code, /formData\.delete\("contactPerson"\)/, "the UI-only full name is not posted; the confirmed names are")
     assert.match(code, /businessNo: isCanada \? businessNumber : ""/)
     assert.match(code, /ein: isUS \? einNumber : ""/)
   })

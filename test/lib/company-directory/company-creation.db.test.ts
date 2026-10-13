@@ -86,7 +86,8 @@ describe("Company creation, reopening and editing (real authorization, real Mast
 
   it("persists every supported field of a Customer to its canonical domain, and the profile reads the same values back", async () => {
     await signInWith(...ALL);
-    const payload = fullPayload("A", { businessNo: "123456782" });
+    const businessNo = digits(9);
+    const payload = fullPayload("A", { businessNo });
     const created = await K.dir.createCompanyDirectoryRecord(payload);
     const id = created.company.id;
     assert.equal(created.company.kind, "Customer");
@@ -119,7 +120,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     assert.equal(profile.billingEmail, payload.billingEmail);
     assert.equal(profile.opRegion, "Cross-Border");
     assert.equal(profile.incorpNo, payload.incorpNo);
-    assert.equal(profile.businessNo, "123456782");
+    assert.equal(profile.businessNo, businessNo);
     assert.equal(profile.ein, payload.ein);
     assert.equal(profile.regCorpState, "ON");
     assert.equal(profile.regCorpCountry, "Canada");

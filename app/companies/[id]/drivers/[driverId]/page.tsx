@@ -240,7 +240,7 @@ export default function DriverPage(props: DriverPageProps) {
     <LegacyWorkspaceGate
       companyId={companyId}
       title="Driver compliance record"
-      description="The driver list shows canonical drivers. The detailed compliance workspace (qualifications, training, roadside events and documents) still reads a browser-local prototype store, so it cannot open a canonical driver yet. No data was deleted."
+      description="The detailed driver compliance record (qualifications, training, roadside events, documents) is saved only in this browser. Canonical drivers appear in the Drivers list; their detailed record is not in the TES database yet. Nothing here was changed or deleted."
     >
       <LegacyDriverPage {...props} />
     </LegacyWorkspaceGate>

@@ -60,6 +60,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     const assignmentId = await fx.assignment(relationshipId, { type: "SYSTEM" });
     for (const capability of capabilities) await fx.grant(relationshipId, capability, { assignmentId });
     K.db.setClerkUser(actor.clerkSubject);
+    return actor.actorId;
   }
 
   const one = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await pools.admin.query(sql, params)).rows[0] as T;
@@ -279,7 +280,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
   });
 
   it("edits operating region and addresses independently: change keeps history, correct flags the wrong version, unchanged is not re-saved", async () => {
-    await signInWith(...ALL);
+    const editorId = await signInWith(...ALL);
     const id = (await K.dir.createCompanyDirectoryRecord(fullPayload("K"))).company.id;
 
     const moved = await K.dir.editCompany(id, { opRegion: "Canada Only", reg_street: "200 Bay St", reg_city: "Toronto", reg_state: "ON", reg_zip: "M5J 2J2", reg_country: "Canada", addressMode: "change" });
@@ -301,8 +302,8 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     assert.equal(same.details?.operatingScope.changed, false);
     assert.deepEqual(same.details?.addresses, [{ role: "MAILING", action: "unchanged" }]);
 
-    const events = await count(`SELECT count(*) AS n FROM master_register.events WHERE record_text::text LIKE $1`, [`%${id}%`]).catch(() => -1);
-    assert.notEqual(events, 0);
+    const editorEvents = await count(`SELECT count(*) AS n FROM public.master_register_events WHERE actor_id = $1::uuid`, [editorId]);
+    assert.ok(editorEvents >= 3, `the edit recorded Master Register events for the acting user (found ${editorEvents})`);
   });
 
   it("validates an edit before writing anything: an invalid address or unsupported field changes nothing, identity included", async () => {
@@ -321,5 +322,34 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     await assert.rejects(K.dir.editCompany(supplier.company.id, { mail_street: "PO Box 1", mail_city: "Ottawa", mail_state: "ON" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
     await signInWith("ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ");
     await assert.rejects(K.dir.editCompany(supplier.company.id, { opRegion: "US Only" }), (e: unknown) => e instanceof K.create.CompanyCreationCapabilityError);
+  });
+
+  it("the capability switch inside a transaction is re-proven by row-level security: a capability the actor lacks is denied and writes nothing", async () => {
+    const { withAuthorizedSystem } = await import("@/lib/auth/tes-system-context");
+    const { enterSystemCapability } = await import("@/lib/company-directory/capability-context");
+    await signInWith("ORGANIZATION_CREATE");
+    await assert.rejects(
+      withAuthorizedSystem("ORGANIZATION_CREATE", async (client) => {
+        await enterSystemCapability(client, "CONTACT_MANAGE");
+      }),
+      (error: unknown) => error instanceof K.authz.TesAuthorizationDeniedError,
+    );
+    // the app-level pre-check refuses first, and a refused creation leaves nothing and records nothing
+    const beforeOrgs = await orgCount();
+    const beforeEvents = await count(`SELECT count(*) AS n FROM public.master_register_events`);
+    await assert.rejects(K.dir.createCompanyDirectoryRecord(fullPayload("N")), (e: unknown) => e instanceof K.create.CompanyCreationCapabilityError);
+    assert.equal(await orgCount(), beforeOrgs);
+    assert.equal(await count(`SELECT count(*) AS n FROM public.master_register_events`), beforeEvents);
+  });
+
+  it("a successful creation records every domain write under the acting user, and a failed one records none", async () => {
+    const actorId = await signInWith(...ALL);
+    const before = await count(`SELECT count(*) AS n FROM public.master_register_events WHERE actor_id = $1::uuid`, [actorId]);
+    await K.dir.createCompanyDirectoryRecord(fullPayload("O"));
+    const afterCreate = await count(`SELECT count(*) AS n FROM public.master_register_events WHERE actor_id = $1::uuid`, [actorId]);
+    assert.ok(afterCreate - before >= 10, `expected at least 10 events by the creator, found ${afterCreate - before}`);
+
+    await assert.rejects(K.dir.createCompanyDirectoryRecord(fullPayload("P", { usdot: "not-a-number" })));
+    assert.equal(await count(`SELECT count(*) AS n FROM public.master_register_events WHERE actor_id = $1::uuid`, [actorId]), afterCreate, "a failed creation records nothing");
   });
 });

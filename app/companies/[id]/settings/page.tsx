@@ -1132,7 +1132,7 @@ export default function SettingsPage() {
   const params = useParams()
   const companyId = params.id as string
   return (
-    <LegacyWorkspaceGate companyId={companyId} title="Settings" description="Settings" canonical={<CanonicalSettings companyId={companyId} />}>
+    <LegacyWorkspaceGate companyId={companyId} title="Settings" description="Compliance settings saved here stay only in this browser (a prototype store); they are not the company operating profile in the TES database. Nothing here was changed or deleted." canonical={<CanonicalSettings companyId={companyId} />}>
       <LegacySettingsPage />
     </LegacyWorkspaceGate>
   )

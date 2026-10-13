@@ -26,13 +26,13 @@ describe("company recovery assessment SQL", { skip: !enabled }, () => {
     await db.closePools();
   });
 
-  it("executes every statement read-only and changes nothing", async () => {
-    const sql = readFileSync("scripts/database/assessment/company-recovery-assessment.sql", "utf8");
+  for (const file of ["company-recovery-assessment.sql", "creator-capability-check.sql"]) it(`${file}: executes every statement read-only and changes nothing`, async () => {
+    const sql = readFileSync(`scripts/database/assessment/${file}`, "utf8");
     const statements = sql
       .split(/^-- name: /m)
       .slice(1)
       .map((block) => ({ name: block.split("\n", 1)[0], text: block.slice(block.indexOf("\n") + 1).trim() }));
-    assert.ok(statements.length >= 10);
+    assert.ok(statements.length >= 2);
     assert.doesNotMatch(sql.replace(/^--.*$/gm, ""), /\b(INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER|CREATE|GRANT)\b/i, "the assessment contains no write or DDL");
 
     const counts = async () => (await pools.admin.query(`SELECT (SELECT count(*) FROM public.organizations) AS o, (SELECT count(*) FROM public.customers) AS c`)).rows[0];
@@ -46,5 +46,29 @@ describe("company recovery assessment SQL", { skip: !enabled }, () => {
       client.release();
     }
     assert.deepEqual(await counts(), before);
+  });
+
+  it("creator-capability-check reports exactly which capabilities an actor lacks (mirrors the RLS gate)", async () => {
+    const fx = new db.AuthFixtures(pools.admin);
+    try {
+      const actor = await fx.actor();
+      const relationshipId = await fx.relationship(actor.actorId, "TES_STAFF");
+      const assignmentId = await fx.assignment(relationshipId, { type: "SYSTEM" });
+      for (const capability of ["ORGANIZATION_CREATE", "COMPANY_PROFILE_MANAGE"]) await fx.grant(relationshipId, capability, { assignmentId });
+
+      const sql = readFileSync("scripts/database/assessment/creator-capability-check.sql", "utf8");
+      const second = sql.split(/^-- name: /m).slice(1)[1];
+      const text = second.slice(second.indexOf("\n") + 1).trim().replace(/;\s*$/, "");
+      const row = (await pools.admin.query(text)).rows.find((r: { actor_id: string }) => r.actor_id === actor.actorId);
+      assert.ok(row, "the staff actor is listed");
+      assert.equal(row.master_account, false);
+      assert.equal(row.can_create_minimal_company, true);
+      assert.equal(row.can_create_complete_customer, false);
+      assert.equal(row.can_read_complete_profile, false);
+      assert.ok((row.missing_capabilities as string[]).includes("CONTACT_MANAGE"));
+      assert.ok(!(row.missing_capabilities as string[]).includes("ORGANIZATION_CREATE"));
+    } finally {
+      await fx.cleanup();
+    }
   });
 });

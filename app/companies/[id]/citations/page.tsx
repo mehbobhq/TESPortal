@@ -1273,7 +1273,7 @@ export default function CitationsPage() {
     <LegacyWorkspaceGate
       companyId={companyId}
       title="Citations"
-      description="Citations and tickets are still held in a browser-local prototype store keyed by an older company id, so showing or saving them here would not be a real record. The citation records will appear here once they are moved to PostgreSQL. No data was deleted."
+      description="Citations, tickets and their evidence are saved only in this browser (a prototype store); they are not in the TES database and no other user or device can see them. They will move to PostgreSQL once their canonical domain exists. Nothing here was changed or deleted."
     >
       <LegacyCitationsPage />
     </LegacyWorkspaceGate>

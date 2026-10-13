@@ -208,6 +208,7 @@ export default function CompanyProfilePage() {
   const isCanada = opRegion === null || opRegion === "Canada Only" || opRegion === "Cross-Border"
   const isUS = opRegion === null || opRegion === "US Only" || opRegion === "Cross-Border"
   const showCustoms = opRegion === null || opRegion === "Cross-Border" || Boolean(company.scac || company.carrierCode)
+  const NO_CANONICAL = "Not recorded (no canonical storage yet)"
   const withheld = (section: keyof CompanyProfile["sections"]) => company.sections[section] === "not_permitted"
 
   const formatAddress = (prefix: "reg" | "mail" | "yard") => {
@@ -238,6 +239,22 @@ export default function CompanyProfilePage() {
         className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
       >
         Edit
+      </button>
+      <button
+        type="button"
+        disabled
+        title="Not available yet"
+        className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground opacity-60 shadow-2xs"
+      >
+        Check Status
+      </button>
+      <button
+        type="button"
+        disabled
+        title="Not available yet"
+        className="inline-flex items-center justify-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground opacity-50 shadow-2xs"
+      >
+        New Case
       </button>
     </>
   )
@@ -285,6 +302,7 @@ export default function CompanyProfilePage() {
               <ReadOnlyField label="Company Record Type" value={company.kind} />
               <ReadOnlyField label="DBA" value={company.dba} />
               <ReadOnlyField label="Phone" value={withheld("contacts") ? "Not permitted to view" : company.phone} />
+              <ReadOnlyField label="Website" value={NO_CANONICAL} />
               <ReadOnlyField label="Account Email" value={withheld("contacts") ? "Not permitted to view" : company.email} />
               <ReadOnlyField label="Billing Email" value={withheld("contacts") ? "Not permitted to view" : company.billingEmail} />
               <ReadOnlyField label="Primary Contact" value={withheld("contacts") ? "Not permitted to view" : company.contact} />
@@ -324,9 +342,14 @@ export default function CompanyProfilePage() {
                   <h3 className="text-sm font-semibold text-primary">Customer Information</h3>
                 </div>
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <ReadOnlyField label="Service Type" value={NO_CANONICAL} />
+                  <ReadOnlyField label="Service Status" value={company.status} />
                   <ReadOnlyField label="Service Start Date" value={withheld("customer") ? "Not permitted to view" : company.startDate} />
+                  <ReadOnlyField label="End Date" value={NO_CANONICAL} />
                   <ReadOnlyField label="Service Stage" value={withheld("customer") ? "Not permitted to view" : company.serviceStage} />
                   <ReadOnlyField label="Operating Region" value={withheld("operatingProfile") ? "Not permitted to view" : company.opRegion} />
+                  <ReadOnlyField label="Payment Method" value={NO_CANONICAL} />
+                  <ReadOnlyField label="Cargo Information" value={NO_CANONICAL} />
                 </div>
               </div>
           )}
@@ -402,6 +425,17 @@ export default function CompanyProfilePage() {
                   </div>
                 )}
 
+                <div className={`rounded-xl border border-border bg-card shadow-xs overflow-hidden ${!showCustoms ? "sm:col-span-2" : ""}`}>
+                  <div className="bg-muted/30 py-2.5 px-4 border-b border-border">
+                    <h3 className="text-sm font-semibold text-primary">Fleet Information</h3>
+                  </div>
+                  <div className="p-4 grid sm:grid-cols-2 gap-4">
+                    <ReadOnlyField label="Truck GPS Provider" value={NO_CANONICAL} />
+                    <ReadOnlyField label="Fuel Provider" value={NO_CANONICAL} />
+                    <ReadOnlyField label="Assessment Date" value={NO_CANONICAL} />
+                  </div>
+                </div>
+
                 <div className={`rounded-xl border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground ${!showCustoms ? "sm:col-span-2" : ""}`}>
                   <p className="font-semibold text-foreground">Not recorded by the canonical system yet</p>
                   <p className="mt-1">
@@ -417,7 +451,7 @@ export default function CompanyProfilePage() {
         <div className="lg:col-span-1 sticky top-16 flex flex-col gap-4">
           <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden">
             <div className="py-2.5 px-4 border-b border-border bg-muted/10 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Record History</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Activity & Notes</span>
             </div>
             <div className="p-4 flex flex-col gap-4">
               <div className="flex items-start gap-3">
@@ -432,6 +466,22 @@ export default function CompanyProfilePage() {
                 </div>
               </div>
 
+              <div className="pt-3 border-t border-border flex flex-col gap-2">
+                <label htmlFor="quick-note" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quick Note</label>
+                <textarea
+                  id="quick-note"
+                  disabled
+                  placeholder="Notes have no canonical storage yet"
+                  className="min-h-[90px] w-full rounded-lg border border-border bg-background p-2.5 text-xs resize-none opacity-60"
+                />
+                <button
+                  type="button"
+                  disabled
+                  className="w-full rounded-lg bg-primary py-1.5 text-xs font-semibold text-primary-foreground opacity-50 shadow-2xs"
+                >
+                  Save Note
+                </button>
+              </div>
             </div>
           </div>
         </div>

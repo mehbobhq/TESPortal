@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import Link from "next/link"
-import { Building2, Hourglass } from "lucide-react"
+import { AlertTriangle, Building2, Hourglass } from "lucide-react"
 
 import { EmptyState, LoadingState } from "@/src/components/shared/StateDisplays"
 
@@ -29,14 +29,62 @@ export function DeferredWorkspace({ companyId, title, description }: { companyId
   )
 }
 
+type CanonicalCompany = { id: string; name: string; kind?: string; region?: string; status?: string }
+
 /**
- * Gate for a workspace whose implementation still keeps its data in this browser's storage under a LEGACY company id.
+ * Makes a canonical company visible to the existing browser-local workspaces, which find their company in
+ * `tes_companies`. It only ADDS a missing entry (marked `source: "canonical-projection"`); an existing entry is never changed,
+ * and nothing is ever deleted or copied back to PostgreSQL. The identity projected is the canonical one.
+ */
+function projectCanonicalCompany(company: CanonicalCompany): void {
+  try {
+    const raw = JSON.parse(localStorage.getItem("tes_companies") || "[]")
+    const list = Array.isArray(raw) ? raw : []
+    if (list.some((entry: { id?: string }) => entry?.id === company.id)) return
+    list.push({
+      id: company.id,
+      name: company.name,
+      companyName: company.name,
+      kind: company.kind ?? "",
+      region: company.region ?? "",
+      status: company.status ?? "Active",
+      source: "canonical-projection",
+    })
+    localStorage.setItem("tes_companies", JSON.stringify(list))
+  } catch {
+    // Browser storage unavailable: the legacy workspace simply reports that it cannot find the company.
+  }
+}
+
+/** The existing workspace, unchanged, opened for a canonical company, with its integration boundary stated above it. */
+function BrowserLocalWorkspace({ company, title, boundary, children }: { company: CanonicalCompany; title: string; boundary: string; children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    projectCanonicalCompany(company)
+    setReady(true)
+  }, [company])
+  return (
+    <div className="flex flex-col">
+      <div role="note" className="mx-6 mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+        <div>
+          <p className="font-semibold text-foreground">{title}: browser-local workspace (not the TES database)</p>
+          <p className="mt-1 text-muted-foreground">{boundary}</p>
+        </div>
+      </div>
+      {ready ? children : <div className="p-10"><LoadingState message={`Loading ${title}...`} /></div>}
+    </div>
+  )
+}
+
+/**
+ * Gate for a workspace whose existing implementation still keeps its data in this browser's storage.
  *
- * - A canonical organization (the id resolves in PostgreSQL) gets the explicit deferred notice, and the legacy component is
- *   never mounted, so it cannot write browser-local "records" under a canonical company id that would look real but belong
- *   to one browser only.
- * - An id that is not a canonical organization renders the legacy component unchanged (legacy prototype data stays
- *   readable and nothing is migrated, merged or deleted).
+ * - The existing workspace is NEVER removed or replaced. For a canonical company it opens unchanged, under a banner that says its
+ *   records live only in this browser and are not canonical production data.
+ * - When a canonical (PostgreSQL) workspace exists it is the default tab, and the existing workspace stays one click away.
+ * - An id that is not a canonical organization renders the existing component directly (legacy prototype data stays readable;
+ *   nothing is migrated, merged or deleted).
  * - A failed lookup is reported as a failure, never as "not found".
  */
 export function LegacyWorkspaceGate({
@@ -48,21 +96,30 @@ export function LegacyWorkspaceGate({
 }: {
   companyId: string
   title: string
+  /** The integration boundary: what is browser-local about this workspace. */
   description: string
-  /** The canonical (PostgreSQL-backed) workspace, when one exists; otherwise a canonical company gets the deferred notice. */
+  /** The canonical (PostgreSQL-backed) workspace, when one exists. */
   canonical?: React.ReactNode
   children: React.ReactNode
 }) {
   const [state, setState] = useState<Resolution>("loading")
+  const [company, setCompany] = useState<CanonicalCompany | null>(null)
+  const [tab, setTab] = useState<"canonical" | "local">("canonical")
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setState("loading")
     fetch(`/api/companies/${encodeURIComponent(companyId)}/summary`, { cache: "no-store" })
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return
-        setState(response.ok ? "canonical" : response.status === 404 ? "legacy" : "error")
+        if (response.ok) {
+          const body = await response.json().catch(() => null)
+          setCompany(body?.company ?? { id: companyId, name: "Company" })
+          setState("canonical")
+        } else {
+          setState(response.status === 404 ? "legacy" : "error")
+        }
       })
       .catch(() => {
         if (!cancelled) setState("error")
@@ -84,7 +141,25 @@ export function LegacyWorkspaceGate({
       </div>
     )
   }
-  if (state === "canonical" && canonical) return <>{canonical}</>
-  if (state === "canonical") return <DeferredWorkspace companyId={companyId} title={title} description={description} />
-  return <>{children}</>
+  if (state === "legacy" || !company) return <>{children}</>
+
+  const local = (
+    <BrowserLocalWorkspace company={company} title={title} boundary={description}>
+      {children}
+    </BrowserLocalWorkspace>
+  )
+  if (!canonical) return local
+  return (
+    <div>
+      <div role="tablist" className="mx-6 mt-4 flex gap-2 text-sm">
+        <button role="tab" aria-selected={tab === "canonical"} onClick={() => setTab("canonical")} className={`rounded-md border px-3 py-1.5 ${tab === "canonical" ? "bg-primary text-primary-foreground" : ""}`}>
+          {title} (TES records)
+        </button>
+        <button role="tab" aria-selected={tab === "local"} onClick={() => setTab("local")} className={`rounded-md border px-3 py-1.5 ${tab === "local" ? "bg-primary text-primary-foreground" : ""}`}>
+          {title} (browser-local workspace)
+        </button>
+      </div>
+      {tab === "canonical" ? canonical : local}
+    </div>
+  )
 }

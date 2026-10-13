@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  ChevronDown,
   Fingerprint,
   Landmark,
   MapPin,
@@ -28,7 +29,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -36,6 +36,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { Badge } from "@/components/ui/badge"
 
 /* =========================================================
    TYPES
@@ -76,6 +82,22 @@ type DuplicateRule = {
 /* =========================================================
    CONSTANTS
 ========================================================= */
+
+const CARGO_OPTIONS = [
+  "General Freight",
+  "Specialized Equipment",
+  "Household Goods",
+  "Temperature-Controlled & Food",
+  "Hazardous Materials",
+  "Bulk & Other",
+]
+
+/**
+ * "Cargo Information" is mandatory for a Customer in the original TES form, but there is no canonical storage for it yet (the
+ * operating-profile rules are regulation-specific, not cargo categories). While that is true the field stays on the form,
+ * disabled, and its mandatory rule cannot be enforced; flip this when a canonical owner exists. See docs/company-recovery.md.
+ */
+const CARGO_STORAGE_AVAILABLE = false
 
 const COMPANY_TYPES = [
   "Customer",
@@ -658,7 +680,7 @@ function evaluateDuplicates(form: HTMLFormElement) {
   --------------------------------------------------------- */
 
   const contactName = String(
-    `${formData.get("contactGivenName") || ""} ${formData.get("contactFamilyName") || ""}`.trim()
+    formData.get("contactPerson") || ""
   ).trim()
 
   if (contactName.length >= 3) {
@@ -695,7 +717,7 @@ function evaluateDuplicates(form: HTMLFormElement) {
         addFinding(review, {
           id: `CONTACT-NAME-${getRecordId(data) || source}`,
           severity: "review",
-          field: "contactFamilyName",
+          field: "contactPerson",
           label: "Contact Name",
           value: contactName,
           matchedRecordId: getRecordId(data),
@@ -827,16 +849,25 @@ function NativeChoice({
   )
 }
 
-function NotRecordedYetNotice() {
+function UnavailableFieldsBanner() {
   return (
-    <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-      <p className="font-semibold text-foreground">Not recorded by the canonical system yet</p>
-      <p className="mt-1">
-        GST/HST account, website, cargo types, service type and status, end date, payment method, assessment date and
-        fleet provider names have no canonical home yet, so they are not collected here and nothing is saved for them.
-        Nothing you enter on this form is discarded silently.
+    <div className="rounded-lg border border-dashed border-amber-500/50 bg-amber-50/50 p-3 text-xs dark:bg-amber-950/20" role="note">
+      <p className="font-semibold text-foreground">Some fields on this form cannot be saved yet</p>
+      <p className="mt-1 text-muted-foreground">
+        Website, GST/HST account, service type and status, end date, payment method, cargo information, fleet provider names and
+        assessment date are kept here exactly as defined, but TES has no canonical storage for them yet. They are disabled and
+        marked &quot;Unavailable&quot; so nothing you type is lost silently. A new customer starts in onboarding.
       </p>
     </div>
+  )
+}
+
+/** Marks a field that is kept on the form (definition intact) but cannot be saved: it has no canonical storage yet. */
+function UnavailableNote() {
+  return (
+    <p className="text-[11px] text-amber-700 dark:text-amber-400" data-unavailable-note>
+      Unavailable: no canonical storage exists for this yet, so it is disabled rather than silently discarded.
+    </p>
   )
 }
 
@@ -1156,6 +1187,7 @@ export default function NewCompanyPage() {
   const [businessNumber, setBusinessNumber] = useState("")
   const [einNumber, setEinNumber] = useState("")
 
+  const [selectedCargo, setSelectedCargo] = useState<string[]>([])
   const [submitIssues, setSubmitIssues] = useState<Array<{ field: string; message: string }>>([])
 
   const [blockingFindings, setBlockingFindings] = useState<
@@ -1282,6 +1314,9 @@ export default function NewCompanyPage() {
     if (!companyName.trim()) return false
     if (!opRegion) return false
 
+    if (CARGO_STORAGE_AVAILABLE && isCustomer && selectedCargo.length === 0) {
+      return false
+    }
 
     if (blockingFindings.length > 0) {
       return false
@@ -1300,6 +1335,8 @@ export default function NewCompanyPage() {
     selectedType,
     companyName,
     opRegion,
+    isCustomer,
+    selectedCargo,
     blockingFindings,
     reviewFindings,
     reviewAcknowledged,
@@ -1341,10 +1378,35 @@ export default function NewCompanyPage() {
       return
     }
 
+    if (
+      CARGO_STORAGE_AVAILABLE &&
+      isCustomer &&
+      selectedCargo.length === 0
+    ) {
+      window.alert(
+        "Cargo Information is mandatory for a Customer record."
+      )
+      return
+    }
+
     if (isCustomer) {
       const serviceStartDate = String(new FormData(form).get("startDate") || "").trim()
       if (!serviceStartDate) {
         window.alert("TES Service Start Date is required for a Customer record.")
+        return
+      }
+    }
+
+    {
+      const entered = new FormData(form)
+      const fullName = String(entered.get("contactPerson") || "").trim()
+      if (fullName && !String(entered.get("contactGivenName") || "").trim() && !String(entered.get("contactFamilyName") || "").trim()) {
+        setSubmitIssues([
+          {
+            field: "contactPerson",
+            message: "Enter the contact's given and/or family name below the full name; a full name is never split automatically.",
+          },
+        ])
         return
       }
     }
@@ -1354,6 +1416,8 @@ export default function NewCompanyPage() {
 
     try {
       const formData = new FormData(form)
+      // The full name is the original field; what is saved is the confirmed given/family name beneath it.
+      formData.delete("contactPerson")
       const formEntries = Object.fromEntries(
         formData.entries()
       )
@@ -1416,8 +1480,7 @@ export default function NewCompanyPage() {
       setSubmitIssues([
         {
           field: "",
-          message:
-            "The company record could not be created and nothing was saved. Check your connection and try again.",
+          message: "The company record could not be created and nothing was saved. Check your connection and try again.",
         },
       ])
       setSubmitting(false)
@@ -1453,6 +1516,8 @@ export default function NewCompanyPage() {
         onChange={handleFormChange}
         className="flex max-w-6xl flex-col gap-7"
       >
+        <UnavailableFieldsBanner />
+
         {/* ===================================================
             SECTION 1 — MASTER IDENTITY
         =================================================== */}
@@ -1575,27 +1640,38 @@ export default function NewCompanyPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="contactGivenName">
-                Primary Contact — Given Name
+              <Label htmlFor="contactPerson">
+                Primary Contact
               </Label>
 
               <Input
-                id="contactGivenName"
-                name="contactGivenName"
-                placeholder="Given name"
+                id="contactPerson"
+                name="contactPerson"
+                placeholder="Full Name"
+                onBlur={(event) => {
+                  const form = event.currentTarget.form
+                  if (!form) return
+                  const given = form.elements.namedItem("contactGivenName") as HTMLInputElement | null
+                  const family = form.elements.namedItem("contactFamilyName") as HTMLInputElement | null
+                  if (!given || !family || given.value || family.value) return
+                  const parts = event.currentTarget.value.trim().split(/\s+/).filter(Boolean)
+                  if (parts.length === 0) return
+                  // A suggestion for the person to confirm or correct below; it is never saved unseen.
+                  given.value = parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0]
+                  family.value = parts.length > 1 ? parts[parts.length - 1] : ""
+                }}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="contactFamilyName">
-                Primary Contact — Family Name
-              </Label>
+              <Label htmlFor="contactGivenName">Contact given name (confirm)</Label>
+              <Input id="contactGivenName" name="contactGivenName" placeholder="Given name" />
+            </div>
 
-              <Input
-                id="contactFamilyName"
-                name="contactFamilyName"
-                placeholder="Family name"
-              />
+            <div className="space-y-2">
+              <Label htmlFor="contactFamilyName">Contact family name (confirm)</Label>
+              <Input id="contactFamilyName" name="contactFamilyName" placeholder="Family name" />
+              <p className="text-[11px] text-muted-foreground">Filled from the full name as a suggestion; correct it if needed. This is what is saved.</p>
             </div>
 
             <div className="space-y-2">
@@ -1612,8 +1688,18 @@ export default function NewCompanyPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="website">Website</Label>
-              <p className="text-[11px] text-muted-foreground">Not recorded yet: websites have no canonical home, so none is collected.</p>
+              <Label htmlFor="website">
+                Website
+              </Label>
+
+              <Input
+                id="website"
+                name="website"
+                type="url"
+                placeholder="https://"
+                disabled
+              />
+              <UnavailableNote />
             </div>
 
             <div className="space-y-2">
@@ -1819,9 +1905,26 @@ export default function NewCompanyPage() {
               </div>
             )}
 
-            <p className="text-[11px] text-muted-foreground sm:col-span-2 lg:col-span-3">
-              Registered province/state and country are needed to record an incorporation number.
-            </p>
+            <div className="space-y-2">
+              <Label>
+                {businessCountry === "Canada"
+                  ? "GST / HST Program Account"
+                  : businessCountry === "United States"
+                  ? "State Tax Registration #"
+                  : "Tax Registration #"}
+              </Label>
+
+              <Input
+                name="gstHst"
+                disabled
+                placeholder={
+                  businessCountry === "Canada"
+                    ? "123456789 RT 0001"
+                    : "Tax registration number"
+                }
+              />
+              <UnavailableNote />
+            </div>
           </CardContent>
         </Card>
 
@@ -1846,6 +1949,64 @@ export default function NewCompanyPage() {
 
               <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
+                  <Label>Service Type</Label>
+
+                  <Select
+                    name="svcType"
+                    defaultValue="Premium"
+                    disabled
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+
+                    <SelectContent>
+                      <SelectItem value="Premium">
+                        Premium
+                      </SelectItem>
+
+                      <SelectItem value="Standard">
+                        Standard
+                      </SelectItem>
+
+                      <SelectItem value="Basic">
+                        Basic
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <UnavailableNote />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Service Status</Label>
+
+                  <Select
+                    name="status"
+                    defaultValue="Active"
+                    disabled
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+
+                    <SelectContent>
+                      <SelectItem value="Active">
+                        Active
+                      </SelectItem>
+
+                      <SelectItem value="Pending">
+                        Pending
+                      </SelectItem>
+
+                      <SelectItem value="Inactive">
+                        Inactive
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <UnavailableNote />
+                </div>
+
+                <div className="space-y-2">
                   <Label>TES Service Start Date *</Label>
 
                   <Input
@@ -1855,12 +2016,138 @@ export default function NewCompanyPage() {
                   />
 
                   <p className="text-[11px] text-muted-foreground">
-                    Date TES began providing services for this customer. A new customer starts in onboarding.
+                    Date TES began providing services for this customer.
                   </p>
                 </div>
 
-                <div className="sm:col-span-2">
-                  <NotRecordedYetNotice />
+                <div className="space-y-2">
+                  <Label>End Date</Label>
+
+                  <Input
+                    name="endDate"
+                    type="date"
+                    disabled
+                  />
+                  <UnavailableNote />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Payment Method</Label>
+
+                  <Select
+                    name="payMethod"
+                    defaultValue="E-Transfer"
+                    disabled
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+
+                    <SelectContent>
+                      <SelectItem value="E-Transfer">
+                        E-Transfer
+                      </SelectItem>
+
+                      <SelectItem value="Credit Card">
+                        Credit Card
+                      </SelectItem>
+
+                      <SelectItem value="Wire Transfer">
+                        Wire Transfer
+                      </SelectItem>
+
+                      <SelectItem value="Cheque">
+                        Cheque
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <UnavailableNote />
+                </div>
+
+                <div className="flex flex-col space-y-2">
+                  <Label>
+                    Cargo Information *
+                  </Label>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled
+                        className={`h-auto min-h-10 w-full justify-between px-3 py-2 ${
+                          selectedCargo.length === 0
+                            ? "text-muted-foreground"
+                            : ""
+                        }`}
+                      >
+                        <div className="flex flex-wrap gap-1 text-left">
+                          {selectedCargo.length === 0 &&
+                            "Select cargo types..."}
+
+                          {selectedCargo.map((cargo) => (
+                            <Badge
+                              variant="secondary"
+                              key={cargo}
+                              className="text-[10px] font-normal"
+                            >
+                              {cargo}
+                            </Badge>
+                          ))}
+                        </div>
+
+                        <ChevronDown className="size-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      className="w-[320px] p-2"
+                      align="start"
+                    >
+                      <p className="mb-2 px-1 text-xs font-semibold text-muted-foreground">
+                        Select all that apply
+                      </p>
+
+                      <div className="space-y-1">
+                        {CARGO_OPTIONS.map((option) => {
+                        const checked =
+                         selectedCargo.includes(option)
+
+                          return (
+                            <label
+                             key={option}
+                              className="flex w-full cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50"
+                           >
+                              <Checkbox
+                              checked={checked}
+                              onCheckedChange={(nextChecked) =>
+                              setSelectedCargo((current) =>
+                             nextChecked === true
+                             ? current.includes(option)
+                ? current
+                : [...current, option]
+              : current.filter(
+                  (item) => item !== option
+                )
+          )
+        }
+      />
+
+      <span>{option}</span>
+    </label>
+  )
+})}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+
+                  <input
+                    type="hidden"
+                    name="cargoTypes"
+                    value={JSON.stringify(selectedCargo)}
+                    disabled
+                  />
+                  <UnavailableNote />
                 </div>
               </CardContent>
             </Card>
@@ -1982,28 +2269,66 @@ export default function NewCompanyPage() {
               </CardContent>
             </Card>
 
-            {/* CUSTOMS */}
-            {showCustoms && (
-              <Card className="shadow-none">
+            {/* CUSTOMS + FLEET */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              {showCustoms && (
+                <Card className="shadow-none">
+                  <CardHeader className="border-b bg-muted/10">
+                    <CardTitle className="text-sm">
+                      Customs Information
+                    </CardTitle>
+                  </CardHeader>
+
+                  <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>SCAC</Label>
+                      <Input name="scac" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Carrier Code</Label>
+                      <Input name="carrierCode" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              <Card
+                className={`shadow-none ${
+                  !showCustoms ? "lg:col-span-2" : ""
+                }`}
+              >
                 <CardHeader className="border-b bg-muted/10">
                   <CardTitle className="text-sm">
-                    Customs Information
+                    Fleet Information
                   </CardTitle>
                 </CardHeader>
 
                 <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>SCAC</Label>
-                    <Input name="scac" />
+                    <Label>Truck GPS Provider</Label>
+                    <Input name="gpsProvider" disabled />
+                    <UnavailableNote />
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Carrier Code</Label>
-                    <Input name="carrierCode" />
+                    <Label>Fuel Provider</Label>
+                    <Input name="fuelProvider" disabled />
+                    <UnavailableNote />
+                  </div>
+
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Assessment Date</Label>
+                    <Input
+                      name="assessmentDate"
+                      type="date"
+                      disabled
+                    />
+                    <UnavailableNote />
                   </div>
                 </CardContent>
               </Card>
-            )}
+            </div>
           </div>
         )}
 

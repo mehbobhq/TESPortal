@@ -942,7 +942,7 @@ export default function ContactsPage() {
     <LegacyWorkspaceGate
       companyId={companyId}
       title="Contacts"
-      description="Contacts"
+      description="Contacts, documents and OCR review saved here stay only in this browser (a prototype store); they are not the canonical contacts in the TES database. Nothing here was changed or deleted."
       canonical={<CanonicalContacts companyId={companyId} />}
     >
       <LegacyContactsPage />

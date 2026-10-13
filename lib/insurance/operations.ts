@@ -647,13 +647,14 @@ function coverageInsert(id: string, termId: string, policyId: string, organizati
  * as history.
  */
 export async function renewPolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId", "policyNumber", "termStart", "termEnd", "coverages"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId", "policyNumber", "termStart", "termEnd", "coverages"])
   const policyId = parseUuid(input.policyId, "policyId")
   const explicitNumber = input.policyNumber === undefined || input.policyNumber === null ? null : prepareNumber(input.policyNumber, "policyNumber")
   const termStart = parseCalendarDate(input.termStart, "termStart")
   const termEnd = optionalDate(input.termEnd, "termEnd")
 
   const { organizationId, policy } = await lockPolicy(ctx, policyId, { requireActivePolicy: true })
+  assertScopedOrganization(input.organizationId, organizationId)
   assertPeriod(policy.family, termStart, termEnd)
   const coverages = parseCoverageList(input.coverages, policy.family, "coverages")
   await requireActiveInsurer(ctx, policy.insurerOrganizationId)

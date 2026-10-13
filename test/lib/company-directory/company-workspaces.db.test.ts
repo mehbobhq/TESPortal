@@ -191,4 +191,20 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
     await K.contacts.restorePerson({ organizationId: a, personId });
     assert.equal((await K.contacts.getOrganizationContacts(a)).contacts[0].person.recordStatus, "active");
   });
+
+  it("insurance: renewal and cancellation are scoped to the URL company; a renewal adds a term and keeps the earlier one", async () => {
+    await signInWith(...ALL);
+    const insured = await organization("RenewInsured");
+    const other = await organization("RenewOther");
+    const insurer = await organization("RenewInsurer");
+    const view = await K.insurance.createPolicy({
+      organizationId: insured, insurerOrganizationId: insurer, family: "INSURANCE", policyNumber: `RN-${run}-${randomInt(1000, 9999)}`,
+      termStart: "2023-01-01", termEnd: "2024-01-01", coverages: [{ coverageType: "AUTO_LIABILITY", limitAmount: "1000000", currency: "CAD", limitBasis: "COMBINED_SINGLE_LIMIT" }],
+    });
+    const renewal = { policyId: view.policy.id, termStart: "2024-01-01", termEnd: "2025-01-01", coverages: [{ coverageType: "AUTO_LIABILITY", limitAmount: "2000000", currency: "CAD", limitBasis: "COMBINED_SINGLE_LIMIT" }] };
+    await notFound(K.insurance.renewPolicy({ ...renewal, organizationId: other }));
+    assert.equal(await count(`SELECT count(*) FROM public.insurance_policy_terms WHERE policy_id = $1`, [view.policy.id]), 1, "a wrong-company renewal changed nothing");
+    await K.insurance.renewPolicy({ ...renewal, organizationId: insured });
+    assert.equal(await count(`SELECT count(*) FROM public.insurance_policy_terms WHERE policy_id = $1`, [view.policy.id]), 2, "the earlier term is kept");
+  });
 });

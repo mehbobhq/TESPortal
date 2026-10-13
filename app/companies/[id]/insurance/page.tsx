@@ -20,7 +20,7 @@ const FAMILY_COVERAGES: Record<string, string[]> = {
 }
 const LIMIT_BASES = ["COMBINED_SINGLE_LIMIT", "PER_OCCURRENCE", "PER_VEHICLE", "AGGREGATE", "PENAL_SUM"]
 
-type Coverage = { id: string; coverageType: string; limitAmount: string | null; currency: string | null }
+type Coverage = { id: string; coverageType: string; limitAmount: string | null; currency: string | null; limitBasis?: string | null; deductibleAmount?: string | null }
 type Term = { id: string; numberDisplay: string; termStart: string; termEnd: string | null; cancelledOn: string | null }
 type Policy = {
   policy: { id: string; insurerOrganizationId: string; family: string; recordStatus: string }
@@ -174,6 +174,53 @@ function CanonicalInsurance() {
                     >
                       {archived ? "Restore" : "Archive"}
                     </Button>
+                    {archived || !term ? null : (
+                      <details className="basis-full text-xs">
+                        <summary className="cursor-pointer font-semibold">Renew or cancel this policy</summary>
+                        <div className="grid md:grid-cols-2 gap-4 pt-2">
+                          <form
+                            className="grid grid-cols-2 gap-2 items-end"
+                            onSubmit={(event) => {
+                              event.preventDefault()
+                              const form = new FormData(event.currentTarget)
+                              const f = (name: string) => String(form.get(name) ?? "").trim()
+                              const first = view.asOf.coverages[0]
+                              void patch(view.policy.id, {
+                                action: "renew",
+                                termStart: f("termStart"),
+                                termEnd: f("termEnd") || null,
+                                ...(f("policyNumber") ? { policyNumber: f("policyNumber") } : {}),
+                                coverages: [{ coverageType: f("coverageType"), limitAmount: f("limitAmount"), currency: f("currency"), ...(first?.limitBasis ? { limitBasis: first.limitBasis } : {}) }],
+                              })
+                            }}
+                          >
+                            <label className="space-y-1">New term starts<Input name="termStart" type="date" required defaultValue={term.termEnd ?? ""} /></label>
+                            <label className="space-y-1">New term ends<Input name="termEnd" type="date" /></label>
+                            <label className="space-y-1">New policy number (blank keeps it)<Input name="policyNumber" /></label>
+                            <label className="space-y-1">Coverage type<Input name="coverageType" required defaultValue={view.asOf.coverages[0]?.coverageType ?? ""} /></label>
+                            <label className="space-y-1">Limit<Input name="limitAmount" defaultValue={view.asOf.coverages[0]?.limitAmount ?? ""} /></label>
+                            <label className="space-y-1">Currency<Input name="currency" defaultValue={view.asOf.coverages[0]?.currency ?? "CAD"} /></label>
+                            <Button type="submit" size="sm" disabled={busy} className="col-span-2">Renew (new term, history kept)</Button>
+                          </form>
+                          <form
+                            className="grid grid-cols-2 gap-2 items-end"
+                            onSubmit={(event) => {
+                              event.preventDefault()
+                              const form = new FormData(event.currentTarget)
+                              void patch(view.policy.id, { action: "cancel", termId: term.id, cancelledOn: String(form.get("cancelledOn") ?? ""), reason: String(form.get("reason") ?? "") })
+                            }}
+                          >
+                            <label className="space-y-1">Cancelled on<Input name="cancelledOn" type="date" required /></label>
+                            <label className="space-y-1">Reason
+                              <select name="reason" required className="w-full rounded-md border bg-background px-2 py-2 text-sm">
+                                {["INSURED_REQUEST", "INSURER_CANCELLATION", "NON_PAYMENT", "REPLACED_BY_NEW_POLICY"].map((value) => <option key={value}>{value}</option>)}
+                              </select>
+                            </label>
+                            <Button type="submit" size="sm" variant="outline" disabled={busy || Boolean(term.cancelledOn)} className="col-span-2">Cancel this term</Button>
+                          </form>
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )
               })}

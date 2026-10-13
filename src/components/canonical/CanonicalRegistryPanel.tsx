@@ -26,6 +26,9 @@ export type RegistryPanelConfig = {
 }
 
 type Version = {
+  recordStatus?: string
+  effectiveFrom?: string
+  effectiveTo?: string | null
   numberDisplay: string
   jurisdictionCountry: string
   jurisdictionRegion: string | null
@@ -34,6 +37,8 @@ type Version = {
 }
 type View = {
   current: { version: Version | null; status: Record<string, string> | null }
+  versions?: Version[]
+  statusPeriods?: Array<Record<string, string | null>>
 } & Record<string, unknown>
 type CompanyHeader = { id: string; name: string; kind: string; status: string }
 
@@ -171,6 +176,61 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                         {archived ? "Restore" : "Archive"}
                       </Button>
                     </div>
+                    {archived ? null : (
+                      <details className="basis-full text-xs">
+                        <summary className="cursor-pointer font-semibold">Edit or correct · history</summary>
+                        <form
+                          className="grid sm:grid-cols-5 gap-2 pt-2 items-end"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            const form = new FormData(event.currentTarget)
+                            const f = (name: string) => String(form.get(name) ?? "").trim()
+                            const payload: Record<string, unknown> = { action: f("mode") === "correct" ? "correctVersion" : "version" }
+                            if (f("number") && f("number") !== (version?.numberDisplay ?? "")) payload.number = f("number")
+                            if (f("region") && f("region") !== (version?.jurisdictionRegion ?? "")) payload.jurisdiction = { region: f("region") }
+                            if (f("issuedOn") !== (version?.issuedOn ?? "")) payload.issuedOn = f("issuedOn") || null
+                            if (f("expiresOn") !== (version?.expiresOn ?? "")) payload.expiresOn = f("expiresOn") || null
+                            void send(`${base}/${config.resource}/${record.id}`, "PATCH", payload)
+                          }}
+                        >
+                          <Input name="number" defaultValue={version?.numberDisplay ?? ""} aria-label="Number" />
+                          <Input name="region" defaultValue={version?.jurisdictionRegion ?? ""} aria-label="Jurisdiction region" placeholder="Region" />
+                          <Input name="issuedOn" type="date" defaultValue={version?.issuedOn ?? ""} aria-label="Issued" />
+                          <Input name="expiresOn" type="date" defaultValue={version?.expiresOn ?? ""} aria-label="Expires" />
+                          <Button type="submit" size="sm" disabled={busy}>Save</Button>
+                          <label className="sm:col-span-5 flex items-center gap-2"><input type="radio" name="mode" value="change" defaultChecked /> A real-world change (the earlier version stays as history)</label>
+                          <label className="sm:col-span-5 flex items-center gap-2"><input type="radio" name="mode" value="correct" /> The recorded value was wrong (correct it; the wrong one is kept and flagged)</label>
+                        </form>
+                        <div className="pt-2 flex items-center gap-2">
+                          <span>Correct status</span>
+                          <select
+                            aria-label="Correct status"
+                            className="rounded-md border bg-background px-2 py-1"
+                            value=""
+                            disabled={busy}
+                            onChange={(event) => {
+                              if (event.target.value) void send(`${base}/${config.resource}/${record.id}`, "PATCH", { action: "correctStatus", status: event.target.value })
+                            }}
+                          >
+                            <option value="">The status was recorded wrongly…</option>
+                            {config.statuses.filter((value) => value !== status).map((value) => (
+                              <option key={value} value={value}>{value}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <ul className="pt-2 list-disc pl-5 text-muted-foreground" aria-label="Version history">
+                          {(view.versions ?? []).map((v, index) => (
+                            <li key={`${v.numberDisplay}-${v.effectiveFrom ?? index}`}>
+                              {v.numberDisplay}
+                              {[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).length ? ` · ${[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).join(", ")}` : ""}
+                              {v.effectiveFrom ? ` · from ${v.effectiveFrom.slice(0, 10)}` : ""}
+                              {v.effectiveTo ? ` to ${v.effectiveTo.slice(0, 10)}` : ""}
+                              {v.recordStatus === "corrected" ? " · corrected (not genuine history)" : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                 )
               })}

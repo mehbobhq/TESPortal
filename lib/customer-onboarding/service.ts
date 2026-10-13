@@ -15,12 +15,8 @@ import { getOrganizationCredentials } from "@/lib/company-credentials/service"
 import { getOrganizationInsurance } from "@/lib/insurance/service"
 import { getOrganizationRegistrations } from "@/lib/tax-registrations/service"
 import { listOrganizationDrivers, listOrganizationVehicles } from "@/lib/operational-identity/reads"
-import {
-  getOnboardingFoundation,
-  reviewEvidenceDocument,
-  upsertEvidenceRequirement,
-  type EvidenceRequirementRecord,
-} from "@/lib/onboarding-foundation/service"
+import { getOnboardingFoundation, upsertEvidenceRequirement, type EvidenceRequirementRecord } from "@/lib/onboarding-foundation/service"
+import { reviewEvidence, satisfyEvidenceRequirement } from "@/lib/evidence-payload/service"
 import { applyContractsAction } from "@/lib/contracts/service"
 
 type StepStatus = "complete" | "available" | "blocked" | "missing"
@@ -94,7 +90,9 @@ type ComputedRequirement = {
 }
 
 function hasSatisfiedRequirement(requirements: EvidenceRequirementRecord[], code: string): boolean {
-  return requirements.some((item) => item.requirementCode === code && ["received", "verified", "waived", "not_applicable"].includes(item.requirementStatus))
+  // 'received' (a stored payload that nobody has verified yet) does NOT satisfy a requirement: readiness moves only on verified
+  // payload-backed evidence, or on an explicit waiver / not-applicable decision.
+  return requirements.some((item) => item.requirementCode === code && ["verified", "waived", "not_applicable"].includes(item.requirementStatus))
 }
 
 function computedRequirements(input: {
@@ -360,10 +358,11 @@ export async function applyCustomerOnboardingAction(organizationId: string, inpu
       break
     }
     case "reviewEvidenceDocument": {
-      await reviewEvidenceDocument({
-        documentId: String(input.documentId ?? ""),
-        decision: input.decision as Parameters<typeof reviewEvidenceDocument>[0]["decision"],
-      })
+      await reviewEvidence({ organizationId, documentId: String(input.documentId ?? ""), decision: input.decision })
+      break
+    }
+    case "satisfyEvidenceRequirement": {
+      await satisfyEvidenceRequirement({ organizationId, documentId: String(input.documentId ?? "") })
       break
     }
     // Authority changes and contract drafts go through the Contracts service only: it requires a verified written company

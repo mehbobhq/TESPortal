@@ -1,0 +1,155 @@
+name: Evidence Payload Lifecycle CI
+
+on:
+  pull_request:
+    paths:
+      - "database/migrations/0032_evidence_payload_lifecycle.sql"
+      - "lib/evidence-payload/**"
+      - "lib/google/storage.ts"
+      - "lib/customer-onboarding/**"
+      - "lib/onboarding-foundation/**"
+      - "app/api/companies/*/evidence/**"
+      - "app/api/document-intake/**"
+      - "app/companies/*/onboarding/**"
+      - "test/lib/evidence-payload/**"
+      - "test/lib/contracts/**"
+      - "test/helpers/**"
+      - "test/database/evidence-payload-rls.sql"
+      - "scripts/database/verify-production-evidence-payload-lifecycle.sh"
+      - "scripts/storage/**"
+      - "scripts/test/run-auth-tests.sh"
+      - "docs/evidence-payload-lifecycle.md"
+      - ".github/workflows/evidence-payload-lifecycle-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      CI_MIGRATOR: "tes-database-migrator@tes-production-510007.iam"
+      CI_MIGRATOR_PASSWORD: ci-migrator
+      CI_RUNTIME: "tes-backend@tes-production-510007.iam"
+      CI_RUNTIME_PASSWORD: ci-runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create production-shaped roles and databases
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_MIGRATOR\" LOGIN PASSWORD '$CI_MIGRATOR_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_RUNTIME\" LOGIN PASSWORD '$CI_RUNTIME_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence_pre OWNER \"$CI_MIGRATOR\""
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence OWNER \"$CI_MIGRATOR\""
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_evidence_mutation OWNER \"$CI_MIGRATOR\""
+      - name: Static boundary, key, validation, consistency and storage-config tests
+        env:
+          GOOGLE_CLOUD_PROJECT_ID: ci-project
+          GOOGLE_GCS_QUARANTINE_BUCKET: ci-evidence-quarantine
+          GOOGLE_GCS_INTAKE_BUCKET: ci-evidence-intake
+          GOOGLE_GCS_EVIDENCE_BUCKET: ci-evidence-store
+        run: |
+          node --test \
+            test/lib/evidence-payload/evidence-payload-boundaries.test.ts \
+            test/lib/evidence-payload/object-keys.test.ts \
+            test/lib/evidence-payload/validation.test.ts \
+            test/lib/evidence-payload/consistency.test.ts \
+            test/lib/evidence-payload/storage-config.test.ts \
+            test/lib/ingestion/object-paths.test.ts \
+            test/lib/contracts/contracts-boundaries.test.ts
+          # offline storage configuration verifier: passes a complete keyless environment, fails closed otherwise.
+          # (PGPASSWORD belongs to this job's throwaway service container, so it is removed for these checks - the verifier
+          # rightly rejects any static credential variable.)
+          env -u PGPASSWORD node scripts/storage/verify-evidence-storage-config.mjs
+          if env -u PGPASSWORD -u GOOGLE_GCS_EVIDENCE_BUCKET node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted an incomplete environment" >&2; exit 1; fi
+          if env -u PGPASSWORD GOOGLE_PRIVATE_KEY=x node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted a static credential" >&2; exit 1; fi
+          if PGPASSWORD=x node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted a database password variable" >&2; exit 1; fi
+      - name: Apply 0001-0031, verify PRE, apply 0032 additively, verify POST
+        env:
+          PGDATABASE: tes_ci_evidence_pre
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+        run: |
+          first31="$(mktemp -d)"
+          for f in database/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+            version="$(basename "$f")"; version="${version%%_*}"
+            if [[ "$version" < "0032" ]]; then cp "$f" "$first31/"; fi
+          done
+          test "$(ls "$first31" | wc -l)" = "31"
+          MIGRATIONS_DIR="$first31" bash scripts/database/migrate.sh
+          TES_VERIFY_PHASE=pre bash scripts/database/verify-production-evidence-payload-lifecycle.sh
+          bash scripts/database/migrate.sh
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-evidence-payload-lifecycle.sh
+          # the closed foundations still verify on the extended chain
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-onboarding-evidence-contracts.sh
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-contracts-foundation.sh
+      - name: Apply the complete chain to the test database and verify POST
+        env:
+          PGDATABASE: tes_ci_evidence
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+        run: |
+          bash scripts/database/migrate.sh
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "32"
+          TES_VERIFY_PHASE=post bash scripts/database/verify-production-evidence-payload-lifecycle.sh
+      - name: Evidence lifecycle and contracts DB tests (real authorization, RLS as the runtime role, real Master Register, in-memory storage port)
+        env:
+          TES_REQUIRE_DB_TESTS: "1"
+          TES_TEST_ADMIN_DATABASE_URL: "postgres://tes-database-migrator%40tes-production-510007.iam:ci-migrator@127.0.0.1:5432/tes_ci_evidence"
+          TES_TEST_RUNTIME_DATABASE_URL: "postgres://tes-backend%40tes-production-510007.iam:ci-runtime@127.0.0.1:5432/tes_ci_evidence"
+        run: node --test --test-concurrency=1 test/lib/evidence-payload/lifecycle.db.test.ts test/lib/contracts/contracts.db.test.ts
+      - name: Evidence payload RLS matrix (runtime role) and policy mutation check
+        env:
+          PGDATABASE: tes_ci_evidence
+        run: |
+          psql -v ON_ERROR_STOP=1 -f test/database/evidence-payload-rls.sql
+          PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_evidence_mutation bash scripts/database/migrate.sh >/dev/null
+          psql -v ON_ERROR_STOP=1 -d tes_ci_evidence_mutation -c "ALTER POLICY evidence_payloads_system_read ON public.evidence_payloads USING (true)"
+          if psql -v ON_ERROR_STOP=1 -d tes_ci_evidence_mutation -f test/database/evidence-payload-rls.sql >/tmp/evidence-rls-mutation.log 2>&1; then
+            cat /tmp/evidence-rls-mutation.log
+            echo "Mutation survived the evidence payload RLS matrix" >&2
+            exit 1
+          fi
+          echo "Mutation caught."
+      - name: TypeScript regression gate
+        shell: bash
+        run: |
+          set +e
+          pnpm exec tsc --noEmit --pretty false > /tmp/head-tsc.txt 2>&1
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha || github.sha }}"
+          cd /tmp/base
+          pnpm install --frozen-lockfile >/dev/null
+          pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
+          cd -
+          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          # Regression gate: the head may fix baseline diagnostics but must not introduce any new one.
+          comm -13 /tmp/base-normalized.txt /tmp/head-normalized.txt > /tmp/new-diagnostics.txt
+          if [ -s /tmp/new-diagnostics.txt ]; then
+            echo "New TypeScript diagnostics introduced:"; cat /tmp/new-diagnostics.txt; exit 1
+          fi
+          echo "No new TypeScript diagnostics versus baseline."

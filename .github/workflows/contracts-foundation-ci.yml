@@ -6,6 +6,8 @@ on:
       - "database/migrations/0031_contracts_foundation.sql"
       - "lib/contracts/**"
       - "lib/onboarding-foundation/**"
+      - "lib/evidence-payload/**"
+      - "test/helpers/**"
       - "lib/customer-onboarding/**"
       - "app/api/companies/*/contracts/**"
       - "app/companies/*/onboarding/**"
@@ -66,7 +68,7 @@ jobs:
             test/lib/contracts/definitions.test.ts \
             test/lib/onboarding-foundation/onboarding-foundation-boundaries.test.ts \
             test/lib/customer-onboarding/onboarding-boundaries.test.ts
-      - name: Apply 0001-0030, verify PRE, then apply 0031 additively
+      - name: Apply 0001-0030, verify PRE, then apply the rest of the chain additively
         env:
           PGDATABASE: tes_ci_contracts_pre
           PGUSER: "tes-database-migrator@tes-production-510007.iam"
@@ -89,7 +91,7 @@ jobs:
           PGPASSWORD: ci-migrator
         run: |
           bash scripts/database/migrate.sh
-          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "31"
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "32"
           TES_VERIFY_PHASE=post bash scripts/database/verify-production-contracts-foundation.sh
       - name: Contracts DB tests (real authorization, RLS as the runtime role, real Master Register)
         env:

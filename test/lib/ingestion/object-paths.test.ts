@@ -101,26 +101,27 @@ test("no function in the portal's storage module writes raw bytes into the intak
   assert.equal(intakeCopyDestinations, null, "intake must never be the destination of a copy in the portal");
 });
 
-test("document-intake cannot directly write raw bytes to Intake: it uses only the quarantine helper and the canonical quarantine path", () => {
+test("document-intake cannot directly write raw bytes to Intake: it goes through the evidence service, whose only raw write is the quarantine helper on the canonical quarantine path", () => {
   const route = code("app/api/document-intake/route.ts");
-  assert.match(route, /import \{ uploadQuarantineObject \} from "@\/lib\/google\/storage"/);
-  assert.match(route, /quarantineObjectName\(\{ companyId, batchId, sourceFileId \}\)/);
+  assert.match(route, /uploadEvidence/);
   assert.doesNotMatch(route, /uploadIntakeObject/);
   assert.doesNotMatch(route, /intakeBucketName/);
   assert.doesNotMatch(route, /`intake\//);
   assert.doesNotMatch(route, /"intake\//);
+  const adapter = code("lib/evidence-payload/gcs-adapter.ts");
+  assert.match(adapter, /uploadQuarantineObject\(objectName, bytes, options\)/);
+  const service = code("lib/evidence-payload/service.ts");
+  assert.match(service, /quarantineKey\(\{ organizationId, batchId: ids\.batchId, sourceFileId: ids\.sourceFileId \}\)/);
+  assert.doesNotMatch(service, /storage\.(putIntake|writeIntake)/);
 });
 
-test("the upload response truthfully reports 'accepted into quarantine, unscanned' - never STORED/cleared", () => {
+test("the upload response truthfully reports 'accepted into quarantine, unscanned' - never stored/cleared", () => {
+  const service = read("lib/evidence-payload/service.ts");
+  assert.match(service, /Promise<\{ documentId: string; state: "quarantined" \}>/);
+  assert.match(service, /return \{ documentId: ids\.documentId, state: "quarantined" \}/);
   const route = read("app/api/document-intake/route.ts");
-  assert.match(route, /storageLocation: "QUARANTINE"/);
-  assert.match(route, /securityState: "UNSCANNED"/);
-  assert.match(route, /processingStatus: "RECEIVED"/);
-  assert.match(route, /status: "RECEIVED"/);
+  assert.doesNotMatch(route, /quarantineObjectName|storageLocation|gcs/i);
   assert.doesNotMatch(route, /status: "STORED"/);
-  assert.doesNotMatch(route, /processingStatus: "STORED"/);
-  // A failed upload reports that nothing was stored.
-  assert.match(route, /storageLocation: null/);
 });
 
 test("the route does not await, poll, or fabricate a scanner result", () => {

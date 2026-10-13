@@ -137,6 +137,8 @@ export default function CompanyProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [activityFilter, setActivityFilter] = useState<string>("all")
   const [activityLimit, setActivityLimit] = useState(20)
+  // Real counts from the canonical lists (the original bar showed hard-coded zeros). null = not loaded, "denied" = not permitted.
+  const [fleet, setFleet] = useState<{ trucks: number; trailers: number; drivers: number } | "denied" | null>(null)
 
   useEffect(() => {
     const id = params?.id as string
@@ -168,6 +170,32 @@ export default function CompanyProfilePage() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+    return () => {
+      cancelled = true
+    }
+  }, [params?.id])
+
+  useEffect(() => {
+    const id = params?.id as string
+    if (!id) return
+    let cancelled = false
+    Promise.all([
+      fetch(`/api/companies/${encodeURIComponent(id)}/vehicles`, { cache: "no-store" }),
+      fetch(`/api/companies/${encodeURIComponent(id)}/drivers`, { cache: "no-store" }),
+    ])
+      .then(async ([vehicles, drivers]) => {
+        if (cancelled) return
+        if (!vehicles.ok || !drivers.ok) return setFleet("denied")
+        const v = ((await vehicles.json()).vehicles ?? []) as Array<{ vehicleType?: string; effectiveTo?: string | null }>
+        const d = ((await drivers.json()).drivers ?? []) as Array<{ effectiveTo?: string | null }>
+        const open = v.filter((item) => !item.effectiveTo)
+        setFleet({
+          trailers: open.filter((item) => item.vehicleType === "TRAILER").length,
+          trucks: open.filter((item) => item.vehicleType === "TRUCK_TRACTOR" || item.vehicleType === "STRAIGHT_TRUCK").length,
+          drivers: d.filter((item) => !item.effectiveTo).length,
+        })
+      })
+      .catch(() => !cancelled && setFleet("denied"))
     return () => {
       cancelled = true
     }
@@ -278,6 +306,12 @@ export default function CompanyProfilePage() {
             <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Record Status</p>
             <p className="font-medium">{company.status}</p>
           </div>
+          {([["Trucks", "trucks"], ["Trailers", "trailers"], ["Drivers", "drivers"]] as const).map(([label, key]) => (
+            <div key={key}>
+              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">{label}</p>
+              <p className="font-medium">{fleet === null ? "…" : fleet === "denied" ? "Not permitted to view" : fleet[key]}</p>
+            </div>
+          ))}
           {isCustomer && (
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Service Stage</p>

@@ -81,10 +81,13 @@ jobs:
             test/lib/evidence-payload/storage-config.test.ts \
             test/lib/ingestion/object-paths.test.ts \
             test/lib/contracts/contracts-boundaries.test.ts
-          # offline storage configuration verifier: passes a complete keyless environment, fails closed otherwise
-          node scripts/storage/verify-evidence-storage-config.mjs
-          if env -u GOOGLE_GCS_EVIDENCE_BUCKET node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted an incomplete environment" >&2; exit 1; fi
-          if GOOGLE_PRIVATE_KEY=x node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted a static credential" >&2; exit 1; fi
+          # offline storage configuration verifier: passes a complete keyless environment, fails closed otherwise.
+          # (PGPASSWORD belongs to this job's throwaway service container, so it is removed for these checks - the verifier
+          # rightly rejects any static credential variable.)
+          env -u PGPASSWORD node scripts/storage/verify-evidence-storage-config.mjs
+          if env -u PGPASSWORD -u GOOGLE_GCS_EVIDENCE_BUCKET node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted an incomplete environment" >&2; exit 1; fi
+          if env -u PGPASSWORD GOOGLE_PRIVATE_KEY=x node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted a static credential" >&2; exit 1; fi
+          if PGPASSWORD=x node scripts/storage/verify-evidence-storage-config.mjs; then echo "verifier accepted a database password variable" >&2; exit 1; fi
       - name: Apply 0001-0031, verify PRE, apply 0032 additively, verify POST
         env:
           PGDATABASE: tes_ci_evidence_pre

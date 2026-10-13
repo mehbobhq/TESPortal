@@ -79,8 +79,8 @@ jobs:
           pnpm exec tsc --noEmit --pretty false > /tmp/base-tsc.txt 2>&1
           base_status=$?
           cd -
-          grep 'error TS' /tmp/head-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/head-normalized.txt
-          grep 'error TS' /tmp/base-tsc.txt | sed -E 's#^([^(:]+)\([^)]*\): ##' | sort > /tmp/base-normalized.txt
+          grep 'error TS' /tmp/head-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/head-normalized.txt
+          grep 'error TS' /tmp/base-tsc.txt | python3 "${GITHUB_WORKSPACE}/scripts/ci/normalize-tsc-diagnostics.py" | sort > /tmp/base-normalized.txt
           # Regression gate: the head may fix baseline diagnostics but must not introduce any new one.
           comm -13 /tmp/base-normalized.txt /tmp/head-normalized.txt > /tmp/new-diagnostics.txt
           if [ -s /tmp/new-diagnostics.txt ]; then

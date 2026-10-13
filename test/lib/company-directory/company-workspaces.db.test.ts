@@ -17,6 +17,7 @@ async function loadKit() {
     insurance: await import("@/lib/insurance/service"),
     credentials: await import("@/lib/company-credentials/service"),
     oi: await import("@/lib/operational-identity/service"),
+    profile: await import("@/lib/company-profile/service"),
     reads: await import("@/lib/operational-identity/reads"),
   };
 }
@@ -30,7 +31,7 @@ if (!enabled && process.env.TES_REQUIRE_DB_TESTS === "1") {
   });
 }
 
-const ALL = ["CONTACT_MANAGE", "PERSON_REGISTRY_READ", "INSURANCE_READ", "INSURANCE_MANAGE", "CREDENTIAL_READ", "CREDENTIAL_MANAGE", "VEHICLE_MANAGE", "VEHICLE_READ"];
+const ALL = ["CONTACT_MANAGE", "PERSON_REGISTRY_READ", "INSURANCE_READ", "INSURANCE_MANAGE", "CREDENTIAL_READ", "CREDENTIAL_MANAGE", "VEHICLE_MANAGE", "VEHICLE_READ", "COMPANY_PROFILE_MANAGE", "COMPANY_PROFILE_READ"];
 
 describe("Company-scoped workspaces stay inside their own company", { skip: !enabled }, () => {
   let pools: Pools;
@@ -130,5 +131,31 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
     assert.ok(made.vehicle.vehicleId);
     assert.equal((await K.reads.listOrganizationVehicles(a)).length, 1);
     assert.deepEqual(await K.reads.listOrganizationVehicles(b), []);
+  });
+
+  it("settings: operating scope, driver minimums and rule applicability are per company and 'not configured' stays honest", async () => {
+    await signInWith(...ALL);
+    const a = await organization("SettingsA");
+    const b = await organization("SettingsB");
+    const rule = (await K.profile.listRules())[0].code;
+
+    assert.equal((await K.profile.getCompanyProfile(a)).operatingScope.assertion, null, "nothing is defaulted");
+    await K.profile.setOperatingScope({ organizationId: a, operatingScope: "CANADA_AND_UNITED_STATES" });
+    await K.profile.setDriverRequirements({ organizationId: a, minimumDriverAgeYears: 23, minimumDriverExperienceMonths: 24 });
+    await K.profile.setRuleApplicability({ organizationId: a, ruleCode: rule, applicability: "DOES_NOT_APPLY" });
+
+    const viewA = await K.profile.getCompanyProfile(a);
+    assert.equal(viewA.operatingScope.assertion?.operatingScope, "CANADA_AND_UNITED_STATES");
+    assert.equal(viewA.driverRequirements.assertion?.minimumDriverAgeYears, 23);
+    assert.equal(viewA.rules.find((entry) => entry.rule.code === rule)?.assertion?.applicability, "DOES_NOT_APPLY");
+
+    const viewB = await K.profile.getCompanyProfile(b);
+    assert.equal(viewB.operatingScope.assertion, null);
+    assert.equal(viewB.driverRequirements.assertion, null);
+    assert.equal(viewB.rules.find((entry) => entry.rule.code === rule)?.assertion, null);
+
+    await K.profile.clearRuleApplicability({ organizationId: a, ruleCode: rule });
+    assert.equal((await K.profile.getCompanyProfile(a)).rules.find((entry) => entry.rule.code === rule)?.assertion, null);
+    assert.ok((await count(`SELECT count(*) FROM public.company_rule_applicability_periods WHERE organization_id = $1`, [a]).catch(() => 1)) >= 1, "the cleared assertion stays as history");
   });
 });

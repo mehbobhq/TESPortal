@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import { CanonicalSettings } from "./canonical-settings"
 import {
   ArrowLeft,
   Check,
@@ -600,7 +602,7 @@ function RuleRow({
   )
 }
 
-export default function SettingsPage() {
+function LegacySettingsPage() {
   const params = useParams()
   const router = useRouter()
 
@@ -1123,5 +1125,15 @@ export default function SettingsPage() {
         </div>
       ) : null}
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate companyId={companyId} title="Settings" description="Settings" canonical={<CanonicalSettings companyId={companyId} />}>
+      <LegacySettingsPage />
+    </LegacyWorkspaceGate>
   )
 }

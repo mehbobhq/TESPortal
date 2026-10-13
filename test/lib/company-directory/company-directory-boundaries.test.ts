@@ -43,4 +43,26 @@ describe("company directory PostgreSQL cutover boundaries", () => {
     assert.equal((code.match(/withAuthorizedSystem\(/g) ?? []).length, 1, "exactly one transaction")
     assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
   })
+
+  it("keeps workspace pages from reporting a failed lookup as a missing company", () => {
+    for (const page of ["business", "credentials", "drivers", "insurance", "vehicles", "edit"]) {
+      const code = source(`app/companies/[id]/${page}/page.tsx`)
+      assert.match(code, /CompanyMissing/, page)
+      assert.doesNotMatch(code, /<div className="p-10 text-center">Company not found\.<\/div>/, page)
+    }
+  })
+
+  it("keeps the canonical Contacts and Settings workspaces off browser persistence and behind company-scoped routes", () => {
+    for (const file of ["app/companies/[id]/contacts/canonical-contacts.tsx", "app/companies/[id]/settings/canonical-settings.tsx"]) {
+      const code = source(file)
+      assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB/i, file)
+      assert.match(code, /\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}\/(contacts|settings)/, file)
+    }
+    for (const file of ["app/api/companies/[id]/contacts/route.ts", "app/api/companies/[id]/settings/route.ts"]) {
+      const code = source(file)
+      assert.match(code, /organizationId: id/, file)
+      assert.doesNotMatch(code, /body\.organizationId/, file)
+      assert.doesNotMatch(code, /INSERT\s+INTO|DELETE\s+FROM|localStorage/i, file)
+    }
+  })
 })

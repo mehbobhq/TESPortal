@@ -1,5 +1,7 @@
 "use client"
 
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -27,6 +29,7 @@ export default function CredentialsPage() {
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [credentials, setCredentials] = useState<CredentialView[]>([])
   const [systems, setSystems] = useState<System[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,7 +43,11 @@ export default function CredentialsPage() {
         fetch(`${base}/credentials`, { cache: "no-store" }),
         fetch("/api/credential-systems", { cache: "no-store" }),
       ])
-      setCompany(profile.ok ? (await profile.json()).company : null)
+      {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
       if (list.ok) setCredentials((await list.json()).credentials ?? [])
       else setError((await list.json().catch(() => null))?.error ?? "Unable to load credentials.")
       if (sys.ok) setSystems((await sys.json()).systems ?? [])
@@ -95,7 +102,7 @@ export default function CredentialsPage() {
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   return (
     <div className="flex flex-col gap-6 pb-10">

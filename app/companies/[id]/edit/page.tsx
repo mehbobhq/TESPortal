@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { ArrowLeft, Save, Building2 } from "lucide-react"
 
+import { CompanyMissing } from "@/components/company-missing"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,6 +41,7 @@ export default function EditCompanyPage() {
   const params = useParams()
   const router = useRouter()
   const [company, setCompany] = useState<EditableCompany | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [details, setDetails] = useState<Details>({})
   const [issues, setIssues] = useState<Array<{ field: string; message: string }>>([])
   const [loading, setLoading] = useState(true)
@@ -51,14 +53,15 @@ export default function EditCompanyPage() {
     let cancelled = false
     Promise.all([
       fetch(`/api/companies/${encodeURIComponent(id)}`, { cache: "no-store" })
-        .then(async (response) => (response.ok ? (await response.json()).company : null))
-        .catch(() => null),
+        .then(async (response) => ({ company: response.ok ? (await response.json()).company : null, failed: !response.ok && response.status !== 404 }))
+        .catch(() => ({ company: null, failed: true })),
       fetch(`/api/companies/${encodeURIComponent(id)}/profile`, { cache: "no-store" })
         .then(async (response) => (response.ok ? (await response.json()).company : null))
         .catch(() => null),
     ]).then(([found, profile]) => {
       if (cancelled) return
-      setCompany(found ?? null)
+      setCompany(found.company ?? null)
+      setLookupFailed(found.failed)
       setDetails(profile ?? {})
       setLoading(false)
     })
@@ -107,7 +110,7 @@ export default function EditCompanyPage() {
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   return (
     <div className="pb-10 flex flex-col gap-6">

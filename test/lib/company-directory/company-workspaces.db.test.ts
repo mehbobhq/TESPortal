@@ -125,12 +125,13 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
     const vin = `WS${run}${String(Date.now() % 10000000).padStart(7, "0")}`.slice(0, 17).padEnd(17, "0");
 
     await assert.rejects(K.oi.createVehicleForOrganization({ vehicleTypeCode: "TRUCK_TRACTOR", vin, make: "Testmake" }, { organizationId: randomUUID(), relationshipType: "OPERATES", unitNumber: "x-1", effectiveFrom: "2024-01-01T00:00:00Z" }));
-    assert.equal(await count(`SELECT count(*) FROM public.vehicles WHERE vin_normalized = upper($1) OR vin = $1`, [vin]).catch(() => 0), 0, "a failed relationship leaves no orphan vehicle");
+    assert.equal(await count(`SELECT count(*) FROM public.vehicles WHERE vin_normalized = $1`, [vin]), 0, "a failed relationship leaves no orphan vehicle");
 
     const made = await K.oi.createVehicleForOrganization({ vehicleTypeCode: "TRUCK_TRACTOR", vin, make: "Testmake" }, { organizationId: a, relationshipType: "OPERATES", unitNumber: "ws-1", effectiveFrom: "2024-01-01T00:00:00Z" });
     assert.ok(made.vehicle.vehicleId);
     assert.equal((await K.reads.listOrganizationVehicles(a)).length, 1);
     assert.deepEqual(await K.reads.listOrganizationVehicles(b), []);
+    assert.equal(await count(`SELECT count(*) FROM public.vehicles WHERE vin_normalized = $1`, [vin]), 1);
   });
 
   it("settings: operating scope, driver minimums and rule applicability are per company and 'not configured' stays honest", async () => {
@@ -156,6 +157,6 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
 
     await K.profile.clearRuleApplicability({ organizationId: a, ruleCode: rule });
     assert.equal((await K.profile.getCompanyProfile(a)).rules.find((entry) => entry.rule.code === rule)?.assertion, null);
-    assert.ok((await count(`SELECT count(*) FROM public.company_rule_applicability_periods WHERE organization_id = $1`, [a]).catch(() => 1)) >= 1, "the cleared assertion stays as history");
+    assert.ok((await count(`SELECT count(*) FROM public.company_rule_applicability_periods WHERE organization_id = $1`, [a])) >= 1, "the cleared assertion stays as history");
   });
 });

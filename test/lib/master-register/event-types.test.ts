@@ -8,7 +8,7 @@ import {
   UnregisteredEventTypeError,
   isRegisteredEventType,
   resolveEventFamily,
-} from "../../../lib/master-register/event-types.ts";
+} from "../../../lib/master-register/event-types";
 
 /**
  * The exact Catalogue Version 1 baseline, mirrored here as the test's own

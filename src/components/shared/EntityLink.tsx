@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CanonicalEntityReference } from "../../types/entity-references";
+import type { CanonicalEntityReference } from "../../../types/entity-references";
 import { ExternalLink } from "lucide-react";
 
 export interface EntityLinkProps {

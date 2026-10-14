@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { CanonicalEntityReference } from "../../types/entity-references";
+import type { CanonicalEntityReference } from "../../../types/entity-references";
 import { Search, X, Check, Plus, Loader2 } from "lucide-react";
 
 export interface EntityPickerProps {

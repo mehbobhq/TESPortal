@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { EvidenceRecord, EvidenceVerificationState } from "../../types/evidence";
+import type { EvidenceRecord, EvidenceVerificationState } from "../../../types/evidence";
 import {
   FileText,
   Eye,

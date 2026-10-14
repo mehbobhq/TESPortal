@@ -1132,6 +1132,14 @@ export default function NewCompanyPage() {
     const businessNo = businessNumber.trim()
     const ein = einNumber.trim()
     setIdentifierMatches([])
+    // Never silently skip a partially entered identifier or an unknown incorporation jurisdiction.
+    const incomplete = (incorpNo.length > 0 && (incorpNo.length < 3 || !country || (country === "US" && !businessRegion))) ||
+      (businessNo.length > 0 && !/^\d{9}$/.test(businessNo)) ||
+      (ein.length > 0 && !/^\d{2}-?\d{7}$/.test(ein))
+    if (incomplete) {
+      setIdentifierCheck("error")
+      return
+    }
     setIdentifierCheck("checking")
     const controller = new AbortController()
     const timer = setTimeout(async () => {
@@ -1141,8 +1149,8 @@ export default function NewCompanyPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             incorpNo: incorpNo.length >= 3 && country ? incorpNo : "",
-            businessNo: /^\\d{9}$/.test(businessNo) ? businessNo : "",
-            ein: /^\\d{2}-?\\d{7}$/.test(ein) ? ein : "",
+            businessNo: /^\d{9}$/.test(businessNo) ? businessNo : "",
+            ein: /^\d{2}-?\d{7}$/.test(ein) ? ein : "",
             regCorpCountry: country,
             regCorpState: businessRegion,
           }),
@@ -2316,8 +2324,8 @@ export default function NewCompanyPage() {
         <div className="rounded-xl border border-border bg-card p-4 text-sm" aria-live="polite">
           <p className="font-semibold">Corporate identifier verification</p>
           {identifierCheck === "checking" && <p>Checking registered identifiers…</p>}
-          {identifierCheck === "error" && <p className="text-destructive">Identifier lookup unavailable. Creation is paused.</p>}
-          {identifierCheck === "ready" && identifierMatches.length === 0 && <p>No submitted corporate identifier collision detected.</p>}
+          {identifierCheck === "error" && <p className="text-destructive">Enter complete, valid identifiers and their registration jurisdiction; if the lookup fails, creation remains paused.</p>}
+          {identifierCheck === "ready" && identifierMatches.length === 0 && <p>No matching active incorporation number, CRA BN or EIN found for the identifiers entered. Other regulatory account identifiers are not yet covered.</p>}
           {identifierMatches.length > 0 && <div className="space-y-2">
             <p className="font-medium text-destructive">Creation blocked — an authoritative identifier belongs to an existing organization.</p>
             {identifierMatches.map((match) => <div key={match.organizationId + match.kind} className="flex items-center justify-between gap-2 rounded border p-2">

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 
-type Tone = "ok" | "warn" | "danger" | "neutral" | "info"
+type Tone = "ok" | "warn" | "danger" | "neutral" | "info" | "default" | "error"
 
 const toneClass: Record<Tone, string> = {
   ok: "bg-emerald-50 text-status-current",
@@ -8,6 +8,8 @@ const toneClass: Record<Tone, string> = {
   danger: "bg-destructive/10 text-destructive",
   neutral: "bg-secondary text-muted-foreground",
   info: "bg-primary/10 text-primary",
+  default: "bg-secondary text-muted-foreground",
+  error: "bg-destructive/10 text-destructive",
 }
 
 export function StatusBadge({ tone = "neutral", children }: { tone?: Tone; children: React.ReactNode }) {

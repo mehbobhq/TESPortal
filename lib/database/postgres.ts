@@ -33,9 +33,9 @@ let statePromise: Promise<DatabaseState> | null = null
 
 async function createDatabaseState(): Promise<DatabaseState> {
   const connector = new Connector({
-    // Reuse TES's existing fail-closed Google auth boundary. In Vercel
-    // Production this is the WIF IdentityPoolClient; outside production it is
-    // ADC, exactly as defined by lib/google/auth.ts.
+    // Production: Vercel OIDC -> Google WIF.
+    // Non-production: existing ADC boundary.
+    // Never fall back to ADC in production.
     auth: getGoogleAuthClient(),
   })
 

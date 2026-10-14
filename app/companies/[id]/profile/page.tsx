@@ -237,18 +237,6 @@ export default function CompanyProfilePage() {
       >
         Edit
       </button>
-      <button
-        type="button"
-        className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
-      >
-        Check Status
-      </button>
-      <button
-        type="button"
-        className="inline-flex items-center justify-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
-      >
-        New Case
-      </button>
     </>
   )
 
@@ -267,26 +255,26 @@ export default function CompanyProfilePage() {
             </div>
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Staff</p>
-              <p className="font-medium">0</p>
+              <p className="font-medium text-muted-foreground">Not available</p>
             </div>
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Trucks</p>
-              <p className="font-medium">0</p>
+              <p className="font-medium text-muted-foreground">Not available</p>
             </div>
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Trailers</p>
-              <p className="font-medium">0</p>
+              <p className="font-medium text-muted-foreground">Not available</p>
             </div>
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Accounts</p>
-              <p className="font-medium flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="size-3.5" /> Good
+              <p className="font-medium flex items-center gap-1 text-muted-foreground">
+                <AlertCircle className="size-3.5" /> Not assessed
               </p>
             </div>
             <div>
               <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Items</p>
-              <p className="font-medium flex items-center gap-1 text-amber-500">
-                <AlertCircle className="size-3.5" /> Pending
+              <p className="font-medium flex items-center gap-1 text-muted-foreground">
+                <AlertCircle className="size-3.5" /> Not assessed
               </p>
             </div>
           </div>

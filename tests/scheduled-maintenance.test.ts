@@ -10,7 +10,7 @@ import {
   lockScheduledMaintenanceSubmission,
   validateScheduledMaintenanceSubmission,
   type ScheduledMaintenanceSubmission,
-} from "../lib/scheduled-maintenance-data.ts"
+} from "../lib/scheduled-maintenance-data"
 
 function baseRecord(): ScheduledMaintenanceSubmission {
   return {

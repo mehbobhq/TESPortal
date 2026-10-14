@@ -6,28 +6,22 @@ import { CompanyMissing } from "@/components/company-missing"
 import { readCompanyLookup } from "@/lib/company-lookup"
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { RestoredDriversRegister } from "@/src/restored/drivers/RestoredDriversRegister"
+import type { CanonicalDriverRow } from "@/src/restored/drivers/canonical-client"
 
-type DriverRow = {
-  relationshipId: string
-  personId: string
-  relationshipType: string
-  driverNumber: string | null
-  status: string
-  givenName: string | null
-  familyName: string | null
-  licence: { jurisdictionCountry: string; jurisdictionRegion: string; number: string; licenceClass: string | null; expiryDate: string | null } | null
-}
 type Company = { id: string; name: string; kind: string; status: string }
 
+/**
+ * The ORIGINAL Driver Register (search, filters, stat cards, Add Driver with the existing-driver check, Invite Applicant) restored
+ * over the canonical PostgreSQL drivers. Each row opens that driver's full workspace by its canonical person id.
+ */
 function CanonicalDrivers() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
   const [lookupFailed, setLookupFailed] = useState(false)
-  const [drivers, setDrivers] = useState<DriverRow[]>([])
+  const [drivers, setDrivers] = useState<CanonicalDriverRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,41 +50,12 @@ function CanonicalDrivers() {
 
   return (
     <div className="flex flex-col gap-6 pb-10">
-      <CompanyWorkspaceHeader company={company} section="Drivers" description="Driver compliance records" />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-
-      <Card>
-        <CardHeader className="bg-muted/30 py-3 border-b">
-          <CardTitle className="text-sm">Drivers on record</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {drivers.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-4 text-center">No drivers yet.</p>
-          ) : (
-            <div className="flex flex-col divide-y">
-              {drivers.map((row) => (
-                <div key={row.relationshipId} className="py-3">
-                  <p className="text-sm font-semibold">
-                    {[row.givenName, row.familyName].filter(Boolean).join(" ") || row.personId}
-                    {row.driverNumber ? ` · #${row.driverNumber}` : ""}
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {row.relationshipType} · {row.status}
-                    {row.licence
-                      ? ` · Licence ${row.licence.number} (${row.licence.jurisdictionRegion}, ${row.licence.jurisdictionCountry}${row.licence.licenceClass ? `, class ${row.licence.licenceClass}` : ""}${row.licence.expiryDate ? `, expires ${row.licence.expiryDate}` : ""})`
-                      : " · No licence on record"}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
+      <RestoredDriversRegister company={company} drivers={drivers} error={error} />
       <p className="text-xs text-muted-foreground">
-        Adding a driver is deferred: there is no canonical service that creates a standalone Person yet (a driver is a role of a
-        Person). Date of birth, addresses, performance events, citations, training, screening and driver evidence are also deferred:
-        they have no canonical PostgreSQL storage yet.
+        Unavailable actions: Invite Applicant is deferred (driver applications have no canonical domain). Date of birth, middle and
+        preferred name, addresses, operating region, performance events, citations, training, screening other than the medical
+        qualification period, hiring packages, tax records and driver evidence are also deferred: they have no canonical PostgreSQL
+        storage yet, so their controls stay visible and refuse instead of saving.
       </p>
     </div>
   )

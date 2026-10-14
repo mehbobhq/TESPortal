@@ -117,7 +117,7 @@ export function TransportationPolicyForm({
                   <input
                     type="text"
                     name="policyNumber"
-                    defaultValue={isRenewalMode ? editingTransportation?.policyNumber || "" : editingTransportation?.policyNumber || ""}
+                    defaultValue={editingTransportation?.policyNumber || ""}
                     placeholder="e.g. NBC-998201-26"
                     className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3 font-mono font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-xs"
                     required

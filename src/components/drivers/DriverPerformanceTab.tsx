@@ -1016,9 +1016,16 @@ export function DriverPerformanceTab({
                       <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
                         <span>Jurisdiction: <strong className="text-foreground">{evt.hosDetails?.ruleJurisdiction || evt.country}</strong></span>
                         <span>Source: <strong className="text-foreground">{evt.hosDetails?.source || "ELD System"}</strong></span>
-                        {evt.hosDetails?.minutesOverLimit && (
-                          <span>Minutes Over Limit: <strong className="text-rose-600">{evt.hosDetails.minutesOverLimit}m</strong></span>
-                        )}
+                        {typeof evt.hosDetails?.hoursExceeded === "number" &&
+                          Number.isFinite(evt.hosDetails.hoursExceeded) &&
+                          evt.hosDetails.hoursExceeded >= 0 && (
+                            <span>
+                              Recorded Hours Exceeded:{" "}
+                              <strong className="text-rose-600">
+                                {evt.hosDetails.hoursExceeded}h
+                              </strong>
+                            </span>
+                          )}
                         {evt.hosDetails?.reviewNotes && (
                           <span className="truncate max-w-md">Notes: {evt.hosDetails.reviewNotes}</span>
                         )}

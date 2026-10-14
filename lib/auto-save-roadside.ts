@@ -184,7 +184,7 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
         draft,
       }
     }
-
+    const resolvedCompany = entities.company
     const driver = entities.driver
     const driverLinkingRequired = !driver
     if (!eventDate || !driver) {
@@ -199,7 +199,7 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
     }
     const driverMasterId = driver.id
     const powerUnitResolution = firstEquipment ? resolveCanonicalVehicleByIdentifiers(
-      entities.company.id,
+      resolvedCompany.id,
       {
         vin: firstEquipment.vinSerialNumber,
         vinMatchMode: firstEquipment.vinSerialNumberCompleteness === "PARTIAL_LAST_6" ? "LAST_6" : "FULL",
@@ -356,11 +356,11 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
     // fabricating the missing data.
     let saved: DriverPerformanceEvent
     try {
-      saved = addPerformanceEvent(entities.company.id, driverMasterId, eventPayload)
+      saved = addPerformanceEvent(resolvedCompany.id, driverMasterId, eventPayload)
       const equipmentRelationshipResolutions = equipmentRows.map((item, index) => {
         const itemId = equipmentCollectionItems[index]?.itemId || `RIE-AUTO-${index + 1}`
         const vehicleResolution = resolveCanonicalVehicleByIdentifiers(
-          entities.company.id,
+          resolvedCompany.id,
           {
             vin: item.vinSerialNumber,
             vinMatchMode: item.vinSerialNumberCompleteness === "PARTIAL_LAST_6" ? "LAST_6" : "FULL",
@@ -373,7 +373,7 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
         return buildEquipmentVehicleResolution(saved.id, itemId, vehicleResolution, result.sourceEvidenceId)
       })
       if (equipmentRelationshipResolutions.length) {
-        saved = persistPerformanceRelationshipResolutions(entities.company.id, saved.id, equipmentRelationshipResolutions) || saved
+        saved = persistPerformanceRelationshipResolutions(resolvedCompany.id, saved.id, equipmentRelationshipResolutions) || saved
       }
     } catch (validationError) {
       return {
@@ -384,7 +384,7 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
     }
 
     // 6. Log activity
-    logActivity(entities.company.id, {
+    logActivity(resolvedCompany.id, {
       section: "performance",
       entityId: saved.id,
       entityLabel: `Roadside Inspection — ${draft.reportNumber || saved.id}`,
@@ -395,7 +395,7 @@ export async function autoSaveRoadsideInspection(result: TESMachineDocumentResul
     return {
       status: "AUTO_SAVED",
       eventId: saved.id,
-      companyId: entities.company.id,
+      companyId: resolvedCompany.id,
     }
   } catch (error) {
     return {

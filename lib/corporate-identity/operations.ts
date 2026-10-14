@@ -422,7 +422,9 @@ export async function createOrganization(ctx: OperationContext, rawInput: unknow
     }
   }
 
-  await assertNameAvailable(ctx, normalizedLegalName, null)
+  for (const name of [...new Set([normalizedLegalName, ...aliases.map((item) => item.normalizedAlias)])].sort()) {
+    await assertNameAvailable(ctx, name, null)
+  }
 
   // Authoritative-identifier collisions are checked before anything is written.
   for (const prepared of identifiers) await assertNoActiveCollision(ctx, prepared)

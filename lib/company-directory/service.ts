@@ -216,6 +216,31 @@ function identifierValue(
   return found?.value ?? null
 }
 
+/**
+ * Authorized preflight for company onboarding. Name matches are review candidates,
+ * never automatic proof that two legal entities are the same.
+ */
+export async function findCompanyNameCandidates(name: string): Promise<Array<{ id: string; name: string; match: "legal_name" | "alias" }>> {
+  const { cleanDisplayText, normalizeBusinessName } = await import("@/lib/corporate-identity/normalization")
+  const normalized = normalizeBusinessName(cleanDisplayText(name, "companyName"), "companyName")
+  return withAuthorizedSystem("ORGANIZATION_REGISTRY_READ", async (client) => {
+    const result = await client.query<{ id: string; legal_name: string; match: "legal_name" | "alias" }>(
+      `SELECT o.id, o.legal_name,
+          CASE WHEN o.normalized_legal_name = $1 THEN 'legal_name' ELSE 'alias' END AS match
+       FROM public.organizations o
+       WHERE o.normalized_legal_name = $1
+          OR EXISTS (
+            SELECT 1 FROM public.organization_aliases a
+            WHERE a.organization_id = o.id AND a.status = 'active' AND a.normalized_alias = $1
+          )
+       ORDER BY o.legal_name, o.id
+       LIMIT 20`,
+      [normalized],
+    )
+    return result.rows.map((row) => ({ id: row.id, name: row.legal_name, match: row.match }))
+  })
+}
+
 export async function listCompanyDirectory(): Promise<CompanyDirectoryRecord[]> {
   return withAuthorizedSystem("ORGANIZATION_REGISTRY_READ", async (client) => {
     const result = await client.query<CompanyDirectoryRow>(

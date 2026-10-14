@@ -58,7 +58,7 @@ export function BusinessDocumentModals({ previewDocument, documentTarget, isSour
             <div className="flex-1 relative overflow-hidden">
               {/* In-memory object URL only: nothing is uploaded, stored or logged. */}
               {previewDocument.name.toLowerCase().endsWith(".pdf") ? (
-                <iframe title={`Preview: ${previewDocument.target}`} src={previewDocument.url} className="size-full bg-white" />
+                <iframe title={`Preview: ${previewDocument.target}`} src={previewDocument.url} sandbox="" referrerPolicy="no-referrer" className="size-full bg-white" />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img alt={`Preview: ${previewDocument.target}`} src={previewDocument.url} className="size-full object-contain bg-white" />

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
-import { createCredential, getOrganizationCredentials } from "@/lib/company-credentials/service"
+import { createCredentialWithRecoverySlots, getOrganizationCredentials } from "@/lib/company-credentials/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -16,12 +16,16 @@ export async function GET(_request: NextRequest, context: Context) {
   }
 }
 
-/** Credential metadata only. The body is passed to the canonical service, which has no field for a secret value. */
+/**
+ * Credential metadata only. The body is passed to the canonical service, which has no field for a secret value (an extra key is
+ * refused). `recoverySlots` is an optional list of slot KINDS the Account Recovery step declared; the credential and its slots
+ * are created in one transaction. The organization always comes from the URL.
+ */
 export async function POST(request: NextRequest, context: Context) {
   try {
     const { id } = await context.params
     const body = await readJsonBody(request)
-    return NextResponse.json({ credential: await createCredential({ ...body, organizationId: id }) }, { status: 201 })
+    return NextResponse.json({ credential: await createCredentialWithRecoverySlots(id, body) }, { status: 201 })
   } catch (error) {
     return canonicalFailure(error, "Unable to create credential.")
   }

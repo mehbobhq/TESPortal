@@ -537,7 +537,7 @@ const SOURCE_ORIGINS: readonly ControlledOption[] = [
 const REPORTER_OPTIONS: readonly ControlledOption[] = [
   { value: "DRIVER", label: "Driver" },
   { value: "COMPANY_USER", label: "Company User" },
-  { value: "TES_REVIEWER", label: "TES Reviewer" },
+  { value: "TES\u005fREVIEWER", label: "TES Reviewer" },
   { value: "INTEGRATION", label: "Integration" },
   { value: "OTHER", label: "Other" },
 ];

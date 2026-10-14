@@ -8,7 +8,7 @@
  * its own system of record instead.
  */
 
-import { REFERENCE_MAX_LENGTH } from "./limits.ts";
+import { REFERENCE_MAX_LENGTH } from "./limits";
 
 export interface MaterialOperationCoverage {
   expectedCount: number;

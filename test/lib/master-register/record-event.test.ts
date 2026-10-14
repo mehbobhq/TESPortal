@@ -9,12 +9,12 @@ import {
   RootEventSourceError,
   buildMasterRegisterEvent,
   recordEvent,
-} from "../../../lib/master-register/record-event.ts";
-import { InvalidActorError } from "../../../lib/master-register/actor-identity.ts";
-import { InvalidCoverageError } from "../../../lib/master-register/coverage.ts";
-import { UnregisteredEventTypeError } from "../../../lib/master-register/event-types.ts";
-import type { MasterRegisterEventInput } from "../../../lib/master-register/types.ts";
-import { InMemoryMasterRegisterRepository } from "./in-memory-repository.ts";
+} from "../../../lib/master-register/record-event";
+import { InvalidActorError } from "../../../lib/master-register/actor-identity";
+import { InvalidCoverageError } from "../../../lib/master-register/coverage";
+import { UnregisteredEventTypeError } from "../../../lib/master-register/event-types";
+import type { MasterRegisterEventInput } from "../../../lib/master-register/types";
+import { InMemoryMasterRegisterRepository } from "./in-memory-repository";
 
 function validInput(overrides: Partial<MasterRegisterEventInput> = {}): MasterRegisterEventInput {
   return {

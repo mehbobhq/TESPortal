@@ -71,19 +71,8 @@ import {
   storeContactEvidenceManifest,
 } from "@/src/components/contacts/evidence-storage";
 
-// Re-exported for backward compatibility: these types/constants/helpers used
-// to be declared in this file. They now live in src/components/contacts/ (see
-// imports above) so reusable components do not depend on this route page.
-export type { Contact, ContactEvent, Evidence, OCRReviewDraft, Relationship };
-export {
-  ALL_JURISDICTIONS,
-  STANDARD_ROLES,
-  applyPrimaryRule,
-  findDuplicateContact,
-  isWithinThreeYears,
-  OCR_REQUIRED_THRESHOLD,
-  simulateOCRExtraction,
-};
+// Reusable contact types and helpers are imported from src/components/contacts/.
+// Next.js route pages must not export non-route symbols.
 
 // =========================================================================
 // MAIN CONTACTS PAGE COMPONENT

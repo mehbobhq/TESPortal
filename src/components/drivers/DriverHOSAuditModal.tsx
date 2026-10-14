@@ -62,9 +62,7 @@ export function DriverHOSAuditModal({
   const [evidenceSummary, setEvidenceSummary] = useState(
     hos?.reviewNotes || ""
   );
-  const [carrierResolution, setCarrierResolution] = useState<HOSReview["carrierResolution"] | "">(
-    hos?.reviewStatus === "Confirmed" ? "Coaching Assigned" : ""
-  );
+const [carrierResolution, setCarrierResolution] = useState<HOSReview["carrierResolution"] | "">("");
   const [correctiveActionReferral, setCorrectiveActionReferral] = useState("");
   const [isFinalized, setIsFinalized] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +72,10 @@ export function DriverHOSAuditModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-
+if (!event.driverMasterId?.trim()) {
+  setError("This HOS event must be linked to a Driver Master before a review can be saved.");
+  return;
+}
     if (!auditorName.trim()) {
       setError("Auditor name is required for compliance audit trails.");
       return;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { findCompanyIdentifierConflicts } from "@/lib/company-directory/service"
+import { findCompanyIdentifierConflicts, CompanyDirectoryValidationError } from "@/lib/company-directory/service"
 import { CorporateIdentityValidationError } from "@/lib/corporate-identity/errors"
 import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
 
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     if (error instanceof TesAuthorizationDeniedError) {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 })
     }
-    if (error instanceof CorporateIdentityValidationError) {
+    if (error instanceof CorporateIdentityValidationError || error instanceof CompanyDirectoryValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
     return NextResponse.json({ error: "Unable to check corporate identifiers." }, { status: 500 })

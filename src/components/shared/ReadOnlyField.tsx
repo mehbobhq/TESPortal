@@ -116,7 +116,7 @@ export function RegulatoryIdentifierField({
             {displayVal}
           </span>
           {isValid && value && (
-            <ShieldCheck className="size-3.5 text-emerald-500 shrink-0" title="Checksum & syntax verified" />
+            <ShieldCheck className="size-3.5 text-emerald-500 shrink-0" aria-label="Checksum & syntax verified" />
           )}
         </div>
 

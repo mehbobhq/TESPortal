@@ -1,4 +1,4 @@
-import { DeadlineRules, DeadlineStatus } from "../types";
+import type { DeadlineRules, DeadlineStatus } from "../src/types";
 
 export const DEFAULT_DEADLINE_RULES: DeadlineRules = {
   healthyMinDays: 61,

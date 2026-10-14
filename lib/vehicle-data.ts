@@ -1,4 +1,4 @@
-import {
+import type {
   DeadlineRules,
   DeadlineStatus,
   VehicleDraft,
@@ -6,7 +6,7 @@ import {
   Company,
   EquipmentType,
   RegistrationType,
-} from "../types";
+} from "../src/types";
 
 // Re-export shared mechanics for backward compatibility
 export {
@@ -486,7 +486,7 @@ export function emptyVehicleDraft(company: Company): VehicleDraft {
     cabCardNumber: `CAB-${Math.floor(100000 + Math.random() * 900000)}`,
 
     hasInitialInspection: true,
-    inspectionType: "Annual Periodic Inspection (CVIP / DOT 396.17)",
+    inspectionType: "Annual / Periodic Commercial Vehicle Inspection",
     inspectionDate: addDaysISO(-60),
     inspectionExpiry: addDaysISO(305),
     inspectorName: "David K. - Safety Cert #8129",
@@ -575,7 +575,7 @@ export function getDefaultSeedVehicles(company: Company): VehicleRecord[] {
       inspections: [
         {
           id: "INSP-101",
-          inspectionType: "Annual Periodic Inspection (CVIP / DOT 396.17)",
+          inspectionType: "Annual / Periodic Commercial Vehicle Inspection",
           inspectionDate: addDaysISO(-240),
           expiryDate: addDaysISO(125),
           stationName: "FleetPro Maintenance Center #9102",
@@ -639,7 +639,7 @@ export function getDefaultSeedVehicles(company: Company): VehicleRecord[] {
       inspections: [
         {
           id: "INSP-102",
-          inspectionType: "Annual Periodic Inspection (CVIP / DOT 396.17)",
+          inspectionType: "Annual / Periodic Commercial Vehicle Inspection",
           inspectionDate: addDaysISO(-340),
           expiryDate: addDaysISO(25), // Urgent status
           stationName: "Apex Heavy Truck Repair #3301",
@@ -702,7 +702,7 @@ export function getDefaultSeedVehicles(company: Company): VehicleRecord[] {
       inspections: [
         {
           id: "INSP-R5301",
-          inspectionType: "Annual Periodic Inspection (CVIP / DOT 396.17)",
+          inspectionType: "Annual / Periodic Commercial Vehicle Inspection",
           inspectionDate: addDaysISO(-180),
           expiryDate: addDaysISO(185),
           stationName: "Utility Trailer Service Center",
@@ -748,7 +748,7 @@ export function getDefaultSeedVehicles(company: Company): VehicleRecord[] {
       inspections: [
         {
           id: "INSP-V5308",
-          inspectionType: "Annual Periodic Inspection (CVIP / DOT 396.17)",
+          inspectionType: "Annual / Periodic Commercial Vehicle Inspection",
           inspectionDate: addDaysISO(-380),
           expiryDate: addDaysISO(-15), // Expired status
           stationName: "Central Fleet Depot",

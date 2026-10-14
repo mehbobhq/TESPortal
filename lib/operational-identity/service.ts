@@ -44,3 +44,24 @@ export const restoreVehicle=(input:lifecycle.VehicleLifecycleInput)=>withAuthori
 export const endVehicleRelationship=(input:lifecycle.EndRelationshipInput)=>withAuthorizedSystem("VEHICLE_MANAGE",(c,d)=>lifecycle.endVehicleRelationship(context(c,d),input))
 export const changeVehicleUnitNumber=(input:lifecycle.UnitNumberInput)=>withAuthorizedSystem("VEHICLE_MANAGE",(c,d)=>lifecycle.changeVehicleUnitNumber(context(c,d),input))
 export const correctVehicleUnitNumber=(input:lifecycle.UnitNumberInput)=>withAuthorizedSystem("VEHICLE_MANAGE",(c,d)=>lifecycle.correctVehicleUnitNumber(context(c,d),input))
+
+// --- Driver operations (UI recovery): see driver-operations.ts. Appended block; vehicle-* operations are wired separately. ---
+import * as driverOperations from "./driver-operations"
+export { DriverConflictError, DriverNotFoundError, DriverStateError, DriverValidationError } from "./driver-errors"
+export type { CreateDriverResult, ExistingDriverMatch } from "./driver-operations"
+export const checkExistingDriver=(organizationId:string,input:unknown)=>withAuthorizedSystem("DRIVER_READ",(c)=>driverOperations.checkExistingDriver(c,organizationId,input))
+export const createDriver=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.createDriver(context(c,d),input))
+export const addExistingDriver=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.addExistingDriver(context(c,d),input))
+export const changeDriverName=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.changeDriverName(context(c,d),input))
+export const correctDriverName=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.correctDriverName(context(c,d),input))
+export const setDriverChannel=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.setDriverChannel(context(c,d),input))
+export const changeDriverRelationship=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.changeDriverRelationship(context(c,d),input))
+export const correctDriverRelationship=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.correctDriverRelationship(context(c,d),input))
+export const endDriverRelationship=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.endDriverRelationship(context(c,d),input))
+export const recordDriverLicence=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.recordDriverLicence(context(c,d),input))
+export const correctDriverLicence=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.correctDriverLicence(context(c,d),input))
+export const voidDriverLicence=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.voidDriverLicence(context(c,d),input))
+export const addMedicalPeriod=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.addMedicalPeriod(context(c,d),input))
+export const changeMedicalPeriod=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.changeMedicalPeriod(context(c,d),input))
+export const correctMedicalPeriod=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.correctMedicalPeriod(context(c,d),input))
+export const voidMedicalPeriod=(input:unknown)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>driverOperations.voidMedicalPeriod(context(c,d),input))

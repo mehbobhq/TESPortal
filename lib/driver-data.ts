@@ -526,7 +526,7 @@ function reconcileApplicantSubmissionHandoffs(store: CompanyDriverStore): Compan
       return {
         ...application,
         status: laterStatus ? application.status : "Submitted",
-        submittedAt: application.submittedAt || snapshot.submittedAt,
+        submittedDate: application.submittedDate || snapshot.submittedAt,
         updatedAt: snapshot.submittedAt,
         applicantSubmissionReceiptId: (application as any).applicantSubmissionReceiptId || snapshot.receiptId,
         applicantSubmittedSnapshot: snapshot,
@@ -572,7 +572,7 @@ export function ingestApplicantSubmissionSnapshot(
   const updatedApplication = {
     ...application,
     status: laterStatus ? application.status : "Submitted",
-    submittedAt: application.submittedAt || snapshot.submittedAt,
+    submittedDate: application.submittedDate || snapshot.submittedAt,
     updatedAt: snapshot.submittedAt,
     applicantSubmissionReceiptId: (application as any).applicantSubmissionReceiptId || snapshot.receiptId,
     applicantSubmittedSnapshot: snapshot,
@@ -1930,13 +1930,13 @@ export function reconcileDriverApplicationEvidence(
     throw new Error("Only an immutable submitted application can be reconciled against evidence.")
   }
 
-  const claimed = application.claimed || {}
-  const claimedLicence = claimed.licences?.[0]
+  const claimedPersonal = application.personalInfoClaimed
+  const claimedLicence = application.claimedLicences?.[0]
   const comparisons = [
     compareDriverApplicationFact({
       subject: "Identity",
       label: "Legal first name",
-      applicantStatement: claimed.personal?.firstName,
+      applicantStatement: claimedPersonal?.legalFirstName,
       evidenceStatement: evidenceFacts.legalFirstName,
       evidenceIds: evidenceFacts.evidenceIds,
       required: true,
@@ -1944,7 +1944,7 @@ export function reconcileDriverApplicationEvidence(
     compareDriverApplicationFact({
       subject: "Identity",
       label: "Legal last name",
-      applicantStatement: claimed.personal?.lastName,
+      applicantStatement: claimedPersonal?.legalLastName,
       evidenceStatement: evidenceFacts.legalLastName,
       evidenceIds: evidenceFacts.evidenceIds,
       required: true,
@@ -1952,7 +1952,7 @@ export function reconcileDriverApplicationEvidence(
     compareDriverApplicationFact({
       subject: "Identity",
       label: "Date of birth",
-      applicantStatement: claimed.personal?.dateOfBirth,
+      applicantStatement: claimedPersonal?.dateOfBirth,
       evidenceStatement: evidenceFacts.dateOfBirth,
       evidenceIds: evidenceFacts.evidenceIds,
       normalize: normalizeComparisonDate,

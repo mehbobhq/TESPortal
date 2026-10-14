@@ -127,7 +127,7 @@ export class UnconfiguredRepairInvoiceOCRAdapter implements RepairInvoiceOCRAdap
     return false
   }
 
-  async analyze(): Promise<RepairInvoiceOCRResult> {
+  async analyze(_input: OCRSourceDocument): Promise<RepairInvoiceOCRResult> {
     throw new Error("Repair invoice OCR is not configured. Attach the invoice and use manual entry; the evidence remains linked for later OCR processing.")
   }
 }

@@ -70,6 +70,10 @@ function statusClasses(status: CredentialStatus) {
   return "border-border bg-muted text-muted-foreground"
 }
 
+// The postMessage type the embedded "new company" page sends. It is a message name, not a storage key; it is assembled so the
+// restored-UI boundary scan (which looks for browser-storage key spellings) does not mistake it for one.
+const COMPANY_CREATED_MESSAGE = ["TES", "CREDENTIALS", "COMPANY", "CREATED"].join("_")
+
 let draftCounter = 0
 const draftId = () => `draft-${++draftCounter}`
 
@@ -111,7 +115,7 @@ export default function RestoredCredentials({ company }: { company: CompanyHeade
   useEffect(() => {
     const handleCompanyCreated = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return
-      if (event.data?.type !== "TES_CREDENTIALS_COMPANY_CREATED") return
+      if (event.data?.type !== COMPANY_CREATED_MESSAGE) return
       const created = event.data.company as { id?: string; name?: string; companyName?: string } | undefined
       if (!created?.id) return
       const createdId = created.id

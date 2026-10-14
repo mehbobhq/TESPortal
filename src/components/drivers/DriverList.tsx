@@ -25,7 +25,7 @@ import {
   DriverStatus,
   LicenceRecord,
 } from "@/types/drivers";
-import { fullLegalName, currentLicence, currentAddress, calculateAge, findDriverDuplicate } from "@/lib/driver-data";
+import { fullLegalName, currentLicence, currentAddress, calculateAge, findDriverIdentityMatch } from "@/lib/driver-data";
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 
 export interface DriverListProps {
@@ -187,15 +187,18 @@ export function DriverList({
       licenceEffectiveFrom: newDriverDraft.startDate,
     };
 
-    const match = findDriverDuplicate(testInput, driverMasters);
+    const match = findDriverIdentityMatch(testInput, driverMasters);
 
-    if (match.kind === "CLEAR") {
+    if (
+      (match.kind === "EXACT_LICENCE" || match.kind === "STRONG") &&
+      match.master
+    ) {
       setDuplicateWarning(
-        `Exact match found with existing Driver Master ${fullLegalName(match.driver)} (${match.driver.id}) [${match.finding.matchedField}: ${match.finding.matchedValue}].`
+        `Existing Driver Master identified: ${fullLegalName(match.master)} (${match.master.id}). ${match.reasons.join("; ")}. Review the existing identity before creating another record.`
       );
-    } else if (match.kind === "AMBIGUOUS") {
+    } else if (match.kind === "POSSIBLE" && match.master) {
       setDuplicateWarning(
-        `Potential match found with ${match.drivers.length} existing Driver Master(s): ${match.drivers.map((d) => fullLegalName(d)).join(", ")}.`
+        `Possible existing Driver Master: ${fullLegalName(match.master)} (${match.master.id}). ${match.reasons.join("; ")}. Identity review is required. Other potential matches may exist.`
       );
     } else {
       setDuplicateWarning(null);

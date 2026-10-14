@@ -6,9 +6,9 @@
  * lib/master-register and must never be imported by application code.
  */
 
-import { DuplicateEventError } from "../../../lib/master-register/repository.ts";
-import type { MasterRegisterRepository } from "../../../lib/master-register/repository.ts";
-import type { MasterRegisterEvent } from "../../../lib/master-register/types.ts";
+import { DuplicateEventError } from "../../../lib/master-register/repository";
+import type { MasterRegisterRepository } from "../../../lib/master-register/repository";
+import type { MasterRegisterEvent } from "../../../lib/master-register/types";
 
 export class InMemoryMasterRegisterRepository implements MasterRegisterRepository {
   private readonly events: MasterRegisterEvent[] = [];

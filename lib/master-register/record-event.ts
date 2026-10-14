@@ -294,8 +294,7 @@ function assertLengthConstraints(input: MasterRegisterEventInput): void {
 
   if (input.target) {
     if (input.target.resourceId !== undefined) assertMaxLength(input.target.resourceId, IDENTIFIER_MAX_LENGTH, "target.resourceId");
-    if (input.target.companyId !== undefined) assertMaxLength(input.target.companyId, IDENTIFIER_MAX_LENGTH, "target.companyId");
-    assertMaxLengthEach(input.target.companyScope, IDENTIFIER_MAX_LENGTH, "target.companyScope");
+    if (input.target.customerId !== undefined) assertMaxLength(input.target.customerId, IDENTIFIER_MAX_LENGTH, "target.customerId");
     assertMaxLengthEach(input.target.subjectReferences, REFERENCE_MAX_LENGTH, "target.subjectReferences");
   }
 

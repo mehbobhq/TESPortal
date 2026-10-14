@@ -242,8 +242,17 @@ export async function findCompanyIdentifierConflicts(input: {
   const identifiers: CorporateIdentifierInput[] = []
   const country = countryCode(input.regCorpCountry)
   const region = text(input.regCorpState) || null
+  if (text(input.incorpNo) && !country) {
+    throw new CompanyDirectoryValidationError("Incorporation number requires a formation country.")
+  }
+  if (text(input.incorpNo) && country === "US" && !region) {
+    throw new CompanyDirectoryValidationError("US incorporation number requires a formation state.")
+  }
   if (text(input.incorpNo) && country) {
     identifiers.push({ kind: "INCORPORATION", value: text(input.incorpNo), country, region })
+  }
+  if (text(input.businessNo) && country === "US") {
+    throw new CompanyDirectoryValidationError("CRA Business Number cannot be assigned to a US formation.")
   }
   if (text(input.businessNo)) identifiers.push({ kind: "CRA_BN", value: text(input.businessNo) })
   if (text(input.ein)) identifiers.push({ kind: "IRS_EIN", value: text(input.ein) })

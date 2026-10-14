@@ -71,8 +71,8 @@ export function EvidencePanel({
   };
 
   const getSourceIcon = (source: string) => {
-    if (source === "camera") return <Camera className="size-3 text-muted-foreground" title="Captured via live camera" />;
-    if (source === "upload") return <Upload className="size-3 text-muted-foreground" title="Uploaded from device" />;
+    if (source === "camera") return <Camera className="size-3 text-muted-foreground" aria-label="Captured via live camera" />;
+    if (source === "upload") return <Upload className="size-3 text-muted-foreground" aria-label="Uploaded from device" />;
     return <FileText className="size-3 text-muted-foreground" />;
   };
 

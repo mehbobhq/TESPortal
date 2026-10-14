@@ -19,8 +19,8 @@
  * system" is never an acceptable actorId on its own.
  */
 
-import { IDENTIFIER_MAX_LENGTH } from "./limits.ts";
-import type { ActorType, EventActor } from "./types.ts";
+import { IDENTIFIER_MAX_LENGTH } from "./limits";
+import type { ActorType, EventActor } from "./types";
 
 export class InvalidActorError extends Error {
   constructor(message: string) {

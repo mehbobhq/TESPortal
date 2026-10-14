@@ -406,9 +406,16 @@ export async function createOrganization(ctx: OperationContext, rawInput: unknow
     [`tes:organization:create:${normalizedLegalName}`],
   )
   const nameCandidates = await ctx.client.query<{ id: string }>(
-    `SELECT id FROM public.organizations
-      WHERE normalized_legal_name = $1
-      LIMIT 1`,
+    `SELECT o.id
+       FROM public.organizations o
+       WHERE o.normalized_legal_name = $1
+          OR EXISTS (
+            SELECT 1 FROM public.organization_aliases a
+            WHERE a.organization_id = o.id
+              AND a.normalized_alias = $1
+              AND a.status = 'active'
+          )
+       LIMIT 1`,
     [normalizedLegalName],
   )
   if (nameCandidates.rowCount && nameCandidates.rowCount > 0) {

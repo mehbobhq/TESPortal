@@ -1422,10 +1422,9 @@ export default function NewCompanyPage() {
           opRegion,
           regCorpState: businessRegion,
           regCorpCountry: businessCountry,
-          businessNo:
-            opRegion === "US Only"
-              ? einNumber
-              : businessNumber,
+          // CRA BN and IRS EIN are distinct authoritative identifiers.
+          // Never copy an EIN into the Canadian Business Number field.
+          businessNo: businessNumber,
           ein: einNumber,
           cargoTypes: selectedCargo,
         }),

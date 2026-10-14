@@ -403,7 +403,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.licenceNumber}
-                    onChange={(value) => setForm({ ...form, licenceNumber: value })}
+                    onChange={(event) => setForm({ ...form, licenceNumber: event.target.value })}
                     required
                     placeholder="e.g. D1234-56789-01234"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono font-bold mt-1"
@@ -444,7 +444,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.class}
-                    onChange={(value) => setForm({ ...form, class: value })}
+                    onChange={(event) => setForm({ ...form, class: event.target.value })}
                     placeholder="e.g. Class A / AZ"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />
@@ -527,7 +527,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.endorsements}
-                    onChange={(value) => setForm({ ...form, endorsements: value })}
+                    onChange={(event) => setForm({ ...form, endorsements: event.target.value })}
                     placeholder="e.g. Air Brake (Z), Tanker (N), Hazmat (H)"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />
@@ -540,7 +540,7 @@ const syntaxCheck = {
                   <input
                     type="text"
                     value={form.restrictions}
-                    onChange={(value) => setForm({ ...form, restrictions: value })}
+                    onChange={(event) => setForm({ ...form, restrictions: event.target.value })}
                     placeholder="e.g. Corrective Lenses (01)"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />

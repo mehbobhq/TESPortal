@@ -1122,6 +1122,46 @@ export default function NewCompanyPage() {
   const [submitting, setSubmitting] = useState(false)
   const [serverMatches, setServerMatches] = useState<Array<{ id: string; name: string; match: string }>>([])
   const [identityCheck, setIdentityCheck] = useState<"idle" | "checking" | "ready" | "error">("idle")
+  const [incorporationNumber, setIncorporationNumber] = useState("")
+  const [identifierMatches, setIdentifierMatches] = useState<Array<{ kind: string; organizationId: string; name: string }>>([])
+  const [identifierCheck, setIdentifierCheck] = useState<"checking" | "ready" | "error">("checking")
+
+  useEffect(() => {
+    const country = businessCountry === "Canada" ? "CA" : businessCountry === "United States" ? "US" : ""
+    const incorpNo = incorporationNumber.trim()
+    const businessNo = businessNumber.trim()
+    const ein = einNumber.trim()
+    setIdentifierMatches([])
+    setIdentifierCheck("checking")
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/companies/duplicates/identifiers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            incorpNo: incorpNo.length >= 3 && country ? incorpNo : "",
+            businessNo: /^\\d{9}$/.test(businessNo) ? businessNo : "",
+            ein: /^\\d{2}-?\\d{7}$/.test(ein) ? ein : "",
+            regCorpCountry: country,
+            regCorpState: businessRegion,
+          }),
+          signal: controller.signal,
+          cache: "no-store",
+        })
+        if (!response.ok) throw new Error("Identifier lookup failed")
+        const payload = await response.json()
+        if (!controller.signal.aborted) {
+          setIdentifierMatches(Array.isArray(payload.matches) ? payload.matches : [])
+          setIdentifierCheck("ready")
+        }
+      } catch {
+        if (!controller.signal.aborted) setIdentifierCheck("error")
+      }
+    }, 350)
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [incorporationNumber, businessNumber, einNumber, businessCountry, businessRegion])
+
 
   useEffect(() => {
     const name = companyName.trim()
@@ -1261,6 +1301,7 @@ export default function NewCompanyPage() {
     }
 
     if (identityCheck !== "ready" || serverMatches.length > 0) return false
+    if (identifierCheck !== "ready" || identifierMatches.length > 0) return false
 
     if (blockingFindings.length > 0) {
       return false
@@ -1286,6 +1327,8 @@ export default function NewCompanyPage() {
     reviewAcknowledged,
     identityCheck,
     serverMatches,
+    identifierCheck,
+    identifierMatches,
   ])
 
   /* ---------------------------------------------------------
@@ -1298,6 +1341,11 @@ export default function NewCompanyPage() {
     event.preventDefault()
 
     const form = event.currentTarget
+
+    if (identifierCheck !== "ready" || identifierMatches.length > 0) {
+      window.alert("Resolve the corporate identifier check before saving.")
+      return
+    }
 
     if (identityCheck !== "ready" || serverMatches.length > 0) {
       window.alert("Complete the company identity lookup and review any matches before saving.")
@@ -1755,6 +1803,7 @@ export default function NewCompanyPage() {
 
               <Input
                 name="incorpNo"
+                onChange={(event) => setIncorporationNumber(event.target.value)}
                 placeholder={
                   businessCountry === "Canada"
                     ? "e.g. 1234567-8"
@@ -2261,6 +2310,19 @@ export default function NewCompanyPage() {
             {serverMatches.map((match) => <div key={match.id} className="flex items-center justify-between gap-2 rounded border p-2">
               <span>{match.name} ({match.match === "alias" ? "DBA" : "legal name"})</span>
               <a className="text-primary underline" href={`/companies/${encodeURIComponent(match.id)}`}>Review company</a>
+            </div>)}
+          </div>}
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 text-sm" aria-live="polite">
+          <p className="font-semibold">Corporate identifier verification</p>
+          {identifierCheck === "checking" && <p>Checking registered identifiers…</p>}
+          {identifierCheck === "error" && <p className="text-destructive">Identifier lookup unavailable. Creation is paused.</p>}
+          {identifierCheck === "ready" && identifierMatches.length === 0 && <p>No submitted corporate identifier collision detected.</p>}
+          {identifierMatches.length > 0 && <div className="space-y-2">
+            <p className="font-medium text-destructive">Creation blocked — an authoritative identifier belongs to an existing organization.</p>
+            {identifierMatches.map((match) => <div key={match.organizationId + match.kind} className="flex items-center justify-between gap-2 rounded border p-2">
+              <span>{match.name} ({match.kind})</span>
+              <a className="text-primary underline" href={`/companies/${encodeURIComponent(match.organizationId)}`}>Review existing company</a>
             </div>)}
           </div>}
         </div>

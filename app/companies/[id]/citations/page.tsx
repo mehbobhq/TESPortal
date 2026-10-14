@@ -978,7 +978,7 @@ export default function CitationsPage() {
             <Search className="size-4 absolute left-3 top-2.5 text-muted-foreground" />
             <Input placeholder="Search report #, officer, driver, or unit..." className="pl-9 h-9" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
-          <Select value={filterType} onValueChange={setFilterType}>
+          <Select value={filterType} onValueChange={(value) => { if (value !== null) setFilterType(value) }}>
             <SelectTrigger className="w-48 h-9"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Types</SelectItem>

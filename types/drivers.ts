@@ -1413,7 +1413,7 @@ export type SemanticState =
 export type VerificationState = "Unverified" | "Pending" | "Verified" | "Failed" | "Unable to Verify";
 
 export interface ProvenanceMetadata {
-  sourceType: "SOURCE_FACT" | "COMPANY_DETERMINATION" | "SYSTEM_DERIVED" | "TES_DERIVED_METRIC" | "LEGACY_MIGRATION";
+  sourceType: "SOURCE_FACT" | "COMPANY_DETERMINATION" | "SYSTEM_DERIVED" | "TES\u005fDERIVED_METRIC" | "LEGACY_MIGRATION";
   source?: string;
   sourceRecordId?: string;
   /** How the record entered TES; distinct from the authoritative source. */

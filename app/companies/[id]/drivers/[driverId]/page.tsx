@@ -11,6 +11,10 @@ import {
   loadDriverMasterStore,
 } from "@/lib/driver-data"
 import { logAuditEvent } from "@/lib/audit-log"
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
+import { RestoredDriverDetail } from "@/src/restored/drivers/RestoredDriverDetail"
+import type { CanonicalCompany } from "@/types/drivers"
 
 import type {
   CompanyDriverStore,
@@ -234,13 +238,45 @@ const allDriversCohort = companyStore.relationships
 }
 
 
+/**
+ * The ORIGINAL driver workspace restored over the canonical record: `driverId` here is the canonical person id taken from the
+ * Drivers list. The company is opened through the canonical profile endpoint, and the driver through the company-scoped drivers API.
+ */
+function CanonicalDriverPage({ params }: DriverPageProps) {
+  const { id: companyId, driverId } = use(params)
+  const [company, setCompany] = useState<CanonicalCompany | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/companies/${encodeURIComponent(companyId)}/profile`, { cache: "no-store" })
+      .then(async (response) => {
+        if (cancelled) return
+        const lookup = await readCompanyLookup<CanonicalCompany>(response)
+        setCompany(lookup.company)
+        setLookupFailed(lookup.failed)
+      })
+      .catch(() => !cancelled && setLookupFailed(true))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [companyId])
+
+  if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading Driver record...</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
+  return <RestoredDriverDetail companyId={companyId} personId={driverId} company={company} />
+}
+
 export default function DriverPage(props: DriverPageProps) {
   const { id: companyId } = use(props.params)
   return (
     <LegacyWorkspaceGate
       companyId={companyId}
       title="Driver compliance record"
-      description="The detailed driver compliance record (qualifications, training, roadside events, documents) is saved only in this browser. Canonical drivers appear in the Drivers list; their detailed record is not in the TES database yet. Nothing here was changed or deleted."
+      description="The detailed driver compliance record (qualifications, training, roadside events, documents) is saved only in this browser. Canonical drivers appear in the Drivers list; this browser-local record is separate from them and is not in the TES database. Nothing here was changed or deleted."
+      canonical={<CanonicalDriverPage {...props} />}
     >
       <LegacyDriverPage {...props} />
     </LegacyWorkspaceGate>

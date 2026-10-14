@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate";
-import { CanonicalContacts } from "./canonical-contacts";
+import { RestoredContacts } from "@/src/restored/contacts/RestoredContacts";
 import {
   Building2,
   CheckCircle2,
@@ -72,20 +72,6 @@ import {
   storeContactEvidenceDataUrl,
   storeContactEvidenceManifest,
 } from "@/src/components/contacts/evidence-storage";
-
-// Re-exported for backward compatibility: these types/constants/helpers used
-// to be declared in this file. They now live in src/components/contacts/ (see
-// imports above) so reusable components do not depend on this route page.
-export type { Contact, ContactEvent, Evidence, OCRReviewDraft, Relationship };
-export {
-  ALL_JURISDICTIONS,
-  STANDARD_ROLES,
-  applyPrimaryRule,
-  findDuplicateContact,
-  isWithinThreeYears,
-  OCR_REQUIRED_THRESHOLD,
-  simulateOCRExtraction,
-};
 
 // =========================================================================
 // MAIN CONTACTS PAGE COMPONENT
@@ -935,6 +921,23 @@ function LegacyContactsPage() {
   );
 }
 
+/**
+ * Honest footer for the TES-records tab: what the restored Contacts workspace cannot do yet (the controls stay visible and
+ * refuse with the reason). The TES-records tab reads and writes PostgreSQL through fetch() to /api/companies/[id]/contacts.
+ */
+function ContactsUnavailableActions() {
+  return (
+    <div role="note" className="mx-6 mb-8 rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+      <p className="font-semibold text-foreground">Unavailable actions (deferred)</p>
+      <ul className="mt-1 list-disc pl-5">
+        <li>Date of birth, driver licence details and notes: no field in the contacts record (licence and date of birth belong to the driver record); entering them refuses the save.</li>
+        <li>Document / OCR intake, camera capture and identity evidence: shown for review only; extraction is retired and contacts have no evidence link, so nothing is stored.</li>
+        <li>Other companies a person works for: only relationships with this company are loaded here.</li>
+      </ul>
+    </div>
+  )
+}
+
 export default function ContactsPage() {
   const params = useParams()
   const companyId = params.id as string
@@ -943,7 +946,12 @@ export default function ContactsPage() {
       companyId={companyId}
       title="Contacts"
       description="Contacts, documents and OCR review saved here stay only in this browser (a prototype store); they are not the canonical contacts in the TES database. Nothing here was changed or deleted."
-      canonical={<CanonicalContacts companyId={companyId} />}
+      canonical={
+        <>
+          <RestoredContacts companyId={companyId} />
+          <ContactsUnavailableActions />
+        </>
+      }
     >
       <LegacyContactsPage />
     </LegacyWorkspaceGate>

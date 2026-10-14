@@ -297,3 +297,14 @@ NOT cut over: Citations, Driver detail (/drivers/[driverId]), legacy Contacts ta
 8. Migration immutability: 0013/0014/0020-0024 edited multiple times; prod apply timing vs edits not provable from repo. next.config ignoreBuildErrors true; baseline TS diagnostics tolerated; 41 DB + 4 static tests fail on main.
 9. SYSTEM-scope isolation relies on query predicates, not RLS; capabilities global to staff; policies drifted from operations (0027/0028 patches); production creators' capability grants unverified.
 10. send-invitation and driver-application submission paths remain outside TES authorization/PostgreSQL (JSON file store, Clerk-only gate); audit P0/P1 (F-001, F-005, F-010) unresolved in repo evidence; BI/DS and Master Register viewer absent.
+
+---
+
+## Addendum: UI recovery on `claude/ui-recovery` (appended; nothing above was changed)
+
+Blocks 9-13 (Vehicles, Drivers, Authorities, Tax, Insurance) and 14 (Credentials), plus Contacts, Settings and Business, moved from
+"UI regressed" to "original interface restored over canonical operations, with the unavailable actions named in place". Per-workspace
+state is in `ui-recovery-matrix.md`. Still incomplete after this work: citations (no domain), evidence links for vehicles/drivers/
+policies/authorities/tax, the filing/obligation domain, ownership percentages and annual returns, OCR/document intake (retired by
+decision), the ten company fields without an owner, the Master Register read UI, legacy-data import (0029 has no route/UI), and the
+send-invitation / driver-application paths. Risks 1-10 above remain open unless a matrix says otherwise; none was closed by assertion.

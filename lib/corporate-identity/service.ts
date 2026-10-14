@@ -5,6 +5,7 @@ import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthori
 import { withAuthorizedCustomer } from "@/lib/auth/tes-customer-context"
 import { CorporateIdentityNotFoundError } from "@/lib/corporate-identity/errors"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
+import * as businessIdentifiers from "@/lib/corporate-identity/business-identifiers"
 import * as operations from "@/lib/corporate-identity/operations"
 import { loadCustomerOrganizationId, loadOrganization } from "@/lib/corporate-identity/repository"
 import type {
@@ -164,5 +165,21 @@ export async function archiveOrganization(organizationId: string, options?: { re
 export async function restoreOrganization(organizationId: string, options?: { reason?: string }): Promise<MutationResult> {
   return withAuthorizedSystem("ORGANIZATION_ARCHIVE", (client, decision) =>
     operations.restoreOrganization(context(client, decision), organizationId, options),
+  )
+}
+
+// --- Business workspace (business-identifiers.ts): CRA BN / IRS EIN registration with change-vs-correction history -----------
+
+/** Registers a CRA Business Number or IRS EIN. When one is already active the caller states whether this is a real change (history kept) or a correction. */
+export async function registerBusinessIdentifier(organizationId: string, input: unknown): Promise<MutationResult> {
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", (client, decision) =>
+    businessIdentifiers.registerBusinessIdentifier(context(client, decision), organizationId, input),
+  )
+}
+
+/** Retires (supersedes) one CRA Business Number or IRS EIN; it stays on record as history. */
+export async function retireBusinessIdentifier(organizationId: string, identifierId: string): Promise<MutationResult> {
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", (client, decision) =>
+    businessIdentifiers.retireBusinessIdentifier(context(client, decision), organizationId, identifierId),
   )
 }

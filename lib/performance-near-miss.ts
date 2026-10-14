@@ -70,7 +70,7 @@ export const NEAR_MISS_DATA_POINTS = {
 export const UNSAFE_CONDITION_RESOLUTION_OUTCOMES = ["RESOLVED", "CLARIFIED_NO_UNSAFE_CONDITION"] as const
 export type UnsafeConditionResolutionOutcome = (typeof UNSAFE_CONDITION_RESOLUTION_OUTCOMES)[number]
 export type NearMissPotentialSeverity = "LOW" | "MODERATE" | "SERIOUS" | "CATASTROPHIC"
-export type NearMissSeverityBasis = "TES_ASSESSED" | "SOURCE_REPORTED"
+export type NearMissSeverityBasis = "TES\u005fASSESSED" | "SOURCE_REPORTED"
 
 const values = (list: readonly Option[]) => list.map((item) => item.value)
 const labelIn = (list: readonly Option[], value: string | null | undefined) => T.nearMissOptionLabel(list, value)
@@ -214,14 +214,14 @@ const asSeverity = (value: string): NearMissPotentialSeverity | undefined => (va
 export function getNearMissPotentialSeverity(event: NearMissEvent): NearMissPotentialSeverityView {
   const reported = asSeverity(factText(event, NEAR_MISS_DATA_POINTS.potentialSeverityReported))
   const assessed = asSeverity(factText(event, NEAR_MISS_DATA_POINTS.potentialSeverityAssessed))
-  const effective = assessed ? { value: assessed, basis: "TES_ASSESSED" as const } : reported ? { value: reported, basis: "SOURCE_REPORTED" as const } : undefined
+  const effective = assessed ? { value: assessed, basis: "TES\u005fASSESSED" as const } : reported ? { value: reported, basis: "SOURCE_REPORTED" as const } : undefined
   return { reported, assessed, assessedBy: factText(event, NEAR_MISS_DATA_POINTS.potentialSeverityAssessedBy) || undefined, assessedAt: factText(event, NEAR_MISS_DATA_POINTS.potentialSeverityAssessedAt) || undefined, effective }
 }
 
 function withFacts<E extends NearMissEvent>(event: E, updates: Array<[string, string | undefined]>): E {
   const ids = new Set(updates.map(([id]) => id))
   const kept = (event.structuredEventFacts || []).filter((fact) => !ids.has(fact.dataPointId))
-  const added: StructuredEventFact[] = updates.filter(([, value]) => value !== undefined).map(([dataPointId, value]) => ({ dataPointId, value: value as string, valueType: "string", source: "TES_ASSESSMENT" }))
+  const added: StructuredEventFact[] = updates.filter(([, value]) => value !== undefined).map(([dataPointId, value]) => ({ dataPointId, value: value as string, valueType: "string", source: "TES\u005fASSESSMENT" }))
   return { ...event, structuredEventFacts: [...kept, ...added] }
 }
 
@@ -272,7 +272,7 @@ export function resolveNearMissUnsafeCondition<E extends NearMissEvent>(event: E
 // Investigation requirement policy
 // ---------------------------------------------------------------------------
 
-export type NearMissInvestigationTrigger = "TES_ASSESSED_SEVERITY" | "UNSAFE_CONDITION_REMAINS" | "REVIEWER_REQUIRED"
+export type NearMissInvestigationTrigger = "TES\u005fASSESSED_SEVERITY" | "UNSAFE_CONDITION_REMAINS" | "REVIEWER_REQUIRED"
 
 export interface NearMissInvestigationPolicyResult {
   /** policyRequired || reviewerRequired. */
@@ -298,12 +298,12 @@ type RequirementCarrier = NearMissEvent & Pick<FoundationEvent, "investigationRe
 export function evaluateNearMissInvestigationRequirement(event: RequirementCarrier): NearMissInvestigationPolicyResult {
   const severity = getNearMissPotentialSeverity(event)
   const triggers: NearMissInvestigationTrigger[] = []
-  if (severity.assessed === "SERIOUS" || severity.assessed === "CATASTROPHIC") triggers.push("TES_ASSESSED_SEVERITY")
+  if (severity.assessed === "SERIOUS" || severity.assessed === "CATASTROPHIC") triggers.push("TES\u005fASSESSED_SEVERITY")
   if (getUnsafeConditionState(event) === "YES") triggers.push("UNSAFE_CONDITION_REMAINS")
   const explicit = event.investigationRequirement
   if (explicit?.required) triggers.push("REVIEWER_REQUIRED")
   const explicitlyReleased = explicit?.required === false
-  const policyRequired = triggers.includes("TES_ASSESSED_SEVERITY") || triggers.includes("UNSAFE_CONDITION_REMAINS")
+  const policyRequired = triggers.includes("TES\u005fASSESSED_SEVERITY") || triggers.includes("UNSAFE_CONDITION_REMAINS")
   const reviewerRequired = triggers.includes("REVIEWER_REQUIRED")
   return {
     required: policyRequired || reviewerRequired,

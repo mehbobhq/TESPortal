@@ -407,8 +407,12 @@ function getSimilarity(a: string, b: string) {
   return ((maxLength - distance) / maxLength) * 100
 }
 
+// Existing companies come from the canonical registry (GET /api/companies), never from browser storage. Until the list has
+// loaded, or when it cannot be read, nothing is compared and the panel says so.
+let canonicalCompanyRecords: PortalRecord[] = []
+
 function getPortalRecords(): PortalRecord[] {
-  return []
+  return canonicalCompanyRecords
 }
 
 function getRecordName(record: Record<string, any>) {
@@ -543,7 +547,7 @@ function evaluateDuplicates(form: HTMLFormElement) {
     const normalizedCandidate = normalizeCompanyName(companyName)
 
     portalRecords.forEach(({ data, source }) => {
-      if (!data.name || !data.id?.toString().startsWith("CMP-")) return
+      if (!data.name) return
 
       const existingName = String(data.name)
       const normalizedExisting = normalizeCompanyName(existingName)
@@ -1011,12 +1015,24 @@ function DuplicateStatusPanel({
   review,
   reviewAcknowledged,
   onReviewAcknowledged,
+  registryState = "ready",
 }: {
   blocking: DuplicateFinding[]
   review: DuplicateFinding[]
+  registryState?: "loading" | "ready" | "unavailable"
   reviewAcknowledged: boolean
   onReviewAcknowledged: (checked: boolean) => void
 }) {
+  if (!blocking.length && !review.length && registryState !== "ready") {
+    return (
+      <div role="note" data-canonical-unavailable className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+        {registryState === "loading"
+          ? "Loading existing companies from the canonical registry…"
+          : "The existing-company list could not be read, so name and phone matching is unavailable. Strong identifiers (incorporation, tax, authority numbers) are still enforced when the company is created, and nothing is created if one is already registered."}
+      </div>
+    )
+  }
+
   if (!blocking.length && !review.length) {
     return (
       <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:bg-emerald-950/10">
@@ -1208,6 +1224,31 @@ export default function NewCompanyPage() {
   /* ---------------------------------------------------------
      RECORD ID
   --------------------------------------------------------- */
+
+  const [registryState, setRegistryState] = useState<"loading" | "ready" | "unavailable">("loading")
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/companies", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("unavailable"))))
+      .then((body: { companies?: { id: string; name: string }[] }) => {
+        if (cancelled) return
+        canonicalCompanyRecords = (body.companies ?? []).map((company) => ({
+          data: { id: company.id, name: company.name },
+          source: "TES company registry",
+        }))
+        setRegistryState("ready")
+      })
+      .catch(() => {
+        if (!cancelled) {
+          canonicalCompanyRecords = []
+          setRegistryState("unavailable")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -2393,6 +2434,7 @@ export default function NewCompanyPage() {
 
           <CardContent className="pt-5">
             <DuplicateStatusPanel
+              registryState={registryState}
               blocking={blockingFindings}
               review={reviewFindings}
               reviewAcknowledged={reviewAcknowledged}

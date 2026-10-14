@@ -1120,6 +1120,32 @@ export default function NewCompanyPage() {
   ] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
+  const [serverMatches, setServerMatches] = useState<Array<{ id: string; name: string; match: string }>>([])
+  const [identityCheck, setIdentityCheck] = useState<"idle" | "checking" | "ready" | "error">("idle")
+
+  useEffect(() => {
+    const name = companyName.trim()
+    setServerMatches([])
+    setReviewAcknowledged(false)
+    if (name.length < 3) { setIdentityCheck("idle"); return }
+    setIdentityCheck("checking")
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/companies/duplicates?name=${encodeURIComponent(name)}`, { signal: controller.signal, cache: "no-store" })
+        if (!response.ok) throw new Error("Lookup unavailable")
+        const payload = await response.json()
+        if (!controller.signal.aborted) {
+          setServerMatches(Array.isArray(payload.matches) ? payload.matches : [])
+          setIdentityCheck("ready")
+        }
+      } catch {
+        if (!controller.signal.aborted) setIdentityCheck("error")
+      }
+    }, 350)
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [companyName])
+
 
   /* ---------------------------------------------------------
      RECORD ID
@@ -1234,6 +1260,8 @@ export default function NewCompanyPage() {
       return false
     }
 
+    if (identityCheck !== "ready" || serverMatches.length > 0) return false
+
     if (blockingFindings.length > 0) {
       return false
     }
@@ -1256,6 +1284,8 @@ export default function NewCompanyPage() {
     blockingFindings,
     reviewFindings,
     reviewAcknowledged,
+    identityCheck,
+    serverMatches,
   ])
 
   /* ---------------------------------------------------------
@@ -1269,6 +1299,10 @@ export default function NewCompanyPage() {
 
     const form = event.currentTarget
 
+    if (identityCheck !== "ready" || serverMatches.length > 0) {
+      window.alert("Complete the company identity lookup and review any matches before saving.")
+      return
+    }
     const duplicateResult = runDuplicateCheck(form)
 
     if (duplicateResult.blocking.length > 0) {
@@ -2216,6 +2250,20 @@ export default function NewCompanyPage() {
             DUPLICATE / IDENTITY CONTROL
         =================================================== */}
 
+        <div className="rounded-xl border border-border bg-card p-4 text-sm" aria-live="polite">
+          <p className="font-semibold">Existing company check</p>
+          {identityCheck === "idle" && <p>Enter a company name to check for existing records.</p>}
+          {identityCheck === "checking" && <p>Checking PostgreSQL records…</p>}
+          {identityCheck === "error" && <p className="text-destructive">Lookup unavailable. Creation is paused.</p>}
+          {identityCheck === "ready" && serverMatches.length === 0 && <p>No exact legal-name or DBA match found. Identifiers are checked again on submission.</p>}
+          {serverMatches.length > 0 && <div className="space-y-2">
+            <p className="font-medium text-amber-700">Possible duplicate — review an existing company before proceeding.</p>
+            {serverMatches.map((match) => <div key={match.id} className="flex items-center justify-between gap-2 rounded border p-2">
+              <span>{match.name} ({match.match === "alias" ? "DBA" : "legal name"})</span>
+              <a className="text-primary underline" href={`/companies/${encodeURIComponent(match.id)}`}>Review company</a>
+            </div>)}
+          </div>}
+        </div>
         <Card className="border-primary/15">
           <CardHeader className="border-b bg-muted/20">
             <CardTitle className="flex items-center gap-2 text-sm">

@@ -25,6 +25,8 @@ import {
   type VehicleStore,
   type VehicleInspectionRecord,
   type VehicleMaintenanceRecord,
+  type InspectionFinding,
+  type MaintenanceItem,
 } from "@/lib/vehicle-data"
 import {
   getVehicleRepairInvoices,
@@ -183,13 +185,110 @@ function outcomeLabel(value?: ScheduledMaintenanceOutcome): string {
   return "Completed - No Defect Found"
 }
 
-function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, setNotice, setError }: {
+function FindingRow({
+  companyId,
+  store,
+  finding,
+  onStoreChange,
+  setNotice,
+  setError,
+  selectClass,
+  StatusPillComponent,
+}: {
+  companyId: string
+  store: VehicleStore
+  finding: InspectionFinding
+  onStoreChange: (store: VehicleStore) => void
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+  selectClass: string
+  StatusPillComponent: AnyComponent
+}) {
+  const [maintenanceItemId, setMaintenanceItemId] = useState("")
+  const links = getLinksForFinding(store, finding.id)
+  const linkedItems = links
+    .map((link) => store.maintenanceItems.find((item) => item.id === link.maintenanceItemId))
+    .filter((item): item is MaintenanceItem => Boolean(item))
+  const availableItems = store.maintenanceItems.filter((item) => !item.archived)
+
+  const refresh = () => onStoreChange(loadVehicleStore(companyId))
+  const changeStatus = (status: InspectionFinding["status"]) => {
+    try {
+      updateInspectionFindingStatus(companyId, finding.id, status)
+      refresh()
+      setNotice("Inspection finding status updated.")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Finding status could not be updated.")
+    }
+  }
+  const linkToMaintenance = () => {
+    if (!maintenanceItemId) return setError("Choose a maintenance item to link.")
+    try {
+      linkFindingToMaintenanceItem(companyId, finding.id, maintenanceItemId)
+      setMaintenanceItemId("")
+      refresh()
+      setNotice("Finding linked to maintenance.")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Finding could not be linked to maintenance.")
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">{finding.rawDescription}</p>
+          {finding.componentSystem ? <p className="mt-0.5 text-[10px] text-muted-foreground">Component / system: {finding.componentSystem}</p> : null}
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground">{finding.id}</p>
+        </div>
+        <StatusPillComponent value={finding.status} />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="space-y-1 text-[10px] font-medium text-muted-foreground">
+          Finding status
+          <select className={selectClass} value={finding.status} onChange={(event) => changeStatus(event.target.value as InspectionFinding["status"])}>
+            <option value="OPEN">Open</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="RESOLVED">Resolved</option>
+          </select>
+        </label>
+        <label className="space-y-1 text-[10px] font-medium text-muted-foreground">
+          Link to maintenance item
+          <div className="flex gap-2">
+            <select className={`${selectClass} min-w-0 flex-1`} value={maintenanceItemId} onChange={(event) => setMaintenanceItemId(event.target.value)}>
+              <option value="">Select maintenance item…</option>
+              {availableItems.map((item) => {
+                const parent = store.maintenanceRecords.find((record) => record.id === item.maintenanceRecordId)
+                const label = [parent?.serviceDate, item.componentSystem, item.workAction, item.specificDescription].filter(Boolean).join(" · ")
+                return <option key={item.id} value={item.id}>{label}</option>
+              })}
+            </select>
+            <Button type="button" size="sm" variant="outline" onClick={linkToMaintenance} disabled={!maintenanceItemId}>Link</Button>
+          </div>
+        </label>
+      </div>
+      {linkedItems.length ? (
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] font-semibold text-muted-foreground">Linked maintenance</p>
+          {linkedItems.map((item) => (
+            <p key={item.id} className="text-[11px]">{[item.componentSystem, item.workAction, item.specificDescription].filter(Boolean).join(" · ")}</p>
+          ))}
+        </div>
+      ) : <p className="mt-2 text-[10px] text-muted-foreground">No maintenance item linked.</p>}
+    </div>
+  )
+}
+
+function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, setNotice, setError, inputClass, selectClass, StatusPillComponent }: {
   companyId: string
   store: VehicleStore
   onStoreChange: (store: VehicleStore) => void
   inspection: VehicleInspectionRecord
   setNotice: (value: string | null) => void
   setError: (value: string | null) => void
+  inputClass: string
+  selectClass: string
+  StatusPillComponent: AnyComponent
 }) {
   const findings = getFindingsForInspection(store, inspection.id)
   const [showAdd, setShowAdd] = useState(false)
@@ -222,7 +321,7 @@ function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, 
       ) : (
         <div className="space-y-2">
           {findings.map((finding) => (
-            <FindingRow key={finding.id} companyId={companyId} store={store} finding={finding} onStoreChange={onStoreChange} setNotice={setNotice} setError={setError} />
+            <FindingRow key={finding.id} companyId={companyId} store={store} finding={finding} onStoreChange={onStoreChange} setNotice={setNotice} setError={setError} selectClass={selectClass} StatusPillComponent={StatusPillComponent} />
           ))}
         </div>
       )}
@@ -237,13 +336,14 @@ function InspectionFindingsPanel({ companyId, store, onStoreChange, inspection, 
   )
 }
 
-function MaintenanceItemsPanel({ companyId, store, onStoreChange, record, setNotice, setError }: {
+function MaintenanceItemsPanel({ companyId, store, onStoreChange, record, setNotice, setError, inputClass }: {
   companyId: string
   store: VehicleStore
   onStoreChange: (store: VehicleStore) => void
   record: VehicleMaintenanceRecord
   setNotice: (value: string | null) => void
   setError: (value: string | null) => void
+  inputClass: string
 }) {
   const items = getMaintenanceItemsForRecord(store, record.id)
   const [showAdd, setShowAdd] = useState(false)
@@ -327,6 +427,8 @@ function InspectionRecordDetail({
   setNotice,
   setError,
   StatusPillComponent,
+  inputClass,
+  selectClass,
 }: {
   companyId: string
   store: VehicleStore
@@ -338,6 +440,8 @@ function InspectionRecordDetail({
   setNotice: (value: string | null) => void
   setError: (value: string | null) => void
   StatusPillComponent: AnyComponent
+  inputClass: string
+  selectClass: string
 }) {
   return <div className="space-y-3">
     <Card>
@@ -362,7 +466,7 @@ function InspectionRecordDetail({
         <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
         <ReadOnlyField label="Notes" value={record.notes || "—"} />
       </div>
-      <InspectionFindingsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} inspection={record} setNotice={setNotice} setError={setError} />
+      <InspectionFindingsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} inspection={record} setNotice={setNotice} setError={setError} inputClass={inputClass} selectClass={selectClass} StatusPillComponent={StatusPillComponent} />
     </Card>
   </div>
 }
@@ -596,7 +700,7 @@ export function MaintenanceTab({
           }}
           renderRecord={(indexRecord, { onBackToList }) => {
             const record = activeInspections.find((item) => item.id === indexRecord.id)
-            if (record) return <InspectionRecordDetail companyId={companyId} store={store} record={record} onStoreChange={onStoreChange} onBack={onBackToList} onEdit={() => { setEditingInspection(record); setShowInspection(true) }} onArchive={() => archiveInspection(record)} setNotice={setNotice} setError={setError} StatusPillComponent={StatusPillComponent} />
+            if (record) return <InspectionRecordDetail companyId={companyId} store={store} record={record} onStoreChange={onStoreChange} onBack={onBackToList} onEdit={() => { setEditingInspection(record); setShowInspection(true) }} onArchive={() => archiveInspection(record)} setNotice={setNotice} setError={setError} StatusPillComponent={StatusPillComponent} inputClass={inputClass} selectClass={selectClass} />
             const roadside = roadsideMatches.find((match) => `roadside:${match.event.id}:${match.resolution.relationshipKey}` === indexRecord.id)
             return roadside ? <RoadsideInspectionDetail match={roadside} onBack={onBackToList} /> : null
           }}
@@ -629,7 +733,7 @@ export function MaintenanceTab({
                   <ReadOnlyField label="Next Due Odometer" value={record.nextServiceDueOdometer || "—"} />
                   <ReadOnlyField label="Evidence" value={record.evidenceIds.length ? `${record.evidenceIds.length} attached` : "Missing"} />
                 </div>
-                <MaintenanceItemsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} record={record} setNotice={setNotice} setError={setError} />
+                <MaintenanceItemsPanel companyId={companyId} store={store} onStoreChange={onStoreChange} record={record} setNotice={setNotice} setError={setError} inputClass={inputClass} />
               </Card>
             ))}
           </div>

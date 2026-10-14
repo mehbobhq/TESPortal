@@ -18,7 +18,8 @@ import { Label } from "@/components/ui/label"
 import type { CompanyProfileView } from "@/lib/company-profile/types"
 import { getRuleDefinition } from "@/lib/company-profile/definitions"
 
-import { RULES, SECTIONS, type Rule, type RuleValue } from "./rules"
+import { RULES, type Rule, type RuleValue } from "./rules"
+import { SECTIONS } from "./sections"
 import {
   SCOPE_CHOICES,
   SettingsRequestError,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
-import { clearRuleApplicability, getCompanyProfile, setDriverRequirements, setOperatingScope, setRuleApplicability } from "@/lib/company-profile/service"
+import { getCompanyProfile } from "@/lib/company-profile/service"
+import { performSettingsAction, UnsupportedSettingsActionError } from "@/lib/ui-recovery/settings-actions"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,27 +19,18 @@ export async function GET(_request: NextRequest, context: Context) {
   }
 }
 
-/** Operating scope, rule applicability and driver minimums for one company. The company id always comes from the URL. */
+/**
+ * Operating scope, rule applicability and driver minimums for one company (see lib/ui-recovery/settings-actions.ts). The company id
+ * always comes from the URL. set / clear are real-world changes; correct* flags a wrongly recorded value (history is kept).
+ */
 export async function POST(request: NextRequest, context: Context) {
   try {
     const { id } = await context.params
     const body = await readJsonBody(request)
-    switch (body.action) {
-      case "setOperatingScope":
-        return NextResponse.json(await setOperatingScope({ organizationId: id, operatingScope: body.operatingScope }), { status: 200, headers: NO_STORE })
-      case "setRuleApplicability":
-        return NextResponse.json(await setRuleApplicability({ organizationId: id, ruleCode: body.ruleCode, applicability: body.applicability }), { status: 200, headers: NO_STORE })
-      case "clearRuleApplicability":
-        return NextResponse.json(await clearRuleApplicability({ organizationId: id, ruleCode: body.ruleCode }), { status: 200, headers: NO_STORE })
-      case "setDriverRequirements":
-        return NextResponse.json(
-          await setDriverRequirements({ organizationId: id, minimumDriverAgeYears: body.minimumDriverAgeYears, minimumDriverExperienceMonths: body.minimumDriverExperienceMonths }),
-          { status: 200, headers: NO_STORE },
-        )
-      default:
-        return NextResponse.json({ error: "Unsupported action." }, { status: 400 })
-    }
+    const result = await performSettingsAction({ organizationId: id, body })
+    return NextResponse.json(result.body, { status: result.status, headers: NO_STORE })
   } catch (error) {
+    if (error instanceof UnsupportedSettingsActionError) return NextResponse.json({ error: "Unsupported action." }, { status: 400 })
     return canonicalFailure(error, "Unable to save the company setting.")
   }
 }

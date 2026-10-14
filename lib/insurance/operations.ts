@@ -364,6 +364,7 @@ async function record(
   operation: string,
   target: { resourceType: ResourceType; resourceId: string; organizationId: string },
   fieldChanges: FieldChange[],
+  reason?: string,
 ): Promise<void> {
   await recordEvent(ctx.masterRegister, {
     eventType,
@@ -377,7 +378,7 @@ async function record(
     source: { sourceType: "APPLICATION", component: "insurance", workflow: operation },
     classification: { materiality: "MATERIAL" },
     change: { changedFields: fieldChanges.map((change) => change.field), fieldChanges },
-    outcome: { result: "SUCCESS" },
+    outcome: reason === undefined ? { result: "SUCCESS" } : { result: "SUCCESS", reason },
   })
 }
 
@@ -752,7 +753,7 @@ export async function cancelTerm(ctx: OperationContext, rawInput: unknown): Prom
  * Endorsements are appended: a date at or before the current state's start is refused (correct the earlier one instead).
  */
 export async function addEndorsement(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["termId", "kind", "effectiveOn", "endorsementNumber", "coverage"])
+  const input = requireObject(rawInput, "input", ["termId", "organizationId", "kind", "effectiveOn", "endorsementNumber", "coverage"])
   const termId = parseUuid(input.termId, "termId")
   if (!isEndorsementKind(input.kind)) throw new InsuranceValidationError("kind", "kind must be a supported endorsement kind.")
   const kind: EndorsementKind = input.kind
@@ -770,6 +771,7 @@ export async function addEndorsement(ctx: OperationContext, rawInput: unknown): 
     : parseCoverageSpec(rawCoverage, "coverage")
 
   const { organizationId, policy, term } = await lockTerm(ctx, termId)
+  assertScopedOrganization(input.organizationId, organizationId)
   assertInsideTerm(term, effectiveOn, "effectiveOn")
   await assertNotFutureDate(ctx, effectiveOn, "effectiveOn")
   if (COVERAGE_TYPE_DEFINITIONS[spec.coverageType].family !== policy.family) {
@@ -840,7 +842,7 @@ type CancellationPatch = undefined | null | { cancelledOn: string; reason: Cance
  * carrySchedule); when the corrected period cannot hold a scheduled window the whole correction is refused.
  */
 export async function correctTerm(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["termId", "policyNumber", "termStart", "termEnd", "cancellation"])
+  const input = requireObject(rawInput, "input", ["termId", "organizationId", "policyNumber", "termStart", "termEnd", "cancellation"])
   const termId = parseUuid(input.termId, "termId")
   const number = input.policyNumber === undefined ? null : prepareNumber(input.policyNumber, "policyNumber")
   const startPatch = input.termStart === undefined ? null : parseCalendarDate(input.termStart, "termStart")
@@ -856,6 +858,7 @@ export async function correctTerm(ctx: OperationContext, rawInput: unknown): Pro
   }
 
   const { organizationId, policy, term } = await lockTerm(ctx, termId)
+  assertScopedOrganization(input.organizationId, organizationId)
   await requireActiveInsurer(ctx, policy.insurerOrganizationId)
   const termStart = startPatch ?? term.termStart
   const termEnd = endProvided ? endPatch : term.termEnd
@@ -1031,9 +1034,9 @@ async function carrySchedule(ctx: OperationContext, operation: string, organizat
 
 /** CORRECTS a wrongly recorded coverage row (kept and flagged; the replacement keeps the same term and dates and takes over its vehicle schedule). */
 export async function correctCoverage(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["coverageId", ...COVERAGE_KEYS])
+  const input = requireObject(rawInput, "input", ["coverageId", "organizationId", ...COVERAGE_KEYS])
   const coverageId = parseUuid(input.coverageId, "coverageId")
-  const { coverageId: _ignored, ...rest } = input
+  const { coverageId: _ignored, organizationId: requestedOrganizationId, ...rest } = input
   void _ignored
   const patch = parseCoveragePatch(rest, true)
   if (Object.keys(patch).length === 0) throw new InsuranceValidationError("input", "Nothing to correct.")
@@ -1041,6 +1044,7 @@ export async function correctCoverage(ctx: OperationContext, rawInput: unknown):
   const termId = await repo.findCoverageTerm(ctx.client, coverageId)
   if (!termId) throw new InsuranceNotFoundError("Coverage")
   const { organizationId, policy } = await lockTerm(ctx, termId)
+  assertScopedOrganization(requestedOrganizationId, organizationId)
   const target = await repo.getCoverage(ctx.client, coverageId, true)
   if (!target) throw new InsuranceNotFoundError("Coverage")
   if (target.recordStatus !== "active") throw new InsuranceStateError("This coverage was already corrected.")
@@ -1082,13 +1086,13 @@ export async function correctCoverage(ctx: OperationContext, rawInput: unknown):
  * only the LATEST endorsement of a coverage type can be corrected (a later one builds on it).
  */
 export async function correctEndorsement(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["endorsementId", "endorsementNumber", "effectiveOn", "limitAmount", "deductibleAmount", "currency", "limitBasis", "scheduledVehiclesOnly"])
+  const input = requireObject(rawInput, "input", ["endorsementId", "organizationId", "endorsementNumber", "effectiveOn", "limitAmount", "deductibleAmount", "currency", "limitBasis", "scheduledVehiclesOnly"])
   const endorsementId = parseUuid(input.endorsementId, "endorsementId")
   const numberProvided = input.endorsementNumber !== undefined
   const number = !numberProvided || input.endorsementNumber === null ? null : prepareNumber(input.endorsementNumber, "endorsementNumber")
   const dateProvided = input.effectiveOn !== undefined
   const newDate = dateProvided ? parseCalendarDate(input.effectiveOn, "effectiveOn") : null
-  const { endorsementId: _id, endorsementNumber: _number, effectiveOn: _date, ...coverageFields } = input
+  const { endorsementId: _id, organizationId: requestedOrganizationId, endorsementNumber: _number, effectiveOn: _date, ...coverageFields } = input
   void _id
   void _number
   void _date
@@ -1098,6 +1102,7 @@ export async function correctEndorsement(ctx: OperationContext, rawInput: unknow
   const termId = await repo.findEndorsementTerm(ctx.client, endorsementId)
   if (!termId) throw new InsuranceNotFoundError("Endorsement")
   const { organizationId, policy, term } = await lockTerm(ctx, termId)
+  assertScopedOrganization(requestedOrganizationId, organizationId)
   const old = await repo.getEndorsement(ctx.client, endorsementId, true)
   if (!old) throw new InsuranceNotFoundError("Endorsement")
   if (old.recordStatus !== "active") throw new InsuranceStateError("This endorsement was already corrected.")
@@ -1178,13 +1183,14 @@ export async function correctEndorsement(ctx: OperationContext, rawInput: unknow
  * policy has no broker of record yet, it starts the first one.
  */
 export async function changeBroker(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId", "brokerOrganizationId", "brokerPersonId", "effectiveFrom"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId", "brokerOrganizationId", "brokerPersonId", "effectiveFrom"])
   const policyId = parseUuid(input.policyId, "policyId")
   const brokerOrganizationId = parseUuid(input.brokerOrganizationId, "brokerOrganizationId")
   const brokerPersonId = optionalUuid(input.brokerPersonId, "brokerPersonId")
   const explicit = optionalInstant(input.effectiveFrom, "effectiveFrom")
 
   const { organizationId } = await lockPolicy(ctx, policyId, { requireActivePolicy: true })
+  assertScopedOrganization(input.organizationId, organizationId)
   const contact = await resolveBroker(ctx, brokerOrganizationId, brokerPersonId, "input")
   const current = await repo.getCurrentBrokerPeriod(ctx.client, policyId, true)
   const at = await resolveInstant(ctx, explicit, "effectiveFrom")
@@ -1212,7 +1218,7 @@ export async function changeBroker(ctx: OperationContext, rawInput: unknown): Pr
 
 /** CORRECTS a wrongly recorded broker period (the brokerage and/or the contact); the replacement inherits its window. */
 export async function correctBroker(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["brokerPeriodId", "brokerOrganizationId", "brokerPersonId"])
+  const input = requireObject(rawInput, "input", ["brokerPeriodId", "organizationId", "brokerOrganizationId", "brokerPersonId"])
   const periodId = parseUuid(input.brokerPeriodId, "brokerPeriodId")
   const orgPatch = input.brokerOrganizationId === undefined ? null : parseUuid(input.brokerOrganizationId, "brokerOrganizationId")
   const personProvided = input.brokerPersonId !== undefined
@@ -1222,6 +1228,7 @@ export async function correctBroker(ctx: OperationContext, rawInput: unknown): P
   const policyId = await repo.findBrokerPeriodPolicy(ctx.client, periodId)
   if (!policyId) throw new InsuranceNotFoundError("Broker period")
   const { organizationId } = await lockPolicy(ctx, policyId, { requireActivePolicy: true })
+  assertScopedOrganization(input.organizationId, organizationId)
   const target = await repo.getBrokerPeriod(ctx.client, periodId, true)
   if (!target) throw new InsuranceNotFoundError("Broker period")
   if (target.recordStatus !== "active") throw new InsuranceStateError("This broker period was already corrected.")
@@ -1253,17 +1260,36 @@ export async function correctBroker(ctx: OperationContext, rawInput: unknown): P
 // Lifecycle
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * An optional archive reason (the operator's own words). The policy has no column for it: it is kept in the Master Register event
+ * of the archive (outcome.reason, the same transaction), which is the audit trail of why the record left active use.
+ */
+function parseArchiveReason(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== "string") throw new InsuranceValidationError("reason", "reason must be text.")
+  const reason = value.normalize("NFC").trim()
+  if (reason === "") return null
+  if (reason.length > 500) throw new InsuranceValidationError("reason", "reason must not exceed 500 characters.")
+  return reason
+}
+
 /** Archive is RECORD lifecycle, not policy status: nothing about the policy's facts changes. */
 export async function archivePolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId", "organizationId"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId", "reason"])
   const policyId = parseUuid(input.policyId, "policyId")
+  const reason = parseArchiveReason(input.reason)
   const { organizationId, policy } = await lockPolicy(ctx, policyId, { requireActivePolicy: false })
   assertScopedOrganization(input.organizationId, organizationId)
   if (policy.recordStatus === "archived") throw new InsuranceStateError("This policy is already archived.")
   await guarded(() => repo.setPolicyArchived(ctx.client, policyId, true))
-  await record(ctx, "RECORD_ARCHIVED", "archivePolicy", { resourceType: "insurance_policy", resourceId: policyId, organizationId }, [
-    { field: "lifecycle", before: literal("active"), after: literal("archived") },
-  ])
+  await record(
+    ctx,
+    "RECORD_ARCHIVED",
+    "archivePolicy",
+    { resourceType: "insurance_policy", resourceId: policyId, organizationId },
+    [{ field: "lifecycle", before: literal("active"), after: literal("archived") }],
+    reason ?? undefined,
+  )
   return loadPolicy(ctx, policyId)
 }
 

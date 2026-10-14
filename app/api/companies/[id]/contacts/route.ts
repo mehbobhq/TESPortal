@@ -1,0 +1,91 @@
+import { NextRequest, NextResponse } from "next/server"
+import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
+import {
+  addOrganizationChannel,
+  addPersonChannel,
+  addTitle,
+  archivePerson,
+  assignPurpose,
+  changePersonName,
+  correctPersonName,
+  createContact,
+  endOrganizationChannel,
+  endPersonChannel,
+  endPurpose,
+  endRelationship,
+  endTitle,
+  findPersonMatches,
+  getOrganizationContacts,
+  makePrimary,
+  restorePerson,
+} from "@/lib/contacts/service"
+
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+
+type Context = { params: Promise<{ id: string }> }
+
+const NO_STORE = { "Cache-Control": "private, no-store" }
+
+export async function GET(_request: NextRequest, context: Context) {
+  try {
+    const { id } = await context.params
+    return NextResponse.json(await getOrganizationContacts(id), { status: 200, headers: NO_STORE })
+  } catch (error) {
+    return canonicalFailure(error, "Unable to load contacts.")
+  }
+}
+
+/**
+ * Contact changes for one company. Every action is an existing contacts-domain operation (own validation, own Master Register
+ * event); the company id always comes from the URL, never from the body. Nothing is deleted: a channel or relationship is ENDED
+ * (history kept).
+ */
+export async function POST(request: NextRequest, context: Context) {
+  try {
+    const { id } = await context.params
+    const body = await readJsonBody(request)
+    switch (body.action) {
+      case "createContact":
+        return NextResponse.json(
+          await createContact({ organizationId: id, name: body.name, titles: body.titles, purposes: body.purposes, channels: body.channels } as Parameters<typeof createContact>[0]),
+          { status: 201, headers: NO_STORE },
+        )
+      case "addChannel":
+        return NextResponse.json(await addOrganizationChannel({ organizationId: id, channel: body.channel }), { status: 201, headers: NO_STORE })
+      case "endChannel":
+        return NextResponse.json(await endOrganizationChannel({ organizationId: id, channelId: body.channelId }), { status: 200, headers: NO_STORE })
+      case "addPersonChannel":
+        return NextResponse.json(await addPersonChannel({ organizationId: id, personId: body.personId, channel: body.channel }), { status: 201, headers: NO_STORE })
+      case "endPersonChannel":
+        return NextResponse.json(await endPersonChannel({ organizationId: id, personId: body.personId, channelId: body.channelId }), { status: 200, headers: NO_STORE })
+      case "endRelationship":
+        return NextResponse.json(await endRelationship({ organizationId: id, relationshipId: String(body.relationshipId ?? "") }), { status: 200, headers: NO_STORE })
+      // A genuine change keeps the earlier name as history; a correction flags the wrong one. Neither deletes anything.
+      case "changeName":
+        return NextResponse.json(await changePersonName({ organizationId: id, personId: String(body.personId ?? ""), givenName: body.givenName as string, familyName: body.familyName as string }), { status: 200, headers: NO_STORE })
+      case "correctName":
+        return NextResponse.json(await correctPersonName({ organizationId: id, personId: String(body.personId ?? ""), givenName: body.givenName as string, familyName: body.familyName as string }), { status: 200, headers: NO_STORE })
+      case "addTitle":
+        return NextResponse.json(await addTitle({ organizationId: id, relationshipId: String(body.relationshipId ?? ""), title: String(body.title ?? "") }), { status: 201, headers: NO_STORE })
+      case "endTitle":
+        return NextResponse.json(await endTitle({ organizationId: id, titleId: String(body.titleId ?? "") }), { status: 200, headers: NO_STORE })
+      case "assignPurpose":
+        return NextResponse.json(await assignPurpose({ organizationId: id, relationshipId: String(body.relationshipId ?? ""), purpose: String(body.purpose ?? ""), primary: body.primary === true }), { status: 201, headers: NO_STORE })
+      case "makePrimary":
+        return NextResponse.json(await makePrimary({ organizationId: id, relationshipId: String(body.relationshipId ?? ""), purpose: String(body.purpose ?? "") }), { status: 200, headers: NO_STORE })
+      case "endPurpose":
+        return NextResponse.json(await endPurpose({ organizationId: id, assignmentId: String(body.assignmentId ?? "") }), { status: 200, headers: NO_STORE })
+      case "archivePerson":
+        return NextResponse.json(await archivePerson({ organizationId: id, personId: String(body.personId ?? "") }), { status: 200, headers: NO_STORE })
+      case "restorePerson":
+        return NextResponse.json(await restorePerson({ organizationId: id, personId: String(body.personId ?? "") }), { status: 200, headers: NO_STORE })
+      case "findMatches":
+        return NextResponse.json({ matches: await findPersonMatches(body.query as Parameters<typeof findPersonMatches>[0]) }, { status: 200, headers: NO_STORE })
+      default:
+        return NextResponse.json({ error: "Unsupported action." }, { status: 400 })
+    }
+  } catch (error) {
+    return canonicalFailure(error, "Unable to save the contact change.")
+  }
+}

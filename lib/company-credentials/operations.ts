@@ -247,6 +247,15 @@ async function lockCredential(ctx: OperationContext, credentialId: string, optio
   return { organizationId, credential }
 }
 
+/**
+ * When a caller names the Organization a request is made under (the company route does), the credential must belong to it.
+ * A mismatch looks exactly like a missing credential, so a URL cannot be used to touch another company's record.
+ */
+function assertScopedOrganization(requested: unknown, actual: string): void {
+  if (requested === undefined) return
+  if (parseUuid(requested, "organizationId") !== actual) throw new CompanyCredentialNotFoundError("Credential")
+}
+
 async function resolveInstant(ctx: OperationContext, explicit: string | null, field: string): Promise<string> {
   if (explicit === null) return repo.databaseNow(ctx.client)
   if (!(await repo.isNotInFuture(ctx.client, explicit))) throw new CompanyCredentialValidationError(field, `${field} cannot be in the future.`)
@@ -665,12 +674,13 @@ export async function updateCredentialMetadata(ctx: OperationContext, rawInput: 
 
 /** A REAL-WORLD status change: ends the current period at T and starts the next one at T. */
 export async function changeCredentialStatus(ctx: OperationContext, rawInput: unknown): Promise<CredentialView> {
-  const input = requireObject(rawInput, "input", ["credentialId", "status", "effectiveFrom"])
+  const input = requireObject(rawInput, "input", ["credentialId", "organizationId", "status", "effectiveFrom"])
   const credentialId = parseUuid(input.credentialId, "credentialId")
   const status = parseStatus(input.status)
   const explicit = optionalInstant(input.effectiveFrom, "effectiveFrom")
 
   const locked = await lockCredential(ctx, credentialId, { requireActiveOrganization: true, requireActiveCredential: true })
+  assertScopedOrganization(input.organizationId, locked.organizationId)
   const current = await repo.getCurrentPeriod(ctx.client, credentialId, "update")
   if (!current) throw new CompanyCredentialStateError("This credential has no current status.")
   if (current.status === status) throw new CompanyCredentialValidationError("status", "The credential already has that status.")
@@ -722,7 +732,7 @@ export async function correctCredentialStatus(ctx: OperationContext, rawInput: u
  * never supplied by the caller). It does not change the credential's status: that is a separate, explicit decision.
  */
 export async function recordVerification(ctx: OperationContext, rawInput: unknown): Promise<CredentialView> {
-  const input = requireObject(rawInput, "input", ["credentialId", "outcome", "method", "verifiedAt"])
+  const input = requireObject(rawInput, "input", ["credentialId", "organizationId", "outcome", "method", "verifiedAt"])
   const credentialId = parseUuid(input.credentialId, "credentialId")
   if (!isVerificationOutcome(input.outcome)) throw new CompanyCredentialValidationError("outcome", "outcome must be a supported verification outcome.")
   if (!isVerificationMethod(input.method)) throw new CompanyCredentialValidationError("method", "method must be a supported verification method.")
@@ -731,6 +741,7 @@ export async function recordVerification(ctx: OperationContext, rawInput: unknow
   const explicit = optionalInstant(input.verifiedAt, "verifiedAt")
 
   const locked = await lockCredential(ctx, credentialId, { requireActiveOrganization: true, requireActiveCredential: true })
+  assertScopedOrganization(input.organizationId, locked.organizationId)
   const verifiedAt = await resolveInstant(ctx, explicit, "verifiedAt")
   const verificationId = randomUUID()
   await guarded(() => repo.insertVerification(ctx.client, { id: verificationId, credentialId, organizationId: locked.organizationId, outcome, method, verifiedAt, actorId: ctx.actor.id }))
@@ -823,9 +834,10 @@ export async function retireSecretSlot(ctx: OperationContext, rawInput: unknown)
 }
 
 export async function archiveCredential(ctx: OperationContext, rawInput: unknown): Promise<CredentialView> {
-  const input = requireObject(rawInput, "input", ["credentialId"])
+  const input = requireObject(rawInput, "input", ["credentialId", "organizationId"])
   const credentialId = parseUuid(input.credentialId, "credentialId")
   const locked = await lockCredential(ctx, credentialId, { requireActiveOrganization: false, requireActiveCredential: false })
+  assertScopedOrganization(input.organizationId, locked.organizationId)
   if (locked.credential.recordStatus === "archived") throw new CompanyCredentialStateError("This credential is already archived.")
   await guarded(() => repo.setCredentialArchived(ctx.client, credentialId, true))
   await record(ctx, "RECORD_ARCHIVED", "archiveCredential", { organizationId: locked.organizationId, resourceType: "company_credential", resourceId: credentialId }, [
@@ -836,9 +848,10 @@ export async function archiveCredential(ctx: OperationContext, rawInput: unknown
 
 /** Restores an archived credential, unless that would give the Organization two active accounts for the same login on the same system. */
 export async function restoreCredential(ctx: OperationContext, rawInput: unknown): Promise<CredentialView> {
-  const input = requireObject(rawInput, "input", ["credentialId"])
+  const input = requireObject(rawInput, "input", ["credentialId", "organizationId"])
   const credentialId = parseUuid(input.credentialId, "credentialId")
   const locked = await lockCredential(ctx, credentialId, { requireActiveOrganization: true, requireActiveCredential: false })
+  assertScopedOrganization(input.organizationId, locked.organizationId)
   if (locked.credential.recordStatus !== "archived") throw new CompanyCredentialStateError("This credential is not archived.")
   const usernameNormalized = await repo.getUsernameNormalized(ctx.client, credentialId)
   if (usernameNormalized === undefined) throw new CompanyCredentialNotFoundError("Credential")

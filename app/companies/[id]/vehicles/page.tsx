@@ -1,5 +1,7 @@
 "use client"
 
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -30,6 +32,7 @@ export default function VehiclesPage() {
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [vehicles, setVehicles] = useState<VehicleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -41,7 +44,11 @@ export default function VehiclesPage() {
         fetch(`${base}/profile`, { cache: "no-store" }),
         fetch(`${base}/vehicles`, { cache: "no-store" }),
       ])
-      setCompany(profile.ok ? (await profile.json()).company : null)
+      {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
       if (list.ok) setVehicles((await list.json()).vehicles ?? [])
       else setError((await list.json().catch(() => null))?.error ?? "Unable to load vehicles.")
     } catch {
@@ -86,7 +93,7 @@ export default function VehiclesPage() {
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   return (
     <div className="flex flex-col gap-6 pb-10">

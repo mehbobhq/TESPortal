@@ -4,8 +4,11 @@ import {
   archiveAuthority,
   changeAuthorityStatus,
   changeAuthorityVersion,
+  correctAuthorityStatus,
+  correctAuthorityVersion,
   restoreAuthority,
   type ChangeVersionInput,
+  type CorrectVersionInput,
 } from "@/lib/operating-authorities/service"
 import { isAuthorityStatus } from "@/lib/operating-authorities/definitions"
 
@@ -14,7 +17,7 @@ export const dynamic = "force-dynamic"
 
 type Context = { params: Promise<{ id: string; authorityId: string }> }
 
-/** PATCH { action: "status" | "version" | "archive" | "restore", ... } maps one-to-one onto the canonical operations. */
+/** PATCH { action: "status" | "version" | "correctVersion" | "correctStatus" | "archive" | "restore", ... } maps one-to-one onto the canonical operations. */
 export async function PATCH(request: NextRequest, context: Context) {
   try {
     const { id, authorityId } = await context.params
@@ -30,6 +33,14 @@ export async function PATCH(request: NextRequest, context: Context) {
         const { action: _action, ...fields } = body
         return NextResponse.json(await changeAuthorityVersion({ ...(fields as ChangeVersionInput), ...target }), { status: 200 })
       }
+      // A correction replaces a wrongly recorded version/status; the wrong one is kept, flagged, never reported as history.
+      case "correctVersion": {
+        const { action: _action, ...fields } = body
+        return NextResponse.json(await correctAuthorityVersion({ ...(fields as CorrectVersionInput), ...target }), { status: 200 })
+      }
+      case "correctStatus":
+        if (!isAuthorityStatus(body.status)) return NextResponse.json({ error: "A valid authority status is required." }, { status: 400 })
+        return NextResponse.json({ view: await correctAuthorityStatus({ ...target, status: body.status }) }, { status: 200 })
       case "archive":
         return NextResponse.json({ view: await archiveAuthority(target) }, { status: 200 })
       case "restore":

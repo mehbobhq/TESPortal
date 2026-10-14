@@ -1,0 +1,83 @@
+name: Company Recovery CI
+
+on:
+  pull_request:
+    paths:
+      - "lib/company-directory/**"
+      - "lib/company-lookup.ts"
+      - "lib/insurance/operations.ts"
+      - "lib/company-credentials/operations.ts"
+      - "lib/operational-identity/service.ts"
+      - "app/api/companies/**"
+      - "app/companies/**"
+      - "components/**"
+      - "src/components/shared/LegacyWorkspaceGate.tsx"
+      - "src/components/canonical/**"
+      - "test/lib/company-directory/**"
+      - "scripts/database/assessment/**"
+      - "scripts/test/run-auth-tests.sh"
+      - ".github/workflows/company-recovery-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      CI_MIGRATOR: "tes-database-migrator@tes-production-510007.iam"
+      CI_MIGRATOR_PASSWORD: ci-migrator
+      CI_RUNTIME: "tes-backend@tes-production-510007.iam"
+      CI_RUNTIME_PASSWORD: ci-runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create production-shaped roles and database
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_MIGRATOR\" LOGIN PASSWORD '$CI_MIGRATOR_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE ROLE \"$CI_RUNTIME\" LOGIN PASSWORD '$CI_RUNTIME_PASSWORD'"
+          psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE tes_ci_company_recovery OWNER \"$CI_MIGRATOR\""
+      - name: Static tests (contract, boundaries, form preservation)
+        run: |
+          node --test \
+            test/lib/company-directory/company-creation-input.test.ts \
+            test/lib/company-directory/company-directory-boundaries.test.ts \
+            test/lib/company-directory/creation-form-preservation.test.ts
+      - name: Apply the complete migration chain
+        env:
+          PGDATABASE: tes_ci_company_recovery
+          PGUSER: "tes-database-migrator@tes-production-510007.iam"
+          PGPASSWORD: ci-migrator
+        run: bash scripts/database/migrate.sh
+      - name: Company recovery DB tests (real authorization, RLS as the runtime role, real Master Register)
+        env:
+          TES_REQUIRE_DB_TESTS: "1"
+          TES_TEST_ADMIN_DATABASE_URL: "postgres://tes-database-migrator%40tes-production-510007.iam:ci-migrator@127.0.0.1:5432/tes_ci_company_recovery"
+          TES_TEST_RUNTIME_DATABASE_URL: "postgres://tes-backend%40tes-production-510007.iam:ci-runtime@127.0.0.1:5432/tes_ci_company_recovery"
+        run: node --test --test-concurrency=1 test/lib/company-directory/*.db.test.ts
+      - name: Production build
+        run: pnpm build

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
-import { CanonicalSettings } from "./canonical-settings"
+import { RestoredSettings } from "@/src/restored/settings/RestoredSettings"
 import {
   ArrowLeft,
   Check,
@@ -1128,11 +1128,38 @@ function LegacySettingsPage() {
   )
 }
 
+/**
+ * Honest footer for the TES-records tab. That tab reads and writes the company operating profile in PostgreSQL through fetch() to
+ * /api/companies/[id]/settings; "Save profile" records one canonical operation per changed item.
+ */
+function SettingsUnavailableActions() {
+  return (
+    <div role="note" className="mx-6 mb-8 rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+      <p className="font-semibold text-foreground">Unavailable actions (deferred)</p>
+      <ul className="mt-1 list-disc pl-5">
+        <li>Clearing recorded driver minimums, and turning a recorded rule answer back into Not configured as a correction: no such operation exists (a real-world change can clear a rule answer).</li>
+        <li>Save profile is a batch of separate operations, not one transaction: each changed item is saved on its own and any that fails is listed and stays unsaved.</li>
+        <li>The earlier defaults (minimum age 21, experience 24 months, jurisdiction derived from the company region) are not recorded facts and are not shown as saved.</li>
+      </ul>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const params = useParams()
   const companyId = params.id as string
   return (
-    <LegacyWorkspaceGate companyId={companyId} title="Settings" description="Compliance settings saved here stay only in this browser (a prototype store); they are not the company operating profile in the TES database. Nothing here was changed or deleted." canonical={<CanonicalSettings companyId={companyId} />}>
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Settings"
+      description="Compliance settings saved here stay only in this browser (a prototype store); they are not the company operating profile in the TES database. Nothing here was changed or deleted."
+      canonical={
+        <>
+          <RestoredSettings companyId={companyId} />
+          <SettingsUnavailableActions />
+        </>
+      }
+    >
       <LegacySettingsPage />
     </LegacyWorkspaceGate>
   )

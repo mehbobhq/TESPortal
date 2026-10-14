@@ -1,0 +1,1913 @@
+"use client";
+
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  X,
+  RefreshCcw,
+  ShieldCheck,
+  FileText,
+  Maximize2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  AlertTriangle,
+  FileX,
+} from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist";
+import {
+  GlobalWorkerOptions,
+  type PDFDocumentProxy,
+  type PDFPageProxy,
+  type PDFDocumentLoadingTask,
+  type RenderTask,
+} from "pdfjs-dist";
+
+import {
+  DocumentWatermark,
+  WatermarkContextInfo,
+} from "./DocumentWatermark";
+
+import { generateViewRef } from "./view-ref";
+
+/*
+ * RESTORED COPY of src/components/shared/SecureDocumentViewer.tsx for the canonical Contacts workspace.
+ * Rendering, zoom/pan/rotate, PDF.js canvas rendering and the forensic watermark are unchanged. The browser-held audit log
+ * (document-opened events) is NOT written: it was browser storage and the canonical audit trail for document views does
+ * not exist yet, so no "audited view" is claimed.
+ */
+
+/**
+ * PDF.js worker
+ *
+ * TES-controlled PDF rendering only.
+ *
+ * The worker is served from the canonical Next.js public directory:
+ *
+ *   public/pdf.worker.mjs
+ *
+ * This avoids:
+ * - browser-native PDF rendering
+ * - iframe/embed/object rendering
+ * - external CDN worker dependencies
+ */
+if (typeof window !== "undefined") {
+  GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+}
+
+export interface SecureDocumentViewerProps {
+  fileName: string;
+  mimeType: string;
+  /** May be empty/undefined while the payload is still loading or confirmed missing - see `loading`. */
+  dataUrl: string | null | undefined;
+  /** Caller-controlled: payload is being fetched (e.g. from IndexedDB) and is not yet known to be missing. */
+  loading?: boolean;
+  documentTitle?: string;
+  documentDate?: string;
+  ocrConfidence?: number;
+  companyName?: string;
+  companyId?: string;
+  viewerRole?: string;
+  designation?: string;
+  viewRef?: string;
+  auditEventId?: string;
+  watermarkContext?: WatermarkContextInfo;
+  onClose?: () => void;
+  onReplace?: () => void;
+}
+
+/**
+ * SecureDocumentViewer
+ *
+ * Shared Foundation Component for TES Compliance Portal.
+ *
+ * Capabilities:
+ * - Raster images remain rendered through the existing image path.
+ * - PDFs are rendered through TES-controlled PDF.js canvas rendering.
+ * - No iframe/embed/object/browser-native PDF viewer.
+ * - PDF intrinsic page dimensions determine document geometry.
+ * - Multi-page PDF navigation.
+ * - Fit / zoom / pan / rotation.
+ * - Forensic document-bound watermark.
+ * - Ambient viewer watermark.
+ * - Dynamic Eastern Time through existing watermark foundation.
+ * - VIEW_DOCUMENT audit binding and View Ref preservation.
+ */
+export function SecureDocumentViewer({
+  fileName,
+  mimeType,
+  dataUrl,
+  loading = false,
+  documentTitle = "Secure Compliance Document",
+  documentDate,
+  ocrConfidence,
+  companyName: propCompanyName,
+  companyId: propCompanyId,
+  viewerRole: propViewerRole,
+  designation: propDesignation,
+  viewRef: propViewRef,
+  auditEventId,
+  watermarkContext,
+  onClose,
+  onReplace,
+}: SecureDocumentViewerProps) {
+  /*
+   * -------------------------------------------------------------
+   * REFS
+   * -------------------------------------------------------------
+   */
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const isDraggingRef = useRef(false);
+
+  const dragStartRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+  const initialPanRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+
+
+  /*
+   * PDF.js lifecycle refs.
+   *
+   * PDFDocumentLoadingTask owns document loading/worker lifecycle.
+   * PDF.js 6 does not expose the old PDFDocumentProxy.destroy()
+   * lifecycle used by older implementations.
+   */
+  const pdfLoadingTaskRef =
+    useRef<PDFDocumentLoadingTask | null>(null);
+
+  const pdfDocumentRef =
+    useRef<PDFDocumentProxy | null>(null);
+
+  const pdfRenderTaskRef =
+    useRef<RenderTask | null>(null);
+
+  /*
+   * Incremented whenever a PDF load/page render is replaced.
+   *
+   * This prevents stale asynchronous PDF operations from updating
+   * the currently displayed document/page.
+   */
+  const renderGenerationRef = useRef(0);
+
+  /*
+   * -------------------------------------------------------------
+   * STABLE VIEW REFERENCE
+   * -------------------------------------------------------------
+   */
+
+  const [viewRef] = useState<string>(() => {
+    if (propViewRef) {
+      return propViewRef;
+    }
+
+    if (watermarkContext?.viewRef) {
+      return watermarkContext.viewRef;
+    }
+
+    if (watermarkContext?.sessionRef?.startsWith("VW-")) {
+      return watermarkContext.sessionRef;
+    }
+
+    return generateViewRef();
+  });
+
+  /*
+   * -------------------------------------------------------------
+   * VIEWPORT / DOCUMENT GEOMETRY
+   * -------------------------------------------------------------
+   */
+
+  const [viewportSize, setViewportSize] = useState({
+    width: 800,
+    height: 600,
+  });
+
+  /*
+   * No artificial Letter-size PDF stage.
+   *
+   * PDF dimensions are populated from the actual PDF page.
+   *
+   * Raster image dimensions are populated from naturalWidth /
+   * naturalHeight exactly as before.
+   */
+  const [docSize, setDocSize] = useState({
+    width: 1,
+    height: 1,
+  });
+
+  const [zoom, setZoom] = useState(1.0);
+
+  /*
+   * "smart" is the default review mode.
+   * "fit" is explicit whole-document containment requested by the Fit control.
+   *
+   * Smart mode only changes the initial/readability scale for unusually tall,
+   * narrow raster evidence. It never crops or mutates the source document.
+   */
+  const [viewMode, setViewMode] =
+    useState<"smart" | "fit">("smart");
+
+  // Smart raster review may create a temporary in-memory crop of the meaningful
+  // document region. The original evidence dataUrl is never changed or replaced.
+  const [smartRasterCrop, setSmartRasterCrop] = useState<{
+    dataUrl: string;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  // Bug fix (B2): caches the ORIGINAL raster image's natural dimensions the
+  // first time it loads, so leaving smart mode can restore docSize to the
+  // original immediately - fitScale/panBounds must never keep computing
+  // geometry from a stale cropped docSize while the original is reloading.
+  const originalDocSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  const [rotation, setRotation] =
+    useState<0 | 90 | 180 | 270>(0);
+
+  const [pan, setPan] = useState({
+    x: 0,
+    y: 0,
+  });
+
+  const [isDragging, setIsDragging] =
+    useState(false);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF STATE
+   * -------------------------------------------------------------
+   */
+
+  const hasPayload = typeof dataUrl === "string" && dataUrl.length > 0;
+
+  const isPdf =
+    mimeType === "application/pdf" ||
+    (hasPayload && dataUrl.includes("application/pdf")) ||
+    fileName.toLowerCase().endsWith(".pdf");
+
+  const [pdfDocument, setPdfDocument] =
+    useState<PDFDocumentProxy | null>(null);
+
+  const [pdfPage, setPdfPage] =
+    useState<PDFPageProxy | null>(null);
+
+  const [pdfPageNumber, setPdfPageNumber] =
+    useState(1);
+
+  const [pdfPageCount, setPdfPageCount] =
+    useState(0);
+
+  const [pdfLoading, setPdfLoading] =
+    useState(false);
+
+  const [pdfError, setPdfError] =
+    useState<string | null>(null);
+
+  const [pdfRenderError, setPdfRenderError] =
+    useState<string | null>(null);
+
+  // Raster-image equivalent of pdfError: set only on a genuine <img> load
+  // failure (a real dataUrl that the browser could not decode/fetch), never
+  // conflated with "still loading" or "confirmed missing" (handled by the
+  // `loading` prop / `hasPayload` below).
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [dataUrl]);
+
+  /*
+   * -------------------------------------------------------------
+   * VIEWPORT MEASUREMENT
+   * -------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (!viewportRef.current) {
+      return;
+    }
+
+    const observer = new ResizeObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const width =
+            entry.contentRect.width;
+
+          const height =
+            entry.contentRect.height;
+
+          if (width > 0 && height > 0) {
+            setViewportSize({
+              width,
+              height,
+            });
+          }
+        }
+      },
+    );
+
+    observer.observe(viewportRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF LOAD
+   * -------------------------------------------------------------
+   *
+   * PDFDocumentLoadingTask owns PDF loading and worker lifecycle.
+   *
+   * Cleanup uses:
+   *
+   *   loadingTask.destroy()
+   *
+   * PDFDocumentProxy.destroy() is intentionally NOT used.
+   * -------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (!isPdf) {
+      return;
+    }
+    if (loading || !hasPayload) {
+      // Payload is still loading or confirmed missing - the controlled
+      // loading/unavailable state below handles presentation; don't ask
+      // pdf.js to load an empty/absent URL.
+      return;
+    }
+
+    let cancelled = false;
+
+    const generation =
+      ++renderGenerationRef.current;
+
+    /*
+     * Cancel an existing page render first.
+     */
+    const existingRenderTask =
+      pdfRenderTaskRef.current;
+
+    if (existingRenderTask) {
+      try {
+        existingRenderTask.cancel();
+      } catch {
+        // Best-effort cancellation.
+      }
+    }
+
+    pdfRenderTaskRef.current = null;
+
+    /*
+     * Destroy the previous loading task.
+     *
+     * In PDF.js 6 this owns the document/worker loading lifecycle.
+     */
+    const existingLoadingTask =
+      pdfLoadingTaskRef.current;
+
+    if (existingLoadingTask) {
+      try {
+        void existingLoadingTask.destroy();
+      } catch {
+        // Best-effort cleanup during replacement.
+      }
+    }
+
+    pdfLoadingTaskRef.current = null;
+    pdfDocumentRef.current = null;
+
+    setPdfDocument(null);
+    setPdfPage(null);
+    setPdfPageNumber(1);
+    setPdfPageCount(0);
+
+    setPdfLoading(true);
+    setPdfError(null);
+    setPdfRenderError(null);
+
+    setDocSize({
+      width: 1,
+      height: 1,
+    });
+
+    setZoom(1);
+    setViewMode("smart");
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
+    setRotation(0);
+
+    let loadingTask: PDFDocumentLoadingTask;
+
+    try {
+      /*
+       * Preserve the supplied PDF data.
+       *
+       * PDF.js receives the existing data URL directly.
+       * No evidence data is modified.
+       */
+      loadingTask = pdfjsLib.getDocument({
+        url: dataUrl,
+      });
+
+      pdfLoadingTaskRef.current =
+        loadingTask;
+    } catch (error) {
+      if (
+        !cancelled &&
+        generation ===
+          renderGenerationRef.current
+      ) {
+        setPdfLoading(false);
+
+        setPdfError(
+          error instanceof Error
+            ? error.message
+            : "Unable to initialize PDF rendering.",
+        );
+      }
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void loadingTask.promise
+      .then(async (document) => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          /*
+           * The loading task owns cleanup.
+           */
+          try {
+            await loadingTask.destroy();
+          } catch {
+            // Best-effort stale-task cleanup.
+          }
+
+          return;
+        }
+
+        pdfDocumentRef.current =
+          document;
+
+        setPdfDocument(document);
+
+        setPdfPageCount(
+          document.numPages,
+        );
+
+        setPdfPageNumber(1);
+
+        try {
+          const firstPage =
+            await document.getPage(1);
+
+          if (
+            cancelled ||
+            generation !==
+              renderGenerationRef.current
+          ) {
+            return;
+          }
+
+          setPdfPage(firstPage);
+          setPdfLoading(false);
+        } catch (error) {
+          if (
+            cancelled ||
+            generation !==
+              renderGenerationRef.current
+          ) {
+            return;
+          }
+
+          setPdfLoading(false);
+
+          setPdfError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load the first PDF page.",
+          );
+        }
+      })
+      .catch((error) => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          return;
+        }
+
+        setPdfLoading(false);
+
+        setPdfError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the PDF document.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+
+      /*
+       * Invalidate every async operation associated with
+       * this PDF instance.
+       */
+      ++renderGenerationRef.current;
+
+      /*
+       * Cancel active page rendering.
+       */
+      const renderTask =
+        pdfRenderTaskRef.current;
+
+      if (renderTask) {
+        try {
+          renderTask.cancel();
+        } catch {
+          // Best-effort cancellation.
+        }
+      }
+
+      pdfRenderTaskRef.current = null;
+
+      /*
+       * PDF.js 6 lifecycle cleanup.
+       *
+       * PDFDocumentProxy is not destroyed directly.
+       * PDFDocumentLoadingTask owns document/worker cleanup.
+       */
+      const loadingTask =
+        pdfLoadingTaskRef.current;
+
+      if (loadingTask) {
+        try {
+          void loadingTask.destroy();
+        } catch {
+          // Best-effort cleanup during React teardown.
+        }
+      }
+
+      pdfLoadingTaskRef.current = null;
+      pdfDocumentRef.current = null;
+    };
+  }, [dataUrl, isPdf]);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF PAGE CHANGE
+   * -------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      !isPdf ||
+      !pdfDocument
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const generation =
+      renderGenerationRef.current;
+
+    setPdfLoading(true);
+    setPdfError(null);
+    setPdfRenderError(null);
+
+    /*
+     * Every page change recalculates containment
+     * and starts with zero pan.
+     */
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
+    setZoom(1);
+    setViewMode("smart");
+
+    setRotation(0);
+
+    void pdfDocument
+      .getPage(pdfPageNumber)
+      .then((page) => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          return;
+        }
+
+        setPdfPage(page);
+        setPdfLoading(false);
+      })
+      .catch((error) => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          return;
+        }
+
+        setPdfLoading(false);
+
+        setPdfError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the selected PDF page.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    pdfDocument,
+    pdfPageNumber,
+    isPdf,
+  ]);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF INTRINSIC PAGE DIMENSIONS
+   * -------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      !isPdf ||
+      !pdfPage
+    ) {
+      return;
+    }
+
+    /*
+     * Scale 1 provides the actual PDF page dimensions.
+     */
+    const pageViewport =
+      pdfPage.getViewport({
+        scale: 1,
+        rotation: 0,
+      });
+
+    setDocSize({
+      width: Math.max(
+        1,
+        pageViewport.width,
+      ),
+      height: Math.max(
+        1,
+        pageViewport.height,
+      ),
+    });
+
+    setZoom(1);
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
+  }, [pdfPage, isPdf]);
+
+  /*
+   * -------------------------------------------------------------
+   * EXISTING RASTER IMAGE GEOMETRY
+   * -------------------------------------------------------------
+   */
+
+  const handleImageLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      if (isPdf) return;
+
+      const img = e.currentTarget;
+      if (img.naturalWidth <= 0 || img.naturalHeight <= 0) return;
+
+      // When the temporary smart crop itself loads, use its intrinsic geometry
+      // directly and do not recursively analyse/crop it again.
+      if (smartRasterCrop && img.src === smartRasterCrop.dataUrl) {
+        setDocSize({ width: smartRasterCrop.width, height: smartRasterCrop.height });
+        return;
+      }
+
+      setDocSize({ width: img.naturalWidth, height: img.naturalHeight });
+      originalDocSizeRef.current = { width: img.naturalWidth, height: img.naturalHeight };
+
+      if (viewMode !== "smart") return;
+
+      // Detect a visually meaningful colour-rich region (typical licence / ID
+      // card) inside oversized scanner/camera canvases. Analysis is performed on
+      // a small offscreen copy; the original evidence remains untouched.
+      try {
+        const maxAnalysisSide = 700;
+        const analysisScale = Math.min(
+          1,
+          maxAnalysisSide / Math.max(img.naturalWidth, img.naturalHeight),
+        );
+        const aw = Math.max(1, Math.round(img.naturalWidth * analysisScale));
+        const ah = Math.max(1, Math.round(img.naturalHeight * analysisScale));
+        const canvas = document.createElement("canvas");
+        canvas.width = aw;
+        canvas.height = ah;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, aw, ah);
+        const pixels = ctx.getImageData(0, 0, aw, ah).data;
+
+        let minX = aw, minY = ah, maxX = -1, maxY = -1, hits = 0;
+        for (let y = 0; y < ah; y += 2) {
+          for (let x = 0; x < aw; x += 2) {
+            const i = (y * aw + x) * 4;
+            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
+            if (a < 180) continue;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const saturation = max === 0 ? 0 : (max - min) / max;
+            const brightness = (r + g + b) / 3;
+            // Ignore neutral paper, gray text and TES watermarks. ID cards usually
+            // contain sustained colour variation even when the portrait is gray.
+            if (saturation >= 0.16 && brightness > 35 && brightness < 245) {
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+              hits++;
+            }
+          }
+        }
+
+        if (hits < 40 || maxX <= minX || maxY <= minY) return;
+
+        const rawW = maxX - minX + 1;
+        const rawH = maxY - minY + 1;
+        const regionArea = rawW * rawH;
+        const imageArea = aw * ah;
+        if (regionArea < imageArea * 0.01 || regionArea > imageArea * 0.72) return;
+
+        const padX = Math.max(8, Math.round(rawW * 0.16));
+        const padY = Math.max(8, Math.round(rawH * 0.16));
+        minX = Math.max(0, minX - padX);
+        minY = Math.max(0, minY - padY);
+        maxX = Math.min(aw - 1, maxX + padX);
+        maxY = Math.min(ah - 1, maxY + padY);
+
+        const sourceX = Math.round(minX / analysisScale);
+        const sourceY = Math.round(minY / analysisScale);
+        const sourceW = Math.min(
+          img.naturalWidth - sourceX,
+          Math.max(1, Math.round((maxX - minX + 1) / analysisScale)),
+        );
+        const sourceH = Math.min(
+          img.naturalHeight - sourceY,
+          Math.max(1, Math.round((maxY - minY + 1) / analysisScale)),
+        );
+
+        const cropCanvas = document.createElement("canvas");
+        cropCanvas.width = sourceW;
+        cropCanvas.height = sourceH;
+        const cropCtx = cropCanvas.getContext("2d");
+        if (!cropCtx) return;
+        cropCtx.drawImage(
+          img,
+          sourceX, sourceY, sourceW, sourceH,
+          0, 0, sourceW, sourceH,
+        );
+
+        setSmartRasterCrop({
+          dataUrl: cropCanvas.toDataURL("image/png"),
+          width: sourceW,
+          height: sourceH,
+        });
+        setDocSize({ width: sourceW, height: sourceH });
+        setPan({ x: 0, y: 0 });
+        setZoom(1);
+      } catch (error) {
+        // A failed smart analysis must never block evidence viewing.
+        console.warn("Smart raster framing unavailable; using original evidence.", error);
+      }
+    },
+    [isPdf, smartRasterCrop, viewMode],
+  );
+
+  /*
+   * -------------------------------------------------------------
+   * FIT SCALE
+   * -------------------------------------------------------------
+   */
+
+  const fitScale = useMemo(() => {
+    const rotated90 =
+      rotation === 90 ||
+      rotation === 270;
+
+    const effectiveWidth =
+      rotated90
+        ? docSize.height
+        : docSize.width;
+
+    const effectiveHeight =
+      rotated90
+        ? docSize.width
+        : docSize.height;
+
+    if (
+      effectiveWidth <= 0 ||
+      effectiveHeight <= 0 ||
+      viewportSize.width <= 0 ||
+      viewportSize.height <= 0
+    ) {
+      return 1;
+    }
+
+    const padding = 24;
+
+    const availableWidth =
+      Math.max(
+        100,
+        viewportSize.width - padding,
+      );
+
+    const availableHeight =
+      Math.max(
+        100,
+        viewportSize.height - padding,
+      );
+
+    const scaleX =
+      availableWidth /
+      effectiveWidth;
+
+    const scaleY =
+      availableHeight /
+      effectiveHeight;
+
+    /*
+     * Explicit Fit always means: show the complete source.
+     */
+    const containmentScale =
+      Math.min(
+        2,
+        scaleX,
+        scaleY,
+      );
+
+    /*
+     * Smart review mode:
+     * Extremely tall/narrow raster scans often contain a small ID/card inside
+     * a much larger camera/scanner canvas. Pure containment makes the useful
+     * evidence unreadably tiny.
+     *
+     * For those raster sources only, prefer a width-readable initial scale.
+     * The full source remains available by panning, and Fit restores complete
+     * containment instantly.
+     */
+    const aspectRatio =
+      effectiveHeight /
+      effectiveWidth;
+
+    const isTallNarrowRaster =
+      !isPdf &&
+      aspectRatio >= 1.8 &&
+      scaleX > containmentScale * 1.35;
+
+    if (
+      viewMode === "smart" &&
+      isTallNarrowRaster
+    ) {
+      return Math.min(
+        2,
+        scaleX,
+      );
+    }
+
+    return containmentScale;
+  }, [
+    viewportSize,
+    docSize,
+    rotation,
+    isPdf,
+    viewMode,
+  ]);
+
+  /*
+   * -------------------------------------------------------------
+   * PAN BOUNDS
+   * -------------------------------------------------------------
+   */
+
+  const panBounds = useMemo(() => {
+    const rotated90 =
+      rotation === 90 ||
+      rotation === 270;
+
+    const effectiveWidth =
+      rotated90
+        ? docSize.height
+        : docSize.width;
+
+    const effectiveHeight =
+      rotated90
+        ? docSize.width
+        : docSize.height;
+
+    const renderedWidth =
+      effectiveWidth *
+      fitScale *
+      zoom;
+
+    const renderedHeight =
+      effectiveHeight *
+      fitScale *
+      zoom;
+
+    return {
+      x: Math.max(
+        0,
+        (renderedWidth -
+          viewportSize.width) /
+          2,
+      ),
+
+      y: Math.max(
+        0,
+        (renderedHeight -
+          viewportSize.height) /
+          2,
+      ),
+    };
+  }, [
+    docSize,
+    fitScale,
+    zoom,
+    rotation,
+    viewportSize,
+  ]);
+
+  /*
+   * -------------------------------------------------------------
+   * PAN CLAMP
+   * -------------------------------------------------------------
+   */
+
+  const clampPan = useCallback(
+    (nextPan: {
+      x: number;
+      y: number;
+    }) => {
+      return {
+        x: Math.min(
+          panBounds.x,
+          Math.max(
+            -panBounds.x,
+            nextPan.x,
+          ),
+        ),
+
+        y: Math.min(
+          panBounds.y,
+          Math.max(
+            -panBounds.y,
+            nextPan.y,
+          ),
+        ),
+      };
+    },
+    [panBounds],
+  );
+
+  /*
+   * Re-clamp whenever:
+   * - viewport changes
+   * - zoom changes
+   * - rotation changes
+   * - page dimensions change
+   */
+  useEffect(() => {
+    setPan((current) =>
+      clampPan(current),
+    );
+  }, [clampPan]);
+
+  /*
+   * -------------------------------------------------------------
+   * PDF CANVAS RENDERING
+   * -------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      !isPdf ||
+      !pdfPage
+    ) {
+      return;
+    }
+
+    /*
+     * Use the existing TES canvas.
+     *
+     * No second canvas is created.
+     */
+    const canvas =
+      pdfCanvasRef.current;
+
+    if (!canvas) {
+      setPdfRenderError(
+        "TES could not initialize the PDF canvas.",
+      );
+
+      return;
+    }
+
+    const context =
+      canvas.getContext("2d", {
+        alpha: false,
+      });
+
+    if (!context) {
+      setPdfRenderError(
+        "TES could not initialize the PDF canvas.",
+      );
+
+      return;
+    }
+
+    let cancelled = false;
+
+    const generation =
+      renderGenerationRef.current;
+
+    /*
+     * Cancel any previous render.
+     */
+    const previousRenderTask =
+      pdfRenderTaskRef.current;
+
+    if (previousRenderTask) {
+      try {
+        previousRenderTask.cancel();
+      } catch {
+        // Best-effort cancellation.
+      }
+    }
+
+    pdfRenderTaskRef.current = null;
+
+    setPdfRenderError(null);
+
+    /*
+     * Render at device resolution while keeping CSS
+     * dimensions equal to actual PDF page dimensions.
+     */
+    const devicePixelRatio =
+      typeof window !== "undefined"
+        ? Math.min(
+            window.devicePixelRatio ||
+              1,
+            2,
+          )
+        : 1;
+
+    const baseViewport =
+      pdfPage.getViewport({
+        scale: 1,
+        rotation: 0,
+      });
+
+    const renderViewport =
+      pdfPage.getViewport({
+        scale: devicePixelRatio,
+        rotation: 0,
+      });
+
+    /*
+     * Actual backing canvas dimensions.
+     */
+    canvas.width = Math.ceil(
+      renderViewport.width,
+    );
+
+    canvas.height = Math.ceil(
+      renderViewport.height,
+    );
+
+    /*
+     * CSS dimensions correspond to actual PDF
+     * page dimensions.
+     */
+    canvas.style.width = `${baseViewport.width}px`;
+    canvas.style.height = `${baseViewport.height}px`;
+
+    context.setTransform(
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+    );
+
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+
+    /*
+     * PDF.js 6 RenderParameters.
+     *
+     * The exact existing canvas and 2D context are supplied.
+     */
+    const renderTask =
+      pdfPage.render({
+        canvas,
+        canvasContext: context,
+        viewport: renderViewport,
+      });
+
+    pdfRenderTaskRef.current =
+      renderTask;
+
+    void renderTask.promise
+      .then(() => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current ||
+          pdfRenderTaskRef.current !==
+            renderTask
+        ) {
+          return;
+        }
+
+        pdfRenderTaskRef.current =
+          null;
+      })
+      .catch((error: unknown) => {
+        if (
+          cancelled ||
+          generation !==
+            renderGenerationRef.current
+        ) {
+          return;
+        }
+
+        /*
+         * Cancellation of an older render is expected.
+         */
+        if (
+          error &&
+          typeof error === "object" &&
+          "name" in error &&
+          (
+            error as {
+              name?: string;
+            }
+          ).name ===
+            "RenderingCancelledException"
+        ) {
+          return;
+        }
+
+        if (
+          pdfRenderTaskRef.current ===
+          renderTask
+        ) {
+          pdfRenderTaskRef.current =
+            null;
+        }
+
+        setPdfRenderError(
+          error instanceof Error
+            ? error.message
+            : "Unable to render the selected PDF page.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+
+      try {
+        renderTask.cancel();
+      } catch {
+        // Best-effort cancellation.
+      }
+
+      if (
+        pdfRenderTaskRef.current ===
+        renderTask
+      ) {
+        pdfRenderTaskRef.current =
+          null;
+      }
+    };
+  }, [pdfPage, isPdf]);
+
+  /*
+   * -------------------------------------------------------------
+   * CONTROLS
+   * -------------------------------------------------------------
+   */
+
+  const handleResetFit = () => {
+    setSmartRasterCrop(null);
+    if (!isPdf && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
+    setZoom(1.0);
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
+
+    setRotation(0);
+  };
+
+  const handleZoomIn = () => {
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
+    setZoom((current) =>
+      Math.min(
+        5.0,
+        Math.round(
+          (current + 0.25) * 100,
+        ) / 100,
+      ),
+    );
+  };
+
+  const handleZoomOut = () => {
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
+    setZoom((current) =>
+      Math.max(
+        0.25,
+        Math.round(
+          (current - 0.25) * 100,
+        ) / 100,
+      ),
+    );
+  };
+
+  const handleRotate = () => {
+    setRotation((current) => {
+      const next =
+        (current + 90) % 360;
+
+      return next as
+        | 0
+        | 90
+        | 180
+        | 270;
+    });
+
+    setPan({
+      x: 0,
+      y: 0,
+    });
+  };
+
+  /*
+   * -------------------------------------------------------------
+   * PDF PAGE NAVIGATION
+   * -------------------------------------------------------------
+   */
+
+  const handlePreviousPage = () => {
+    if (
+      !isPdf ||
+      pdfPageNumber <= 1 ||
+      pdfLoading
+    ) {
+      return;
+    }
+
+    setPdfPageNumber(
+      (current) =>
+        Math.max(
+          1,
+          current - 1,
+        ),
+    );
+  };
+
+  const handleNextPage = () => {
+    if (
+      !isPdf ||
+      pdfPageNumber >=
+        pdfPageCount ||
+      pdfLoading
+    ) {
+      return;
+    }
+
+    setPdfPageNumber(
+      (current) =>
+        Math.min(
+          pdfPageCount,
+          current + 1,
+        ),
+    );
+  };
+
+  /*
+   * -------------------------------------------------------------
+   * POINTER PAN
+   * -------------------------------------------------------------
+   */
+
+  const handlePointerDown = (
+    e: React.PointerEvent,
+  ) => {
+    if (e.button !== 0) {
+      return;
+    }
+
+    isDraggingRef.current =
+      true;
+
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+    };
+
+    initialPanRef.current = {
+      ...pan,
+    };
+
+    setIsDragging(true);
+
+    e.currentTarget.setPointerCapture(
+      e.pointerId,
+    );
+  };
+
+  const handlePointerMove = (
+    e: React.PointerEvent,
+  ) => {
+    if (
+      !isDraggingRef.current
+    ) {
+      return;
+    }
+
+    const dx =
+      e.clientX -
+      dragStartRef.current.x;
+
+    const dy =
+      e.clientY -
+      dragStartRef.current.y;
+
+    setPan(
+      clampPan({
+        x:
+          initialPanRef.current.x +
+          dx,
+
+        y:
+          initialPanRef.current.y +
+          dy,
+      }),
+    );
+  };
+
+  const handlePointerUp = (
+    e: React.PointerEvent,
+  ) => {
+    if (
+      !isDraggingRef.current
+    ) {
+      return;
+    }
+
+    isDraggingRef.current =
+      false;
+
+    setIsDragging(false);
+
+    try {
+      e.currentTarget.releasePointerCapture(
+        e.pointerId,
+      );
+    } catch {
+      // Pointer capture may already have been released.
+    }
+  };
+
+  /*
+   * -------------------------------------------------------------
+   * WHEEL ZOOM
+   * -------------------------------------------------------------
+   */
+
+  const handleWheel = (
+    e: React.WheelEvent,
+  ) => {
+    if (
+      !e.ctrlKey &&
+      !e.metaKey
+    ) {
+      return;
+    }
+
+    e.preventDefault();
+    if (!isPdf && viewMode === "smart" && originalDocSizeRef.current) {
+      setDocSize(originalDocSizeRef.current);
+    }
+    setViewMode("fit");
+
+    const delta =
+      e.deltaY < 0
+        ? 0.15
+        : -0.15;
+
+    setZoom((current) =>
+      Math.min(
+        5.0,
+        Math.max(
+          0.25,
+          Math.round(
+            (current + delta) *
+              100,
+          ) / 100,
+        ),
+      ),
+    );
+  };
+
+  /*
+   * -------------------------------------------------------------
+   * WATERMARK CONTEXT
+   * -------------------------------------------------------------
+   */
+
+  const mergedWatermarkContext: WatermarkContextInfo =
+    useMemo(() => {
+      return {
+        ...watermarkContext,
+
+        companyName:
+          propCompanyName ||
+          watermarkContext?.companyName,
+
+        companyId:
+          propCompanyId ||
+          watermarkContext?.companyId,
+
+        viewerRole:
+          propViewerRole ||
+          watermarkContext?.viewerRole,
+
+        designation:
+          propDesignation ||
+          watermarkContext?.designation,
+
+        viewRef,
+      };
+    }, [
+      watermarkContext,
+      propCompanyName,
+      propCompanyId,
+      propViewerRole,
+      propDesignation,
+      viewRef,
+    ]);
+
+  const displayZoomPercentage =
+    Math.round(zoom * 100);
+
+  /*
+   * -------------------------------------------------------------
+   * RENDER
+   * -------------------------------------------------------------
+   */
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col bg-background border border-border rounded-xl shadow-2xl overflow-hidden select-none">
+      {/* ------------------------------------------------------- */}
+      {/* SECURE VIEWER HEADER                                    */}
+      {/* ------------------------------------------------------- */}
+
+      <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 shrink-0 z-30">
+        <div className="min-w-0 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
+            <FileText className="size-4" />
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-bold text-foreground truncate">
+                {documentTitle}
+              </p>
+
+              <span className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                <ShieldCheck className="size-2.5" />
+                Audited View
+              </span>
+            </div>
+
+            <p className="max-w-[460px] truncate text-[10px] text-muted-foreground font-mono">
+              {fileName}{" "}
+              {documentDate
+                ? `• Date: ${documentDate}`
+                : ""}{" "}
+              • Ref: {viewRef}
+            </p>
+          </div>
+        </div>
+
+        {/* ----------------------------------------------------- */}
+        {/* ACTION CONTROLS                                       */}
+        {/* ----------------------------------------------------- */}
+
+        <div className="flex items-center gap-1.5">
+          {isPdf &&
+            pdfPageCount > 0 && (
+              <div className="flex items-center gap-1 rounded border border-border bg-background px-1">
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={
+                    handlePreviousPage
+                  }
+                  disabled={
+                    pdfPageNumber <=
+                      1 ||
+                    pdfLoading
+                  }
+                  title="Previous page"
+                >
+                  <ChevronLeft className="size-3.5" />
+                </button>
+
+                <span className="min-w-[78px] text-center text-[10px] font-mono font-semibold text-foreground tabular-nums">
+                  Page{" "}
+                  {pdfPageNumber}{" "}
+                  of{" "}
+                  {pdfPageCount}
+                </span>
+
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={
+                    handleNextPage
+                  }
+                  disabled={
+                    pdfPageNumber >=
+                      pdfPageCount ||
+                    pdfLoading
+                  }
+                  title="Next page"
+                >
+                  <ChevronRight className="size-3.5" />
+                </button>
+              </div>
+            )}
+
+          <button
+            type="button"
+            className="flex items-center gap-1 h-7 rounded border border-border px-2.5 text-xs font-semibold hover:bg-muted text-foreground transition-colors active:scale-95"
+            onClick={
+              handleResetFit
+            }
+            title="Fit to window (Recalculate Scale)"
+          >
+            <Maximize2 className="size-3" />
+            Fit
+          </button>
+
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
+            onClick={
+              handleZoomOut
+            }
+            title="Zoom out (-25%)"
+          >
+            <ZoomOut className="size-3.5" />
+          </button>
+
+          <span
+            className="w-12 text-center text-[10px] font-mono font-bold text-foreground tabular-nums cursor-pointer hover:underline"
+            onClick={() => {
+              setSmartRasterCrop(null);
+              if (!isPdf && originalDocSizeRef.current) {
+                setDocSize(originalDocSizeRef.current);
+              }
+              setViewMode("fit");
+              setZoom(1.0);
+
+              setPan({
+                x: 0,
+                y: 0,
+              });
+            }}
+            title="Click to reset to 100% Fit"
+          >
+            {displayZoomPercentage}%
+          </span>
+
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
+            onClick={
+              handleZoomIn
+            }
+            title="Zoom in (+25%)"
+          >
+            <ZoomIn className="size-3.5" />
+          </button>
+
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors active:scale-95"
+            onClick={
+              handleRotate
+            }
+            title="Rotate 90° Clockwise"
+          >
+            <RotateCcw className="size-3.5" />
+          </button>
+
+          {ocrConfidence !==
+            undefined && (
+            <div className="flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 px-2 py-0.5 text-[10px] text-emerald-800 dark:text-emerald-300 font-bold">
+              OCR:{" "}
+              {Math.round(
+                ocrConfidence,
+              )}
+              %
+            </div>
+          )}
+
+          {onClose && (
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors ml-1"
+              onClick={
+                onClose
+              }
+              title="Close secure viewer"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------- */}
+      {/* MAIN SECURE VIEWPORT                                    */}
+      {/* ------------------------------------------------------- */}
+
+      <div
+        ref={viewportRef}
+        className="relative min-h-[350px] flex-1 overflow-hidden bg-muted/30 select-none flex items-center justify-center"
+        onWheel={
+          handleWheel
+        }
+        onPointerDown={
+          handlePointerDown
+        }
+        onPointerMove={
+          handlePointerMove
+        }
+        onPointerUp={
+          handlePointerUp
+        }
+        onPointerCancel={
+          handlePointerUp
+        }
+        style={{
+          cursor: isDragging
+            ? "grabbing"
+            : panBounds.x > 0 ||
+                panBounds.y > 0
+              ? "grab"
+              : "default",
+
+          touchAction: "none",
+        }}
+      >
+        {/* ----------------------------------------------------- */}
+        {/* AMBIENT CANVAS WATERMARK                              */}
+        {/* ----------------------------------------------------- */}
+
+        <DocumentWatermark
+          {...mergedWatermarkContext}
+          variant="canvas"
+        />
+
+        {/* ----------------------------------------------------- */}
+        {/* CONTROLLED DOCUMENT STAGE                             */}
+        {/* ----------------------------------------------------- */}
+
+        <div
+          className="relative flex items-center justify-center shadow-2xl rounded-lg bg-background border border-border overflow-visible select-none"
+          style={{
+            width: `${docSize.width}px`,
+            height: `${docSize.height}px`,
+
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${fitScale * zoom}) rotate(${rotation}deg)`,
+
+            transformOrigin:
+              "center center",
+
+            boxShadow:
+              "0 20px 45px -10px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.1)",
+
+            transition:
+              isDragging
+                ? "none"
+                : "transform 75ms ease-out",
+          }}
+        >
+          {/* --------------------------------------------------- */}
+          {/* PDF.JS CONTROLLED PDF RENDERING                     */}
+          {/* --------------------------------------------------- */}
+
+          {loading ? (
+            <div className="flex h-full w-full items-center justify-center bg-white">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-lg">
+                <Loader2 className="size-4 animate-spin" />
+                Loading evidence…
+              </div>
+            </div>
+          ) : !hasPayload || imgError ? (
+            <div className="flex h-full w-full items-center justify-center bg-white">
+              <div className="mx-6 max-w-md rounded-xl border border-border bg-muted/30 p-5 text-center">
+                <FileX className="mx-auto mb-3 size-7 text-muted-foreground" />
+                <p className="text-sm font-semibold text-foreground">Evidence unavailable</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {imgError
+                    ? "This document could not be displayed."
+                    : "The evidence metadata exists, but its stored file could not be found."}
+                </p>
+              </div>
+            </div>
+          ) : isPdf ? (
+            <div className="relative h-full w-full bg-white flex items-center justify-center overflow-visible">
+              {pdfPage && (
+                <canvas
+                  ref={pdfCanvasRef}
+                  aria-label={`${fileName}, page ${pdfPageNumber}`}
+                  className="block max-w-none"
+                  draggable={false}
+                  style={{
+                    width: `${docSize.width}px`,
+                    height: `${docSize.height}px`,
+                  }}
+                />
+              )}
+
+              {/* PDF loading state */}
+              {pdfLoading && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80">
+                  <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-lg">
+                    <Loader2 className="size-4 animate-spin" />
+                    Rendering document…
+                  </div>
+                </div>
+              )}
+
+              {/* PDF parsing/loading failure */}
+              {pdfError && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
+                  <div className="mx-6 max-w-md rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-center">
+                    <AlertTriangle className="mx-auto mb-3 size-7 text-destructive" />
+
+                    <p className="text-sm font-semibold text-foreground">
+                      PDF could not be displayed
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {pdfError}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Individual page render failure */}
+              {!pdfError &&
+                pdfRenderError && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
+                    <div className="mx-6 max-w-md rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-center">
+                      <AlertTriangle className="mx-auto mb-3 size-7 text-destructive" />
+
+                      <p className="text-sm font-semibold text-foreground">
+                        PDF page could not be rendered
+                      </p>
+
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {pdfRenderError}
+                      </p>
+                    </div>
+                  </div>
+                )}
+            </div>
+          ) : (
+            /* ------------------------------------------------- */
+            /* EXISTING RASTER IMAGE PATH — UNCHANGED            */
+            /* ------------------------------------------------- */
+
+            <img
+              src={viewMode === "smart" && smartRasterCrop ? smartRasterCrop.dataUrl : (dataUrl as string)}
+              alt={fileName}
+              draggable={false}
+              onLoad={
+                handleImageLoad
+              }
+              onError={() => setImgError(true)}
+              className="h-full w-full object-contain select-none pointer-events-none"
+            />
+          )}
+
+          {/* --------------------------------------------------- */}
+          {/* FORENSIC DOCUMENT WATERMARK                         */}
+          {/* --------------------------------------------------- */}
+
+          <DocumentWatermark
+            {...mergedWatermarkContext}
+            variant="document"
+          />
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------- */}
+      {/* BOTTOM SECURE STATUS                                    */}
+      {/* ------------------------------------------------------- */}
+
+      <div className="flex min-h-11 items-center justify-between gap-3 border-t border-border bg-card px-4 py-2 shrink-0 z-30">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="size-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+
+          <p className="min-w-0 truncate text-[11px] text-muted-foreground font-mono">
+            {fileName} •{" "}
+            {isPdf
+              ? `PDF.js Controlled View${
+                  pdfPageCount >
+                  0
+                    ? ` • Page ${pdfPageNumber}/${pdfPageCount}`
+                    : ""
+                }`
+              : "High-Resolution Image Asset"}{" "}
+            • Audited View Ref:{" "}
+            <span className="font-bold text-foreground">
+              {viewRef}
+            </span>
+          </p>
+        </div>
+
+        {onReplace && (
+          <button
+            type="button"
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-xs active:scale-95"
+            onClick={
+              onReplace
+            }
+          >
+            <RefreshCcw className="size-3" />
+            Replace Document
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

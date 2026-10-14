@@ -2029,6 +2029,7 @@ export default function NewCompanyPage() {
                     disabled
                   />
                   <UnavailableNote />
+                  <p className="text-[11px] text-muted-foreground">A new customer cannot start already ended. End a customer&apos;s service later from Edit, with a reason.</p>
                 </div>
 
                 <div className="space-y-2">

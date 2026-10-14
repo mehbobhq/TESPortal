@@ -243,6 +243,59 @@ export default function EditCompanyPage() {
           </Button>
         </div>
       </form>
+
+      {details.kind === "Customer" && details.serviceStage !== "ENDED" ? <EndServiceCard companyId={company.id} onEnded={() => router.push(`/companies/${company.id}/profile`)} /> : null}
     </div>
+  )
+}
+
+/** The original form's "End Date": ending a customer's service is a lifecycle action with a reason (an ended engagement is never reopened or deleted). */
+function EndServiceCard({ companyId, onEnded }: { companyId: string; onEnded: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  return (
+    <Card className="max-w-5xl">
+      <CardHeader className="bg-muted/30 py-3 border-b">
+        <CardTitle className="text-sm">End this customer&apos;s service</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <form
+          className="grid sm:grid-cols-4 gap-4 items-end"
+          onSubmit={async (event) => {
+            event.preventDefault()
+            const form = new FormData(event.currentTarget)
+            if (!window.confirm("End this customer's service? This is recorded permanently with its reason and is never reopened or deleted.")) return
+            setBusy(true)
+            setMessage(null)
+            try {
+              const response = await fetch(`/api/companies/${encodeURIComponent(companyId)}/engagement`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ endedAt: `${String(form.get("endedAt"))}T00:00:00Z`, endReason: String(form.get("endReason")) }),
+              })
+              if (!response.ok) return setMessage((await response.json().catch(() => null))?.error ?? "The service could not be ended.")
+              onEnded()
+            } catch {
+              setMessage("The service could not be ended.")
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          <div className="space-y-1">
+            <Label htmlFor="endedAt">End date</Label>
+            <Input id="endedAt" name="endedAt" type="date" required />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="endReason">Reason</Label>
+            <select id="endReason" name="endReason" required className="w-full rounded-md border bg-background px-2 py-2 text-sm">
+              {["COMPLETED", "CUSTOMER_TERMINATED", "TES_TERMINATED", "MUTUAL_AGREEMENT", "ENTERED_IN_ERROR"].map((value) => <option key={value}>{value}</option>)}
+            </select>
+          </div>
+          <Button type="submit" variant="outline" disabled={busy}>End service</Button>
+          {message ? <p role="alert" className="sm:col-span-4 text-sm text-red-600">{message}</p> : null}
+        </form>
+      </CardContent>
+    </Card>
   )
 }

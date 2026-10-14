@@ -14,7 +14,7 @@ export function AppShellBoundary({ children }: { children: React.ReactNode }) {
   if (externalDriverApplication) return <>{children}</>
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>

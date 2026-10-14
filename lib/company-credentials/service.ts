@@ -3,7 +3,6 @@ import "server-only"
 import type { PoolClient } from "pg"
 import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import * as operations from "@/lib/company-credentials/operations"
-import * as scoped from "@/lib/company-credentials/scoped-operations"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import type { CredentialView, OrganizationCredentialsView, SystemView } from "@/lib/company-credentials/types"
 
@@ -85,18 +84,3 @@ export const voidVerification = (input: unknown): Promise<CredentialView> => man
 export const addSecretSlot = (input: unknown): Promise<CredentialView> => manage((ctx) => operations.addSecretSlot(ctx, input))
 export const attachSecretReference = (input: unknown): Promise<CredentialView> => manage((ctx) => operations.attachSecretReference(ctx, input))
 export const retireSecretSlot = (input: unknown): Promise<CredentialView> => manage((ctx) => operations.retireSecretSlot(ctx, input))
-
-// --- company-scoped entry points (scoped-operations.ts) -------------------------------------------------------------------
-// The same operations, but each id must belong to the Organization named by the route; a mismatch is "not found". All run in
-// the one CREDENTIAL_MANAGE transaction, so the scope check and the change commit or roll back together.
-
-export const createCredentialWithRecoverySlots = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.createCredentialWithRecoverySlots(ctx, organizationId, input))
-export const replaceCompanyCredential = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.replaceCredentialInOrganization(ctx, organizationId, input))
-export const updateCompanyCredentialMetadata = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.updateCredentialMetadataInOrganization(ctx, organizationId, input))
-export const correctCompanyCredentialStatus = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.correctCredentialStatusInOrganization(ctx, organizationId, input))
-export const voidCompanyVerification = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.voidVerificationInOrganization(ctx, organizationId, input))
-export const declareCompanySecretSlot = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.declareSecretSlotInOrganization(ctx, organizationId, input))
-export const retireCompanySecretSlot = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.retireSecretSlotInOrganization(ctx, organizationId, input))
-/** Links a slot to a Secret Manager resource NAME (never a value). */
-export const linkCompanySlotToSecretManager = (organizationId: string, input: unknown): Promise<CredentialView> => manage((ctx) => scoped.linkSlotToSecretManagerInOrganization(ctx, organizationId, input))
-export const retireAliasOfCredentialSystem = (systemId: string, input: unknown): Promise<SystemView> => manage((ctx) => scoped.retireAliasOfSystem(ctx, systemId, input))

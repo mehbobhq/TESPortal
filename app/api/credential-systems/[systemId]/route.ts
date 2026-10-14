@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
-import {
-  addAlias,
-  archiveSystem,
-  getSystem,
-  restoreSystem,
-  retireAliasOfCredentialSystem,
-  updateSystem,
-} from "@/lib/company-credentials/service"
+import { addAlias, archiveSystem, getSystem, restoreSystem, updateSystem } from "@/lib/company-credentials/service"
+import { retireAliasOfCredentialSystem } from "@/lib/company-credential-scope/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

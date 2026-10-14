@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
-import { createCredentialWithRecoverySlots, getOrganizationCredentials } from "@/lib/company-credentials/service"
+import { getOrganizationCredentials } from "@/lib/company-credentials/service"
+import { createCredentialWithRecoverySlots } from "@/lib/company-credential-scope/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

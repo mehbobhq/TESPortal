@@ -21,12 +21,12 @@
 
 import { randomUUID } from "node:crypto";
 
-import { validateActor } from "./actor-identity.ts";
-import { validateCoverage } from "./coverage.ts";
-import { CATALOGUE_VERSION, getEventTypeDefinition, isRegisteredEventType, UnregisteredEventTypeError } from "./event-types.ts";
-import { HASH_ALGORITHM_MAX_LENGTH, HASH_VALUE_MAX_LENGTH, IDENTIFIER_MAX_LENGTH, REFERENCE_MAX_LENGTH, SHORT_TEXT_MAX_LENGTH } from "./limits.ts";
-import type { MasterRegisterRepository } from "./repository.ts";
-import type { ChangeSet, MasterRegisterEvent, MasterRegisterEventInput } from "./types.ts";
+import { validateActor } from "./actor-identity";
+import { validateCoverage } from "./coverage";
+import { CATALOGUE_VERSION, getEventTypeDefinition, isRegisteredEventType, UnregisteredEventTypeError } from "./event-types";
+import { HASH_ALGORITHM_MAX_LENGTH, HASH_VALUE_MAX_LENGTH, IDENTIFIER_MAX_LENGTH, REFERENCE_MAX_LENGTH, SHORT_TEXT_MAX_LENGTH } from "./limits";
+import type { MasterRegisterRepository } from "./repository";
+import type { ChangeSet, MasterRegisterEvent, MasterRegisterEventInput } from "./types";
 
 export class ForbiddenFamilyOverrideError extends Error {
   constructor() {

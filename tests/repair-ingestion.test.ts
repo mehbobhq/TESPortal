@@ -6,12 +6,12 @@ import {
   createLineFingerprint,
   scoreDuplicateCandidate,
   sha256Hex,
-} from "../lib/repair-document-intake.ts"
+} from "../lib/repair-document-intake"
 import {
   decideRepairInvoiceIngestion,
   UnconfiguredRepairInvoiceOCRAdapter,
-} from "../lib/repair-invoice-ocr.ts"
-import { normalizeSuffix, validateCompany } from "../lib/company-validation.ts"
+} from "../lib/repair-invoice-ocr"
+import { normalizeSuffix, validateCompany } from "../lib/company-validation"
 
 test("identical source hashes are exact duplicates", () => {
   const result = scoreDuplicateCandidate({ sourceHash: "same", companyId: "C1" }, { invoiceId: "I1", sourceHash: "same", companyId: "C1" })

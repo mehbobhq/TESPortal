@@ -1,7 +1,6 @@
 // Original Settings rule copy (titles, descriptions, region relevance, section layout), restored verbatim from the original
 // Settings workspace. The `defaultValue` the original pre-selected is NOT an assertion: the restored page shows "Not configured"
 // until the company has actually recorded an answer, and shows the catalogue default only as a note (see adapter.ts).
-import { FileCheck2, Globe2, ReceiptText, ShieldCheck, Truck, Users } from "lucide-react"
 
 export type RuleValue = "applies" | "does-not-apply" | "not-configured"
 
@@ -351,41 +350,3 @@ export const RULES: Record<string, Rule[]> = {
     },
   ],
 }
-export const SECTIONS = [
-  {
-    id: "overview",
-    label: "Profile",
-    description: "Operating scope",
-    icon: Globe2,
-  },
-  {
-    id: "cargo",
-    label: "Cargo",
-    description: "Goods & permits",
-    icon: Truck,
-  },
-  {
-    id: "operations",
-    label: "Operations",
-    description: "Routes & states",
-    icon: ShieldCheck,
-  },
-  {
-    id: "tax",
-    label: "Tax Filing",
-    description: "Taxes & filings",
-    icon: ReceiptText,
-  },
-  {
-    id: "drivers",
-    label: "Drivers & Staff",
-    description: "People & documents",
-    icon: Users,
-  },
-  {
-    id: "programs",
-    label: "Programs",
-    description: "Memberships",
-    icon: FileCheck2,
-  },
-] as const

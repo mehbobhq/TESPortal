@@ -14,7 +14,8 @@ import {
   supersedeIdentifier,
   updateLegalIdentity,
 } from "@/lib/corporate-identity/service"
-import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
+import { prepareCorporateIdentifier, type CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
+import { findActiveIdentifierCollision } from "@/lib/corporate-identity/repository"
 import type { ClassificationInput, CreateOrganizationInput, OrganizationRecord } from "@/lib/corporate-identity/types"
 
 type CompanyDirectoryRow = {
@@ -220,6 +221,37 @@ function identifierValue(
  * Authorized preflight for company onboarding. Name matches are review candidates,
  * never automatic proof that two legal entities are the same.
  */
+/** Read-only strong-identifier preflight; the creation transaction remains authoritative. */
+export async function findCompanyIdentifierConflicts(input: {
+  incorpNo?: string
+  businessNo?: string
+  ein?: string
+  regCorpCountry?: string
+  regCorpState?: string
+}): Promise<Array<{ kind: string; organizationId: string; name: string }>> {
+  const identifiers: CorporateIdentifierInput[] = []
+  const country = countryCode(input.regCorpCountry)
+  const region = text(input.regCorpState) || null
+  if (text(input.incorpNo) && country) {
+    identifiers.push({ kind: "INCORPORATION", value: text(input.incorpNo), country, region })
+  }
+  if (text(input.businessNo)) identifiers.push({ kind: "CRA_BN", value: text(input.businessNo) })
+  if (text(input.ein)) identifiers.push({ kind: "IRS_EIN", value: text(input.ein) })
+  const prepared = identifiers.map((identifier) => prepareCorporateIdentifier(identifier))
+  return withAuthorizedSystem("ORGANIZATION_REGISTRY_READ", async (client) => {
+    const matches: Array<{ kind: string; organizationId: string; name: string }> = []
+    for (const identifier of prepared) {
+      const found = await findActiveIdentifierCollision(client, identifier)
+      if (found) matches.push({
+        kind: identifier.kind,
+        organizationId: found.organizationId,
+        name: found.legalName,
+      })
+    }
+    return matches
+  })
+}
+
 export async function findCompanyNameCandidates(name: string): Promise<Array<{ id: string; name: string; match: "legal_name" | "alias" }>> {
   const { cleanDisplayText, normalizeBusinessName } = await import("@/lib/corporate-identity/normalization")
   const normalized = normalizeBusinessName(cleanDisplayText(name, "companyName"), "companyName")

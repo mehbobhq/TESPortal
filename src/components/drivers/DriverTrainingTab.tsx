@@ -336,7 +336,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.provider}
-                    onChange={(value) => setForm({ ...form, provider: value })}
+                    onChange={(event) => setForm({ ...form, provider: event.target.value })}
                     required
                     placeholder="e.g. Internal Safety Dept or Vendor Name"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
@@ -380,7 +380,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.certificateNumber}
-                    onChange={(value) => setForm({ ...form, certificateNumber: value })}
+                    onChange={(event) => setForm({ ...form, certificateNumber: event.target.value })}
                     placeholder="Optional certificate/ID"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1"
                   />
@@ -404,7 +404,7 @@ export function DriverTrainingTab({
                   <input
                     type="text"
                     value={form.scoreOrResult}
-                    onChange={(value) => setForm({ ...form, scoreOrResult: value })}
+                    onChange={(event) => setForm({ ...form, scoreOrResult: event.target.value })}
                     placeholder="e.g. Passed, 96%, or Grade"
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
                   />

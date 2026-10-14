@@ -328,6 +328,31 @@ const formationOf = (core: repo.OrganizationCore): Jurisdiction | null =>
     ? null
     : { country: core.formationCountry as Jurisdiction["country"], region: core.formationRegion }
 
+/** Shared name-review gate for creation and later identity/alias changes.
+ * Locks are transaction scoped. A match is a review candidate, not proof of identity.
+ */
+async function assertNameAvailable(ctx: OperationContext, normalizedName: string, ownId: string | null): Promise<void> {
+  await ctx.client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+    [`tes:organization:create:${normalizedName}`],
+  )
+  const candidates = await ctx.client.query<{ id: string }>(
+    `SELECT o.id FROM public.organizations o
+     WHERE ($2::uuid IS NULL OR o.id <> $2::uuid)
+       AND (o.normalized_legal_name = $1 OR EXISTS (
+         SELECT 1 FROM public.organization_aliases a
+         WHERE a.organization_id = o.id AND a.normalized_alias = $1 AND a.status = 'active'
+       ))
+     LIMIT 1`,
+    [normalizedName, ownId],
+  )
+  if (candidates.rows.length > 0) {
+    throw new CorporateIdentityConflictError(
+      "A company with this name already exists or requires identity review. Search the company registry before proceeding.",
+    )
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // create
 // ---------------------------------------------------------------------------------------------------------------
@@ -397,32 +422,7 @@ export async function createOrganization(ctx: OperationContext, rawInput: unknow
     }
   }
 
-  // Serialize identical-name onboarding within the existing authorized transaction.
-  // This is a review gate, not a declaration that names establish legal identity.
-  // The transaction-scoped advisory lock prevents two concurrent requests from both
-  // passing the name lookup before either creates an organization.
-  await ctx.client.query(
-    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
-    [`tes:organization:create:${normalizedLegalName}`],
-  )
-  const nameCandidates = await ctx.client.query<{ id: string }>(
-    `SELECT o.id
-       FROM public.organizations o
-       WHERE o.normalized_legal_name = $1
-          OR EXISTS (
-            SELECT 1 FROM public.organization_aliases a
-            WHERE a.organization_id = o.id
-              AND a.normalized_alias = $1
-              AND a.status = 'active'
-          )
-       LIMIT 1`,
-    [normalizedLegalName],
-  )
-  if (nameCandidates.rowCount && nameCandidates.rowCount > 0) {
-    throw new CorporateIdentityConflictError(
-      "A company with this legal name already exists or requires identity review. Search the company registry before creating another record.",
-    )
-  }
+  await assertNameAvailable(ctx, normalizedLegalName, null)
 
   // Authoritative-identifier collisions are checked before anything is written.
   for (const prepared of identifiers) await assertNoActiveCollision(ctx, prepared)
@@ -539,6 +539,10 @@ export async function updateLegalIdentity(
     })
   }
   if (changes.length === 0) return loadResult(ctx, id, [])
+
+  if (legalName !== core.legalName) {
+    await assertNameAvailable(ctx, normalizeBusinessName(legalName, "legalName"), id)
+  }
 
   await repo.updateOrganizationIdentity(ctx.client, id, {
     legalName,
@@ -685,6 +689,7 @@ export async function addAlias(ctx: OperationContext, organizationId: string, ra
   if (await repo.findActiveAlias(ctx.client, id, alias.normalizedAlias, persistedType)) {
     throw new CorporateIdentityConflictError("This alias is already recorded for the Organization.")
   }
+  await assertNameAvailable(ctx, alias.normalizedAlias, id)
   const inserted = await repo.insertAlias(ctx.client, id, {
     alias: alias.alias,
     normalizedAlias: alias.normalizedAlias,

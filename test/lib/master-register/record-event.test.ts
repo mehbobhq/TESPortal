@@ -314,7 +314,7 @@ test("COMPLIANCE_ASSESSMENT_COMPLETED can reference a report, coverage, and an a
   const event = buildMasterRegisterEvent(
     validInput({
       eventType: "COMPLIANCE_ASSESSMENT_COMPLETED",
-      target: { resourceType: "Company", resourceId: "CMP-1", companyId: "CMP-1" },
+      target: { resourceType: "Company", resourceId: "CMP-1" },
       evidence: { documentReferences: ["assessment-report-ref-1"] },
       relationships: { assessmentId: "ASMT-1" },
       coverage: { expectedCount: 12, attemptedCount: 12, succeededCount: 12, failedCount: 0, unresolvedCount: 0 },

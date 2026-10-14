@@ -24,6 +24,7 @@ type Coverage = { id: string; coverageType: string; limitAmount: string | null; 
 type Term = { id: string; numberDisplay: string; termStart: string; termEnd: string | null; cancelledOn: string | null }
 type Policy = {
   policy: { id: string; insurerOrganizationId: string; family: string; recordStatus: string }
+  terms?: Array<{ coverages: Coverage[] }>
   asOf: { inForce: boolean; term: Term | null; coverages: Coverage[] }
   current: { latestTerm: Term | null }
 }
@@ -146,6 +147,8 @@ function CanonicalInsurance() {
               {policies.map((view) => {
                 const term = view.current.latestTerm
                 const archived = view.policy.recordStatus === "archived"
+                // A renewal starts from the most recent term's coverage (what is in force today may be empty once a term has ended).
+                const priorCoverages = view.terms?.[view.terms.length - 1]?.coverages?.length ? view.terms[view.terms.length - 1].coverages : view.asOf.coverages
                 return (
                   <div key={view.policy.id} className="py-3 flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -184,7 +187,7 @@ function CanonicalInsurance() {
                               event.preventDefault()
                               const form = new FormData(event.currentTarget)
                               const f = (name: string) => String(form.get(name) ?? "").trim()
-                              const first = view.asOf.coverages[0]
+                              const first = priorCoverages[0]
                               void patch(view.policy.id, {
                                 action: "renew",
                                 termStart: f("termStart"),
@@ -197,9 +200,9 @@ function CanonicalInsurance() {
                             <label className="space-y-1">New term starts<Input name="termStart" type="date" required defaultValue={term.termEnd ?? ""} /></label>
                             <label className="space-y-1">New term ends<Input name="termEnd" type="date" /></label>
                             <label className="space-y-1">New policy number (blank keeps it)<Input name="policyNumber" /></label>
-                            <label className="space-y-1">Coverage type<Input name="coverageType" required defaultValue={view.asOf.coverages[0]?.coverageType ?? ""} /></label>
-                            <label className="space-y-1">Limit<Input name="limitAmount" defaultValue={view.asOf.coverages[0]?.limitAmount ?? ""} /></label>
-                            <label className="space-y-1">Currency<Input name="currency" defaultValue={view.asOf.coverages[0]?.currency ?? "CAD"} /></label>
+                            <label className="space-y-1">Coverage type<Input name="coverageType" required defaultValue={priorCoverages[0]?.coverageType ?? ""} /></label>
+                            <label className="space-y-1">Limit<Input name="limitAmount" defaultValue={priorCoverages[0]?.limitAmount ?? ""} /></label>
+                            <label className="space-y-1">Currency<Input name="currency" defaultValue={priorCoverages[0]?.currency ?? "CAD"} /></label>
                             <Button type="submit" size="sm" disabled={busy} className="col-span-2">Renew (new term, history kept)</Button>
                           </form>
                           <form

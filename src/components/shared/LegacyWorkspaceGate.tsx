@@ -79,8 +79,14 @@ function BrowserLocalWorkspace({ company, title, boundary, children }: { company
   useEffect(() => {
     const added = projectCanonicalCompany(company)
     setReady(true)
-    return () => {
+    // Also on a hard navigation or tab close (React cleanup does not run then).
+    const onHide = () => {
       if (added) removeCanonicalProjection(company.id)
+    }
+    window.addEventListener("pagehide", onHide)
+    return () => {
+      window.removeEventListener("pagehide", onHide)
+      onHide()
     }
   }, [company])
   return (

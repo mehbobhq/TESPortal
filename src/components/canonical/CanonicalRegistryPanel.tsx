@@ -108,7 +108,8 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
       issuedOn: field("issuedOn") || undefined,
       expiresOn: field("expiresOn") || undefined,
     }
-    if (field("region")) payload.jurisdiction = { region: field("region") }
+    // The issuing country is an explicit choice (never inferred from the region); national numbers (USDOT, MC) need none.
+    if (field("region") || field("country")) payload.jurisdiction = { ...(field("country") ? { country: field("country") } : {}), ...(field("region") ? { region: field("region") } : {}) }
     if (await send(`${base}/${config.resource}`, "POST", payload)) form.reset()
   }
 
@@ -180,26 +181,33 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                       <details className="basis-full text-xs">
                         <summary className="cursor-pointer font-semibold">Edit or correct · history</summary>
                         <form
-                          className="grid sm:grid-cols-5 gap-2 pt-2 items-end"
+                          className="grid sm:grid-cols-6 gap-2 pt-2 items-end"
                           onSubmit={(event) => {
                             event.preventDefault()
                             const form = new FormData(event.currentTarget)
                             const f = (name: string) => String(form.get(name) ?? "").trim()
                             const payload: Record<string, unknown> = { action: f("mode") === "correct" ? "correctVersion" : "version" }
                             if (f("number") && f("number") !== (version?.numberDisplay ?? "")) payload.number = f("number")
-                            if (f("region") && f("region") !== (version?.jurisdictionRegion ?? "")) payload.jurisdiction = { region: f("region") }
+                            if (f("region") && (f("region") !== (version?.jurisdictionRegion ?? "") || f("country") !== (version?.jurisdictionCountry ?? ""))) {
+                              payload.jurisdiction = { country: f("country") || version?.jurisdictionCountry, region: f("region") }
+                            }
                             if (f("issuedOn") !== (version?.issuedOn ?? "")) payload.issuedOn = f("issuedOn") || null
                             if (f("expiresOn") !== (version?.expiresOn ?? "")) payload.expiresOn = f("expiresOn") || null
                             void send(`${base}/${config.resource}/${record.id}`, "PATCH", payload)
                           }}
                         >
                           <Input name="number" defaultValue={version?.numberDisplay ?? ""} aria-label="Number" />
+                          <select name="country" defaultValue={version?.jurisdictionCountry ?? ""} aria-label="Issuing country" className="rounded-md border bg-background px-2 text-sm">
+                            <option value="">—</option>
+                            <option value="CA">Canada</option>
+                            <option value="US">United States</option>
+                          </select>
                           <Input name="region" defaultValue={version?.jurisdictionRegion ?? ""} aria-label="Jurisdiction region" placeholder="Region" />
                           <Input name="issuedOn" type="date" defaultValue={version?.issuedOn ?? ""} aria-label="Issued" />
                           <Input name="expiresOn" type="date" defaultValue={version?.expiresOn ?? ""} aria-label="Expires" />
                           <Button type="submit" size="sm" disabled={busy}>Save</Button>
-                          <label className="sm:col-span-5 flex items-center gap-2"><input type="radio" name="mode" value="change" defaultChecked /> A real-world change (the earlier version stays as history)</label>
-                          <label className="sm:col-span-5 flex items-center gap-2"><input type="radio" name="mode" value="correct" /> The recorded value was wrong (correct it; the wrong one is kept and flagged)</label>
+                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="change" defaultChecked /> A real-world change (the earlier version stays as history)</label>
+                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="correct" /> The recorded value was wrong (correct it; the wrong one is kept and flagged)</label>
                         </form>
                         <div className="pt-2 flex items-center gap-2">
                           <span>Correct status</span>
@@ -256,6 +264,14 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
             <div className="space-y-1">
               <Label htmlFor="number">Number</Label>
               <Input id="number" name="number" required />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="country">Issuing country</Label>
+              <select id="country" name="country" defaultValue="" className="w-full rounded-md border bg-background px-2 py-2 text-sm">
+                <option value="">Not applicable / national</option>
+                <option value="CA">Canada</option>
+                <option value="US">United States</option>
+              </select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="region">Jurisdiction (region code)</Label>

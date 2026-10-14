@@ -24,7 +24,7 @@ type CredentialView = {
   lastVerification: { outcome: string; method: string; verifiedAt: string } | null
   slots: { id: string; slotKind: string; secretState: string }[]
 }
-type System = { id: string; displayName: string }
+type System = { id: string; displayName: string; loginUrl?: string | null }
 type Company = { id: string; name: string; kind: string; status: string }
 
 function CanonicalCredentials() {
@@ -200,8 +200,8 @@ function CanonicalCredentials() {
                       >
                         Record check
                       </Button>
-                      {view.system.loginUrl ? (
-                        <a href={view.system.loginUrl} target="_blank" rel="noopener noreferrer" className="rounded-md border px-2 py-1 text-xs font-semibold hover:bg-muted">
+                      {systems.find((system) => system.id === view.system.id)?.loginUrl ? (
+                        <a href={systems.find((system) => system.id === view.system.id)?.loginUrl ?? undefined} target="_blank" rel="noopener noreferrer" className="rounded-md border px-2 py-1 text-xs font-semibold hover:bg-muted">
                           Open portal
                         </a>
                       ) : null}

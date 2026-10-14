@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { ArrowLeft, Save, Building2 } from "lucide-react"
 
+import { ENGAGEMENT_END_REASONS } from "@/lib/customer-relationship/definitions"
 import { CompanyMissing } from "@/components/company-missing"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -289,7 +290,7 @@ function EndServiceCard({ companyId, onEnded }: { companyId: string; onEnded: ()
           <div className="space-y-1">
             <Label htmlFor="endReason">Reason</Label>
             <select id="endReason" name="endReason" required className="w-full rounded-md border bg-background px-2 py-2 text-sm">
-              {["COMPLETED", "CUSTOMER_TERMINATED", "TES_TERMINATED", "MUTUAL_AGREEMENT", "ENTERED_IN_ERROR"].map((value) => <option key={value}>{value}</option>)}
+              {ENGAGEMENT_END_REASONS.map((value) => <option key={value}>{value}</option>)}
             </select>
           </div>
           <Button type="submit" variant="outline" disabled={busy}>End service</Button>

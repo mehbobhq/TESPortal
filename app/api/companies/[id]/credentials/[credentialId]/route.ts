@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
+import { archiveCredential, changeCredentialStatus, recordVerification, restoreCredential } from "@/lib/company-credentials/service"
 import {
-  archiveCredential,
-  changeCredentialStatus,
   correctCompanyCredentialStatus,
   declareCompanySecretSlot,
   linkCompanySlotToSecretManager,
-  recordVerification,
   replaceCompanyCredential,
-  restoreCredential,
   retireCompanySecretSlot,
   updateCompanyCredentialMetadata,
   voidCompanyVerification,
-} from "@/lib/company-credentials/service"
+} from "@/lib/company-credential-scope/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

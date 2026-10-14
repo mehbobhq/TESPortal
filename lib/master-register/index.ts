@@ -5,7 +5,7 @@
  * no I/O, no Node-only built-ins, nothing that writes to a ledger. It
  * deliberately does NOT re-export record-event.ts: a shared barrel like this
  * one must never be the thing that hands a client component a callable
- * server write path. To record an event, import from "./server.ts" instead
+ * server write path. To record an event, import from "./server" instead
  * (guarded by the `server-only` marker package) — never from this file, and
  * never by reaching into record-event.ts directly from application code.
  *
@@ -28,10 +28,10 @@
  * future decision — not part of this foundation.
  */
 
-export * from "./types.ts";
-export * from "./event-types.ts";
-export * from "./coverage.ts";
-export * from "./assessment.ts";
-export * from "./actor-identity.ts";
-export * from "./repository.ts";
-export * from "./limits.ts";
+export * from "./types";
+export * from "./event-types";
+export * from "./coverage";
+export * from "./assessment";
+export * from "./actor-identity";
+export * from "./repository";
+export * from "./limits";

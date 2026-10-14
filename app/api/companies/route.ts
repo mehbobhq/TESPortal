@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { createCompanyDirectoryRecord, listCompanyDirectory } from "@/lib/company-directory/service"
+import { CorporateIdentifierCollisionError, CorporateIdentityConflictError, CorporateIdentityValidationError } from "@/lib/corporate-identity/errors"
+import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
+import { CompanyDirectoryValidationError, createCompanyDirectoryRecord, listCompanyDirectory } from "@/lib/company-directory/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,9 +20,15 @@ export async function POST(request: Request) {
     const company = await createCompanyDirectoryRecord(await request.json())
     return NextResponse.json(company, { status: 201 })
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to create company." },
-      { status: 400 },
-    )
+    if (error instanceof TesAuthorizationDeniedError) {
+      return NextResponse.json({ error: "Not authorized." }, { status: 403 })
+    }
+    if (error instanceof CorporateIdentityConflictError || error instanceof CorporateIdentifierCollisionError) {
+      return NextResponse.json({ error: error.message }, { status: 409 })
+    }
+    if (error instanceof CorporateIdentityValidationError || error instanceof CompanyDirectoryValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    return NextResponse.json({ error: "Unable to create company." }, { status: 500 })
   }
 }

@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildMasterRegisterEvent, recordEvent } from "../../../lib/master-register/record-event.ts";
-import { DuplicateEventError } from "../../../lib/master-register/repository.ts";
-import type { MasterRegisterEventInput } from "../../../lib/master-register/types.ts";
-import { InMemoryMasterRegisterRepository } from "./in-memory-repository.ts";
+import { buildMasterRegisterEvent, recordEvent } from "../../../lib/master-register/record-event";
+import { DuplicateEventError } from "../../../lib/master-register/repository";
+import type { MasterRegisterEventInput } from "../../../lib/master-register/types";
+import { InMemoryMasterRegisterRepository } from "./in-memory-repository";
 
 function input(overrides: Partial<MasterRegisterEventInput> = {}): MasterRegisterEventInput {
   return {

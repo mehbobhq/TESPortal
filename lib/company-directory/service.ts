@@ -169,10 +169,20 @@ function buildCreateOrganizationInput(input: CreateCompanyDirectoryInput): Creat
   const businessNumber = text(input.businessNo)
   const ein = text(input.ein)
 
+  // Never silently discard a supplied strong identifier: doing so bypasses collision prevention.
+  if (incorporation && !formation) {
+    throw new CompanyDirectoryValidationError("Incorporation number requires a formation country.")
+  }
+  if (incorporation && country === "US" && !regionCode) {
+    throw new CompanyDirectoryValidationError("US incorporation number requires a formation state.")
+  }
+  if (businessNumber && country === "US") {
+    throw new CompanyDirectoryValidationError("CRA Business Number cannot be assigned to a US formation.")
+  }
   if (incorporation && formation) {
     identifiers.push({ kind: "INCORPORATION", value: incorporation, country: formation.country, region: formation.region })
   }
-  if (businessNumber && country !== "US") identifiers.push({ kind: "CRA_BN", value: businessNumber })
+  if (businessNumber) identifiers.push({ kind: "CRA_BN", value: businessNumber })
   if (ein) identifiers.push({ kind: "IRS_EIN", value: ein })
 
   const aliases = text(input.dba) ? [{ alias: text(input.dba), aliasType: "TRADE_NAME" as const }] : []

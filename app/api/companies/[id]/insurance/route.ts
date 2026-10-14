@@ -7,10 +7,12 @@ export const dynamic = "force-dynamic"
 
 type Context = { params: Promise<{ id: string }> }
 
-export async function GET(_request: NextRequest, context: Context) {
+export async function GET(request: NextRequest, context: Context) {
   try {
     const { id } = await context.params
-    return NextResponse.json(await getOrganizationInsurance(id), { status: 200 })
+    // Optional as-of calendar date (YYYY-MM-DD); validated by the operation. The default is the database date.
+    const asOf = request.nextUrl.searchParams.get("asOf")
+    return NextResponse.json(await getOrganizationInsurance(id, asOf ? { asOf } : undefined), { status: 200 })
   } catch (error) {
     return canonicalFailure(error, "Unable to load insurance.")
   }

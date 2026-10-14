@@ -397,6 +397,26 @@ export async function createOrganization(ctx: OperationContext, rawInput: unknow
     }
   }
 
+  // Serialize identical-name onboarding within the existing authorized transaction.
+  // This is a review gate, not a declaration that names establish legal identity.
+  // The transaction-scoped advisory lock prevents two concurrent requests from both
+  // passing the name lookup before either creates an organization.
+  await ctx.client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+    [`tes:organization:create:${normalizedLegalName}`],
+  )
+  const nameCandidates = await ctx.client.query<{ id: string }>(
+    `SELECT id FROM public.organizations
+      WHERE normalized_legal_name = $1
+      LIMIT 1`,
+    [normalizedLegalName],
+  )
+  if (nameCandidates.rowCount && nameCandidates.rowCount > 0) {
+    throw new CorporateIdentityConflictError(
+      "A company with this legal name already exists or requires identity review. Search the company registry before creating another record.",
+    )
+  }
+
   // Authoritative-identifier collisions are checked before anything is written.
   for (const prepared of identifiers) await assertNoActiveCollision(ctx, prepared)
 

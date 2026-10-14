@@ -589,7 +589,7 @@ export function DriverScreeningTab({
                   <input
                     type="text"
                     value={form.providerOrAuthority}
-                    onChange={(value) => setForm({ ...form, providerOrAuthority: value })}
+                    onChange={(event) => setForm({ ...form, providerOrAuthority: event.target.value })}
                     placeholder="e.g. Dynacare / Dr. Angela Foster, MD"
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"
@@ -600,11 +600,11 @@ export function DriverScreeningTab({
                   <>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">National Registry CME #</label>
-                      <input value={form.cmeNumber} onChange={(value) => setForm({ ...form, cmeNumber: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" />
+                      <input value={form.cmeNumber} onChange={(event) => setForm({ ...form, cmeNumber: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name</label>
-                      <input value={form.examinerName} onChange={(value) => setForm({ ...form, examinerName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" />
+                      <input value={form.examinerName} onChange={(event) => setForm({ ...form, examinerName: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Medical Qualification</label>
@@ -628,14 +628,14 @@ export function DriverScreeningTab({
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Specimen Collection Date</label><DriverDateInput value={form.specimenCollectionDate} onChange={(value) => setForm({ ...form, specimenCollectionDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Drug / Alcohol Result</label><select value={form.drugAlcoholResult} onChange={(e) => setForm({ ...form, drugAlcoholResult: e.target.value as typeof form.drugAlcoholResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Negative</option><option>Positive</option><option>Refusal to Test</option><option>Cancelled / Invalid</option><option>Pending Verification</option></select></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Verified Date</label><DriverDateInput value={form.mroVerifiedDate} onChange={(value) => setForm({ ...form, mroVerifiedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Name</label><input value={form.mroName} onChange={(value) => setForm({ ...form, mroName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Laboratory Name</label><input value={form.laboratoryName} onChange={(value) => setForm({ ...form, laboratoryName: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">MRO Name</label><input value={form.mroName} onChange={(event) => setForm({ ...form, mroName: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Laboratory Name</label><input value={form.laboratoryName} onChange={(event) => setForm({ ...form, laboratoryName: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
                   </>
                 )}
 
                 {form.category === "Previous Employer Verification" && (
                   <>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Previous Employer *</label><input value={form.employerName} onChange={(value) => setForm({ ...form, employerName: value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Previous Employer *</label><input value={form.employerName} onChange={(event) => setForm({ ...form, employerName: event.target.value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Requested</label><DriverDateInput value={form.verificationRequestedDate} onChange={(value) => setForm({ ...form, verificationRequestedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Received</label><DriverDateInput value={form.verificationReceivedDate} onChange={(value) => setForm({ ...form, verificationReceivedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Verification Method</label><select value={form.verificationMethod} onChange={(e) => setForm({ ...form, verificationMethod: e.target.value as typeof form.verificationMethod })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Not recorded</option><option>Email</option><option>Fax</option><option>Phone</option><option>Third-Party Service</option></select></div>
@@ -650,7 +650,7 @@ export function DriverScreeningTab({
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Submitted Date</label><DriverDateInput value={form.clearinghouseSubmittedDate} onChange={(value) => setForm({ ...form, clearinghouseSubmittedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Completed Date</label><DriverDateInput value={form.clearinghouseCompletedDate} onChange={(value) => setForm({ ...form, clearinghouseCompletedDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Result</label><select value={form.clearinghouseResult} onChange={(e) => setForm({ ...form, clearinghouseResult: e.target.value as typeof form.clearinghouseResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Driver Not Prohibited</option><option>Driver Prohibited</option><option>Pending Consent</option><option>Pending Results</option></select></div>
-                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Reference Number</label><input value={form.clearinghouseReference} onChange={(value) => setForm({ ...form, clearinghouseReference: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
+                    <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Query Reference Number</label><input value={form.clearinghouseReference} onChange={(event) => setForm({ ...form, clearinghouseReference: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
                     <label className="col-span-2 flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={form.clearinghouseConsentObtained} onChange={(e) => setForm({ ...form, clearinghouseConsentObtained: e.target.checked })} /> Consent obtained</label>
                   </>
                 )}
@@ -668,9 +668,9 @@ export function DriverScreeningTab({
                 {form.category === "Road Test Evaluation" && (
                   <>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Date</label><DriverDateInput value={form.roadTestDate} onChange={(value) => setForm({ ...form, roadTestDate: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 font-mono mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name *</label><input value={form.roadTestExaminer} onChange={(value) => setForm({ ...form, roadTestExaminer: value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Unit</label><input value={form.roadTestVehicleUnit} onChange={(value) => setForm({ ...form, roadTestVehicleUnit: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
-                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Type</label><input value={form.roadTestVehicleType} onChange={(value) => setForm({ ...form, roadTestVehicleType: value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Examiner Name *</label><input value={form.roadTestExaminer} onChange={(event) => setForm({ ...form, roadTestExaminer: event.target.value })} required className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Unit</label><input value={form.roadTestVehicleUnit} onChange={(event) => setForm({ ...form, roadTestVehicleUnit: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
+                    <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vehicle Type</label><input value={form.roadTestVehicleType} onChange={(event) => setForm({ ...form, roadTestVehicleType: event.target.value })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1" /></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Type</label><select value={form.roadTestType} onChange={(e) => setForm({ ...form, roadTestType: e.target.value as typeof form.roadTestType })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Pre-Trip &amp; Road Test</option><option>Manoeuvring &amp; Backing</option><option>Coupling / Uncoupling</option><option>Full Evaluation</option></select></div>
                     <div><label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Test Result</label><select value={form.roadTestResult} onChange={(e) => setForm({ ...form, roadTestResult: e.target.value as typeof form.roadTestResult })} className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1"><option value="">Select</option><option>Passed</option><option>Failed</option><option>Retest Required</option></select></div>
                   </>
@@ -683,7 +683,7 @@ export function DriverScreeningTab({
                   <input
                     type="text"
                     value={form.resultSummary}
-                    onChange={(value) => setForm({ ...form, resultSummary: value })}
+                    onChange={(event) => setForm({ ...form, resultSummary: event.target.value })}
                     placeholder="e.g. Clean MVR - 0 Points, 2-Year Medical Cert Issued"
                     required
                     className="w-full h-9 rounded-xl border border-border bg-background px-3 mt-1 font-semibold"
@@ -697,7 +697,7 @@ export function DriverScreeningTab({
                   <textarea
                     rows={2}
                     value={form.notes}
-                    onChange={(value) => setForm({ ...form, notes: value })}
+                    onChange={(event) => setForm({ ...form, notes: event.target.value })}
                     placeholder="e.g. Annual clearinghouse pre-employment consent on file."
                     className="w-full rounded-xl border border-border bg-background p-2.5 mt-1"
                   />

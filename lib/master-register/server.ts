@@ -2,7 +2,7 @@
  * TES Master Register — server-authoritative write path.
  *
  * Application/Next.js code recording an event must import from HERE, never
- * directly from "./record-event.ts" and never via "./index.ts" (index.ts
+ * directly from "./record-event" and never via "./index.ts" (index.ts
  * deliberately does not re-export record-event.ts — see its own header
  * comment). This file is guarded by the `server-only` marker package:
  * importing it from client-bundled code throws immediately rather than
@@ -16,4 +16,4 @@
  */
 import "server-only";
 
-export * from "./record-event.ts";
+export * from "./record-event";

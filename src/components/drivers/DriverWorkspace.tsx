@@ -386,32 +386,16 @@ export function DriverWorkspace({
         evidenceIds: [],
       });
 
-      // Keep the canonical Driver email current only after the operator explicitly confirms this recipient.
-      if (recipientEmail !== (master.identity.email || "").trim().toLowerCase()) {
-        updateDriverMasterIdentity(master.id, { email: recipientEmail });
-      }
-
       const response = await fetch("/api/driver-applications/send-invitation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // References only. The server resolves company identity, driver details and the destination from authoritative
+        // records and rejects a recipient that does not match; nothing here is trusted as identity.
         body: JSON.stringify({
           companyId: company.id,
-          companyName: company.name,
-          companyAddress: {
-            street: String(company.reg_street || company.regStreet || company.registeredStreet || company.addressLine1 || "").trim(),
-            city: String(company.reg_city || company.regCity || company.registeredCity || company.city || "").trim(),
-            stateProvince: String(company.reg_state || company.regState || company.registeredState || company.regCorpState || company.stateProvince || "").trim(),
-            postalCode: String(company.reg_zip || company.regZip || company.registeredPostalCode || company.postalZip || "").trim(),
-            country: String(company.reg_country || company.regCountry || company.registeredCountry || company.regCorpCountry || company.country || "").trim(),
-          },
-          companyPhone: String(company.phone || company.contactNumber || company.phoneNumber || "").trim(),
-          companyEmail: String(company.email || company.accountEmail || "").trim(),
           driverMasterId: master.id,
           applicationId: application.id,
           recipientEmail,
-          driverName: `${master.identity.legalFirstName} ${master.identity.legalLastName}`.trim(),
-          applicationType,
-          operatingRegion: applicationRegion,
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -429,6 +413,10 @@ export function DriverWorkspace({
         invitationExpiresAt: result.expiresAt,
         invitationLastError: undefined,
       });
+      // Keep the Driver email current only after the server accepted this recipient and the invitation was sent.
+      if (recipientEmail !== (master.identity.email || "").trim().toLowerCase()) {
+        updateDriverMasterIdentity(master.id, { email: recipientEmail });
+      }
       logAuditEvent({
         e: "RECORD_CREATED",
         co: company.id,

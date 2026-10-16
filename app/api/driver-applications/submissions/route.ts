@@ -1,8 +1,12 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
 import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
+import { canonicalFailure } from "@/lib/api/canonical-response"
 import {
-  getApplicantSubmissions,
+  APPLICANT_SUBMISSION_READ_UNAVAILABLE_MESSAGE,
+  authorizeApplicantSubmissionRead,
+} from "@/lib/driver-applications/access"
+import {
   saveApplicantSubmission,
   type ServerApplicantSubmission,
 } from "@/lib/server/driver-application-submission-repository"
@@ -49,23 +53,25 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
-  const { userId } = await auth()
-
-  if (!userId) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 })
+/**
+ * Applicant submission retrieval is CLOSED. The server-side store (.tes-data) keeps no record of which customer owns an
+ * application, and browser data or caller-supplied ids are not a trustworthy substitute, so no submission can be released
+ * safely. The route still authenticates and authorizes first (TES actor holding DRIVER_READ) so the answer does not depend
+ * on who asks, and it never reads the store or looks at the requested ids. Stored submissions are untouched.
+ * Re-open by adding a canonical ownership check in lib/driver-applications/access.ts once application records are in PostgreSQL.
+ */
+export async function GET() {
+  try {
+    const { userId } = await auth()
+    if (!userId) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 })
+    }
+    await authorizeApplicantSubmissionRead()
+    return NextResponse.json(
+      { error: APPLICANT_SUBMISSION_READ_UNAVAILABLE_MESSAGE },
+      { status: 503, headers: { "Cache-Control": "private, no-store" } },
+    )
+  } catch (error) {
+    return canonicalFailure(error, "Unable to retrieve application submissions.")
   }
-
-  const applicationIds = (request.nextUrl.searchParams.get("applicationIds") ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .slice(0, 50)
-
-  if (applicationIds.length === 0) {
-    return NextResponse.json({ submissions: [] }, { status: 200 })
-  }
-
-  const submissions = await getApplicantSubmissions(applicationIds)
-  return NextResponse.json({ submissions }, { status: 200 })
 }

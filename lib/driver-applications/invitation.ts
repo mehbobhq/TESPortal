@@ -25,6 +25,16 @@ import { recordEvent } from "@/lib/master-register/server"
  * The production port therefore reports UNAVAILABLE and the endpoint FAILS CLOSED: nothing is sent. It must be replaced by a
  * PostgreSQL-backed implementation as part of the cutover; no allow-list, browser data or caller-supplied identifier is
  * accepted in its place.
+ *
+ * Delivery and audit semantics (see docs/driver-application-invitation-containment.md):
+ *   - Sending an email and writing to PostgreSQL cannot be one atomic step. The intent event is appended BEFORE the call (if
+ *     that fails nothing is sent); the outcome event is appended AFTER, in a separate transaction.
+ *   - A provider failure is reported as REJECTED only when the provider answered with an explicit refusal. A timeout, network
+ *     error, 5xx, idempotency conflict or unreadable answer is UNKNOWN: the message may have been delivered, and the response and
+ *     the Register say so. There is no automatic retry; the idempotency key is stable per verified application.
+ *   - The durable fix is a transactional outbox (intent row committed with the audit event, a worker that sends with the same
+ *     idempotency key and reconciles provider status, and a webhook for delivery/bounce). That needs a migration and queue
+ *     infrastructure and is deliberately NOT part of this containment patch.
  */
 
 export const INVITATION_UNAVAILABLE_MESSAGE =
@@ -95,10 +105,18 @@ export type OutboundInvitation = {
   idempotencyKey: string
 }
 
+/**
+ * `REJECTED`: the provider explicitly refused the message, so it was not sent.
+ * `UNKNOWN`: no trustworthy answer (timeout, network failure, 5xx, idempotency conflict, malformed response); the message may
+ * have been accepted and delivered.
+ */
 export class InvitationProviderError extends Error {
-  constructor() {
-    super("The email provider did not accept the invitation.")
+  readonly kind: "REJECTED" | "UNKNOWN"
+
+  constructor(kind: "REJECTED" | "UNKNOWN" = "UNKNOWN") {
+    super(kind === "REJECTED" ? "The email provider refused the invitation." : "The email provider's answer is unknown.")
     this.name = "InvitationProviderError"
+    this.kind = kind
   }
 }
 
@@ -116,8 +134,9 @@ export interface InvitationDeps {
 }
 
 export type InvitationOutcome =
-  | { status: 401 | 400 | 404 | 422 | 502 | 503; error: string }
-  | { status: 200; messageId: string; sentAt: string; expiresAt: string; auditRecorded: boolean }
+  | { status: 401 | 400 | 404 | 422 | 503; error: string }
+  | { status: 502; error: string; delivery: "REJECTED" | "UNKNOWN"; auditRecorded: boolean }
+  | { status: 200; messageId: string; sentAt: string; expiresAt: string; auditRecorded: boolean; auditNote?: string }
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase()
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex")
@@ -233,7 +252,7 @@ export async function handleInvitationRequest(request: Request, deps: Invitation
 
   if (prepared.kind === "STOP") return prepared.outcome
 
-  const outcomeEvent = (result: "SUCCESS" | "FAILURE", reasonCode: string, providerMessageId?: string) =>
+  const outcomeEvent = (result: "SUCCESS" | "FAILURE" | "UNKNOWN", reasonCode: string, providerMessageId?: string) =>
     deps.runAuthorized((scope) =>
       recordEvent(scope.register, {
         ...eventBase(scope, prepared.context, "send_driver_application_invitation"),
@@ -247,21 +266,46 @@ export async function handleInvitationRequest(request: Request, deps: Invitation
   let messageId: string
   try {
     messageId = (await deps.sendEmail(prepared.message)).messageId
-  } catch {
+  } catch (error) {
+    // Only an explicit refusal is a confirmed non-delivery. Anything else is an unknown outcome and is never reported as failed.
+    const rejected = error instanceof InvitationProviderError && error.kind === "REJECTED"
+    let auditRecorded = true
     try {
-      await outcomeEvent("FAILURE", "PROVIDER_REJECTED")
+      await outcomeEvent(rejected ? "FAILURE" : "UNKNOWN", rejected ? "PROVIDER_REJECTED" : "PROVIDER_OUTCOME_UNKNOWN")
     } catch {
-      // The intent event already records that a send was attempted; the failure outcome is the only thing missing.
+      auditRecorded = false
+      reportAuditGap(prepared.intentEventId, prepared.context.applicationId)
     }
-    return { status: 502, error: "The email provider did not accept the invitation. Nothing was delivered." }
+    return rejected
+      ? { status: 502, delivery: "REJECTED", auditRecorded, error: "The email provider refused the invitation. Nothing was sent." }
+      : {
+          status: 502,
+          delivery: "UNKNOWN",
+          auditRecorded,
+          error: "TES could not confirm whether the invitation was delivered. It may have been sent. Do not resend until this is checked.",
+        }
   }
 
   let auditRecorded = true
   try {
     await outcomeEvent("SUCCESS", "PROVIDER_ACCEPTED", messageId)
   } catch {
-    // The email is already sent and cannot be recalled. The intent event exists; surface the gap, never claim a full record.
+    // The email is already sent and cannot be recalled. The intent event exists (outcome UNRESOLVED); surface the gap, never
+    // claim a complete delivery record.
     auditRecorded = false
+    reportAuditGap(prepared.intentEventId, prepared.context.applicationId)
   }
-  return { status: 200, messageId, sentAt: deps.now().toISOString(), expiresAt: prepared.expiresAt, auditRecorded }
+  return {
+    status: 200,
+    messageId,
+    sentAt: deps.now().toISOString(),
+    expiresAt: prepared.expiresAt,
+    auditRecorded,
+    ...(auditRecorded ? {} : { auditNote: "The invitation was sent, but its outcome could not be recorded in the Master Register; only the pre-send intent event exists." }),
+  }
+}
+
+/** Operator-visible marker for reconciliation. Carries identifiers only: no recipient, no applicant data, no error text. */
+function reportAuditGap(intentEventId: string, applicationId: string) {
+  console.error("driver-invitation-outcome-not-recorded", { intentEventId, applicationId })
 }

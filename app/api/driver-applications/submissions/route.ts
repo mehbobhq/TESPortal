@@ -4,15 +4,14 @@ import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import { canonicalFailure } from "@/lib/api/canonical-response"
 import {
   APPLICANT_SUBMISSION_READ_UNAVAILABLE_MESSAGE,
+  APPLICANT_SUBMISSION_WRITE_UNAVAILABLE_MESSAGE,
   authorizeApplicantSubmissionRead,
 } from "@/lib/driver-applications/access"
-import {
-  saveApplicantSubmission,
-  type ServerApplicantSubmission,
-} from "@/lib/server/driver-application-submission-repository"
+import type { ServerApplicantSubmission } from "@/lib/server/driver-application-submission-repository"
 
 export const dynamic = "force-dynamic"
 
+// Retained for the PostgreSQL-backed implementation; intentionally unused while submissions are closed.
 function isSubmission(value: unknown): value is ServerApplicantSubmission {
   if (!value || typeof value !== "object") return false
   const candidate = value as Partial<ServerApplicantSubmission>
@@ -26,31 +25,30 @@ function isSubmission(value: unknown): value is ServerApplicantSubmission {
   )
 }
 
+/**
+ * Applicant submission acceptance is CLOSED, like retrieval. The only place a submission can be written today is the local
+ * JSON file in `.tes-data` (lib/server/driver-application-submission-repository.ts): it is not durable on serverless hosting,
+ * is not tenant-scoped, and no canonical application record exists to verify ownership. Accepting data there would lose it
+ * or park it somewhere nothing can safely read.
+ *
+ * The invitation-token check is kept exactly as it was so a future PostgreSQL-backed implementation can reuse it: an invalid
+ * token is still 401. A valid token no longer reaches the body or the repository: the request is answered with a fixed 503
+ * that contains no applicant data and no internal error text. Existing stored submissions are not read, changed or deleted.
+ * `isSubmission` and the application-id binding below are the validation to re-apply when persistence returns.
+ */
 export async function POST(request: NextRequest) {
-  try {
-    const authorization = request.headers.get("authorization")
-    const match = authorization?.match(/^Bearer\s+(.+)$/i)
-    const invitation = match ? verifyDriverInvitationToken(match[1].trim()) : null
+  const authorization = request.headers.get("authorization")
+  const match = authorization?.match(/^Bearer\s+(.+)$/i)
+  const invitation = match ? verifyDriverInvitationToken(match[1].trim()) : null
 
-    if (!invitation) {
-      return NextResponse.json({ error: "A valid driver application invitation is required." }, { status: 401 })
-    }
-
-    const body = await request.json()
-    if (!isSubmission(body)) {
-      return NextResponse.json({ error: "Invalid application submission payload." }, { status: 400 })
-    }
-
-    if (body.applicationId !== invitation.applicationId) {
-      return NextResponse.json({ error: "The invitation does not authorize this application." }, { status: 403 })
-    }
-
-    const saved = await saveApplicantSubmission(body)
-    return NextResponse.json({ submission: saved }, { status: 200 })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save application submission."
-    return NextResponse.json({ error: message }, { status: 409 })
+  if (!invitation) {
+    return NextResponse.json({ error: "A valid driver application invitation is required." }, { status: 401 })
   }
+
+  return NextResponse.json(
+    { error: APPLICANT_SUBMISSION_WRITE_UNAVAILABLE_MESSAGE },
+    { status: 503, headers: { "Cache-Control": "private, no-store" } },
+  )
 }
 
 /**

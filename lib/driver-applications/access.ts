@@ -24,19 +24,31 @@ export async function authorizeApplicantSubmissionRead(): Promise<void> {
   await withAuthorizedSystem("DRIVER_READ", async () => undefined)
 }
 
+export const APPLICANT_SUBMISSION_WRITE_UNAVAILABLE_MESSAGE =
+  "Application submission is temporarily unavailable. Your answers were not saved on the server; please try again later."
+
 const FROM = "TES <applications@truckease.co>"
+
+/** Statuses on which Resend explicitly did not process the request. Everything else is treated as an unknown outcome. */
+const CONFIRMED_REFUSAL_STATUSES = new Set([400, 401, 403, 422, 429])
 
 async function sendWithResend(message: OutboundInvitation): Promise<{ messageId: string }> {
   const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) throw new InvitationProviderError()
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": message.idempotencyKey },
-    body: JSON.stringify({ from: FROM, to: [message.to], subject: message.subject, html: message.html }),
-  })
-  const result = (await response.json().catch(() => ({}))) as { id?: string }
-  if (!response.ok || !result.id) throw new InvitationProviderError()
-  return { messageId: result.id }
+  if (!apiKey) throw new InvitationProviderError("REJECTED") // nothing was attempted
+  let response: Response
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": message.idempotencyKey },
+      body: JSON.stringify({ from: FROM, to: [message.to], subject: message.subject, html: message.html }),
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch {
+    throw new InvitationProviderError("UNKNOWN") // network failure or timeout: the request may have been processed
+  }
+  const result = (await response.json().catch(() => null)) as { id?: string } | null
+  if (response.ok && typeof result?.id === "string" && result.id) return { messageId: result.id }
+  throw new InvitationProviderError(!response.ok && result !== null && CONFIRMED_REFUSAL_STATUSES.has(response.status) ? "REJECTED" : "UNKNOWN")
 }
 
 export function productionInvitationDeps(origin: string): InvitationDeps {

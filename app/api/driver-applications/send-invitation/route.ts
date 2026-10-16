@@ -15,11 +15,8 @@ export const dynamic = "force-dynamic"
 export async function POST(request: NextRequest) {
   try {
     const outcome = await handleInvitationRequest(request, productionInvitationDeps(new URL(request.url).origin))
-    if (outcome.status === 200) {
-      const { status: _status, ...body } = outcome
-      return NextResponse.json(body, { status: 200, headers: { "Cache-Control": "private, no-store" } })
-    }
-    return NextResponse.json({ error: outcome.error }, { status: outcome.status, headers: { "Cache-Control": "private, no-store" } })
+    const { status, ...body } = outcome
+    return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return canonicalFailure(error, "Unable to send the Driver Application invitation.")
   }

@@ -147,28 +147,74 @@ describe("GET /api/driver-applications/submissions", () => {
   });
 });
 
-describe("POST /api/driver-applications/submissions (unrelated applicant path stays working)", () => {
-  it("still accepts an invitation-authorized submission and keeps replays idempotent", async () => {
+describe("POST /api/driver-applications/submissions (closed)", () => {
+  const token = async () => {
     const { createDriverInvitationToken } = await import("@/lib/driver-invitation-token");
-    const token = createDriverInvitationToken({
+    return createDriverInvitationToken({
       version: 1, companyId: "c1", companyName: "Carrier", driverMasterId: "d1", applicationId: "APP-000777",
       recipientEmail: "driver@example.test", driverName: "Driver", expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     });
+  };
+  const body = { applicationId: "APP-000777", submittedAt: "2026-10-02T00:00:00.000Z", receiptId: "R-777", completedSteps: ["a"], draft: { legalName: "SENTINEL-POST-PII-9a2e" } };
+  const post = async (headers: Record<string, string>, payload: unknown = body) => {
     const route = await import("@/app/api/driver-applications/submissions/route");
-    const body = { applicationId: "APP-000777", submittedAt: "2026-10-02T00:00:00.000Z", receiptId: "R-777", completedSteps: ["a"], draft: { x: 1 } };
-    const post = () => route.POST(new Request("http://localhost/api", {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body),
-    }) as never);
-    assert.equal((await post()).status, 200);
-    assert.equal((await post()).status, 200);
-    const noToken = await route.POST(new Request("http://localhost/api", { method: "POST", body: JSON.stringify(body) }) as never);
-    assert.equal(noToken.status, 401);
-    // restore the original store so the "untouched" assertion above stays meaningful if tests are reordered
-    writeFileSync(storeFile, JSON.stringify({
-      version: 1,
-      submissions: { "APP-000102": { applicationId: "APP-000102", submittedAt: "2026-10-01T00:00:00.000Z", receiptId: "R-1", completedSteps: ["personal"], draft: { legalName: SENTINEL } } },
-    }));
-    storeHashBefore = createHash("sha256").update(readFileSync(storeFile)).digest("hex");
+    const response = await route.POST(new Request("http://localhost/api", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(payload) }) as never);
+    return { status: response.status, text: await response.text() };
+  };
+  const storeBytes = () => readFileSync(storeFile, "utf8");
+
+  it("a valid invitation token gets a controlled 503 and nothing is written", async () => {
+    const before = storeBytes();
+    const result = await post({ Authorization: `Bearer ${await token()}` });
+    assert.equal(result.status, 503);
+    assert.equal(storeBytes(), before, "the store is byte-for-byte unchanged");
+    assert.ok(!JSON.parse(storeBytes()).submissions["APP-000777"], "the new application was not stored");
+    assert.equal(createHash("sha256").update(storeBytes()).digest("hex"), storeHashBefore);
+  });
+
+  it("the response carries no applicant data, no existing submission data and no internal error text", async () => {
+    const result = await post({ Authorization: `Bearer ${await token()}` });
+    for (const forbidden of ["SENTINEL-POST-PII-9a2e", SENTINEL, "APP-000777", "APP-000102", "R-777", ".tes-data", "ENOENT", "EACCES", "at ", "Error:"]) {
+      assert.ok(!result.text.includes(forbidden), forbidden);
+    }
+    assert.deepEqual(Object.keys(JSON.parse(result.text)), ["error"]);
+  });
+
+  it("a malformed body, a mismatched application id and a replay are all the same fixed 503 once the token is valid", async () => {
+    const t = await token();
+    const results = await Promise.all([
+      post({ Authorization: `Bearer ${t}` }, { nonsense: true }),
+      post({ Authorization: `Bearer ${t}` }, { ...body, applicationId: "APP-OTHER" }),
+      post({ Authorization: `Bearer ${t}` }),
+      post({ Authorization: `Bearer ${t}` }),
+    ]);
+    assert.ok(results.every((result) => result.status === 503 && result.text === results[0].text));
+  });
+
+  it("token validation is unchanged: a missing, malformed or tampered token is 401 and never reaches storage", async () => {
+    const t = await token();
+    const badHeaders: Record<string, string>[] = [{}, { Authorization: "Bearer not-a-token" }, { Authorization: `Bearer ${t}x` }, { Authorization: `Basic ${t}` }];
+    for (const headers of badHeaders) {
+      assert.equal((await post(headers)).status, 401);
+    }
+    assert.equal(storeBytes() === undefined, false);
+    assert.equal(createHash("sha256").update(storeBytes()).digest("hex"), storeHashBefore);
+  });
+
+  it("the route no longer imports the submission repository, but the repository module is still present", () => {
+    const code = read("app/api/driver-applications/submissions/route.ts").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.ok(!/saveApplicantSubmission|getApplicantSubmissions|from "@\/lib\/server\/driver-application-submission-repository"\s*$/m.test(code.replace(/import type[^\n]*\n/, "")));
+    assert.ok(existsSync(path.join(ROOT, "lib/server/driver-application-submission-repository.ts")));
+    assert.ok(/verifyDriverInvitationToken\(/.test(code), "token validation retained for reuse");
+  });
+
+  it("GET and POST are both closed for a fully authorized actor / valid token", async () => {
+    signIn("user_tes_actor");
+    scriptedPool({ identity: true, allowed: true });
+    const route = await import("@/app/api/driver-applications/submissions/route");
+    const getResponse = await (route.GET as (request: Request) => Promise<Response>)(new Request("http://localhost/api?applicationIds=APP-000102"));
+    assert.equal(getResponse.status, 503);
+    assert.equal((await post({ Authorization: `Bearer ${await token()}` })).status, 503);
   });
 });
 
@@ -182,7 +228,7 @@ const CONTEXT = {
   applicationId: "APP-100", applicationType: "Standard Driver Application", operatingRegion: "Canada" as const,
 };
 
-function harness(overrides: Partial<import("../../../lib/driver-applications/invitation.ts").InvitationDeps> & { denied?: boolean; failAudit?: boolean; providerFails?: boolean } = {}) {
+function harness(overrides: Partial<import("../../../lib/driver-applications/invitation.ts").InvitationDeps> & { denied?: boolean; failAudit?: boolean; failOutcomeAudit?: boolean; providerFails?: boolean; providerError?: "REJECTED" | "UNKNOWN" } = {}) {
   const calls: string[] = [];
   const sent: Array<{ to: string; subject: string; html: string; idempotencyKey: string }> = [];
   const tokens: Array<Record<string, unknown>> = [];
@@ -190,6 +236,7 @@ function harness(overrides: Partial<import("../../../lib/driver-applications/inv
   const register = Object.assign(Object.create(memory), {
     append: async (event: { eventType: string }) => {
       if (overrides.failAudit) throw new Error("register unavailable");
+      if (overrides.failOutcomeAudit && calls.some((call) => call === "send")) throw new Error("register unavailable after send");
       calls.push(`append:${event.eventType}`);
       return memory.append(event as never);
     },
@@ -214,7 +261,7 @@ function harness(overrides: Partial<import("../../../lib/driver-applications/inv
     createToken: (payload: Record<string, unknown>) => { tokens.push(payload); return "signed-token"; },
     sendEmail: async (message: (typeof sent)[number]) => {
       calls.push("send");
-      if (overrides.providerFails) throw new I.InvitationProviderError();
+      if (overrides.providerFails || overrides.providerError) throw new I.InvitationProviderError(overrides.providerError ?? "UNKNOWN");
       sent.push(message);
       return { messageId: "msg_1" };
     },
@@ -225,6 +272,8 @@ function harness(overrides: Partial<import("../../../lib/driver-applications/inv
   delete (deps as Record<string, unknown>).denied;
   delete (deps as Record<string, unknown>).failAudit;
   delete (deps as Record<string, unknown>).providerFails;
+  delete (deps as Record<string, unknown>).failOutcomeAudit;
+  delete (deps as Record<string, unknown>).providerError;
   return { deps: deps as never, calls, sent, tokens, memory, resolved };
 }
 
@@ -391,18 +440,133 @@ describe("driver invitation: authorized path, audit and idempotency", () => {
     assert.deepEqual(h.sent.map((message) => message.idempotencyKey), ["driver-application/APP-100", "driver-application/APP-100"]);
   });
 
-  it("reports a provider failure without claiming delivery and records a failure outcome", async () => {
-    const h = harness({ providerFails: true });
+  it("a confirmed provider refusal is reported as REJECTED and recorded as FAILURE", async () => {
+    const h = harness({ providerError: "REJECTED" });
     const outcome = await I.handleInvitationRequest(request(VALID), h.deps);
     assert.equal(outcome.status, 502);
+    if (outcome.status !== 502) return;
+    assert.equal(outcome.delivery, "REJECTED");
+    assert.equal(outcome.auditRecorded, true);
+    assert.match(outcome.error, /Nothing was sent/);
     const events = await h.memory.queryByActorId(ACTOR);
     assert.deepEqual(events.map((event) => event.outcome?.result), ["UNRESOLVED", "FAILURE"]);
+  });
+
+  it("an unconfirmed provider failure is UNKNOWN: never described as not delivered, recorded as UNKNOWN, never FAILURE or SUCCESS", async () => {
+    const h = harness({ providerError: "UNKNOWN" });
+    const outcome = await I.handleInvitationRequest(request(VALID), h.deps);
+    assert.equal(outcome.status, 502);
+    if (outcome.status !== 502) return;
+    assert.equal(outcome.delivery, "UNKNOWN");
+    assert.ok(!/not delivered|nothing was (sent|delivered)|did not (accept|deliver)/i.test(outcome.error), outcome.error);
+    assert.match(outcome.error, /may have been sent/i);
+    assert.match(outcome.error, /do not resend/i);
+    const events = await h.memory.queryByActorId(ACTOR);
+    assert.deepEqual(events.map((event) => event.outcome?.result), ["UNRESOLVED", "UNKNOWN"]);
+    assert.equal(events[1].outcome?.reasonCode, "PROVIDER_OUTCOME_UNKNOWN");
+  });
+
+  it("there is no automatic retry: one provider attempt per request, with the stable idempotency key", async () => {
+    const h = harness({ providerError: "UNKNOWN" });
+    await I.handleInvitationRequest(request(VALID), h.deps);
+    assert.equal(h.calls.filter((call) => call === "send").length, 1);
+  });
+
+  it("when the provider accepted but the outcome event failed, the response says so and does not claim a complete record", async () => {
+    const h = harness({ failOutcomeAudit: true });
+    const errors: unknown[][] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    try {
+      const outcome = await I.handleInvitationRequest(request(VALID), h.deps);
+      assert.equal(outcome.status, 200);
+      if (outcome.status !== 200) return;
+      assert.equal(outcome.messageId, "msg_1");
+      assert.equal(outcome.auditRecorded, false);
+      assert.match(outcome.auditNote ?? "", /outcome could not be recorded/i);
+    } finally {
+      console.error = realError;
+    }
+    const events = await h.memory.queryByActorId(ACTOR);
+    assert.deepEqual(events.map((event) => event.eventType), ["NOTIFICATION_CREATED"], "only the unresolved intent exists");
+    assert.equal(events[0].outcome?.result, "UNRESOLVED");
+    const logged = JSON.stringify(errors);
+    assert.match(logged, /driver-invitation-outcome-not-recorded/);
+    assert.ok(!logged.includes("dana@driver.test") && !logged.includes("register unavailable"), "the reconciliation marker holds identifiers only");
+  });
+
+  it("an unknown provider outcome whose audit event also fails reports auditRecorded:false", async () => {
+    const h = harness({ providerError: "UNKNOWN", failOutcomeAudit: true });
+    const realError = console.error;
+    console.error = () => {};
+    try {
+      const outcome = await I.handleInvitationRequest(request(VALID), h.deps);
+      assert.equal(outcome.status, 502);
+      if (outcome.status === 502) assert.equal(outcome.auditRecorded, false);
+    } finally {
+      console.error = realError;
+    }
+  });
+
+  it("audit-intent failure prevents sending, and the route returns a generic error", async () => {
+    const h = harness({ failAudit: true });
+    await assert.rejects(I.handleInvitationRequest(request(VALID), h.deps), /register unavailable/);
+    assert.ok(!h.calls.includes("send"));
+    const { canonicalFailure } = await import("@/lib/api/canonical-response");
+    const response = canonicalFailure(new Error("register unavailable: connection string postgres://secret"), "Unable to send the Driver Application invitation.");
+    assert.equal(response.status, 500);
+    assert.ok(!(await response.text()).includes("postgres://"));
   });
 
   it("does not record intent or send when email is not configured", async () => {
     const h = harness({ emailConfigured: () => false });
     assert.equal((await I.handleInvitationRequest(request(VALID), h.deps)).status, 503);
     assert.ok(!h.calls.some((call) => call.startsWith("append:") || call === "send"));
+  });
+});
+
+
+describe("Resend adapter: confirmed refusal versus unknown outcome", () => {
+  const message = { to: "dana@driver.test", subject: "s", html: "h", idempotencyKey: "driver-application/APP-100" };
+  const attempt = async (respond: () => Promise<Response>) => {
+    const realFetch = globalThis.fetch;
+    const seen: Array<{ key: string | null }> = [];
+    globalThis.fetch = (async (_url: unknown, init: RequestInit) => { seen.push({ key: new Headers(init.headers).get("Idempotency-Key") }); return respond(); }) as typeof fetch;
+    process.env.RESEND_API_KEY = "re_test_key";
+    try {
+      const result = await A.productionInvitationDeps("https://tes.example").sendEmail(message).then((value) => ({ ok: value }), (error) => ({ error }));
+      return { result, seen };
+    } finally {
+      delete process.env.RESEND_API_KEY;
+      globalThis.fetch = realFetch;
+    }
+  };
+  const json = (status: number, body: unknown) => async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  it("accepts only a 2xx answer that carries a message id", async () => {
+    const { result, seen } = await attempt(json(200, { id: "msg_9" }));
+    assert.deepEqual(result, { ok: { messageId: "msg_9" } });
+    assert.deepEqual(seen, [{ key: "driver-application/APP-100" }], "one attempt, stable idempotency key");
+  });
+
+  it("explicit refusals are REJECTED", async () => {
+    for (const status of [400, 401, 403, 422, 429]) {
+      const { result } = await attempt(json(status, { message: "no" }));
+      assert.equal((result as { error: InstanceType<typeof I.InvitationProviderError> }).error.kind, "REJECTED", String(status));
+    }
+  });
+
+  it("5xx, idempotency conflicts, an unreadable answer, a 2xx without an id and a network failure are UNKNOWN", async () => {
+    const cases: Array<() => Promise<Response>> = [
+      json(500, {}), json(502, {}), json(409, { name: "concurrent_idempotent_requests" }), json(409, { name: "invalid_idempotent_request" }),
+      async () => new Response("<html>gateway</html>", { status: 400 }),
+      json(200, {}),
+      async () => { throw new TypeError("fetch failed"); },
+    ];
+    for (const respond of cases) {
+      const { result } = await attempt(respond);
+      assert.equal((result as { error: InstanceType<typeof I.InvitationProviderError> }).error.kind, "UNKNOWN");
+    }
   });
 });
 

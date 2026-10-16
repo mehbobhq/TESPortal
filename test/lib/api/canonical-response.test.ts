@@ -40,9 +40,10 @@ before(async () => {
       if (typeof value === "function" && value.prototype instanceof Error) real[name] = value as Ctor;
     }
   }
-  const actor = (await import("@/lib/auth/tes-actor")) as Record<string, Ctor>;
-  const core = (await import("@/lib/auth/tes-authorization-core")) as Record<string, Ctor>;
-  const guard = (await import("@/lib/auth/tes-transaction-guard")) as Record<string, Ctor>;
+  // Typed namespace imports: each class is checked against its real declaration, with no cast.
+  const actor = await import("@/lib/auth/tes-actor");
+  const core = await import("@/lib/auth/tes-authorization-core");
+  const guard = await import("@/lib/auth/tes-transaction-guard");
   Object.assign(real, {
     TesIdentityRequiredError: actor.TesIdentityRequiredError,
     TesAuthorizationDeniedError: core.TesAuthorizationDeniedError,

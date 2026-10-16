@@ -23,7 +23,13 @@ RUNTIME_ROLE="tes-backend@tes-production-510007.iam"
 DATABASE="tes_prod"
 
 run_tests() {
-  TES_REQUIRE_DB_TESTS=1 node --test --test-concurrency=1 "$@" test/lib/auth/*.test.ts test/lib/corporate-identity/*.test.ts test/lib/organization-locations/*.test.ts test/lib/operating-authorities/*.test.ts test/lib/contacts/*.test.ts test/lib/customer-relationship/*.test.ts test/lib/companies-foundation/*.test.ts test/lib/tax-registrations/*.test.ts test/lib/insurance/*.test.ts test/lib/company-credentials/*.test.ts test/lib/company-profile/*.test.ts test/lib/operational-identity/*.test.ts test/lib/vehicle-merges/*.test.ts test/lib/master-register/*.test.ts test/lib/system-rls/*.test.ts test/lib/legacy-import/*.db.test.ts test/lib/phase-de/*.db.test.ts test/lib/contracts/*.db.test.ts test/lib/evidence-payload/*.db.test.ts test/lib/legacy-ocr/*.db.test.ts test/lib/driver-applications/*.test.ts test/lib/api/*.test.ts
+  # TES_TEST_FILES="path/a.test.ts path/b.test.ts" runs just those files against the disposable database (development convenience).
+  if [[ -n "${TES_TEST_FILES:-}" ]]; then
+    # shellcheck disable=SC2086
+    TES_REQUIRE_DB_TESTS=1 node --test --test-concurrency=1 "$@" ${TES_TEST_FILES}
+    return $?
+  fi
+  TES_REQUIRE_DB_TESTS=1 node --test --test-concurrency=1 "$@" test/lib/auth/*.test.ts test/lib/corporate-identity/*.test.ts test/lib/organization-locations/*.test.ts test/lib/operating-authorities/*.test.ts test/lib/contacts/*.test.ts test/lib/customer-relationship/*.test.ts test/lib/companies-foundation/*.test.ts test/lib/tax-registrations/*.test.ts test/lib/insurance/*.test.ts test/lib/company-credentials/*.test.ts test/lib/company-profile/*.test.ts test/lib/operational-identity/*.test.ts test/lib/vehicle-merges/*.test.ts test/lib/master-register/*.test.ts test/lib/system-rls/*.test.ts test/lib/legacy-import/*.db.test.ts test/lib/phase-de/*.db.test.ts test/lib/contracts/*.db.test.ts test/lib/evidence-payload/*.db.test.ts test/lib/legacy-ocr/*.db.test.ts test/lib/driver-applications/*.test.ts test/lib/api/*.test.ts test/lib/company-directory/*.db.test.ts
 }
 
 if [[ -n "${TES_TEST_ADMIN_DATABASE_URL:-}" && -n "${TES_TEST_RUNTIME_DATABASE_URL:-}" ]]; then

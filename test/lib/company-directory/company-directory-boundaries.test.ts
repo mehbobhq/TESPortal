@@ -28,11 +28,42 @@ describe("company directory PostgreSQL cutover boundaries", () => {
     const code = source("lib/company-directory/service.ts")
     assert.match(code, /withAuthorizedSystem\("ORGANIZATION_REGISTRY_READ"/)
     assert.match(code, /withAuthorizedSystem\("CUSTOMER_RELATIONSHIP_READ"/)
-    assert.match(code, /createOrganization/)
-    assert.match(code, /establishCustomerRelationship/)
-    assert.match(code, /getCompanyProfile/)
+    assert.match(code, /createCompanyRecord/)
+    assert.match(code, /readCompanyProfile/)
     assert.match(code, /public\.organizations/)
     assert.match(code, /public\.customers/)
     assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
+  })
+
+  it("creates companies only through the existing canonical domain operations in one transaction", () => {
+    const code = source("lib/company-directory/create-company.ts")
+    for (const op of ["createOrganization", "establishCustomerRelationship", "setOperatingScope", "createLocation", "createContact", "addOrganizationChannel", "createAuthority", "createRegistration"]) {
+      assert.match(code, new RegExp(op), op)
+    }
+    assert.equal((code.match(/withAuthorizedSystem\(/g) ?? []).length, 1, "exactly one transaction")
+    assert.doesNotMatch(code, /INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM|TRUNCATE|localStorage|sessionStorage|indexedDB/i)
+  })
+
+  it("keeps workspace pages from reporting a failed lookup as a missing company", () => {
+    for (const file of [...["business", "credentials", "drivers", "insurance", "vehicles", "edit"].map((page) => `app/companies/[id]/${page}/page.tsx`), "src/components/canonical/CanonicalRegistryPanel.tsx"]) {
+      const page = file
+      const code = source(file)
+      assert.match(code, /CompanyMissing/, page)
+      assert.doesNotMatch(code, /<div className="p-10 text-center">Company not found\.<\/div>/, page)
+    }
+  })
+
+  it("keeps the canonical Contacts and Settings workspaces off browser persistence and behind company-scoped routes", () => {
+    for (const file of ["app/companies/[id]/contacts/canonical-contacts.tsx", "app/companies/[id]/settings/canonical-settings.tsx"]) {
+      const code = source(file)
+      assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB/i, file)
+      assert.match(code, /\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}\/(contacts|settings)/, file)
+    }
+    for (const file of ["app/api/companies/[id]/contacts/route.ts", "app/api/companies/[id]/settings/route.ts"]) {
+      const code = source(file)
+      assert.match(code, /organizationId: id/, file)
+      assert.doesNotMatch(code, /body\.organizationId/, file)
+      assert.doesNotMatch(code, /INSERT\s+INTO|DELETE\s+FROM|localStorage/i, file)
+    }
   })
 })

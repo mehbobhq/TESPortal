@@ -1,5 +1,10 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyInsurancePage from "./legacy-insurance"
+
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useCallback, useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -15,21 +20,23 @@ const FAMILY_COVERAGES: Record<string, string[]> = {
 }
 const LIMIT_BASES = ["COMBINED_SINGLE_LIMIT", "PER_OCCURRENCE", "PER_VEHICLE", "AGGREGATE", "PENAL_SUM"]
 
-type Coverage = { id: string; coverageType: string; limitAmount: string | null; currency: string | null }
+type Coverage = { id: string; coverageType: string; limitAmount: string | null; currency: string | null; limitBasis?: string | null; deductibleAmount?: string | null }
 type Term = { id: string; numberDisplay: string; termStart: string; termEnd: string | null; cancelledOn: string | null }
 type Policy = {
   policy: { id: string; insurerOrganizationId: string; family: string; recordStatus: string }
+  terms?: Array<{ coverages: Coverage[] }>
   asOf: { inForce: boolean; term: Term | null; coverages: Coverage[] }
   current: { latestTerm: Term | null }
 }
 type Company = { id: string; name: string; kind: string; status: string }
 type Directory = { id: string; name: string }
 
-export default function InsurancePage() {
+function CanonicalInsurance() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [policies, setPolicies] = useState<Policy[]>([])
   const [directory, setDirectory] = useState<Directory[]>([])
   const [family, setFamily] = useState("INSURANCE")
@@ -44,7 +51,11 @@ export default function InsurancePage() {
         fetch(`${base}/insurance`, { cache: "no-store" }),
         fetch("/api/companies", { cache: "no-store" }),
       ])
-      setCompany(profile.ok ? (await profile.json()).company : null)
+      {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
       if (list.ok) setPolicies((await list.json()).policies ?? [])
       else setError((await list.json().catch(() => null))?.error ?? "Unable to load insurance.")
       if (companies.ok) setDirectory(((await companies.json()).companies ?? []) as Directory[])
@@ -115,7 +126,7 @@ export default function InsurancePage() {
   }
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   const nameOf = (id: string) => directory.find((entry) => entry.id === id)?.name ?? id
 
@@ -136,6 +147,8 @@ export default function InsurancePage() {
               {policies.map((view) => {
                 const term = view.current.latestTerm
                 const archived = view.policy.recordStatus === "archived"
+                // A renewal starts from the most recent term's coverage (what is in force today may be empty once a term has ended).
+                const priorCoverages = view.terms?.[view.terms.length - 1]?.coverages?.length ? view.terms[view.terms.length - 1].coverages : view.asOf.coverages
                 return (
                   <div key={view.policy.id} className="py-3 flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -164,6 +177,53 @@ export default function InsurancePage() {
                     >
                       {archived ? "Restore" : "Archive"}
                     </Button>
+                    {archived || !term ? null : (
+                      <details className="basis-full text-xs">
+                        <summary className="cursor-pointer font-semibold">Renew or cancel this policy</summary>
+                        <div className="grid md:grid-cols-2 gap-4 pt-2">
+                          <form
+                            className="grid grid-cols-2 gap-2 items-end"
+                            onSubmit={(event) => {
+                              event.preventDefault()
+                              const form = new FormData(event.currentTarget)
+                              const f = (name: string) => String(form.get(name) ?? "").trim()
+                              const first = priorCoverages[0]
+                              void patch(view.policy.id, {
+                                action: "renew",
+                                termStart: f("termStart"),
+                                termEnd: f("termEnd") || null,
+                                ...(f("policyNumber") ? { policyNumber: f("policyNumber") } : {}),
+                                coverages: [{ coverageType: f("coverageType"), limitAmount: f("limitAmount"), currency: f("currency"), ...(first?.limitBasis ? { limitBasis: first.limitBasis } : {}) }],
+                              })
+                            }}
+                          >
+                            <label className="space-y-1">New term starts<Input name="termStart" type="date" required defaultValue={term.termEnd ?? ""} /></label>
+                            <label className="space-y-1">New term ends<Input name="termEnd" type="date" /></label>
+                            <label className="space-y-1">New policy number (blank keeps it)<Input name="policyNumber" /></label>
+                            <label className="space-y-1">Coverage type<Input name="coverageType" required defaultValue={priorCoverages[0]?.coverageType ?? ""} /></label>
+                            <label className="space-y-1">Limit<Input name="limitAmount" defaultValue={priorCoverages[0]?.limitAmount ?? ""} /></label>
+                            <label className="space-y-1">Currency<Input name="currency" defaultValue={priorCoverages[0]?.currency ?? "CAD"} /></label>
+                            <Button type="submit" size="sm" disabled={busy} className="col-span-2">Renew (new term, history kept)</Button>
+                          </form>
+                          <form
+                            className="grid grid-cols-2 gap-2 items-end"
+                            onSubmit={(event) => {
+                              event.preventDefault()
+                              const form = new FormData(event.currentTarget)
+                              void patch(view.policy.id, { action: "cancel", termId: term.id, cancelledOn: String(form.get("cancelledOn") ?? ""), reason: String(form.get("reason") ?? "") })
+                            }}
+                          >
+                            <label className="space-y-1">Cancelled on<Input name="cancelledOn" type="date" required /></label>
+                            <label className="space-y-1">Reason
+                              <select name="reason" required className="w-full rounded-md border bg-background px-2 py-2 text-sm">
+                                {["INSURED_REQUEST", "INSURER_CANCELLATION", "NON_PAYMENT", "REPLACED_BY_NEW_POLICY"].map((value) => <option key={value}>{value}</option>)}
+                              </select>
+                            </label>
+                            <Button type="submit" size="sm" variant="outline" disabled={busy || Boolean(term.cancelledOn)} className="col-span-2">Cancel this term</Button>
+                          </form>
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )
               })}
@@ -256,5 +316,20 @@ export default function InsurancePage() {
         Certificates, certificate evidence and OCR intake are deferred: they have no canonical PostgreSQL storage yet.
       </p>
     </div>
+  )
+}
+
+export default function InsuranceWorkspacePage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Insurance"
+      description="The original Insurance workspace (transportation, workers compensation and surety bond forms, broker update, evidence and OCR intake, renewal lineage) saves only in this browser; none of it is in the TES database, and canonical policies under TES records are separate. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalInsurance />}
+    >
+      <LegacyInsurancePage />
+    </LegacyWorkspaceGate>
   )
 }

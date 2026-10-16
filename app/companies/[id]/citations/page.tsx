@@ -8,6 +8,7 @@ import {
 } from "react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
 import { getQueryParam } from "@/lib/deep-linking"
 import {
   AlertOctagon,
@@ -708,7 +709,7 @@ function CitationForm({
    MAIN COMPONENT PAGE
 ========================================================= */
 
-export default function CitationsPage() {
+function LegacyCitationsPage() {
   const params = useParams()
   const router = useRouter()
   const companyId = params.id as string
@@ -1262,5 +1263,19 @@ export default function CitationsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function CitationsPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Citations"
+      description="Citations, tickets and their evidence are saved only in this browser (a prototype store); they are not in the TES database and no other user or device can see them. They will move to PostgreSQL once their canonical domain exists. Nothing here was changed or deleted."
+    >
+      <LegacyCitationsPage />
+    </LegacyWorkspaceGate>
   )
 }

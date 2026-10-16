@@ -1,5 +1,10 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyBusinessPage from "./legacy-business"
+
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -24,10 +29,11 @@ const DEFERRED = [
   "Business history and audit cases",
 ]
 
-export default function BusinessPage() {
+function CanonicalBusiness() {
   const params = useParams()
   const companyId = params.id as string
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [identity, setIdentity] = useState<Identity | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -37,7 +43,11 @@ export default function BusinessPage() {
     Promise.all([fetch(`${base}/profile`, { cache: "no-store" }), fetch(base, { cache: "no-store" })])
       .then(async ([profile, edit]) => {
         if (cancelled) return
-        setCompany(profile.ok ? (await profile.json()).company : null)
+        {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
         setIdentity(edit.ok ? (await edit.json()).company : null)
       })
       .catch(() => undefined)
@@ -48,7 +58,7 @@ export default function BusinessPage() {
   }, [companyId])
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   const rows: Array<[string, string]> = identity
     ? [
@@ -91,5 +101,20 @@ export default function BusinessPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function BusinessWorkspacePage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Business"
+      description="The original Business workspace (incorporation, corporate documents, shareholders, annual returns, CRA/EIN/GST/sales-tax cards, history and audit cases) saves only in this browser, keyed by company id; none of it is in the TES database, and canonical corporate identity under TES records is separate. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalBusiness />}
+    >
+      <LegacyBusinessPage />
+    </LegacyWorkspaceGate>
   )
 }

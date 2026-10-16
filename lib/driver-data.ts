@@ -2,6 +2,7 @@ import { normalizeName } from "@/lib/identifier-normalization"
 import { normalizeDriverDate, requireDriverDate } from "@/lib/driver-date"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
+import { INVITATION_DELIVERY_UNCONFIRMED_STATUS } from "@/lib/driver-applications/workspace-outcomes"
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
 import { loadVehicleStore } from "@/lib/vehicle-data"
 import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, createRoadsideStatementItem, createRoadsideStatementCollection, ROADSIDE_VIOLATION_COLLECTION_ID, type RoadsideStatementInput } from "@/lib/driver-performance-child-facts"
@@ -2311,7 +2312,11 @@ export function assessDriverHiringFile(
   let nextAction: import("@/types/drivers").HiringWorkflowAction = "NONE"
   let nextActionLabel: string | undefined
 
-  if (!latestApplication || latestApplication.status === "Invitation Ready") {
+  if (applications.some((item) => item.status === INVITATION_DELIVERY_UNCONFIRMED_STATUS)) {
+    // Never offer Send while an invitation's delivery is unconfirmed; the next step is to check it, not to resend.
+    nextAction = "CONTINUE_APPLICATION"
+    nextActionLabel = "Invitation delivery unconfirmed"
+  } else if (!latestApplication || latestApplication.status === "Invitation Ready") {
     nextAction = "SEND_APPLICATION"
     nextActionLabel = "Send Application"
   } else if (!applicationSatisfied) {

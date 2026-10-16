@@ -212,6 +212,7 @@ export type DriverApplicationStatus =
   | "Draft"
   | "Invitation Ready"
   | "Invited"
+  | "Invitation Delivery Unconfirmed"
   | "Started"
   | "In Progress"
   | "Submitted"

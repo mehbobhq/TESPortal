@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  INVITATION_DELIVERY_UNCONFIRMED_MESSAGE,
+  INVITATION_DELIVERY_UNCONFIRMED_STATUS,
+  SUBMISSION_SYNC_PAUSED_NOTICE,
+  classifySubmissionSyncStatus,
+  hasUnconfirmedInvitation,
+  interpretInvitationResponse,
+  shouldSkipSubmissionSync,
+} from "@/lib/driver-applications/workspace-outcomes";
+import {
   DriverMaster,
   CompanyDriverRelationship,
   CanonicalCompany,
@@ -90,6 +99,36 @@ export interface DriverWorkspaceProps {
   onRefresh: () => void;
 }
 
+class InvitationDeliveryUnconfirmedError extends Error {}
+class InvitationNotSentError extends Error {}
+
+const SUBMISSION_SYNC_PAUSED_KEY = "tes_driver_submission_sync_paused_at";
+
+function readSubmissionSyncPausedAt(): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(SUBMISSION_SYNC_PAUSED_KEY);
+    return raw ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSubmissionSyncPausedAt(value: number) {
+  try {
+    window.sessionStorage.setItem(SUBMISSION_SYNC_PAUSED_KEY, String(value));
+  } catch {
+    // Session storage is only a politeness cool-down; the notice and the once-per-mount fetch still apply without it.
+  }
+}
+
+function clearSubmissionSyncPausedAt() {
+  try {
+    window.sessionStorage.removeItem(SUBMISSION_SYNC_PAUSED_KEY);
+  } catch {
+    // See writeSubmissionSyncPausedAt.
+  }
+}
+
 export function DriverWorkspace({
   master,
   relationship,
@@ -137,12 +176,25 @@ export function DriverWorkspace({
     if (applicationIds.length === 0) return
 
     const reconcileSubmittedApplications = async () => {
+      // While the service is paused do not ask again for a cool-down period, even across remounts in this tab.
+      const pausedAt = readSubmissionSyncPausedAt()
+      if (shouldSkipSubmissionSync(Date.now(), pausedAt)) {
+        setSubmissionSyncPaused(true)
+        return
+      }
       try {
         const response = await fetch(
           `/api/driver-applications/submissions?applicationIds=${encodeURIComponent(applicationIds.join(","))}`,
           { cache: "no-store" },
         )
-        if (!response.ok) return
+        const syncState = classifySubmissionSyncStatus(response.status)
+        if (syncState === "PAUSED") {
+          writeSubmissionSyncPausedAt(Date.now())
+          setSubmissionSyncPaused(true)
+          return
+        }
+        if (syncState !== "OK") return
+        clearSubmissionSyncPausedAt()
 
         const body = await response.json() as { submissions?: ApplicantSubmissionHandoff[] }
         let applied = false
@@ -214,6 +266,7 @@ export function DriverWorkspace({
   const [applicationRegion, setApplicationRegion] = useState<DriverApplicationRecord["operatingRegion"]>(relationship.operatingRegion);
   const [applicationRecipientEmail, setApplicationRecipientEmail] = useState(master.identity.email || "");
   const [isSendingApplication, setIsSendingApplication] = useState(false);
+  const [submissionSyncPaused, setSubmissionSyncPaused] = useState(false);
   const [packageVersion, setPackageVersion] = useState("");
   const [packageNotes, setPackageNotes] = useState("");
   const [taxFormType, setTaxFormType] = useState<DriverTaxDocRecord["formType"]>("TD1 Federal");
@@ -366,8 +419,15 @@ export function DriverWorkspace({
       return;
     }
 
+    // Browser-local guard: an earlier invitation for this Driver may already have reached them. Not durable server-side.
+    if (hasUnconfirmedInvitation(applications, master.id)) {
+      setCreationError(INVITATION_DELIVERY_UNCONFIRMED_MESSAGE);
+      return;
+    }
+
     setIsSendingApplication(true);
     let application: DriverApplicationRecord | undefined;
+    let requestDispatched = false;
     try {
       // Create an auditable Invitation Ready record first. It is NOT marked sent until Resend accepts the message.
       application = addDriverApplication(company.id, master.id, {
@@ -386,6 +446,7 @@ export function DriverWorkspace({
         evidenceIds: [],
       });
 
+      requestDispatched = true;
       const response = await fetch("/api/driver-applications/send-invitation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -398,10 +459,10 @@ export function DriverWorkspace({
           recipientEmail,
         }),
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result?.messageId) {
-        throw new Error(result?.error || "Resend did not accept the Driver Application invitation.");
-      }
+      const result = await response.json().catch(() => null);
+      const outcome = interpretInvitationResponse({ status: response.status, body: result });
+      if (outcome.kind === "UNKNOWN") throw new InvitationDeliveryUnconfirmedError(outcome.message);
+      if (outcome.kind === "NOT_SENT") throw new InvitationNotSentError(outcome.message);
 
       updateDriverApplication(company.id, application.id, {
         status: "Invited",
@@ -428,10 +489,16 @@ export function DriverWorkspace({
       setIsAddApplicationOpen(false);
       onRefresh();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to send the Driver Application invitation.";
+      // A thrown fetch (network failure, timeout) happens after the request may have been processed, so it is also unknown.
+      const unconfirmed = error instanceof InvitationDeliveryUnconfirmedError || (requestDispatched && !(error instanceof InvitationNotSentError));
+      const message = unconfirmed
+        ? INVITATION_DELIVERY_UNCONFIRMED_MESSAGE
+        : error instanceof Error ? error.message : "Unable to send the Driver Application invitation.";
       if (application?.id) {
+        // UNKNOWN is never recorded as sent or rejected, and never returns the application to "Invitation Ready" (which
+        // would re-enable Send). The application id, and with it the server idempotency key, is preserved.
         updateDriverApplication(company.id, application.id, {
-          status: "Invitation Ready",
+          status: unconfirmed ? INVITATION_DELIVERY_UNCONFIRMED_STATUS : "Invitation Ready",
           invitationLastError: message,
         });
       }
@@ -904,6 +971,18 @@ export function DriverWorkspace({
         openReviewsCount={openReviewsCount}
       />
 
+      {submissionSyncPaused && (
+        <div role="status" data-testid="submission-sync-paused" className="rounded-2xl border border-border bg-card px-5 py-3 text-xs text-muted-foreground shadow-xs">
+          <span className="font-bold text-foreground">Applicant submissions paused. </span>{SUBMISSION_SYNC_PAUSED_NOTICE}
+        </div>
+      )}
+
+      {hasUnconfirmedInvitation(applications, master.id) && (
+        <div role="status" data-testid="invitation-delivery-unconfirmed" className="rounded-2xl border border-border bg-card px-5 py-3 text-xs text-muted-foreground shadow-xs">
+          <span className="font-bold text-foreground">Invitation delivery unconfirmed. </span>{INVITATION_DELIVERY_UNCONFIRMED_MESSAGE}
+        </div>
+      )}
+
       {activeTab === "profile" && hiringAssessment.nextAction !== "NONE" && (
         <div className="rounded-2xl border border-border bg-card px-5 py-4 shadow-xs">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1069,7 +1148,7 @@ export function DriverWorkspace({
               </select></label>
               <label className="block"><span className="font-bold text-muted-foreground">Driver Email *</span><input type="email" value={applicationRecipientEmail} onChange={(e) => setApplicationRecipientEmail(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" placeholder="driver@example.com" autoComplete="email" /><span className="mt-1 block text-[11px] text-muted-foreground">Confirm this address before sending. It becomes the Driver Master email when the invitation is sent.</span></label>
             </div>
-            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" disabled={isSendingApplication} onClick={handleCreateApplication} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">{isSendingApplication ? "Sending…" : "Send Application"}</button></div>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" disabled={isSendingApplication || hasUnconfirmedInvitation(applications, master.id)} onClick={handleCreateApplication} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">{isSendingApplication ? "Sending…" : "Send Application"}</button></div>
           </div>
         </div>
       )}

@@ -269,7 +269,9 @@ export function DriverWorkspace({
   const [openAddEventModalSignal, setOpenAddEventModalSignal] = useState(false);
   const [autoSaveNotification, setAutoSaveNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [ocrReviewData, setOcrReviewData] = useState<{
+    documentId: string;
     docName: string;
+    mimeType: string;
     dataUrl: string;
   } | null>(null);
 
@@ -284,12 +286,15 @@ export function DriverWorkspace({
 
   const openReviewsCount = master.jurisdictionReviews?.filter((r) => r.status === "OPEN").length || 0;
 
-  const hiringAssessment = assessDriverHiringFile(company.id, master.id, company);
+  const hiringAssessment = assessDriverHiringFile(company.id, master.id, {
+    startDate: typeof company.startDate === "string" ? company.startDate : undefined,
+  });
 
   const handleHiringWorkflowAction = () => {
     switch (hiringAssessment.nextAction) {
       case "SEND_APPLICATION":
       case "CONTINUE_APPLICATION":
+      case "REMEDIATE_HIRING_FILE":
         setActiveTab("documents");
         pushHistoryQueryParams({ driverTab: "documents", performanceView: null });
         if (hiringAssessment.nextAction === "SEND_APPLICATION") {
@@ -374,7 +379,7 @@ export function DriverWorkspace({
         companyDriverRelationshipId: relationship.id,
         applicationType,
         status: "Invitation Ready",
-        applicationContext: hiringAssessment.isInheritedDriver ? "Existing Driver File Completion" : "Prospective Hire",
+        applicationContext: hiringAssessment.hiringContext,
         tesServiceStartDateAtCreation: hiringAssessment.tesServiceStartDate,
         employmentStartDateAtCreation: hiringAssessment.employmentStartDate,
         source: "TES Workflow",
@@ -570,7 +575,8 @@ export function DriverWorkspace({
 
   // Handlers for Qualifications Tab
   const handleAddLicence = (licenceData: Omit<LicenceRecord, "id" | "createdAt" | "status" | "effectiveTo">) => {
-    addLicence(company.id, master.id, licenceData);
+    // `licenceNumber` is the normalized comparison value; the documentary value falls back to it only when no raw value was captured.
+    addLicence(company.id, master.id, { ...licenceData, licenceNumberRaw: licenceData.licenceNumberRaw || licenceData.licenceNumber });
     logAuditEvent({
       e: "RECORD_CREATED",
       co: company.id,
@@ -824,7 +830,9 @@ export function DriverWorkspace({
     const reader = new FileReader();
     reader.onload = () => {
       setOcrReviewData({
+        documentId: crypto.randomUUID(),
         docName: file.name,
+        mimeType: file.type || "application/octet-stream",
         dataUrl: String(reader.result || ""),
       });
     };
@@ -925,8 +933,25 @@ export function DriverWorkspace({
               <p className="mt-1 text-xs text-muted-foreground">
                 {hiringAssessment.isInheritedDriver
                   ? `Existing driver file · TES-managed period begins ${hiringAssessment.tesServiceStartDate || "on the recorded service start date"}. Historical source records remain unchanged.`
-                  : "Next required hiring workflow action based on the records currently established in TES."}
+                  : hiringAssessment.hiringContext === "Existing Driver File Completion"
+                    ? "Existing driver file · requirements are assessed from the records and verified evidence on file."
+                    : "Next required hiring workflow action based on the records currently established in TES."}
               </p>
+              {hiringAssessment.application.authoritativeApplicationId && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Application {hiringAssessment.application.authoritativeApplicationId} · Submission: {hiringAssessment.application.submission} · Document verification: {hiringAssessment.application.verification} · Regulatory completeness: {hiringAssessment.application.completeness}
+                </p>
+              )}
+              {hiringAssessment.application.reasons.length > 0 && hiringAssessment.applicationStatus !== "SATISFIED" && (
+                <p className="mt-1 text-xs text-muted-foreground">{hiringAssessment.application.reasons.join(" ")}</p>
+              )}
+              {hiringAssessment.requirements.filter((requirement) => requirement.status !== "SATISFIED").length > 1 && (
+                <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                  {hiringAssessment.requirements.filter((requirement) => requirement.status !== "SATISFIED").map((requirement) => (
+                    <li key={requirement.id}>{requirement.label}: {requirement.status.replaceAll("_", " ").toLowerCase()}</li>
+                  ))}
+                </ul>
+              )}
             </div>
             <button
               type="button"
@@ -1136,7 +1161,7 @@ export function DriverWorkspace({
             <div className="flex-1 p-3 min-h-0 overflow-hidden">
               <SecureDocumentViewer
                 fileName={viewingDoc.fileName}
-                mimeType={viewingDoc.mimeType}
+                mimeType={viewingDoc.mimeType || viewingDoc.fileType}
                 dataUrl={viewingDoc.dataUrl}
                 documentTitle={viewingDoc.documentType}
                 ocrConfidence={viewingDoc.ocrConfidence}
@@ -1160,12 +1185,17 @@ export function DriverWorkspace({
 
       {/* OCR Split-Screen Review Modal */}
       {ocrReviewData && (
-        <OCRReview
-          documentName={ocrReviewData.docName}
+        <OCRReview<Record<string, unknown>>
+          documentResult={{
+            documentId: ocrReviewData.documentId,
+            documentType: "Commercial Driver Licence",
+            fileName: ocrReviewData.docName,
+            mimeType: ocrReviewData.mimeType,
+            overallConfidence: 0,
+            extractedFields: {},
+          }}
           documentDataUrl={ocrReviewData.dataUrl}
-          overallConfidence={0}
           initialValues={{}}
-          fieldConfidence={{}}
           fieldDefinitions={[
             { key: "licenceNumber", label: "Commercial Licence Number", required: true },
             { key: "jurisdiction", label: "Issuing Jurisdiction", required: true },

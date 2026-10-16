@@ -36,6 +36,7 @@ import {
   resolveDriverApplicationFinding,
   createReplacementDriverApplication,
 } from "@/lib/driver-data";
+import { assessApplicationRequirement, hasVerifiedExperienceEvidence } from "@/lib/driver-application-evidence";
 
 export interface DriverDocumentsTabProps {
   master: DriverMaster;
@@ -66,7 +67,12 @@ export function DriverDocumentsTab({
   onOpenEvidence,
   onRefresh,
 }: DriverDocumentsTabProps) {
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(applications.at(0)?.id || null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(
+    () =>
+      assessApplicationRequirement(applications, evidence, { companyId: company.id, driverMasterId: master.id, relationshipId: relationship.id, identity: master.identity })
+        .authoritativeApplicationId || applications.at(0)?.id || null,
+  );
+  const [replacementReason, setReplacementReason] = useState("");
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(hiringPackages.at(0)?.id || null);
   const [isDeterminationModalOpen, setIsDeterminationModalOpen] = useState(false);
   const [determinationDecision, setDeterminationDecision] = useState<"Approved" | "Rejected" | "Withdrawn">("Approved");
@@ -205,12 +211,13 @@ export function DriverDocumentsTab({
   const handleCreateReplacement = () => {
     if (!activeApplication) return;
     setProcessingError(null);
+    if (!replacementReason.trim()) {
+      setProcessingError("Enter the justification for replacing this application. The submitted application is kept unchanged.");
+      return;
+    }
     try {
-      const replacement = createReplacementDriverApplication(
-        company.id,
-        activeApplication.id,
-        "A new application is required because submitted information could not be reconciled with supporting records."
-      );
+      const replacement = createReplacementDriverApplication(company.id, activeApplication.id, replacementReason.trim());
+      setReplacementReason("");
       if (replacement?.id) setSelectedAppId(replacement.id);
       onRefresh();
     } catch (error) {
@@ -327,19 +334,7 @@ export function DriverDocumentsTab({
                 Universal Application Profile Summary
               </span>
               {(() => {
-                const hasExperienceVerificationEvidence = Boolean(
-                  activeApplication.evidenceIds &&
-                  activeApplication.evidenceIds.length > 0 &&
-                  evidence.some(
-                    (e) =>
-                      activeApplication.evidenceIds.includes(e.id) &&
-                      (e.documentType?.toLowerCase().includes("verification") ||
-                        e.documentType?.toLowerCase().includes("employment") ||
-                        e.documentType?.toLowerCase().includes("mvr") ||
-                        e.documentType?.toLowerCase().includes("screening") ||
-                        e.documentType?.toLowerCase().includes("inquiry"))
-                  )
-                );
+                const hasExperienceVerificationEvidence = hasVerifiedExperienceEvidence(activeApplication, evidence);
 
                 return (
                   <div className="grid sm:grid-cols-3 gap-3 text-xs">
@@ -480,6 +475,13 @@ export function DriverDocumentsTab({
               {activeApplication.findings?.some((finding) => finding.status === "New Application Required") && activeApplication.status !== "Superseded" && (
                 <div className="border-t border-border bg-amber-50/60 p-4">
                   <p className="text-xs font-semibold text-amber-900">A replacement application has been identified as necessary. The submitted application will remain unchanged.</p>
+                  <textarea
+                    value={replacementReason}
+                    onChange={(e) => setReplacementReason(e.target.value)}
+                    placeholder="Justification for the replacement (required)"
+                    rows={2}
+                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                  />
                   <button type="button" onClick={handleCreateReplacement} className="mt-2 rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-800">
                     Issue New Linked Application
                   </button>

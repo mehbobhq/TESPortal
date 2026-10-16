@@ -3,6 +3,7 @@ import { normalizeDriverDate, requireDriverDate } from "@/lib/driver-date"
 import { TRAINING_COURSE_CATALOG } from "@/lib/driver-taxonomy"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, PERFORMANCE_CATEGORY_OWNERSHIP, PERFORMANCE_EVENT_SCHEMA_VERSION, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
+import { applicationWorkflowOutcome, assessApplicationRequirement, checkApplicationCreation, classifyHiringContext } from "@/lib/driver-application-evidence"
 import { loadVehicleStore } from "@/lib/vehicle-data"
 import { getRoadsideViolationCollection, getRoadsideEquipmentCollection, deriveRoadsideViolationCounts, deriveRoadsideInspectionOutcome, validateRoadsideViolationCollection, validateRoadsideEquipmentCollection, validateRoadsideStatementCollection, validateRoadsideInspectionConsistency, createRoadsideStatementItem, createRoadsideStatementCollection, ROADSIDE_VIOLATION_COLLECTION_ID, type RoadsideStatementInput } from "@/lib/driver-performance-child-facts"
 import { eventFactsByKey, getRoadsideOpenActions } from "@/lib/driver-performance-families"
@@ -1704,6 +1705,8 @@ export function addCompanyDetermination(companyId: string, data: Omit<CompanyDet
 export function addDriverApplication(companyId: string, driverMasterId: string, data: Omit<DriverApplicationRecord, "id" | "companyId" | "driverMasterId" | "createdAt" | "updatedAt">) {
   const store = loadCompanyDriverStore(companyId)
   const relationshipId = data.companyDriverRelationshipId || activeRelationship(store, driverMasterId)?.id
+  const creationError = checkApplicationCreation(store.applications, store.evidence, { companyId, driverMasterId, relationshipId }, data)
+  if (creationError) throw new Error(creationError)
   const now = new Date().toISOString()
   const record: DriverApplicationRecord = {
     ...data,
@@ -2230,6 +2233,9 @@ export function createReplacementDriverApplication(
   if (!["Submitted", "Under Review", "Additional Information Requested"].includes(original.status)) {
     throw new Error("A replacement can only be created from an immutable submitted application.")
   }
+  if (!original.supersededByApplicationId && !reason?.trim()) {
+    throw new Error("A justification is required before an application is replaced.")
+  }
   if (original.supersededByApplicationId) {
     return store.applications.find((item) => item.id === original.supersededByApplicationId)
   }
@@ -2251,7 +2257,7 @@ export function createReplacementDriverApplication(
     operatingRegion: original.operatingRegion,
     createdDate: now.slice(0, 10),
     companyDetermination: "Pending",
-    determinationNotes: reason,
+    determinationNotes: reason?.trim(),
     evidenceIds: [],
     createdAt: now,
     updatedAt: now,
@@ -2278,21 +2284,23 @@ export function assessDriverHiringFile(
 ) {
   const store = loadCompanyDriverStore(companyId)
   const relationship = activeRelationship(store, driverMasterId)
-  const applications = store.applications.filter((item) => item.driverMasterId === driverMasterId)
+  const master = loadDriverMasterStore().drivers.find((driver) => driver.id === driverMasterId)
   const packages = store.hiringPackages.filter((item) => item.driverMasterId === driverMasterId)
   const screenings = store.screenings.filter((item) => item.driverMasterId === driverMasterId && !item.isArchived)
 
-  const latestApplication = applications[0]
   const latestPackage = packages[0]
   const serviceStartDate = company?.startDate || undefined
   const employmentStartDate = relationship?.startDate || undefined
   const isInheritedDriver = Boolean(serviceStartDate && employmentStartDate && employmentStartDate < serviceStartDate)
+  const hiringContext = classifyHiringContext(relationship)
 
-  const applicationSatisfied = Boolean(
-    latestApplication &&
-      (latestApplication.status === "Submitted" || latestApplication.status === "Under Review" || latestApplication.status === "Approved")
-  )
-  const applicationPending = Boolean(latestApplication && !applicationSatisfied)
+  const recognition = assessApplicationRequirement(store.applications, store.evidence, {
+    companyId,
+    driverMasterId,
+    relationshipId: relationship?.id,
+    identity: master?.identity,
+  })
+  const applicationSatisfied = recognition.state === "VERIFIED"
 
   const referenceRecords = screenings.filter((item) => item.category === "Previous Employer Verification")
   const referenceSatisfied = referenceRecords.length > 0 && referenceRecords.every((item) =>
@@ -2311,27 +2319,43 @@ export function assessDriverHiringFile(
   let nextAction: import("@/types/drivers").HiringWorkflowAction = "NONE"
   let nextActionLabel: string | undefined
 
-  if (!latestApplication || latestApplication.status === "Invitation Ready") {
-    nextAction = "SEND_APPLICATION"
-    nextActionLabel = "Send Application"
-  } else if (!applicationSatisfied) {
-    nextAction = "CONTINUE_APPLICATION"
-    nextActionLabel = "Application Pending"
+  const applicationOutcome = applicationWorkflowOutcome(recognition)
+  // A submitted application whose regulatory completeness is Not Assessed does not block the other hiring steps,
+  // but it stays an outstanding requirement and is never reported as satisfied.
+  const applicationReceived = applicationSatisfied || recognition.completenessNotAssessed
+
+  if (!applicationReceived) {
+    nextAction = applicationOutcome.action ?? "NONE"
+    nextActionLabel = applicationOutcome.label
   } else if (!referenceSatisfied) {
     nextAction = "COMPLETE_REFERENCE_CHECKS"
     nextActionLabel = "Complete Reference Checks"
   } else if (!packageSatisfied) {
     nextAction = "COMPLETE_HIRING_PACKAGE"
     nextActionLabel = "Complete Hiring Package"
+  } else if (!applicationSatisfied) {
+    nextAction = applicationOutcome.action ?? "NONE"
+    nextActionLabel = applicationOutcome.label
   }
 
-  const applicationStatus = !latestApplication ? "MISSING" : applicationSatisfied ? "SATISFIED" : "PENDING"
-  const referenceCheckStatus = referenceSatisfied ? "SATISFIED" : applicationSatisfied ? "MISSING" : "PENDING"
+  const applicationStatus = applicationOutcome.status
+  const referenceCheckStatus = referenceSatisfied ? "SATISFIED" : applicationReceived ? "MISSING" : "PENDING"
   const hiringPackageStatus = packageSatisfied ? "SATISFIED" : referenceSatisfied ? "MISSING" : "PENDING"
 
   return {
     driverMasterId,
     companyId,
+    hiringContext,
+    application: {
+      state: recognition.state,
+      authoritativeApplicationId: recognition.authoritativeApplicationId,
+      qualifyingEvidenceIds: recognition.qualifyingEvidenceIds,
+      unlinkedApplicationEvidenceIds: recognition.unlinkedApplicationEvidenceIds,
+      reasons: recognition.reasons,
+      submission: recognition.submission,
+      verification: recognition.verification,
+      completeness: recognition.completeness,
+    },
     tesServiceStartDate: serviceStartDate,
     employmentStartDate,
     isInheritedDriver,
@@ -2341,7 +2365,7 @@ export function assessDriverHiringFile(
     nextAction,
     nextActionLabel,
     requirements: [
-      { id: "HIRING_APPLICATION", label: "Driver hiring application", status: applicationStatus, evidenceIds: latestApplication?.evidenceIds || [] },
+      { id: "HIRING_APPLICATION", label: "Driver hiring application", status: applicationStatus, evidenceIds: recognition.qualifyingEvidenceIds, notes: recognition.reasons.join(" ") || undefined },
       { id: "REFERENCE_CHECKS", label: "Previous employer / reference checks", status: referenceCheckStatus, evidenceIds: referenceRecords.flatMap((item) => item.evidenceIds || []) },
       { id: "HIRING_PACKAGE", label: "Hiring / onboarding package", status: hiringPackageStatus, evidenceIds: latestPackage?.evidenceIds || [] },
     ],

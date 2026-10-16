@@ -1,12 +1,15 @@
 "use client";
 
 import React, { useState } from "react";
-import type { OCRDocumentResult, OCRFieldResult } from "../../../types/ocr";
+import type { OCRDocumentResult, OCRFieldResult } from "@/types/ocr";
 import { SecureDocumentViewer } from "./SecureDocumentViewer";
 import { Check, AlertCircle, RefreshCw, Upload, Camera, Edit2, ShieldAlert } from "lucide-react";
 
 export interface OCRReviewProps<T extends Record<string, unknown>> {
-  documentResult: OCRDocumentResult;
+  documentResult: Pick<
+  OCRDocumentResult,
+  "documentId" | "documentType" | "fileName" | "mimeType" | "overallConfidence" | "extractedFields"
+>;
   documentDataUrl: string;
   initialValues: T;
   fieldDefinitions: Array<{

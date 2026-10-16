@@ -7,6 +7,8 @@ import { DriverWorkspace } from "@/src/components/drivers/DriverWorkspace"
 import {
   getCompany,
   loadCompanyDriverStore,
+  companyDriverStorageKey,
+  DRIVER_MASTER_STORAGE_KEY,
   loadDriverMasterStore,
 } from "@/lib/driver-data"
 import { logAuditEvent } from "@/lib/audit-log"
@@ -45,6 +47,15 @@ export default function DriverPage({ params }: DriverPageProps) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // Reassess when another tab changes this company's driver records (evidence, verification, applications).
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === companyDriverStorageKey(companyId) || event.key === DRIVER_MASTER_STORAGE_KEY) refresh()
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [companyId, refresh])
 
   useEffect(() => {
     if (!masterStore || !companyStore) return

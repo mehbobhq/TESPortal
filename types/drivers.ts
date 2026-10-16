@@ -304,7 +304,32 @@ export interface HiringRequirementAssessment {
   notes?: string;
 }
 
+export type DriverHiringContext = "Prospective Hire" | "Existing Driver File Completion";
+
+export type HiringApplicationRecognitionState =
+  | "VERIFIED"
+  | "AWAITING_REVIEW"
+  | "REQUIRES_CORRECTION"
+  | "NEW_APPLICATION_WORKFLOW"
+  | "MISSING";
+
+export interface HiringApplicationAssessment {
+  state: HiringApplicationRecognitionState;
+  /** The application the decision rests on; never simply the first record in the list. */
+  authoritativeApplicationId?: string;
+  qualifyingEvidenceIds: string[];
+  unlinkedApplicationEvidenceIds: string[];
+  reasons: string[];
+  /** Lifecycle, document verification and regulatory completeness are reported separately and never imply one another. */
+  submission: "Submitted" | "Not Submitted";
+  verification: "Verified" | "Pending" | "Not Applicable";
+  completeness: "Not Assessed" | "Complete" | "Incomplete" | "Review Required";
+}
+
 export interface DriverHiringFileAssessment {
+  /** Prospective only while no company relationship has been established; a missing TES service start date never implies it. */
+  hiringContext: DriverHiringContext;
+  application: HiringApplicationAssessment;
   driverMasterId: string;
   companyId: string;
   tesServiceStartDate?: string;

@@ -1,5 +1,7 @@
 # Company workflow recovery
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 Branch `claude/company-recovery-clean` (from `main`, which includes PR #18). **No migration, no schema/grant/policy/capability change, no
 production data change, no IAM change.** Every write goes through the existing domain operations modules (own validation, own Master
 Register event) under the existing authorization wrappers and row-level security. This repairs integration defects; it does not

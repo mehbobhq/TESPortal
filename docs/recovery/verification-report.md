@@ -1,5 +1,7 @@
 # Verification report
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 Scope: PR #20 (`claude/company-recovery-clean`). **Nothing in this report was executed against production or against a shared database.**
 All database and browser runs used a throwaway local PostgreSQL built from the repository's real migrations (0001-0032) and queried as the
 real runtime role, so row-level security applied.

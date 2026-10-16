@@ -1,4 +1,4 @@
-import { launch, BASE, record, shot, pick, setActor, results } from "./lib.mjs"
+import { launch, BASE, record, shot, pick, setActor, results, browserStorage, tesKeys } from "./lib.mjs"
 import fs from "node:fs"
 const data = JSON.parse(fs.readFileSync("/tmp/tes-e2e/created.json", "utf8"))
 setActor("user_e2e_staff")
@@ -52,11 +52,10 @@ try {
   await shot(page, "07-contacts-added")
   await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector("text=Add a contact")
   record("a contact added in the browser is read back after reload", (await page.innerText("body")).includes("Sam Dispatcher"))
-  record("the existing browser-local contacts workspace stays one click away", await page.getByRole("tab", { name: /browser-local workspace/ }).isVisible())
-  await page.getByRole("tab", { name: /browser-local workspace/ }).click()
-  await page.waitForTimeout(1500)
-  await shot(page, "08-contacts-browser-local")
-  record("browser-local contacts workspace opens with its non-canonical banner", await page.getByText("browser-local workspace (not the TES database)").isVisible())
+  record("containment: no browser-local contacts workspace is offered", (await page.getByRole("tab", { name: /browser-local/ }).count()) === 0 && !(await page.innerText("body")).includes("not the TES database"))
+  const contactsStorage = await browserStorage(page)
+  record("containment: opening and using Contacts wrote nothing to browser storage", tesKeys(contactsStorage).length === 0, JSON.stringify(contactsStorage))
+  await shot(page, "08-contacts-no-browser-local-tab")
 
   // ---- settings ----
   await go(`/companies/${id}/settings`)

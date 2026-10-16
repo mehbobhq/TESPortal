@@ -16,7 +16,7 @@ try {
     ["drivers", /Driver/i, "Drivers"],
     ["business", /Business/i, "Business"],
     ["onboarding", /Onboarding/i, "Onboarding"],
-    ["citations", /browser-local workspace \(not the TES database\)/, "Citations (existing workspace, browser-local banner)"],
+    ["citations", /not connected to the canonical records yet/, "Citations (deferred: browser-local version contained)"],
   ]) {
     await go(`/companies/${id}/${path}`)
     await page.waitForFunction(() => !/Loading/.test(document.body.innerText), null, { timeout: 90000 }).catch(() => {})

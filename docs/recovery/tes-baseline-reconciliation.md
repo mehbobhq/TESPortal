@@ -1,5 +1,7 @@
 # TES baseline reconciliation
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 Status: working document for PR #20 (`claude/company-recovery-clean`). It **adds** to, and does not replace, the historical records
 (`docs/canonical-data-cutover-browser-authority-retirement.md`, `docs/*-boundaries.md`, `docs/system-wide-authorization-rls-closure.md`,
 `docs/contracts-foundation.md`, `docs/evidence-*.md`, `docs/audits/TES_SYSTEM_INTEGRITY_AUDIT.md`, `docs/company-recovery.md`).

@@ -1,5 +1,7 @@
 # Browser verification evidence (company recovery)
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 Run on the final code of `claude/company-recovery-clean`: real Chromium → real Next.js dev server → real route handlers, services,
 authorization wrappers and Master Register → real PostgreSQL (all repository migrations applied) as the **runtime role**.
 Stubbed (test-only, in `scripts/verification/company-recovery-browser/`): the Clerk session (a file names the signed-in subject) and the

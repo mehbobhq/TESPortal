@@ -28,3 +28,14 @@ export async function pick(page, triggerLocator, optionText) {
   await option.click({ force: true })
   await page.waitForTimeout(200)
 }
+
+/** Every key the page's origin holds in localStorage, sessionStorage and IndexedDB (names only, never values). */
+export async function browserStorage(page) {
+  return page.evaluate(async () => ({
+    local: Object.keys(localStorage),
+    session: Object.keys(sessionStorage),
+    idb: ((await indexedDB.databases?.()) ?? []).map((d) => d.name),
+  }))
+}
+/** Containment check: no TES key in any browser storage (the app's own UI-preference keys are not TES records). */
+export const tesKeys = (s) => [...s.local, ...s.session, ...s.idb].filter((k) => /^tes|^TES|tes_/.test(String(k)))

@@ -1,4 +1,4 @@
-import { launch, BASE, record, shot, setActor, results } from "./lib.mjs"
+import { launch, BASE, record, shot, setActor, results, browserStorage, tesKeys } from "./lib.mjs"
 import fs from "node:fs"
 setActor("user_e2e_staff")
 const { browser, page } = await launch()
@@ -103,20 +103,22 @@ try {
   record("profile shows real Trucks/Trailers/Drivers counts (no hard-coded values)", /TRUCKS\s*\n?\s*0/i.test(pt) || pt.includes("Trucks"))
   await shot(page, "23-profile-counts")
 
-  // ---- legacy tabs for restored workspaces ----
-  for (const [path, label] of [["business", "Business"], ["insurance", "Insurance"], ["authorities", "Authorities"], ["tax-filing", "Tax Filing"], ["credentials", "Credentials"], ["drivers", "Drivers"]]) {
-    await go(`/companies/${id}/${path}`); await page.getByRole("tab", { name: new RegExp(`${label} \\(browser-local workspace\\)`) }).waitFor({ timeout: 90000 })
-    await page.getByRole("tab", { name: new RegExp(`${label} \\(browser-local workspace\\)`) }).click()
-    await page.waitForFunction(() => /not the TES database/.test(document.body.innerText), null, { timeout: 60000 })
-    await page.waitForTimeout(1500)
+  // ---- containment: the original browser-local workspaces are never offered, and nothing is written to browser storage ----
+  for (const [path, label] of [["business", "Business"], ["insurance", "Insurance"], ["authorities", "Authorities"], ["tax-filing", "Tax Filing"], ["credentials", "Credentials"], ["drivers", "Drivers"], ["contacts", "Contacts"], ["settings", "Settings"]]) {
+    await go(`/companies/${id}/${path}`)
+    await page.waitForFunction(() => !/Loading/.test(document.body.innerText), null, { timeout: 90000 }).catch(() => {})
+    await page.waitForTimeout(1200)
     const body = await page.innerText("body")
-    const proj = await page.evaluate((cid) => JSON.parse(localStorage.getItem("tes_companies") || "[]").some((c) => c.id === cid && c.source === "canonical-projection"), id)
-    record(`${label}: original workspace opens as a labelled browser-local tab`, /not the TES database/.test(body) && !/could not be opened/.test(body) && proj, proj ? "" : "projection missing")
-    await shot(page, `24-legacy-${path}`)
+    const tabs = await page.getByRole("tab", { name: /browser-local/ }).count()
+    const st = await browserStorage(page)
+    record(`${label}: canonical workspace only; no browser-local tab or banner`, tabs === 0 && !/not the TES database/.test(body) && !/could not be opened/.test(body), `tabs=${tabs}`)
+    record(`${label}: nothing written to browser storage`, tesKeys(st).length === 0, JSON.stringify(tesKeys(st)))
+    await shot(page, `24-contained-${path}`)
   }
-  await go(`/companies/${id}/profile`); await settle()
-  const left = await page.evaluate((cid) => JSON.parse(localStorage.getItem("tes_companies") || "[]").some((c) => c.id === cid), id)
-  record("leaving the browser-local tab removes the marked projection (no durable second copy)", left === false)
+  await go(`/companies/${id}/credentials`); await settle()
+  record("Credentials: no password, secret or recovery-answer input is reachable", (await page.locator("input[type=password]").count()) === 0 && !/Protected secret|Protected answer/.test(await page.innerText("body")))
+  const final = await browserStorage(page)
+  record("no tes_companies entry (or any TES key) was created at any point in this run", tesKeys(final).length === 0, JSON.stringify(tesKeys(final)))
 } catch (e) {
   record("scenario error", false, String(e).slice(0, 500))
   await shot(page, "95-error-features")

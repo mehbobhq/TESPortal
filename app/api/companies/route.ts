@@ -11,8 +11,9 @@ export async function GET() {
   try {
     const companies = await listCompanyDirectory()
     return NextResponse.json({ companies }, { status: 200 })
-  } catch {
-    return NextResponse.json({ error: "Unable to load companies." }, { status: 500 })
+  } catch (error) {
+    // Authorization denial is 403 (not a generic 500); infrastructure failures stay a generic 500 with no detail.
+    return canonicalFailure(error, "Unable to load companies.")
   }
 }
 

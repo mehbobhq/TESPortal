@@ -1,5 +1,7 @@
 # Functional regression matrix
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 Three points compared per workspace: **A** = original rich interface (root snapshot `2644183`, last pre-cutover version of each file),
 **B** = `main` (after the Block 01 D/E cutover), **C** = this PR. Line counts are pages only.
 

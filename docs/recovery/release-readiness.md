@@ -1,5 +1,7 @@
 # Release readiness
 
+> **Superseded in part:** browser-local workspace behavior described here was contained by the Batch 1 corrections; see `docs/recovery/legacy-workspace-containment.md`.
+
 **Nothing here has been executed. No merge, deployment, production migration, production grant or production data change is authorized by this document.**
 
 | Item | Value |

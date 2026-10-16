@@ -4,7 +4,7 @@ import { PDFDocument } from "pdf-lib"
 import { GoogleDocumentAIAcquisitionProvider } from "@/lib/google-document-ai-provider"
 import type { TESMachineDocumentResult } from "@/lib/machine-acquisition"
 import { getGoogleAccessToken } from "@/lib/google/auth"
-import { canonicalFailure } from "@/lib/api/canonical-response"
+import { canonicalFailure, isTesDenial } from "@/lib/api/canonical-response"
 import { MAX_PAYLOAD_BYTES } from "@/lib/evidence-payload/definitions"
 import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize"
 import { LEGACY_OCR_CLOSED_MESSAGE, LegacyOcrUploadError, legacyOcrAvailability, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy"
@@ -166,8 +166,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ result })
   } catch (error) {
     if (error instanceof LegacyOcrUploadError) return NextResponse.json({ error: error.message }, { status: error.status })
-    const denied = error instanceof Error && (error.constructor.name === "TesAuthorizationDeniedError" || error.constructor.name === "TesIdentityRequiredError")
-    if (denied) return canonicalFailure(error, "Document AI processing failed. Please try again.")
+    if (isTesDenial(error)) return canonicalFailure(error, "Document AI processing failed. Please try again.")
     // Server-side only: the full error (which may include upstream Google
     // response text, e.g. from lib/google-document-ai-provider.ts) is logged
     // here for operators, but never contains credentials or tokens - Google's

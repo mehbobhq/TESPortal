@@ -50,6 +50,11 @@ export type ContractsWorkspace = ContractsView & {
   openEngagement: { id: string; scopes: Array<{ id: string; productLevel: string; serviceCode: string | null; responsibilityStartsAt: string | null }> } | null
 }
 
+/** TesAuthorizationDeniedError, by its stable code. TesIdentityRequiredError and every other error are NOT a denial here. */
+function isAuthorizationDenied(error: unknown): boolean {
+  return error instanceof Error && (error as { code?: unknown }).code === "TES_AUTHORIZATION_DENIED"
+}
+
 /**
  * Reads the contracts workspace and readiness. The read is itself recorded in the Master Register (contract-significant
  * views are accountable), inside the same CONTRACT_READ transaction.
@@ -59,8 +64,9 @@ export async function getContractsWorkspace(organizationId: string): Promise<Con
     getCustomerRelationship(organizationId),
     getOnboardingFoundation(organizationId),
     getOrganizationContacts(organizationId).catch((error: unknown) => {
-      // Only a denial degrades (application code does not import the authorization core; it matches the canonical error name).
-      if (error instanceof Error && error.constructor.name === "TesAuthorizationDeniedError") return null
+      // Only a denial degrades. Application code does not import the authorization core, so the denial is recognised by its
+      // explicit code (never constructor.name, which a production build minifies).
+      if (isAuthorizationDenied(error)) return null
       throw error
     }),
   ])

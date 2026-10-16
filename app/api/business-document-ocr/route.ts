@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { canonicalFailure } from "@/lib/api/canonical-response";
+import { canonicalFailure, isTesDenial } from "@/lib/api/canonical-response";
 import { authorizeLegacyOcr } from "@/lib/legacy-ocr/authorize";
 import { LEGACY_OCR_CLOSED_MESSAGE, LegacyOcrUploadError, legacyOcrAvailability, validateLegacyOcrFile } from "@/lib/legacy-ocr/upload-policy";
 import { getGoogleAccessToken } from "@/lib/google/auth";
@@ -51,8 +51,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof LegacyOcrUploadError) return NextResponse.json({ error: error.message }, { status: error.status });
-    const denied = error instanceof Error && (error.constructor.name === "TesAuthorizationDeniedError" || error.constructor.name === "TesIdentityRequiredError");
-    if (denied) return canonicalFailure(error, "Corporate OCR failed.");
+    if (isTesDenial(error)) return canonicalFailure(error, "Corporate OCR failed.");
     console.error("Corporate OCR failed:", error);
     return NextResponse.json({ error: "Corporate OCR failed. The evidence remains available for manual review." }, { status: 502 });
   }

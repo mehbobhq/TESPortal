@@ -24,6 +24,15 @@ function declaredCode(error: unknown): string {
   return typeof code === "string" ? code : ""
 }
 
+/**
+ * True only for the two TES authentication/authorization denials (TesAuthorizationDeniedError, TesIdentityRequiredError),
+ * recognised by their explicit codes. For routes that decide between "denial" and their own failure handling; it is the same
+ * test canonicalFailure uses for 403. Any other error, including every other Tes* error, is not a denial.
+ */
+export function isTesDenial(error: unknown): boolean {
+  return TES_DENIAL_CODES.has(declaredCode(error))
+}
+
 export function canonicalFailure(error: unknown, fallback: string) {
   const name = declaredName(error)
   const message = error instanceof Error ? error.message : fallback
@@ -32,7 +41,7 @@ export function canonicalFailure(error: unknown, fallback: string) {
   if (name.endsWith("StateError") || name.endsWith("ConflictError") || name.endsWith("CollisionError")) {
     return NextResponse.json({ error: message }, { status: 409 })
   }
-  if (TES_DENIAL_CODES.has(declaredCode(error))) {
+  if (isTesDenial(error)) {
     return NextResponse.json({ error: "Not authorized." }, { status: 403 })
   }
   return NextResponse.json({ error: fallback }, { status: 500 })

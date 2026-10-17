@@ -4,6 +4,7 @@ import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/au
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as operations from "./operations"
 import * as lifecycle from "./vehicle-lifecycle"
+import { classifyVehicleCreateFailure } from "./vehicle-create-failure"
 import type { DriverLicenceInput, DriverProfileCreateInput, EntityResolutionInput, OrganizationDriverRelationshipInput, OrganizationVehicleRelationshipInput, VehicleCreateInput } from "./types"
 export type * from "./types"
 
@@ -22,9 +23,11 @@ export const createVehicleForOrganization=(
  relationship:Omit<OrganizationVehicleRelationshipInput,"vehicleId">,
 )=>withAuthorizedSystem("VEHICLE_MANAGE",async(c,d)=>{
  const ctx=context(c,d)
- const created=await operations.createVehicle(ctx,vehicle)
- const established=await operations.establishOrganizationVehicle(ctx,{...relationship,vehicleId:created.vehicleId} as OrganizationVehicleRelationshipInput)
- return {vehicle:created,relationship:established}
+ try{
+  const created=await operations.createVehicle(ctx,vehicle)
+  const established=await operations.establishOrganizationVehicle(ctx,{...relationship,vehicleId:created.vehicleId} as OrganizationVehicleRelationshipInput)
+  return {vehicle:created,relationship:established}
+ }catch(error){throw classifyVehicleCreateFailure(error)}
 })
 export const createDriverProfile=(input:DriverProfileCreateInput)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>operations.createDriverProfile(context(c,d),input))
 export const addDriverLicence=(input:DriverLicenceInput)=>withAuthorizedSystem("DRIVER_MANAGE",(c,d)=>operations.addDriverLicence(context(c,d),input))

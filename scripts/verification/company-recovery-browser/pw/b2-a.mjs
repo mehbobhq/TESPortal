@@ -1,7 +1,7 @@
 import { start, makeCompany, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const A = await makeCompany(h, "Alpha"); const B = await makeCompany(h, "Bravo")
 fs.writeFileSync("/tmp/tes-e2e/b2-ids.json", JSON.stringify({ A, B }))
 const auth = (id) => Number(psql(`select count(*) from public.operating_authorities where organization_id='${id}'`))
@@ -19,7 +19,7 @@ await step("authorities: validation - an empty number is refused and nothing is 
   const before = auth(A.id)
   await page.getByRole("button", { name: "Add Record" }).first().click()
   const save = page.getByRole("button", { name: "Save Record" }); const disabled = await save.isDisabled()
-  if (!disabled) { await save.click(); await page.waitForTimeout(1000) }
+  if (!disabled) { await submit(() => save.click()) }
   await page.getByRole("button", { name: "Cancel" }).click()
   return auth(A.id) === before ? `Save disabled=${disabled}` : false
 })
@@ -27,7 +27,7 @@ await step("authorities: a record with an unsupported field (Notes) is refused, 
   const before = auth(A.id)
   await page.getByRole("button", { name: "Add Record" }).first().click(); await page.getByPlaceholder("Enter identifier").fill(`MV${digits(6)}`)
   await page.getByPlaceholder("Optional compliance notes or reference details").fill("secret note")
-  await page.getByRole("button", { name: "Save Record" }).click(); await page.waitForTimeout(2000)
+  await submit(() => page.getByRole("button", { name: "Save Record" }).click())
   const ok = auth(A.id) === before
   await shot(page, "b2-authorities-notes-refused")
   await page.getByRole("button", { name: "Cancel" }).click().catch(() => {})
@@ -36,7 +36,7 @@ await step("authorities: a record with an unsupported field (Notes) is refused, 
 await step("authorities: Save persists a canonical record (database row + Master Register event)", async () => {
   const rows0 = auth(A.id); const events0 = Number(psql(`select count(*) from public.master_register_events`))
   await page.getByRole("button", { name: "Add Record" }).first().click(); await page.getByPlaceholder("Enter identifier").fill(MV)
-  await page.getByRole("button", { name: "Save Record" }).click(); await page.waitForTimeout(3000)
+  await submit(() => page.getByRole("button", { name: "Save Record" }).click(), true, () => page.getByRole("button", { name: "Save Record" }).waitFor({ state: "hidden", timeout: 60000 }))
   const n = auth(A.id); const events1 = Number(psql(`select count(*) from public.master_register_events`))
   await shot(page, "b2-authorities-saved")
   return n === rows0 + 1 && events1 > events0 ? `rows ${rows0}->${n}, master-register events +${events1 - events0}` : false
@@ -45,7 +45,7 @@ await step("authorities: the saved record survives a refresh", async () => { awa
 await step("authorities: a duplicate number is refused (409) and no second row exists", async () => {
   const before = auth(A.id)
   await page.getByRole("button", { name: "Add Record" }).first().click(); await page.getByPlaceholder("Enter identifier").fill(MV)
-  await page.getByRole("button", { name: "Save Record" }).click(); await page.waitForTimeout(2500)
+  await submit(() => page.getByRole("button", { name: "Save Record" }).click())
   const msg = /already|exists|registered|duplicate/i.test(await body())
   await shot(page, "b2-authorities-duplicate")
   await page.getByRole("button", { name: "Cancel" }).click().catch(() => {})

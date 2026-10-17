@@ -2,7 +2,7 @@
 import { start, makeCompany, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const A = await makeCompany(h, "VehAlpha"); const B = await makeCompany(h, "VehBravo")
 fs.writeFileSync("/tmp/tes-e2e/b3-ids.json", JSON.stringify({ A, B }))
 const t = digits(6); const vinOf = (s) => `1HG${t}${s}`.padEnd(17, "0").slice(0, 17)
@@ -21,33 +21,33 @@ await step("vehicles: Cancel stores nothing", async () => {
 })
 await step("vehicles: validation - an empty form cannot be saved and nothing is stored", async () => {
   const b = [n(A.id), nv()]; await open(); const save = page.getByRole("button", { name: "Save Vehicle" })
-  const disabled = await save.isDisabled(); if (!disabled) { await save.click(); await page.waitForTimeout(1200) }
+  const disabled = await save.isDisabled(); if (!disabled) { await submit(() => save.click()) }
   await page.getByRole("button", { name: "Cancel" }).click().catch(() => {}); return n(A.id) === b[0] && nv() === b[1] ? `save disabled=${disabled}` : false
 })
 await step("vehicles: an invalid VIN is refused with a message (previously a generic 500) and nothing is stored", async () => {
-  const b = [n(A.id), nv()]; await open(); await fill(`BAD-${t}`, "1HGIOQ00000000000"); await page.getByRole("button", { name: "Save Vehicle" }).click(); await page.waitForTimeout(2000)
+  const b = [n(A.id), nv()]; await open(); await fill(`BAD-${t}`, "1HGIOQ00000000000"); await submit(() => page.getByRole("button", { name: "Save Vehicle" }).click())
   const msg = await body(); await shot(page, "b3-vehicle-invalid-vin"); await page.getByRole("button", { name: "Cancel" }).click().catch(() => {})
   return n(A.id) === b[0] && nv() === b[1] && /vin|not valid|invalid/i.test(msg) && !/Unable to create vehicle/.test(msg) ? "refused with a specific message" : "!rows or message"
 })
 await step("vehicles: a field with no canonical home (Color) is refused, not silently dropped", async () => {
   const b = [n(A.id), nv()]; await open(); await fill(`COLOR-${t}`, vinOf("0002"))
-  await dlg().locator("input:not([disabled])").nth(5).fill("Red"); await page.getByRole("button", { name: "Save Vehicle" }).click(); await page.waitForTimeout(2000)
+  await dlg().locator("input:not([disabled])").nth(5).fill("Red"); await submit(() => page.getByRole("button", { name: "Save Vehicle" }).click())
   await shot(page, "b3-vehicle-color-refused"); await page.getByRole("button", { name: "Cancel" }).click().catch(() => {})
   return n(A.id) === b[0] && nv() === b[1]
 })
 await step("vehicles: Save creates the vehicle and the company relationship (database + Master Register events)", async () => {
-  const b = [n(A.id), nv(), ev()]; await open(); await fill(UNIT, VIN); await page.getByRole("button", { name: "Save Vehicle" }).click(); await page.waitForTimeout(3500)
+  const b = [n(A.id), nv(), ev()]; await open(); await fill(UNIT, VIN); await submit(() => page.getByRole("button", { name: "Save Vehicle" }).click(), true, () => page.getByRole("button", { name: "Save Vehicle" }).waitFor({ state: "hidden", timeout: 60000 }))
   await shot(page, "b3-vehicle-saved"); const a = [n(A.id), nv(), ev()]
   return a[0] === b[0] + 1 && a[1] === b[1] + 1 && a[2] >= b[2] + 2 ? `links ${b[0]}->${a[0]}, vehicles ${b[1]}->${a[1]}, events +${a[2] - b[2]}` : `!${b} -> ${a}`
 })
 await step("vehicles: the saved vehicle is listed and survives a refresh", async () => { await page.reload({ waitUntil: "domcontentloaded" }); await settle(); return (await body()).includes(UNIT) })
 await step("vehicles: the same unit number is refused (409 message, not a 500) and no row is added", async () => {
-  const b = [n(A.id), nv()]; await open(); await fill(UNIT, vinOf("0003")); await page.getByRole("button", { name: "Save Vehicle" }).click(); await page.waitForTimeout(2500)
+  const b = [n(A.id), nv()]; await open(); await fill(UNIT, vinOf("0003")); await submit(() => page.getByRole("button", { name: "Save Vehicle" }).click())
   const msg = await body(); await shot(page, "b3-vehicle-dup-unit"); await page.getByRole("button", { name: "Cancel" }).click().catch(() => {})
   return n(A.id) === b[0] && nv() === b[1] && /unit number|already/i.test(msg) && !/Unable to create vehicle/.test(msg) ? "refused with a specific message" : "!rows or message"
 })
 await step("vehicles: the same VIN for the same company is refused and no row is added", async () => {
-  const b = [n(A.id), nv()]; await open(); await fill(`DUP-${t}`, VIN); await page.getByRole("button", { name: "Save Vehicle" }).click(); await page.waitForTimeout(2500)
+  const b = [n(A.id), nv()]; await open(); await fill(`DUP-${t}`, VIN); await submit(() => page.getByRole("button", { name: "Save Vehicle" }).click())
   const msg = await body(); await page.getByRole("button", { name: "Cancel" }).click().catch(() => {}); return n(A.id) === b[0] && nv() === b[1] && /already|current vehicle/i.test(msg) ? "refused" : "!"
 })
 const vid = () => psql(`select vehicle_id from public.organization_vehicle_relationships where organization_id='${A.id}' limit 1`)

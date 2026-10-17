@@ -2,7 +2,7 @@
 import { start, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const { A, B } = JSON.parse(fs.readFileSync("/tmp/tes-e2e/b3-ids.json", "utf8"))
-const h = await start(); const { page, go, settle, api, step, body } = h
+const h = await start(); const { page, go, settle, api, step, body, submit } = h
 const q = (s) => Number(psql(s)); const ev = () => q(`select count(*) from public.master_register_events`)
 const t = digits(5)
 const saved = (fn, re) => Promise.all([page.waitForResponse((r) => re.test(r.url()) && r.request().method() !== "GET", { timeout: 30000 }), fn()]).then(([r]) => r.status())
@@ -83,7 +83,7 @@ await step("driver edit: the corrected name survives a refresh", async () => { a
 await step("driver edit: an unsupported field (date of birth) is refused and nothing changes", async () => {
   const before = nm(); const e0 = ev(); await page.getByRole("button", { name: "Edit Profile" }).click(); await page.waitForTimeout(600)
   await page.locator("main label").filter({ hasText: /^Date of Birth/ }).first().locator("xpath=..").locator("input").fill("1980-01-01")
-  await page.getByRole("button", { name: "Save Profile Changes" }).click(); await page.waitForTimeout(2500); await shot(page, "b3-driver-dob-refused")
+  await submit(() => page.getByRole("button", { name: "Save Profile Changes" }).click()); await shot(page, "b3-driver-dob-refused")
   return nm() === before && ev() === e0 && /not available|refus|no canonical/i.test(await body()) ? "refused; no change, no event" : `!${nm()} events ${ev() - e0}`
 })
 await step("driver licence relationship: a second licence in another jurisdiction coexists; same jurisdiction replaces with history (API)", async () => {

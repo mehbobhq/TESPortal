@@ -1,7 +1,7 @@
 import { start, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const { A, B } = JSON.parse(fs.readFileSync("/tmp/tes-e2e/b2-ids.json", "utf8"))
 const tag = digits(5); const PORTAL = `B2 Portal ${tag}`; const USER = `ops-${tag}@example.test`
 const creds = (id) => Number(psql(`select count(*) from public.company_credentials where organization_id='${id}'`))
@@ -15,7 +15,7 @@ await step("credentials: no password/secret input is enterable (the password fie
   return dis && type === 0 ? "password field disabled; no type=password input" : false
 })
 await step("credentials: validation - Save without a portal/username is refused and nothing is saved", async () => {
-  const before = creds(A.id); await page.getByRole("button", { name: "Save", exact: true }).click(); await page.waitForTimeout(1500)
+  const before = creds(A.id); await submit(() => page.getByRole("button", { name: "Save", exact: true }).click())
   await shot(page, "b2-credentials-validation"); return creds(A.id) === before
 })
 await step("credentials: Cancel stores nothing", async () => { const before = creds(A.id); await page.getByRole("button", { name: "Cancel" }).click(); await page.waitForTimeout(500); return creds(A.id) === before })
@@ -27,7 +27,7 @@ await step("credentials: creating through the UI persists a credential (database
   await page.getByText(PORTAL, { exact: false }).last().click(); await page.waitForTimeout(500)
   await page.getByPlaceholder("Username or account email").fill(USER)
   await shot(page, "b2-credentials-filled")
-  await page.getByRole("button", { name: "Save", exact: true }).click(); await page.waitForTimeout(3000)
+  await submit(() => page.getByRole("button", { name: "Save", exact: true }).click(), true, () => page.getByText("Add Credential", { exact: true }).waitFor({ state: "hidden", timeout: 60000 }))
   const after = creds(A.id); const ev1 = Number(psql(`select count(*) from public.master_register_events`)); await shot(page, "b2-credentials-after-save")
   return after === before + 1 && ev1 > ev0 ? `credentials ${before}->${after}, events +${ev1 - ev0}` : `!credentials ${before}->${after}; body tail: ${(await body()).slice(-300).replace(/\\n/g, " ")}`
 })

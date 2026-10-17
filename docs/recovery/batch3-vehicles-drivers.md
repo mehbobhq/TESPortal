@@ -42,3 +42,15 @@ VO = verified operational (browser + database), DT = domain-tested only, UP = UI
 | Hiring applications, Send Application, Invite Applicant | MD / UP (refused; nothing sent; containment unchanged) |
 | Evaluation, screening results, training, performance events, HOS, company actions, citations | MD / UP |
 | Driver documents / licence evidence | MD (no driver evidence target) |
+
+## Final corrections (closure pass)
+- **Driver identity disclosure:** the existing-driver lookup discloses a driver's name and id only to the company that already holds the driver. A licence
+  registered to another company's driver returns `{found:true, scope:"OTHER_ORGANIZATION"}` and nothing else; creating a driver with that licence is a generic
+  409; linking another company's driver (`add-existing`) is refused and indistinguishable from an unknown person (no consent / identity-resolution workflow exists).
+  Conflicts no longer carry the holder's person id, and the driver detail read no longer returns other-company counts. Residual: the lookup still confirms that a
+  licence number is registered in TES, as creating a driver with it would.
+- **Add Driver address:** the address fields are disabled and labelled "not available yet" (no required marker); the server still rejects an address key.
+- **Shared vehicle:** ending one company's relationship keeps the global vehicle active and the other company's access and history unchanged; a vehicle another
+  company holds cannot be archived.
+- **Browser harness:** persistence steps wait for the page's own completion signal (a save can be several writes) instead of a fixed sleep. The earlier Credentials
+  failure was this: the first write (linking the portal to its provider) finished while the credential was still being created.

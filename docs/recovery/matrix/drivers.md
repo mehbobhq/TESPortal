@@ -27,8 +27,8 @@ licence number, email or phone), take the Organization from the URL, and report 
 | Operation | Semantics | Route |
 | --- | --- | --- |
 | `createDriver` | Person + name (INITIAL) + driver profile + email/phone channels + licence + relationship, one transaction; a licence that already identifies a driver is a conflict (never a second person) | `POST /api/companies/[id]/drivers` `{mode:"create"}` |
-| `addExistingDriver` | "Same person" resolution: new relationship only; person untouched | same, `{mode:"add-existing"}` |
-| `checkExistingDriver` | licence lookup (country+jurisdiction+normalized number); reports same-company / other-company counts | `POST .../drivers/check` |
+| `addExistingDriver` | Re-engagement of a person this company ALREADY has a relationship with (new relationship only; person untouched). Linking another company's driver is refused like an unknown person: it needs consent or an identity-resolution workflow that does not exist | same, `{mode:"add-existing"}` |
+| `checkExistingDriver` | licence lookup (country+jurisdiction+normalized number). **Minimum disclosure:** a driver this company already holds is returned in full (`scope: THIS_ORGANIZATION`); a licence registered to another company's driver returns only `{found:true, scope:"OTHER_ORGANIZATION"}` (no name, person id, counts or detail) | `POST .../drivers/check` |
 | `changeDriverName` / `correctDriverName` | real-world change (old name = history) / correction (wrong name kept, flagged) | `PATCH .../drivers/[personId]` `change-name` / `correct-name` |
 | `setDriverChannel` | first value adds; different value = change (or `mode:"correct"`); unchanged refused | `set-channel` |
 | `changeDriverRelationship` | end open row at T, new row from T (type/status/driver number); T must be after the open start (same day => correct) | `change-relationship` |

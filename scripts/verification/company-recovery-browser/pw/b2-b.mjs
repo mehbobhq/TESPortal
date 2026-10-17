@@ -1,7 +1,7 @@
 import { start, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const { A, B } = JSON.parse(fs.readFileSync("/tmp/tes-e2e/b2-ids.json", "utf8"))
 const BN = digits(9)
 const ident = (id, kind) => Number(psql(`select count(*) from public.organization_identifiers where organization_id='${id}' and namespace='${kind === "CRA_BN" ? "cra" : "irs"}' and status='active'`))
@@ -15,13 +15,13 @@ await step("business: Cancel on the CRA BN card stores nothing", async () => {
   return ident(A.id, "CRA_BN") === before && !(await body()).includes(BN)
 })
 await step("business: an invalid BN is refused with a message and nothing is saved", async () => {
-  const before = ident(A.id, "CRA_BN"); const row = await addCra(); await row.fill("12ab"); await page.locator("form button[type=submit]").first().click(); await page.waitForTimeout(1500)
+  const before = ident(A.id, "CRA_BN"); const row = await addCra(); await row.fill("12ab"); await submit(() => page.locator("form button[type=submit]").first().click())
   const msg = await body(); await shot(page, "b2-business-invalid")
   return ident(A.id, "CRA_BN") === before && /nine|9|digit|invalid|valid/i.test(msg) ? "refused with message" : false
 })
 await step("business: a valid BN is saved to the canonical identifier table with a Master Register event", async () => {
   const before = ident(A.id, "CRA_BN"); const ev0 = Number(psql(`select count(*) from public.master_register_events`))
-  const row = await addCra(); await row.fill(BN); await page.locator("form button[type=submit]").first().click(); await page.waitForTimeout(2500)
+  const row = await addCra(); await row.fill(BN); await submit(() => page.locator("form button[type=submit]").first().click(), true, () => page.locator("input[name=accountNo]").first().waitFor({ state: "hidden", timeout: 60000 }))
   const after = ident(A.id, "CRA_BN"); const ev1 = Number(psql(`select count(*) from public.master_register_events`))
   await shot(page, "b2-business-bn-saved"); return after === before + 1 && ev1 > ev0 ? `identifiers ${before}->${after}, events +${ev1 - ev0}` : false
 })
@@ -45,7 +45,7 @@ await step("settings: changing the scope and cancelling (navigating away) stores
 await step("settings: Save profile persists the scope (database + Master Register) and survives refresh", async () => {
   await page.locator("input[name=operating-scope][value=CANADA]").check()
   const ev0 = Number(psql(`select count(*) from public.master_register_events`))
-  await page.getByRole("button", { name: /Save profile/i }).click(); await page.waitForTimeout(3000)
+  await submit(() => page.getByRole("button", { name: /Save profile/i }).click(), true)
   await shot(page, "b2-settings-saved")
   await page.reload({ waitUntil: "domcontentloaded" }); await settle()
   const ev1 = Number(psql(`select count(*) from public.master_register_events`))

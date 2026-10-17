@@ -1,7 +1,7 @@
 import { start, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const { A, B } = JSON.parse(fs.readFileSync("/tmp/tes-e2e/b2-ids.json", "utf8"))
 const tag = digits(5)
 const persons = (id) => Number(psql(`select count(*) from public.organization_person_relationships r where r.organization_id='${id}'`))
@@ -16,7 +16,7 @@ await step("contacts: Cancel in Manual Add stores nothing", async () => {
 })
 await step("contacts: validation - missing last name is refused and nothing is saved", async () => {
   const before = persons(A.id); await page.getByRole("button", { name: "Manual Add" }).click()
-  await dlg().locator("input[type=text]").nth(0).fill(`Solo${tag}`); await dlg().getByRole("button", { name: "Save Contact" }).click(); await page.waitForTimeout(1500)
+  await dlg().locator("input[type=text]").nth(0).fill(`Solo${tag}`); await submit(() => dlg().getByRole("button", { name: "Save Contact" }).click())
   const still = await dlg().isVisible().catch(() => false); await shot(page, "b2-contacts-validation"); await page.keyboard.press("Escape").catch(() => {})
   await page.reload({ waitUntil: "domcontentloaded" }); await settle()
   return persons(A.id) === before && still
@@ -24,7 +24,7 @@ await step("contacts: validation - missing last name is refused and nothing is s
 await step("contacts: a driver-licence/DOB entry (no canonical home) is refused, not silently dropped", async () => {
   const before = persons(A.id); await page.getByRole("button", { name: "Manual Add" }).click()
   await dlg().locator("input[type=text]").nth(0).fill(`Dob${tag}`); await dlg().locator("input[type=text]").nth(1).fill("Test"); await dlg().locator("input[type=email]").fill(`dob${tag}@example.test`)
-  await dlg().locator("input[aria-label='Date of Birth']").fill("1980-01-01"); await dlg().getByRole("button", { name: "Save Contact" }).click(); await page.waitForTimeout(2000)
+  await dlg().locator("input[aria-label='Date of Birth']").fill("1980-01-01"); await submit(() => dlg().getByRole("button", { name: "Save Contact" }).click())
   const msg = await body(); const reason = /not available yet|refuse/i.test(msg); await shot(page, "b2-contacts-dob-refused"); await page.reload({ waitUntil: "domcontentloaded" }); await settle()
   return persons(A.id) === before && !(await body()).includes(`Dob${tag}`) && reason ? "refused; nothing stored" : "!persons or reason"
 })
@@ -32,7 +32,7 @@ await step("contacts: Save Contact persists a canonical person + relationship (d
   const before = persons(A.id); const ev0 = Number(psql(`select count(*) from public.master_register_events`))
   await page.getByRole("button", { name: "Manual Add" }).click()
   await dlg().locator("input[type=text]").nth(0).fill(`Sam${tag}`); await dlg().locator("input[type=text]").nth(1).fill("Rivera")
-  await dlg().locator("input[type=email]").fill(`sam${tag}@example.test`); await dlg().getByRole("button", { name: "Save Contact" }).click(); await page.waitForTimeout(3000)
+  await dlg().locator("input[type=email]").fill(`sam${tag}@example.test`); await submit(() => dlg().getByRole("button", { name: "Save Contact" }).click(), true, () => page.getByRole("button", { name: "Save Contact" }).waitFor({ state: "hidden", timeout: 60000 }))
   const after = persons(A.id); const ev1 = Number(psql(`select count(*) from public.master_register_events`)); await shot(page, "b2-contacts-saved")
   return after === before + 1 && ev1 > ev0 ? `relationships ${before}->${after}, events +${ev1 - ev0}` : false
 })

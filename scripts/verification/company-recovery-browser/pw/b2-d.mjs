@@ -1,7 +1,7 @@
 import { start, makeCompany, record, shot, psql, digits, browserStorage, tesKeys } from "./b2-common.mjs"
 import fs from "node:fs"
 const h = await start()
-const { page, go, settle, api, step, body, text } = h
+const { page, go, settle, api, step, body, text, submit } = h
 const { A, B } = JSON.parse(fs.readFileSync("/tmp/tes-e2e/b2-ids.json", "utf8"))
 const tag = digits(5); const POL = `POL-${tag}`; const INSURER = `Northbridge B2 ${tag} Insurance Ltd`
 const pols = (id) => Number(psql(`select count(*) from public.insurance_policies where organization_id='${id}'`))
@@ -19,7 +19,7 @@ await step("insurance: Cancel stores nothing", async () => {
 })
 await step("insurance: validation - a policy without insurer/dates is refused and nothing is saved", async () => {
   const before = pols(A.id); await page.getByRole("button", { name: "Add Transportation Policy" }).first().click()
-  await page.locator("input[name=policyNumber]").fill(`BAD-${tag}`); await page.getByRole("button", { name: "Save Policy" }).click(); await page.waitForTimeout(1500)
+  await page.locator("input[name=policyNumber]").fill(`BAD-${tag}`); await submit(() => page.getByRole("button", { name: "Save Policy" }).click())
   await shot(page, "b2-insurance-validation"); const stillOpen = await page.locator("input[name=policyNumber]").isVisible().catch(() => false)
   await page.getByRole("button", { name: "Cancel" }).click().catch(() => {}); return pols(A.id) === before && stillOpen
 })
@@ -29,7 +29,7 @@ await step("insurance: Save Policy persists a canonical policy (database + Maste
   await page.locator("select[name=insuranceType]").selectOption("Auto Liability")
   await page.locator("input[name=policyNumber]").fill(POL); await page.locator("input[name=insurerName]").fill(INSURER)
   await page.locator("input[name=coverageAmount]").fill("2000000"); await page.locator("input[name=effectiveDate]").fill("2026-01-01"); await page.locator("input[name=expiryDate]").fill("2027-01-01")
-  await page.getByRole("button", { name: "Save Policy" }).click(); await page.waitForTimeout(3500)
+  await submit(() => page.getByRole("button", { name: "Save Policy" }).click(), true, () => page.getByRole("button", { name: "Save Policy" }).waitFor({ state: "hidden", timeout: 60000 }))
   await shot(page, "b2-insurance-after-save")
   const after = pols(A.id); const ev1 = Number(psql(`select count(*) from public.master_register_events`))
   return after === before + 1 && ev1 > ev0 ? `policies ${before}->${after}, events +${ev1 - ev0}` : `!policies ${before}->${after}, events +${ev1 - ev0}; body: ${(await body()).slice(-400).replace(/\n/g, " ")}`

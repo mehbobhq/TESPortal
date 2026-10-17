@@ -5,10 +5,12 @@ import { Briefcase, Plus } from "lucide-react";
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField";
 import { EmptyState } from "@/src/components/shared/StateDisplays";
 import { getDaysRemaining, getDeadlineClasses, getDeadlineStatus } from "./deadline";
-import { EvidenceNote } from "./EvidenceNote";
+import { EvidenceAttachments } from "@/src/components/shared/EvidenceAttachments";
 import type { WorkersRecord } from "./model";
 
 interface WorkersCompSectionProps {
+  /** The company in the page URL: evidence is always read and written for it. */
+  companyId: string;
   records: WorkersRecord[];
   today: string;
   onAdd: () => void;
@@ -19,6 +21,7 @@ interface WorkersCompSectionProps {
 }
 
 export function WorkersCompSection({
+  companyId,
   records,
   today,
   onAdd,
@@ -103,7 +106,7 @@ export function WorkersCompSection({
                     <ReadOnlyField label="Expiry / Clearance" value={wcb.cancelledOn ? `${wcb.expiryDate || "—"} (cancelled ${wcb.cancelledOn})` : wcb.expiryDate} mono />
                   </div>
 
-                  <EvidenceNote compact />
+                  <EvidenceAttachments companyId={companyId} targetTable="insurance_policies" targetId={wcb.policyId} targetLabel="policy" allowWrite={wcb.status !== "Archived"} compact />
                 </div>
 
                 <div className="mt-3 pt-2.5 border-t border-border flex items-center justify-between text-xs">

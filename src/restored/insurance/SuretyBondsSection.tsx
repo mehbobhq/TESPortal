@@ -5,10 +5,12 @@ import { Award, Plus } from "lucide-react";
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField";
 import { EmptyState } from "@/src/components/shared/StateDisplays";
 import { getDaysRemaining, getDeadlineClasses, getDeadlineStatus } from "./deadline";
-import { EvidenceNote } from "./EvidenceNote";
+import { EvidenceAttachments } from "@/src/components/shared/EvidenceAttachments";
 import type { BondEntry } from "./model";
 
 interface SuretyBondsSectionProps {
+  /** The company in the page URL: evidence is always read and written for it. */
+  companyId: string;
   records: BondEntry[];
   today: string;
   onAdd: () => void;
@@ -19,6 +21,7 @@ interface SuretyBondsSectionProps {
 }
 
 export function SuretyBondsSection({
+  companyId,
   records,
   today,
   onAdd,
@@ -107,7 +110,7 @@ export function SuretyBondsSection({
                     <ReadOnlyField label="Expiry" value={bond.cancelledOn ? `${bond.expiryDate || "Continuous"} (cancelled ${bond.cancelledOn})` : bond.expiryDate || "Continuous"} mono />
                   </div>
 
-                  <EvidenceNote compact />
+                  <EvidenceAttachments companyId={companyId} targetTable="insurance_policies" targetId={bond.policyId} targetLabel="policy" allowWrite={bond.status !== "Archived"} compact />
                 </div>
 
                 <div className="mt-3 pt-2.5 border-t border-border flex items-center justify-between text-xs">

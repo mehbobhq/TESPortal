@@ -7,6 +7,7 @@ import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import { classifyPayloadConsistency, type ConsistencyFinding, type ListedObject } from "@/lib/evidence-payload/consistency"
+import { EVIDENCE_LINK_TARGETS, isEvidenceLinkTarget } from "@/lib/evidence-payload/definitions"
 import { EvidenceStateError, EvidenceValidationError } from "@/lib/evidence-payload/errors"
 import { intakeKey, evidenceKey, quarantineKey } from "@/lib/evidence-payload/object-keys"
 import * as links from "@/lib/evidence-payload/links"
@@ -273,6 +274,22 @@ export const archiveEvidenceAssociation = (input: { organizationId: string; docu
 
 /** Associations of one document, or of one record (EVIDENCE_READ). */
 export const listEvidenceAssociations = (input: links.ListLinksInput) => withAuthorizedSystem("EVIDENCE_READ", (client) => links.listAssociations({ client }, input))
+
+/**
+ * What the CALLER may do with associations, so a client can hide write controls for a read-only user. Informational only: every write
+ * is authorized again, server-side, by the write itself. `canAssociate` needs EVIDENCE_MANAGE and, when a target kind is given, that
+ * kind's domain read capability (the same pair associateEvidence enforces); `canArchive` needs EVIDENCE_MANAGE.
+ */
+export type AssociationPermissions = { canAssociate: boolean; canArchive: boolean }
+
+export const listEvidenceAssociationsWithPermissions = (input: links.ListLinksInput) =>
+  withAuthorizedSystem("EVIDENCE_READ", async (client, decision): Promise<{ links: EvidenceLinkView[]; permissions: AssociationPermissions }> => {
+    const found = await links.listAssociations({ client }, input)
+    const manage = await hasAdditionalSystemCapability(client, decision, "EVIDENCE_MANAGE")
+    const kind = typeof input.targetTable === "string" && isEvidenceLinkTarget(input.targetTable) ? input.targetTable : null
+    const domain = kind ? await hasAdditionalSystemCapability(client, decision, EVIDENCE_LINK_TARGETS[kind].readCapability as TesSystemCapability) : true
+    return { links: found, permissions: { canAssociate: manage && domain, canArchive: manage } }
+  })
 
 /** Dispatches the association actions of the evidence PATCH route. Nothing here deletes anything. */
 export async function applyEvidenceLinkAction(organizationId: string, documentId: string, input: Record<string, unknown>): Promise<{ link: EvidenceLinkView; created?: boolean }> {

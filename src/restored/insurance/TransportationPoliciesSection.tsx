@@ -2,10 +2,12 @@ import { ShieldCheck, Plus, Briefcase, FileCheck2, Eye, AlertTriangle, Pencil, R
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField";
 import { EmptyState } from "@/src/components/shared/StateDisplays";
 import { getDaysRemaining, getDeadlineStatus, getDeadlineClasses } from "./deadline";
-import { EvidenceNote } from "./EvidenceNote";
+import { EvidenceAttachments } from "@/src/components/shared/EvidenceAttachments";
 import type { TransportationRecord } from "./model";
 
 interface TransportationPoliciesSectionProps {
+  /** The company in the page URL: evidence is always read and written for it. */
+  companyId: string;
   records: TransportationRecord[];
   /** The canonical as-of date (YYYY-MM-DD) every deadline is read against. */
   today: string;
@@ -18,6 +20,7 @@ interface TransportationPoliciesSectionProps {
 }
 
 export function TransportationPoliciesSection({
+  companyId,
   records: filteredTransportation,
   today,
   onAdd,
@@ -177,7 +180,7 @@ export function TransportationPoliciesSection({
                       )}
 
                       {/* Evidence Attachment Info: no canonical link between a policy and a document yet */}
-                      <EvidenceNote />
+                      <EvidenceAttachments companyId={companyId} targetTable="insurance_policies" targetId={pol.policyId} targetLabel="policy" allowWrite={pol.status !== "Archived"} />
 
                       {/* Archive Metadata if archived (the reason is kept in the audit trail, not on the record) */}
                       {pol.status === "Archived" && (

@@ -22,4 +22,18 @@ BEGIN
   INSERT INTO public.actor_relationships (id, actor_id, relationship_type, status, starts_at) VALUES (r3,a3,'TES_STAFF','active',now()-interval '1 day');
   INSERT INTO public.relationship_assignments (id, relationship_id, scope_type, status, starts_at) VALUES (s3,r3,'SYSTEM','active',now()-interval '1 day');
 END $$;
+-- Evidence / insurance permission variants: all READ capabilities only; and everything except EVIDENCE_*.
+DO $$
+DECLARE a4 uuid := gen_random_uuid(); r4 uuid := gen_random_uuid(); s4 uuid := gen_random_uuid();
+        a5 uuid := gen_random_uuid(); r5 uuid := gen_random_uuid(); s5 uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO public.actors (id, actor_type, status) VALUES (a4,'HUMAN','active'),(a5,'HUMAN','active');
+  INSERT INTO public.authentication_identities (actor_id, provider, provider_subject) VALUES (a4,'clerk','user_e2e_readonly'),(a5,'clerk','user_e2e_noevidence');
+  INSERT INTO public.actor_relationships (id, actor_id, relationship_type, status, starts_at) VALUES (r4,a4,'TES_STAFF','active',now()-interval '1 day'),(r5,a5,'TES_STAFF','active',now()-interval '1 day');
+  INSERT INTO public.relationship_assignments (id, relationship_id, scope_type, status, starts_at) VALUES (s4,r4,'SYSTEM','active',now()-interval '1 day'),(s5,r5,'SYSTEM','active',now()-interval '1 day');
+  INSERT INTO public.relationship_capability_grants (relationship_id, capability_id, assignment_id, status, granted_at)
+    SELECT r4, c.id, s4, 'active', now()-interval '1 day' FROM public.capabilities c WHERE c.is_active AND c.code LIKE '%\_READ';
+  INSERT INTO public.relationship_capability_grants (relationship_id, capability_id, assignment_id, status, granted_at)
+    SELECT r5, c.id, s5, 'active', now()-interval '1 day' FROM public.capabilities c WHERE c.is_active AND c.code NOT LIKE 'EVIDENCE\_%';
+END $$;
 SELECT count(*) AS full_staff_grants FROM public.relationship_capability_grants;

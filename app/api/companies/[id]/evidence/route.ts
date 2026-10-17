@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure } from "@/lib/api/canonical-response"
 import { MAX_PAYLOAD_BYTES } from "@/lib/evidence-payload/definitions"
-import { EvidenceValidationError, PayloadValidationError, listEvidenceAssociations, listOrganizationEvidence, uploadEvidence } from "@/lib/evidence-payload/service"
+import { EvidenceValidationError, PayloadValidationError, listEvidenceAssociationsWithPermissions, listOrganizationEvidence, uploadEvidence } from "@/lib/evidence-payload/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -14,14 +14,14 @@ export async function GET(request: NextRequest, context: Context) {
     // ?documentId=... or ?targetTable=...&targetId=... (optionally &includeArchived=true) returns the associations instead of the document list.
     const query = request.nextUrl.searchParams
     if (query.has("documentId") || query.has("targetTable")) {
-      const links = await listEvidenceAssociations({
+      const { links, permissions } = await listEvidenceAssociationsWithPermissions({
         organizationId: id,
         documentId: query.get("documentId") ?? undefined,
         targetTable: query.get("targetTable") ?? undefined,
         targetId: query.get("targetId") ?? undefined,
         includeArchived: query.get("includeArchived") === "true",
       })
-      return NextResponse.json({ links }, { status: 200, headers: { "Cache-Control": "private, no-store" } })
+      return NextResponse.json({ links, permissions }, { status: 200, headers: { "Cache-Control": "private, no-store" } })
     }
     return NextResponse.json({ evidence: await listOrganizationEvidence(id) }, { status: 200, headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {

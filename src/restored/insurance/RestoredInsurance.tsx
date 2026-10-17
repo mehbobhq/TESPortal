@@ -431,6 +431,7 @@ export function RestoredInsurance({ companyId, company }: { companyId: string; c
 
       {(activeTab === "transportation" || activeTab === "all") && (
         <TransportationPoliciesSection
+          companyId={companyId}
           records={filteredTransportation}
           today={today}
           onAdd={() => {
@@ -459,6 +460,7 @@ export function RestoredInsurance({ companyId, company }: { companyId: string; c
 
       {(activeTab === "workers" || activeTab === "all") && (
         <WorkersCompSection
+          companyId={companyId}
           records={filteredWorkers}
           today={today}
           onAdd={() => {
@@ -483,6 +485,7 @@ export function RestoredInsurance({ companyId, company }: { companyId: string; c
 
       {(activeTab === "bonds" || activeTab === "all") && (
         <SuretyBondsSection
+          companyId={companyId}
           records={filteredBonds}
           today={today}
           onAdd={() => {

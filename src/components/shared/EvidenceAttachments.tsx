@@ -126,9 +126,9 @@ export function EvidenceAttachments({
         setNotice({ kind: "error", text: failureMessage(result.status, result.body, "The document could not be attached.") })
         return
       }
-      setNotice({ kind: "ok", text: result.body?.created === false ? "That document was already attached." : "Document attached. Attaching does not verify it." })
       setPicker(null)
-      await load()
+      await load() // the list is refreshed first, so the confirmation never shows over a stale list
+      setNotice({ kind: "ok", text: result.body?.created === false ? "That document was already attached." : "Document attached. Attaching does not verify it." })
     } catch {
       setNotice({ kind: "error", text: "The document could not be attached." })
     } finally {
@@ -145,9 +145,9 @@ export function EvidenceAttachments({
         setNotice({ kind: "error", text: failureMessage(result.status, result.body, "The association could not be archived.") })
         return
       }
-      setNotice({ kind: "ok", text: "Association archived. The document itself is unchanged." })
       setConfirmArchive(null)
       await load()
+      setNotice({ kind: "ok", text: "Association archived. The document itself is unchanged." })
     } catch {
       setNotice({ kind: "error", text: "The association could not be archived." })
     } finally {

@@ -49,7 +49,7 @@ const createPolicy = async (number) => {
   await submit(() => page.getByRole("button", { name: "Save Policy" }).click(), true, () => page.getByRole("button", { name: "Save Policy" }).waitFor({ state: "hidden", timeout: 60000 }))
 }
 await step("insurance: two policies are created through the existing UI", async () => { await createPolicy(`EV-${t}-1`); await createPolicy(`EV-${t}-2`); return Number(psql(`select count(*) from public.insurance_policies where organization_id='${A.id}'`)) === 2 })
-const policyId = (n) => psql(`select p.id from public.insurance_policies p join public.insurance_policy_terms t on t.policy_id=p.id where p.organization_id='${A.id}' and t.policy_number='EV-${t}-${n}' limit 1`)
+const policyId = (n) => psql(`select p.id from public.insurance_policies p join public.insurance_policy_terms t on t.policy_id = p.id where p.organization_id='${A.id}' and t.number_display='EV-${t}-${n}' limit 1`)
 const P1 = policyId(1), P2 = policyId(2)
 const docR = seedDocument(A.id, `COI received ${t}`), docV = seedDocument(A.id, `COI verified ${t}`, "verified"), docC = seedDocument(A.id, `COI conflict ${t}`)
 const docRej = seedDocument(A.id, `COI rejected ${t}`), docArch = seedDocument(A.id, `COI archived ${t}`), docQ = seedQuarantined(A.id, `COI quarantined ${t}`)
@@ -115,7 +115,7 @@ await step("evidence: a conflict (the document is archived after the picker was 
   await submit(() => evidenceOf(2).getByRole("button", { name: "Attach", exact: true }).click(), false)
   await page.waitForTimeout(800); const text = await evidenceOf(2).innerText(); await shot(page, "ev2-conflict")
   await evidenceOf(2).getByRole("button", { name: "Cancel" }).click().catch(() => {})
-  return links(A.id) === rows && /archived or rejected document cannot be associated|cannot be associated/i.test(text) ? "conflict message shown; nothing stored" : `!${text}`
+  return links(A.id) === rows && /Only a stored, scanner-cleared document can be associated/.test(text) ? "conflict message shown; nothing stored" : `!${text}`
 })
 await step("evidence: archiving an association asks for confirmation, keeps the document, and moves it to the history", async () => {
   await openInsurance()

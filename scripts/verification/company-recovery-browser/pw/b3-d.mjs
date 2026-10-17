@@ -32,20 +32,30 @@ await step("vehicle edit: a unit number already used by another current vehicle 
   const after = psql(`select count(*) || ':' || max(unit_number_display) from public.organization_vehicle_relationships where organization_id='${A.id}' and record_status='active'`)
   return other.status === 201 && r.status === 409 && before === after ? `409 ${JSON.stringify(r.body).slice(0, 100)}; unchanged` : `!other ${other.status} correct ${r.status} ${JSON.stringify(r.body).slice(0, 140)} ${before} -> ${after}`
 })
+await step("vehicle: a vehicle that another company also has on its current record cannot be archived (409, message), and stays active", async () => {
+  const shared = psql(`select vehicle_id from public.organization_vehicle_relationships where vehicle_id in (select vehicle_id from public.organization_vehicle_relationships where organization_id='${B.id}' and effective_to is null) and organization_id='${A.id}' and effective_to is null limit 1`)
+  if (!shared) return "!no shared vehicle in this database"
+  const r = await api(`/api/companies/${A.id}/vehicles/${shared}`, { action: "archive" }, "PATCH"); const st = psql(`select record_status from public.vehicles where id='${shared}'`)
+  return r.status === 409 && st === "active" ? `409 ${JSON.stringify(r.body).slice(0, 110)}; still active` : `!status ${r.status} ${st}`
+})
+const solo = `AR${t}`
+const soloVehicle = async () => psql(`select vehicle_id from public.organization_vehicle_relationships where organization_id='${A.id}' and unit_number_display='${solo}' limit 1`)
 await step("vehicle: Archive through the UI keeps the record (status archived) and writes a Master Register event", async () => {
-  await openVehicle().catch(async () => { await go(`/companies/${A.id}/vehicles`); await settle(); await page.locator("tr", { hasText: unit1 }).first().click() })
+  const made = await api(`/api/companies/${A.id}/vehicles`, { vehicleTypeCode: "TRAILER", vin: `1HG${t}ARCHIVE00`.slice(0, 17), relationshipType: "OPERATES", unitNumber: solo, effectiveFrom: "2024-01-01T00:00:00Z" })
+  if (made.status !== 201) return `!create ${made.status}`
+  await go(`/companies/${A.id}/vehicles`); await settle(); await page.locator("tr", { hasText: solo }).first().click(); await page.waitForTimeout(1500)
   const e0 = ev(); const code = await saved(() => page.getByRole("button", { name: "Archive", exact: true }).first().click(), /vehicles\/[0-9a-f-]+$/); await page.waitForTimeout(800)
-  const s2 = psql(`select record_status from public.vehicles where id='${vehicleId}'`); await shot(page, "b3-vehicle-archived")
+  const s2 = psql(`select record_status from public.vehicles where id='${await soloVehicle()}'`); await shot(page, "b3-vehicle-archived")
   return code === 200 && s2 === "archived" && ev() > e0 ? `status=archived; events +${ev() - e0}` : `!code ${code} status=${s2}`
 })
 await step("vehicle: the archived vehicle is reachable under the Archived filter", async () => {
   await go(`/companies/${A.id}/vehicles`); await settle(); await page.getByRole("button", { name: "Filters" }).click(); await page.waitForTimeout(500)
-  const sel = page.locator("main select").first(); await sel.selectOption({ label: "Archived" }); await page.waitForTimeout(800); return (await body()).includes(unit1) ? "listed under Archived" : "!not listed"
+  const sel = page.locator("main select").first(); await sel.selectOption({ label: "Archived" }); await page.waitForTimeout(800); return (await body()).includes(solo) ? "listed under Archived" : "!not listed"
 })
-await step("vehicle: the archived vehicle is restored (UI or API) and is active again with history intact", async () => {
-  const r = await api(`/api/companies/${A.id}/vehicles/${vehicleId}`, { action: "restore" }, "PATCH"); const s = psql(`select record_status from public.vehicles where id='${vehicleId}'`)
-  const n = q(`select count(*) from public.organization_vehicle_relationships where vehicle_id='${vehicleId}' and organization_id='${A.id}'`)
-  return r.status === 200 && s === "active" && n >= 2 ? `restored; relationship rows kept (${n})` : `!status ${r.status} ${s} rows ${n}`
+await step("vehicle: the archived vehicle is restored and is active again with its history intact", async () => {
+  const vid = await soloVehicle(); const r = await api(`/api/companies/${A.id}/vehicles/${vid}`, { action: "restore" }, "PATCH"); const s2 = psql(`select record_status from public.vehicles where id='${vid}'`)
+  const n = q(`select count(*) from public.organization_vehicle_relationships where vehicle_id='${vid}' and organization_id='${A.id}'`)
+  return r.status === 200 && s2 === "active" && n === 1 ? "restored; relationship row kept" : `!status ${r.status} ${s2} rows ${n}`
 })
 // ---------- driver edit ----------
 const lic = psql(`select licence_number_display from public.driver_licences where person_id in (select person_id from public.organization_driver_relationships where organization_id='${A.id}') order by created_at limit 1`)
@@ -54,7 +64,7 @@ const nm = () => psql(`select given_name || ' ' || family_name from public.perso
 const openDriver = async () => { await go(`/companies/${A.id}/drivers/${pid}`); await settle() }
 const name0 = nm()
 await step("driver: the register row opens the driver detail page for the canonical person", async () => {
-  await go(`/companies/${A.id}/drivers`); await settle(); await page.locator("tr", { hasText: name0.split(" ")[0] }).first().click(); await page.waitForTimeout(2500); await settle()
+  await go(`/companies/${A.id}/drivers`); await settle(); await page.locator("td", { hasText: name0.split(" ")[0] }).first().click(); await page.waitForTimeout(2500); await settle()
   return page.url().includes(`/drivers/${pid}`) ? "navigated to the person's page" : `!url ${page.url()}`
 })
 await step("driver edit: Cancel keeps the name", async () => {
@@ -84,8 +94,9 @@ await step("driver licence relationship: a second licence in another jurisdictio
   return r1.status === 201 && r2.status === 201 && current === 2 && cur2 === 2 && ended === 1 ? `coexists (2 current), AB replaced with history (1 ended)` : `!${r1.status} ${r2.status} current=${current}/${cur2} ended=${ended} ${JSON.stringify(r2.body).slice(0, 100)}`
 })
 await step("driver licence relationship: a licence held by another driver is refused (409) and not attached to this person", async () => {
-  const other = psql(`select licence_number_display from public.driver_licences where person_id <> '${pid}' and record_status='active' and effective_to is null limit 1`)
-  if (!other) return "!no other driver licence in this database to test against"
+  const other = `OTH${digits(4)}-${digits(5)}-${digits(5)}`
+  const seed = await api(`/api/companies/${B.id}/drivers`, { mode: "create", givenName: `Other${t}`, familyName: "Driver", email: `other${t}@example.test`, relationshipType: "EMPLOYEE", status: "ACTIVE", effectiveFrom: "2024-02-01", licence: { jurisdictionCountry: "Canada", jurisdictionRegion: "ON", licenceNumber: other, effectiveFrom: "2024-02-01" } })
+  if (seed.status !== 201) return `!seed ${seed.status}`
   const before = q(`select count(*) from public.driver_licences where person_id='${pid}'`)
   const r = await api(`/api/companies/${A.id}/drivers/${pid}/licences`, { licence: { jurisdictionCountry: "Canada", jurisdictionRegion: "ON", licenceNumber: other, effectiveFrom: "2024-07-01" } })
   return r.status === 409 && q(`select count(*) from public.driver_licences where person_id='${pid}'`) === before ? "409; unchanged" : `!status ${r.status} ${JSON.stringify(r.body).slice(0, 120)}`

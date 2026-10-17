@@ -12,7 +12,7 @@ const lics = () => q(`select count(*) from public.driver_licences`)
 const ev = () => q(`select count(*) from public.master_register_events`)
 const snap = (org) => [persons(), rels(org), lics()].join("/")
 const dlg = () => page.locator("div").filter({ has: page.getByText("Add Driver", { exact: true }) }).filter({ has: page.getByRole("button", { name: "Save Driver" }) }).last()
-const open = async () => { if (!/\/drivers$/.test(page.url())) { await go(`/companies/${A.id}/drivers`); await settle() }; await page.getByRole("button", { name: "Add Driver" }).first().click(); await page.waitForTimeout(800) }
+const open = async () => { if (!page.url().endsWith(`/companies/${A.id}/drivers`)) { await go(`/companies/${A.id}/drivers`); await settle() }; await page.getByRole("button", { name: "Add Driver" }).first().click(); await page.waitForTimeout(800) }
 const field = (label) => dlg().locator("label").filter({ hasText: new RegExp("^" + label) }).first().locator("xpath=..").locator("input, select").first()
 async function fillForm({ address = false, first = FIRST, last = "Rivera", phone = "+1 416 555 0142", email = `dana${t}@example.test`, licence = LICENCE, start = "2024-02-01", extra = {} } = {}) {
   await field("First Name").fill(first); await field("Last Name").fill(last); await field("Phone").fill(phone); await field("Email").fill(email)

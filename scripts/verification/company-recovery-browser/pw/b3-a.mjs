@@ -11,7 +11,7 @@ const n = (org) => Number(psql(`select count(*) from public.organization_vehicle
 const nv = () => Number(psql(`select count(*) from public.vehicles`))
 const ev = () => Number(psql(`select count(*) from public.master_register_events`))
 const dlg = () => page.locator("div").filter({ has: page.getByText("Create Vehicle", { exact: true }) }).filter({ has: page.getByRole("button", { name: "Save Vehicle" }) }).last()
-const open = async () => { if (!/\/vehicles$/.test(page.url())) { await go(`/companies/${A.id}/vehicles`); await settle() }; await page.getByRole("button", { name: "Add Vehicle" }).first().click(); await page.waitForTimeout(700) }
+const open = async () => { if (!page.url().endsWith(`/companies/${A.id}/vehicles`)) { await go(`/companies/${A.id}/vehicles`); await settle() }; await page.getByRole("button", { name: "Add Vehicle" }).first().click(); await page.waitForTimeout(700) }
 const fill = async (equipment, vin) => { const d = dlg(); const ins = d.locator("input:not([disabled])"); await ins.nth(0).fill(equipment); await ins.nth(1).fill(vin) }
 
 await step("vehicles: loads the canonical (empty) register with the unavailable-fields notice", async () => { await go(`/companies/${A.id}/vehicles`); await settle(); return /No vehicles in this company/.test(await body()) })

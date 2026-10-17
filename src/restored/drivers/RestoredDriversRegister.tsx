@@ -158,7 +158,11 @@ export function RestoredDriversRegister({
       setFormError("Run “Check for Existing Driver” for the current First Name, Last Name, Email and Phone before saving.")
       return
     }
-    const found = check.match.found ? check.match : null
+    if (check.match.found && check.match.scope === "OTHER_ORGANIZATION") {
+      setFormError("This licence is already registered to a driver in TES, so it cannot be used to create another driver. Check the licence number.")
+      return
+    }
+    const found = check.match.found && check.match.scope === "THIS_ORGANIZATION" ? check.match : null
     if (found && !resolution) {
       setFormError("An existing Driver may match. Select the matching Driver, or confirm this is a different person, before saving.")
       return
@@ -219,7 +223,10 @@ export function RestoredDriversRegister({
     setFormError("")
   }
 
-  const matchedDriver = check?.match.found ? check.match : null
+  // Only a driver this company already holds is shown in detail. A licence registered to another company's driver is reported
+  // without any identifying detail (no name, no id, no counts) and cannot be linked or recreated from here.
+  const matchedDriver = check?.match.found && check.match.scope === "THIS_ORGANIZATION" ? check.match : null
+  const otherCompanyMatch = Boolean(check?.match.found && check.match.scope === "OTHER_ORGANIZATION")
 
   return (
     <div className="space-y-6">
@@ -366,15 +373,15 @@ export function RestoredDriversRegister({
               </Section>
               <Section title="Current Address">
                 <Grid>
-                  <Field label="Address *" value={form.addressLine1} onChange={(v) => update("addressLine1", v)} />
-                  <Field label="Address Line 2" value={form.addressLine2} onChange={(v) => update("addressLine2", v)} />
-                  <Field label="City" value={form.city} onChange={(v) => update("city", v)} />
-                  <SelectField label="Country *" value={form.country} onChange={(v) => update("country", v as Country)} options={COUNTRIES} />
-                  <SelectField label="State / Province" value={form.stateProvince} onChange={(v) => update("stateProvince", v)} options={jurisdictions(form.country).map((j: any) => j.code || j.value || j.name)} />
-                  <Field label="Postal / ZIP" value={form.postalZip} onChange={(v) => update("postalZip", v)} />
-                  <Field label="Address Effective From" type="date" value={form.addressEffectiveFrom} onChange={(v) => update("addressEffectiveFrom", v)} />
+                  <Field label="Address (not available yet)" disabled value={form.addressLine1} onChange={(v) => update("addressLine1", v)} />
+                  <Field label="Address Line 2 (not available yet)" disabled value={form.addressLine2} onChange={(v) => update("addressLine2", v)} />
+                  <Field label="City (not available yet)" disabled value={form.city} onChange={(v) => update("city", v)} />
+                  <SelectField label="Country (not available yet)" disabled value={form.country} onChange={(v) => update("country", v as Country)} options={COUNTRIES} />
+                  <SelectField label="State / Province (not available yet)" disabled value={form.stateProvince} onChange={(v) => update("stateProvince", v)} options={jurisdictions(form.country).map((j: any) => j.code || j.value || j.name)} />
+                  <Field label="Postal / ZIP (not available yet)" disabled value={form.postalZip} onChange={(v) => update("postalZip", v)} />
+                  <Field label="Address Effective From (not available yet)" type="date" disabled value={form.addressEffectiveFrom} onChange={(v) => update("addressEffectiveFrom", v)} />
                 </Grid>
-                <CanonicalUnavailable className="mt-2" action="Driver address" reason="there is no canonical driver address table (addresses are not part of migrations 0014/0021); entering an address refuses the save" />
+                <CanonicalUnavailable className="mt-2" action="Driver address" reason="there is no canonical driver address table (addresses are not part of migrations 0014/0021), so these fields are disabled and an address is never accepted or stored" />
               </Section>
               <Section title="Current Driver Licence">
                 <Grid>
@@ -388,7 +395,12 @@ export function RestoredDriversRegister({
               </Section>
               {check && checkFresh && (
                 <div className="rounded-md border p-4 text-sm" role="status">
-                  {!matchedDriver ? (
+                  {otherCompanyMatch ? (
+                    <div className="space-y-1" data-testid="licence-registered-elsewhere">
+                      <div className="font-semibold">This licence is already registered to a driver in TES.</div>
+                      <p className="text-xs text-muted-foreground">No details about that driver are shown, and a driver cannot be created a second time with the same licence. Linking an existing driver across companies needs a verified identity-resolution step that does not exist yet, so it is not available. Check the licence number you entered.</p>
+                    </div>
+                  ) : !matchedDriver ? (
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 font-medium">
                         <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
@@ -398,13 +410,12 @@ export function RestoredDriversRegister({
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="font-semibold">An existing Driver holds this licence. Confirm whether this is the same person.</div>
+                      <div className="font-semibold">This company already has a Driver with this licence.</div>
                       <div className={`rounded-md border p-3 ${resolution?.kind === "REUSE" ? "border-primary bg-primary/5" : ""}`}>
                         <div className="font-medium">
                           {fullName(matchedDriver)} · <span className="font-mono text-xs">{matchedDriver.personId}</span>
                         </div>
                         <div className="text-xs text-muted-foreground">Matched on driver licence</div>
-                        <div className="mt-1 text-xs">{matchedDriver.otherOrganizationCount > 0 ? `Current driver at ${matchedDriver.otherOrganizationCount} other ${matchedDriver.otherOrganizationCount === 1 ? "company" : "companies"}` : "No other current company affiliation"}</div>
                         {matchedDriver.activeAtThisOrganization ? (
                           <div className="mt-2 text-xs font-medium text-amber-700">Already an active Driver at this company — cannot be added again.</div>
                         ) : (
@@ -433,7 +444,7 @@ export function RestoredDriversRegister({
                 <Button disabled={!fieldsComplete || saving} onClick={runCheck}>
                   Check for Existing Driver
                 </Button>
-                <Button disabled={saving || !checkFresh} onClick={submit}>
+                <Button disabled={saving || !checkFresh || otherCompanyMatch} onClick={submit}>
                   {saving ? "Saving…" : "Save Driver"}
                 </Button>
               </div>
@@ -471,20 +482,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Grid({ children }: { children: React.ReactNode }) {
   return <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{children}</div>
 }
-function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+function Field({ label, value, onChange, type = "text", disabled = false }: { label: string; value: string; onChange: (v: string) => void; type?: string; disabled?: boolean }) {
   const safeValue = type === "date" ? driverDateInputValue(value) : value
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <Input type={type} value={safeValue} placeholder={type === "date" ? "YYYY-MM-DD" : undefined} onChange={(e) => onChange(e.target.value)} />
+      <Input type={type} value={safeValue} disabled={disabled} placeholder={type === "date" ? "YYYY-MM-DD" : undefined} onChange={(e) => onChange(e.target.value)} />
     </div>
   )
 }
-function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: readonly string[] }) {
+function SelectField({ label, value, onChange, options, disabled = false }: { label: string; value: string; onChange: (v: string) => void; options: readonly string[]; disabled?: boolean }) {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
-      <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60" disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Select…</option>
         {options.map((x) => (
           <option key={x} value={x}>

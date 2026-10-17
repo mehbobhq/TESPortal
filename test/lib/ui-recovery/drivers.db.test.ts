@@ -138,25 +138,26 @@ describe("Driver operations (real authorization, real transactions, real Master 
     const licence = { ...lookup, effectiveFrom: "2024-01-01" };
     assert.deepEqual(await K.oi.checkExistingDriver(a, lookup), { found: false });
     const first = await newDriver(a, { licence });
+    // Another company's driver: minimum disclosure (no name, no person id, no counts) and no linking.
     const match = await K.oi.checkExistingDriver(b, { ...lookup, licenceNumber: lookup.licenceNumber.toLowerCase().replace(/(.{3})/, "$1-") });
-    assert.equal(match.found, true);
-    if (match.found) {
-      assert.equal(match.personId, first.personId);
-      assert.equal(match.activeAtThisOrganization, false);
-      assert.equal(match.otherOrganizationCount, 1);
-    }
+    assert.deepEqual(match, { found: true, scope: "OTHER_ORGANIZATION" });
     const sameOrg = await K.oi.checkExistingDriver(a, lookup);
-    assert.equal(sameOrg.found && sameOrg.activeAtThisOrganization, true);
+    assert.equal(sameOrg.found && sameOrg.scope === "THIS_ORGANIZATION" && sameOrg.activeAtThisOrganization && sameOrg.personId === first.personId, true);
     await conflict(newDriver(b, { licence }));
     assert.equal(await count(`SELECT count(*) FROM public.driver_licences WHERE licence_number_normalized = $1`, [lookup.licenceNumber.toUpperCase()]), 1);
 
-    // "same person": only a relationship is added; the person and name are untouched.
-    const added = await K.oi.addExistingDriver({ organizationId: b, personId: first.personId, relationshipType: "CONTRACTOR", status: "ONBOARDING", effectiveFrom: "2024-06-01" });
-    assert.ok(added.relationshipId);
-    assert.equal((await K.reads.listOrganizationDrivers(b)).length, 1);
-    assert.equal(await count(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1`, [first.personId]), 1);
-    await conflict(K.oi.addExistingDriver({ organizationId: b, personId: first.personId, relationshipType: "CONTRACTOR", status: "ACTIVE", effectiveFrom: "2024-07-01" }));
+    // Linking another company's driver is refused (no consent / identity-resolution workflow exists) and looks like an unknown person.
+    await notFound(K.oi.addExistingDriver({ organizationId: b, personId: first.personId, relationshipType: "CONTRACTOR", status: "ONBOARDING", effectiveFrom: "2024-06-01" }));
     await notFound(K.oi.addExistingDriver({ organizationId: b, personId: randomUUID(), relationshipType: "CONTRACTOR", status: "ACTIVE", effectiveFrom: "2024-07-01" }));
+    assert.equal((await K.reads.listOrganizationDrivers(b)).length, 0);
+
+    // Same company: a current driver cannot be added twice; after the relationship ends the same person is re-engaged (a new relationship only).
+    await conflict(K.oi.addExistingDriver({ organizationId: a, personId: first.personId, relationshipType: "CONTRACTOR", status: "ACTIVE", effectiveFrom: "2024-07-01" }));
+    await K.oi.endDriverRelationship({ organizationId: a, personId: first.personId, effectiveTo: "2024-03-01" });
+    const rehired = await K.oi.addExistingDriver({ organizationId: a, personId: first.personId, relationshipType: "CONTRACTOR", status: "ONBOARDING", effectiveFrom: "2024-06-01" });
+    assert.ok(rehired.relationshipId);
+    assert.equal(await count(`SELECT count(*) FROM public.person_name_versions WHERE person_id = $1`, [first.personId]), 1);
+    assert.equal(await count(`SELECT count(*) FROM public.organization_driver_relationships WHERE person_id = $1 AND organization_id = $2`, [first.personId, a]), 2);
   });
 
   it("create rolls back completely when the Master Register write fails (no orphan person, profile or licence)", async () => {

@@ -231,9 +231,24 @@ async function insertLicence(client: PoolClient, id: string, personId: string, l
 // Existing-driver check (canonical identity signal: licence only)
 // ======================================================================================================================
 
+/**
+ * Minimum disclosure. A licence is a global identity signal, but the person behind it is not shared between companies:
+ *   - THIS_ORGANIZATION: the person already has a (non-voided) relationship with the Organization in the URL, so the company
+ *     already holds this driver's record and sees its own data (name, id, whether the relationship is current).
+ *   - OTHER_ORGANIZATION: the licence identifies a driver this company has no relationship with. Nothing about that person is
+ *     returned: no name, no person id (a stable id would let callers enumerate across companies), no company count, no licence
+ *     or employment detail. The caller learns only that the licence is already registered, which creation would reveal anyway.
+ */
 export type ExistingDriverMatch =
   | { found: false }
-  | { found: true; personId: string; givenName: string | null; familyName: string | null; activeAtThisOrganization: boolean; otherOrganizationCount: number }
+  | { found: true; scope: "THIS_ORGANIZATION"; personId: string; givenName: string | null; familyName: string | null; activeAtThisOrganization: boolean }
+  | { found: true; scope: "OTHER_ORGANIZATION" }
+
+/** True when the person has (or had) a recorded driver relationship with the Organization. A voided row (entered in error) does not count. */
+async function hasRelationshipWith(client: PoolClient, organizationId: string, personId: string): Promise<boolean> {
+  const rows = await client.query(`SELECT 1 FROM public.organization_driver_relationships WHERE organization_id=$1 AND person_id=$2 AND record_status <> 'voided' LIMIT 1`, [organizationId, personId])
+  return (rows.rowCount ?? 0) > 0
+}
 
 /** Read: does the licence (country + jurisdiction + normalized number) already identify a driver? Email/phone/name are NOT identity signals. */
 export async function checkExistingDriver(client: PoolClient, organizationId: string, rawInput: unknown): Promise<ExistingDriverMatch> {
@@ -246,21 +261,19 @@ export async function checkExistingDriver(client: PoolClient, organizationId: st
   )
   if (!found.rows[0]) return { found: false }
   const personId = found.rows[0].person_id
+  if (!(await hasRelationshipWith(client, organizationId, personId))) return { found: true, scope: "OTHER_ORGANIZATION" }
   const name = await client.query<{ given_name: string | null; family_name: string | null }>(
     `SELECT given_name, family_name FROM public.person_name_versions WHERE person_id=$1 AND record_status='active' AND effective_to IS NULL LIMIT 1`,
     [personId],
   )
-  const relationships = await client.query<{ organization_id: string }>(
-    `SELECT organization_id FROM public.organization_driver_relationships WHERE person_id=$1 AND record_status='active' AND effective_to IS NULL`,
-    [personId],
-  )
+  const open = await client.query(`SELECT 1 FROM public.organization_driver_relationships WHERE organization_id=$1 AND person_id=$2 AND record_status='active' AND effective_to IS NULL LIMIT 1`, [organizationId, personId])
   return {
     found: true,
+    scope: "THIS_ORGANIZATION",
     personId,
     givenName: name.rows[0]?.given_name ?? null,
     familyName: name.rows[0]?.family_name ?? null,
-    activeAtThisOrganization: relationships.rows.some((row) => row.organization_id === organizationId),
-    otherOrganizationCount: relationships.rows.filter((row) => row.organization_id !== organizationId).length,
+    activeAtThisOrganization: (open.rowCount ?? 0) > 0,
   }
 }
 
@@ -291,7 +304,13 @@ export async function createDriver(ctx: IdentityContext, rawInput: unknown): Pro
       `SELECT person_id FROM public.driver_licences WHERE jurisdiction_country=$1 AND jurisdiction_region=$2 AND licence_number_normalized=$3 AND record_status='active' AND effective_to IS NULL LIMIT 1`,
       [licence.country, licence.region, normalizeDriverLicenceNumber(licence.number)],
     )
-    if (existing.rows[0]) throw new DriverConflictError("This licence already identifies a driver. Add the existing driver to the Organization instead of creating a second person.", existing.rows[0].person_id)
+    if (existing.rows[0]) {
+      // Own company's driver: say so (and which). Any other company's driver: a generic refusal, no identifier, no linking offer.
+      if (await hasRelationshipWith(ctx.client, organizationId, existing.rows[0].person_id)) {
+        throw new DriverConflictError("This licence already identifies a driver of this company. Open the existing driver instead of creating a second person.", existing.rows[0].person_id)
+      }
+      throw new DriverConflictError("This licence is already registered to a driver in TES, so a second driver cannot be created with it. Check the licence number.")
+    }
   }
 
   const personId = randomUUID()
@@ -336,7 +355,10 @@ export async function addExistingDriver(ctx: IdentityContext, rawInput: unknown)
   await lockActiveOrganization(ctx, organizationId)
   const person = await contacts.lockPerson(ctx.client, personId)
   const profile = await ctx.client.query<{ record_status: string }>(`SELECT record_status FROM public.driver_profiles WHERE person_id=$1 FOR UPDATE`, [personId])
-  if (!person || !profile.rows[0]) throw new DriverNotFoundError("Driver")
+  // Linking an existing driver is allowed only for a person this company already has a relationship with (for example a rehire after
+  // the relationship ended). Linking a driver who belongs to another company needs consent or a verified identity-resolution workflow
+  // that does not exist yet, so it is refused, and reported exactly like an unknown person so that ids cannot be probed.
+  if (!person || !profile.rows[0] || !(await hasRelationshipWith(ctx.client, organizationId, personId))) throw new DriverNotFoundError("Driver")
   if (person.recordStatus !== "active" || profile.rows[0].record_status !== "active") throw new DriverStateError("This driver is archived.")
   const open = await ctx.client.query(`SELECT 1 FROM public.organization_driver_relationships WHERE organization_id=$1 AND person_id=$2 AND record_status='active' AND effective_to IS NULL`, [organizationId, personId])
   if ((open.rowCount ?? 0) > 0) throw new DriverConflictError("This driver is already a current driver of this Organization.", personId)
@@ -553,7 +575,7 @@ export async function recordDriverLicence(ctx: IdentityContext, rawInput: unknow
     `SELECT person_id FROM public.driver_licences WHERE jurisdiction_country=$1 AND jurisdiction_region=$2 AND licence_number_normalized=$3 AND record_status='active' AND effective_to IS NULL LIMIT 1`,
     [licence.country, licence.region, number],
   )
-  if (holder.rows[0] && holder.rows[0].person_id !== personId) throw new DriverConflictError("This licence already identifies a different driver.", holder.rows[0].person_id)
+  if (holder.rows[0] && holder.rows[0].person_id !== personId) throw new DriverConflictError("This licence already identifies a different driver.")
   const sameJurisdiction = await ctx.client.query<LicenceRow>(
     `SELECT ${LICENCE_COLUMNS} FROM public.driver_licences WHERE person_id=$1 AND jurisdiction_country=$2 AND jurisdiction_region=$3 AND record_status='active' AND effective_to IS NULL FOR UPDATE`,
     [personId, licence.country, licence.region],
@@ -603,7 +625,7 @@ export async function correctDriverLicence(ctx: IdentityContext, rawInput: unkno
     `SELECT person_id, id FROM public.driver_licences WHERE jurisdiction_country=$1 AND jurisdiction_region=$2 AND licence_number_normalized=$3 AND record_status='active' AND effective_to IS NULL LIMIT 1`,
     [next.country, next.region, number],
   )
-  if (holder.rows[0] && holder.rows[0].id !== current.id) throw new DriverConflictError("This licence already identifies a driver.", holder.rows[0].person_id)
+  if (holder.rows[0] && holder.rows[0].id !== current.id) throw new DriverConflictError("This licence already identifies a driver.")
   const id = randomUUID()
   await guarded(async () => {
     await ctx.client.query(`UPDATE public.driver_licences SET record_status='corrected', corrected_at=clock_timestamp(), superseded_by_id=$2, updated_at=clock_timestamp() WHERE id=$1`, [current.id, id])

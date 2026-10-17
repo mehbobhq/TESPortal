@@ -54,7 +54,6 @@ export type OrganizationDriverDetail = {
   relationships: DriverRelationshipRow[]
   licences: DriverLicenceRow[]
   medicalPeriods: DriverMedicalPeriodRow[]
-  otherOrganizationCount: number
 }
 
 const micro = (column: string) => `to_char(${column} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
@@ -92,10 +91,6 @@ export async function getOrganizationDriverDetail(organizationId: string, person
          FROM public.driver_medical_qualification_periods WHERE person_id=$1 ORDER BY effective_from, created_at, id`,
       [personId],
     )
-    const others = await client.query(
-      `SELECT count(DISTINCT organization_id)::int AS n FROM public.organization_driver_relationships WHERE person_id=$1 AND organization_id<>$2 AND record_status='active' AND effective_to IS NULL`,
-      [personId, organizationId],
-    )
     return {
       personId,
       personStatus: person.rows[0].person_status,
@@ -105,7 +100,6 @@ export async function getOrganizationDriverDetail(organizationId: string, person
       relationships: relationships.rows.map((r) => ({ id: r.id, relationshipType: r.relationship_type, driverNumber: r.driver_number_display, status: r.status, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, recordStatus: r.record_status })),
       licences: licences.rows.map((r) => ({ id: r.id, jurisdictionCountry: r.jurisdiction_country, jurisdictionRegion: r.jurisdiction_region, number: r.licence_number_display, licenceClass: r.licence_class, issueDate: r.issue_date, expiryDate: r.expiry_date, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, recordStatus: r.record_status })),
       medicalPeriods: medical.rows.map((r) => ({ id: r.id, qualificationType: r.qualification_type, jurisdictionCountry: r.jurisdiction_country, jurisdictionRegion: r.jurisdiction_region, issuedOn: r.issued_on, expiresOn: r.expires_on, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, recordStatus: r.record_status })),
-      otherOrganizationCount: others.rows[0].n,
     }
   })
 }

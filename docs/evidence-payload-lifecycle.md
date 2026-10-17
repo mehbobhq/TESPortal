@@ -115,6 +115,16 @@ Attaches a **stored** document to a record of the **same organization**. No sche
 - **Not yet enforced by the database:** `evidence_links` has no guard trigger (organization consistency, immutability of the document/target columns); see the
   hardening note in the Phase 1 report. Contacts, registration periods, licences and identifiers are not in the 0030 target list and need a migration.
 
+### Insurance policy attachments (Phase 2; `src/components/shared/EvidenceAttachments.tsx`)
+
+The Insurance workspace's old "Evidence: not recorded" placeholder is replaced by the reusable `EvidenceAttachments` component (one per policy card, for
+transportation, WCB and bond policies). It is a thin client of the association API above: it lists the policy's associations (active, with archived
+history on request), offers the company's eligible documents (stored, not archived, not rejected, not already attached), attaches, archives an association
+(with confirmation; the document is untouched) and links to the existing secure-view route (`/api/companies/{id}/evidence/{documentId}`, new tab). It
+uploads nothing, holds no storage detail and keeps nothing in the browser. Document status (received / classified / verified / rejected / archived) is shown
+separately from "Attached", and the component states that attaching verifies nothing and shows no compliance. The association GET additionally returns
+`permissions: { canAssociate, canArchive }` (informational; each write is still authorized server-side) so write controls are hidden for read-only users.
+
 ## Environment variables (server-side only — never `NEXT_PUBLIC_*`)
 
 | Variable | Purpose |

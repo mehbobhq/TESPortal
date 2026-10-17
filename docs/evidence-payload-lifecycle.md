@@ -95,6 +95,26 @@ now counts only `verified`, `waived` or `not_applicable` — `received` no longe
 (`contract_evidence_document_acceptable`) already require a `verified` document, which now implies a stored, hash-verified payload.
 Archiving or superseding a document removes it from those gates until a replacement is verified and linked.
 
+## Evidence associations (`public.evidence_links`, migration 0030; `lib/evidence-payload/links.ts`)
+
+Attaches a **stored** document to a record of the **same organization**. No schema change. API: `PATCH /api/companies/{id}/evidence/{documentId}` with
+`{action:"link", targetTable, targetId, relationshipType?}` / `{action:"archiveLink", linkId}`; `GET /api/companies/{id}/evidence?documentId=` or
+`?targetTable=&targetId=` (`&includeArchived=true`) lists associations.
+
+- **Targets:** `organizations`, `operating_authorities`, `registrations`, `insurance_policies`, `organization_vehicle_relationships`,
+  `organization_driver_relationships`. Global `vehicles` / `driver_profiles` / `persons`, credentials, credential systems, engagements and contracts are not
+  targets. Relationship types written: `supports` (default), `source`.
+- **Integrity** (the database does not enforce these for `evidence_links`; this module is the control): document found by organization and id; payload
+  must be `stored` and the document not archived or rejected; the target must exist and carry the same `organization_id` (another organization's record is
+  "not found"); a corrected or voided record cannot receive evidence; the actor needs `EVIDENCE_MANAGE` **and** the target domain's read capability
+  (checked first, before anything is disclosed); an identical active association is an idempotent no-op (no second row, no second event).
+- **Never verification:** an association does not change `document_status`; a document that is only `received` can be attached.
+- **Audit:** `EVIDENCE_ASSOCIATED` on create, `EVIDENCE_ASSOCIATION_REMOVED` (catalogue entry "An evidence association was removed") on archive, in the same
+  transaction, references only. Archive sets `link_status='archived'` and `archived_at`; the row is kept, the document is untouched, and a new association may be
+  made later. Nothing is deleted.
+- **Not yet enforced by the database:** `evidence_links` has no guard trigger (organization consistency, immutability of the document/target columns); see the
+  hardening note in the Phase 1 report. Contacts, registration periods, licences and identifiers are not in the 0030 target list and need a migration.
+
 ## Environment variables (server-side only — never `NEXT_PUBLIC_*`)
 
 | Variable | Purpose |

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
-import { applyEvidenceAction, openEvidenceForView } from "@/lib/evidence-payload/service"
+import { applyEvidenceAction, openEvidenceForView, applyEvidenceLinkAction } from "@/lib/evidence-payload/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -38,7 +38,13 @@ export async function GET(_request: NextRequest, context: Context) {
 export async function PATCH(request: NextRequest, context: Context) {
   try {
     const { id, documentId } = await context.params
-    return NextResponse.json({ evidence: await applyEvidenceAction(id, documentId, await readJsonBody(request)) }, { status: 200, headers: { "Cache-Control": "private, no-store" } })
+    const body = await readJsonBody(request)
+    // Association actions (link / archiveLink) share this route; the company and the document always come from the URL.
+    if (body.action === "link" || body.action === "archiveLink") {
+      const result = await applyEvidenceLinkAction(id, documentId, body)
+      return NextResponse.json(result, { status: result.created ? 201 : 200, headers: { "Cache-Control": "private, no-store" } })
+    }
+    return NextResponse.json({ evidence: await applyEvidenceAction(id, documentId, body) }, { status: 200, headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return canonicalFailure(error, "Unable to update the document.")
   }

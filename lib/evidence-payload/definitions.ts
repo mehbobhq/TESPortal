@@ -77,3 +77,44 @@ export const KNOWN_DOCUMENT_TYPES: readonly string[] = [
   "HISTORY_RECORDS",
   "OTHER_EVIDENCE",
 ]
+
+/**
+ * Evidence ASSOCIATION (the existing public.evidence_links table, migration 0030).
+ *
+ * The associable targets are a deliberate SUBSET of the targets the 0030 CHECK allows. Every one is a record that belongs to exactly
+ * one organization (it carries organization_id), so an association can always be proven to be the requesting organization's.
+ * Global identities (vehicles, driver profiles / persons) are excluded: a global vehicle or person is shared across organizations,
+ * so evidence attaches to the organization's own relationship row instead. Credentials, credential systems, customer engagement and
+ * contract targets are excluded on purpose (secret-adjacent, or owned by other lifecycles).
+ *
+ * `readCapability` is the SYSTEM capability the actor must ALSO hold to associate with that kind of record: row-level security
+ * lets only that domain's capability read the target row, and association must never let an actor attach to a record it cannot see.
+ */
+export const EVIDENCE_LINK_TARGETS = {
+  organizations: { label: "Company", readCapability: "ORGANIZATION_REGISTRY_READ" },
+  operating_authorities: { label: "Operating authority", readCapability: "ORGANIZATION_REGISTRY_READ" },
+  registrations: { label: "Tax registration", readCapability: "TAX_REGISTRATION_READ" },
+  insurance_policies: { label: "Insurance policy", readCapability: "INSURANCE_READ" },
+  organization_vehicle_relationships: { label: "Company vehicle record", readCapability: "VEHICLE_READ" },
+  organization_driver_relationships: { label: "Company driver record", readCapability: "DRIVER_READ" },
+} as const
+export type EvidenceLinkTargetTable = keyof typeof EVIDENCE_LINK_TARGETS
+
+/**
+ * Relationship types this service writes. The database also allows authority_notice, contract_attachment and readiness_requirement;
+ * those belong to the onboarding and contract lifecycles and are not written here. An association states that a document is
+ * attached to a record. It never states that the document is verified or that the record is compliant.
+ */
+export const EVIDENCE_LINK_RELATIONSHIPS = ["supports", "source"] as const
+export type EvidenceLinkRelationship = (typeof EVIDENCE_LINK_RELATIONSHIPS)[number]
+
+/** Target record statuses that cannot receive new evidence: a value entered in error, or one superseded by a correction. */
+export const INELIGIBLE_TARGET_STATUSES: readonly string[] = ["voided", "corrected"]
+
+export function isEvidenceLinkTarget(value: unknown): value is EvidenceLinkTargetTable {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(EVIDENCE_LINK_TARGETS, value)
+}
+
+export function isEvidenceLinkRelationship(value: unknown): value is EvidenceLinkRelationship {
+  return typeof value === "string" && (EVIDENCE_LINK_RELATIONSHIPS as readonly string[]).includes(value)
+}

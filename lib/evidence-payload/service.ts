@@ -2,14 +2,17 @@ import "server-only"
 
 import { randomUUID } from "node:crypto"
 import type { PoolClient } from "pg"
-import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
+import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
+import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import { classifyPayloadConsistency, type ConsistencyFinding, type ListedObject } from "@/lib/evidence-payload/consistency"
 import { EvidenceStateError, EvidenceValidationError } from "@/lib/evidence-payload/errors"
 import { intakeKey, evidenceKey, quarantineKey } from "@/lib/evidence-payload/object-keys"
+import * as links from "@/lib/evidence-payload/links"
 import * as operations from "@/lib/evidence-payload/operations"
 import type { EvidenceStoragePort } from "@/lib/evidence-payload/ports"
-import type { EvidenceItemView, FinalizeResult, OpenedEvidence } from "@/lib/evidence-payload/types"
+import type { EvidenceItemView, EvidenceLinkView, FinalizeResult, OpenedEvidence } from "@/lib/evidence-payload/types"
 import { sha256Hex, validateUpload } from "@/lib/evidence-payload/validation"
 
 export * from "@/lib/evidence-payload/errors"
@@ -26,7 +29,8 @@ export { PayloadValidationError } from "@/lib/evidence-payload/validation"
  *
  * Capabilities (all SYSTEM scope; there is no CUSTOMER-facing path):
  *   EVIDENCE_READ     list, secure view (the view is recorded in the Master Register BEFORE any byte is read), audit
- *   EVIDENCE_MANAGE   upload, finalize, block, archive, review, satisfy a requirement
+ *   EVIDENCE_MANAGE   upload, finalize, block, archive, review, satisfy a requirement, associate / archive an association
+ *                     (an association also needs the target domain's read capability, see links.ts)
  *
  * Payloads never touch PostgreSQL, the browser, a public URL or a signed URL. The browser sends bytes to this server and
  * receives bytes from this server; it never learns a bucket, an object name or a generation.
@@ -242,6 +246,44 @@ export async function auditEvidencePayloads(input: { organizationId?: string | n
     }
   }
   return { findings, checkedRows: rows.length, listed: { quarantine: quarantine.length, intake: intake.length, evidence: evidence.length } }
+}
+
+// --- associations (public.evidence_links) --------------------------------------------------------------------------
+
+function linkContext(client: PoolClient, decision: SystemAuthorizationDecision): links.LinkContext {
+  return {
+    ...context(client, decision),
+    // Re-proves a capability for row-level security on this connection; a denial is the standard authorization denial (403).
+    enterCapability: async (capability) => {
+      await client.query("SELECT set_config('tes.system_capability', $1, true)", [capability])
+      const rls = await client.query<{ allowed: boolean }>("SELECT tes_security.system_context_authorized(ARRAY[$1]::text[]) AS allowed", [capability])
+      if (rls.rows[0]?.allowed !== true) throw new TesAuthorizationDeniedError()
+    },
+    hasCapability: (capability) => hasAdditionalSystemCapability(client, decision, capability as TesSystemCapability),
+    denied: () => new TesAuthorizationDeniedError(),
+  }
+}
+
+/** Associates a stored document with a record of the same organization. Needs EVIDENCE_MANAGE and the target domain's read capability. */
+export const associateEvidenceWithRecord = (input: links.AssociateInput) =>
+  withAuthorizedSystem("EVIDENCE_MANAGE", (client, decision) => links.associateEvidence(linkContext(client, decision), input))
+
+export const archiveEvidenceAssociation = (input: { organizationId: string; documentId: string; linkId: unknown }) =>
+  withAuthorizedSystem("EVIDENCE_MANAGE", (client, decision) => links.archiveAssociation(linkContext(client, decision), input))
+
+/** Associations of one document, or of one record (EVIDENCE_READ). */
+export const listEvidenceAssociations = (input: links.ListLinksInput) => withAuthorizedSystem("EVIDENCE_READ", (client) => links.listAssociations({ client }, input))
+
+/** Dispatches the association actions of the evidence PATCH route. Nothing here deletes anything. */
+export async function applyEvidenceLinkAction(organizationId: string, documentId: string, input: Record<string, unknown>): Promise<{ link: EvidenceLinkView; created?: boolean }> {
+  switch (input.action) {
+    case "link":
+      return associateEvidenceWithRecord({ organizationId, documentId, targetTable: input.targetTable, targetId: input.targetId, relationshipType: input.relationshipType })
+    case "archiveLink":
+      return { link: await archiveEvidenceAssociation({ organizationId, documentId, linkId: input.linkId }) }
+    default:
+      throw new EvidenceValidationError("action", "Unsupported evidence action.")
+  }
 }
 
 // --- API dispatch -------------------------------------------------------------------------------------------------

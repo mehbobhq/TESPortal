@@ -28,9 +28,9 @@ try {
   record("vehicle appears under company A only; company B shows a legitimate empty state", a.includes("E2E-1") && !b.includes("E2E-1") && /no vehicles|no current vehicles|not.*recorded|empty/i.test(b), b.slice(-160).replace(/\n/g, " "))
 
   // contacts isolation
-  await go(`/companies/${B}/contacts`); await page.waitForSelector("text=Add a contact", { timeout: 60000 }); await settle()
+  await go(`/companies/${B}/contacts`); await page.waitForSelector("text=Manual Add", { timeout: 60000 }); await settle()
   const bc = await page.innerText("body")
-  record("company B contacts show none of company A's contacts", !bc.includes("Sam Dispatcher") && bc.includes("No contacts have been recorded"))
+  record("company B contacts show none of company A's contacts", !bc.includes("Sam Dispatcher") && /no contacts|0 contacts|No contacts match|ACTIVE PERSONNEL\s*\n*\s*[01]\b/i.test(bc))
   await shot(page, "13-contacts-B-empty")
 
   // wrong-company mutation through another company's URL

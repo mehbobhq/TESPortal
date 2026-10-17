@@ -21,6 +21,12 @@ describe("legacy workspace containment", () => {
     assert.doesNotMatch(gate, /\{children\}|<>\{children\}<\/>|return children/);
   });
 
+  it("the gate reports a refused lookup as 'not permitted', not as a missing company or a temporary failure", () => {
+    const gate = source("src/components/shared/LegacyWorkspaceGate.tsx")
+    assert.match(gate, /response\.status === 401 \|\| response\.status === 403 \? "denied"/)
+    assert.match(gate, /You are not permitted to view this company's records\./)
+  })
+
   it("the legacy implementations are preserved as source", () => {
     for (const f of ["authorities", "business", "credentials", "drivers", "insurance", "tax-filing"]) {
       assert.ok(existsSync(path.join(root, `app/companies/[id]/${f}/legacy-${f}.tsx`)), f);

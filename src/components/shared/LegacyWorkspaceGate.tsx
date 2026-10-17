@@ -6,7 +6,7 @@ import { Building2, Hourglass } from "lucide-react"
 
 import { EmptyState, LoadingState } from "@/src/components/shared/StateDisplays"
 
-type Resolution = "loading" | "canonical" | "not-canonical" | "error"
+type Resolution = "loading" | "canonical" | "not-canonical" | "denied" | "error"
 
 /**
  * Explains a workspace that has no canonical (PostgreSQL) implementation yet.
@@ -43,6 +43,7 @@ export function DeferredWorkspace({ companyId, title, description }: { companyId
  *   - a canonical company with a canonical (PostgreSQL-backed) workspace: that workspace, alone;
  *   - a canonical company whose module has no canonical workspace yet: the deferred-workspace explanation;
  *   - an id that is not a canonical company: a plain "not a TES record" explanation (nothing is read from, or written to, browser storage);
+ *   - a refused lookup (401/403): reported as "not permitted", never as "not found" and never as a temporary failure;
  *   - a failed lookup: reported as a failure, never as "not found".
  */
 export function LegacyWorkspaceGate({
@@ -69,7 +70,7 @@ export function LegacyWorkspaceGate({
       .then((response) => {
         if (cancelled) return
         if (response.ok) setState("canonical")
-        else setState(response.status === 404 ? "not-canonical" : "error")
+        else setState(response.status === 404 ? "not-canonical" : response.status === 401 || response.status === 403 ? "denied" : "error")
       })
       .catch(() => {
         if (!cancelled) setState("error")
@@ -80,6 +81,16 @@ export function LegacyWorkspaceGate({
   }, [companyId, attempt])
 
   if (state === "loading") return <div className="p-10"><LoadingState message={`Loading ${title}...`} /></div>
+  if (state === "denied") {
+    return (
+      <div className="p-6">
+        <EmptyState
+          title={`${title} could not be opened`}
+          description="You are not permitted to view this company's records."
+        />
+      </div>
+    )
+  }
   if (state === "error") {
     return (
       <div className="p-6">

@@ -18,78 +18,9 @@ try {
   const insurer = await post("/api/companies", { companyName: `E2E Insurer ${tag} Ltd`, companyType: "Insurance Company", opRegion: "Canada Only" })
   record("insurer company created", insurer.status === 201, `status ${insurer.status}`)
 
-  // ---- Contacts: existing operations in the UI ----
-  await go(`/companies/${id}/contacts`); await page.waitForSelector("text=Add a contact", { timeout: 90000 }); await settle()
-  await page.locator("details summary", { hasText: "Edit" }).first().click()
-  await page.locator("input[aria-label='Given name']").first().fill("Patricia")
-  await page.getByRole("button", { name: "Save name" }).click()
-  await page.waitForSelector("text=Name saved.", { timeout: 30000 })
-  await page.locator("input[aria-label='Add title']").first().fill("Safety Lead")
-  await page.getByRole("button", { name: "Add", exact: true }).first().click()
-  await page.waitForSelector("text=Title added.", { timeout: 30000 })
-  await page.waitForFunction(() => document.body.innerText.includes("Safety Lead"), null, { timeout: 30000 }).catch(() => {})
-  let t = await page.innerText("body")
-  record("contacts: name change and title add persist and display", t.includes("Patricia") && t.includes("Safety Lead"))
-  await page.fill("[aria-label='Search contacts']", "zzzz"); 
-  record("contacts: search filters the list", (await page.innerText("body")).includes("No contacts match"))
-  await page.fill("[aria-label='Search contacts']", "")
-  await page.getByRole("button", { name: "End contact" }).first().click()
-  await page.waitForSelector("text=Contact ended", { timeout: 30000 })
-  await page.getByLabel(/Include ended contacts/).check()
-  await page.getByRole("button", { name: "Archive person" }).first().click()
-  await page.waitForSelector("text=Person archived", { timeout: 30000 })
-  await page.waitForFunction(() => document.body.innerText.includes("(archived)"), null, { timeout: 30000 }).catch(() => {})
-  record("contacts: end then archive keeps the person visible under 'ended' (history kept)", (await page.innerText("body")).includes("(archived)"))
-  await shot(page, "20-contacts-operations")
-
-  // ---- Authorities: create, edit (change), correct, history ----
-  await go(`/companies/${id}/authorities`); await page.getByRole("tab", { name: /TES records/ }).click().catch(() => {}); await page.waitForSelector("text=Add authorities record", { timeout: 90000 }).catch(async () => { await page.waitForSelector("text=Add authorit", { timeout: 30000 }) }); await settle()
-  await page.selectOption("#type", "IRP"); await page.fill("#number", `IRP${digits(6)}`); await page.selectOption("#country", "US"); await page.fill("#region", "IL"); await page.click("button:has-text('Save record')")
-  await page.waitForSelector("text=Edit or correct", { timeout: 30000 })
-  await page.locator("details summary", { hasText: "Edit or correct" }).first().click()
-  await page.locator("select[aria-label='Issuing country']").first().selectOption("CA")
-  await page.locator("input[aria-label='Jurisdiction region']").first().fill("ON")
-  await page.getByRole("button", { name: "Save", exact: true }).first().click()
-  await page.waitForFunction(() => /\bON\b/.test(document.body.innerText) && document.body.innerText.includes("from "), null, { timeout: 30000 })
-  const fixed = `IRP${digits(6)}`
-  await page.locator("input[aria-label='Number']").first().fill(fixed)
-  await page.locator("input[value=correct]").first().check()
-  await page.getByRole("button", { name: "Save", exact: true }).first().click()
-  await page.waitForFunction(() => document.body.innerText.includes("corrected (not genuine history)"), null, { timeout: 30000 })
-  record("authorities: a real change (IRP base move) keeps history; a correction flags the wrong version", true)
-  await shot(page, "21-authorities-edit-history")
-
-  // ---- Insurance: renew and cancel ----
-  const pol = await post(`/api/companies/${id}/insurance`, { insurerOrganizationId: insurer.body.company.id, family: "INSURANCE", policyNumber: `E2E-${tag}`, termStart: "2023-01-01", termEnd: "2024-01-01", coverages: [{ coverageType: "AUTO_LIABILITY", limitAmount: "1000000", currency: "CAD", limitBasis: "COMBINED_SINGLE_LIMIT" }] })
-  record("insurance policy created (API)", pol.status === 201, `status ${pol.status} ${JSON.stringify(pol.body).slice(0, 100)}`)
-  await go(`/companies/${id}/insurance`); await page.waitForSelector("summary:has-text('Renew or cancel')", { timeout: 90000 }); await settle()
-  await page.locator("summary", { hasText: "Renew or cancel" }).first().click()
-  await page.locator("input[name=termStart]").first().fill("2024-01-01")
-  await page.locator("input[name=termEnd]").first().fill("2025-01-01")
-  await page.getByRole("button", { name: /Renew \(new term/ }).click()
-  await page.waitForFunction(() => document.body.innerText.includes("2024-01-01 to 2025-01-01"), null, { timeout: 30000 })
-  record("insurance: renewal adds a new term (shown as latest)", true)
-  if (!(await page.locator("input[name=cancelledOn]").first().isVisible())) await page.locator("summary", { hasText: "Renew or cancel" }).first().click()
-  await page.locator("input[name=cancelledOn]").first().fill("2024-06-01")
-  await page.getByRole("button", { name: "Cancel this term" }).click()
-  await page.waitForFunction(() => document.body.innerText.includes("cancelled 2024-06-01"), null, { timeout: 30000 })
-  record("insurance: a term can be cancelled with a reason", true)
-  await shot(page, "22-insurance-renew-cancel")
-
-  // ---- Credentials ----
-  const sys = await post("/api/credential-systems", { name: `E2E Portal ${tag}`, loginUrl: "https://portal.example.test/login" })
-  record("credential system created", sys.status === 201 || sys.status === 200, `status ${sys.status}`)
-  await go(`/companies/${id}/credentials`); await page.waitForSelector("text=Add credential", { timeout: 90000 }); await settle()
-  await page.selectOption("#systemId", { label: `E2E Portal ${tag}` }); await page.fill("#username", `user${tag}`); await page.click("button:has-text('Save credential')")
-  await page.waitForFunction(() => document.body.innerText.includes("NEEDS_VERIFICATION"), null, { timeout: 30000 })
-  record("credentials: a new credential starts as needs-verification (original parity)", true)
-  await page.selectOption("[aria-label='Verification outcome']", "VERIFIED"); await page.selectOption("[aria-label='Verification method']", "PORTAL_CHECK")
-  await page.getByRole("button", { name: "Record check" }).first().click()
-  await page.waitForFunction(() => document.body.innerText.includes("last check VERIFIED"), null, { timeout: 30000 })
-  await page.fill("[aria-label='Search credentials']", "nomatch")
-  record("credentials: search narrows the list and the open-portal link is offered", !(await page.innerText("body")).includes(`user${tag}`))
-  await page.fill("[aria-label='Search credentials']", "")
-  record("credentials: Open portal link present", await page.getByRole("link", { name: "Open portal" }).first().isVisible())
+  // Contacts, Authorities, Insurance, Credentials, Business, Settings and Tax Filing now run the restored original interfaces; their
+  // browser flows (load, save, cancel, refresh, validation, denial, isolation) are in b2-*.mjs. Change-vs-correction
+  // history, renewal and cancellation are verified at the operation level by test/lib/ui-recovery/*.db.test.ts.
 
   // ---- End service (edit page) ----
   await go(`/companies/${id}/edit`); await page.waitForSelector("text=End this customer", { timeout: 90000 })

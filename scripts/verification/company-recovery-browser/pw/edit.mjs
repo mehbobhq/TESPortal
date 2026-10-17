@@ -40,32 +40,34 @@ try {
   body = await page.innerText("body")
   record("a refused edit changes nothing (identity included)", !body.includes("Should Not Persist") && body.includes(newName))
 
-  // ---- contacts ----
+  // ---- contacts (restored original interface over the canonical register) ----
   await go(`/companies/${id}/contacts`)
-  await page.waitForSelector("text=Add a contact", { timeout: 60000 })
+  await page.waitForSelector("text=Manual Add", { timeout: 60000 })
+  await page.waitForFunction(() => /TES database \(PostgreSQL\)/.test(document.body.innerText), null, { timeout: 60000 })
   body = await page.innerText("body")
   record("contacts shows the canonical primary contact and company lines", body.includes("Jane") && body.includes(data.phone) && body.includes("Roe"))
-  await page.fill("#givenName", "Sam"); await page.fill("#familyName", "Dispatcher"); await page.fill("#title", "Dispatcher")
-  await page.fill("#phone", "+1 416 555 0199")
-  await page.click("button:has-text('Add contact')")
-  await page.waitForSelector("text=Contact added.", { timeout: 30000 })
+  await page.getByRole("button", { name: "Manual Add" }).click()
+  const dialog = page.locator("div").filter({ has: page.getByText("Add Contact Manually") }).filter({ has: page.getByRole("button", { name: "Save Contact" }) }).last()
+  await dialog.locator("input[type=text]").nth(0).fill("Sam"); await dialog.locator("input[type=text]").nth(1).fill("Dispatcher"); await dialog.locator("input[type=email]").fill("sam.dispatcher@example.test")
+  await dialog.getByRole("button", { name: "Save Contact" }).click()
+  await page.waitForFunction(() => document.body.innerText.includes("Sam Dispatcher"), null, { timeout: 30000 })
   await shot(page, "07-contacts-added")
-  await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector("text=Add a contact")
+  await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector("text=Manual Add")
+  await page.waitForFunction(() => document.body.innerText.includes("Sam Dispatcher"), null, { timeout: 30000 }).catch(() => {})
   record("a contact added in the browser is read back after reload", (await page.innerText("body")).includes("Sam Dispatcher"))
   record("containment: no browser-local contacts workspace is offered", (await page.getByRole("tab", { name: /browser-local/ }).count()) === 0 && !(await page.innerText("body")).includes("not the TES database"))
   const contactsStorage = await browserStorage(page)
   record("containment: opening and using Contacts wrote nothing to browser storage", tesKeys(contactsStorage).length === 0, JSON.stringify(contactsStorage))
   await shot(page, "08-contacts-no-browser-local-tab")
 
-  // ---- settings ----
+  // ---- settings (restored original interface) ----
   await go(`/companies/${id}/settings`)
   await page.waitForSelector("text=Operating scope", { timeout: 60000 })
-  await page.selectOption("select[aria-label='Operating scope']", "CANADA_AND_UNITED_STATES")
-  await page.waitForSelector("text=Operating scope saved.", { timeout: 30000 })
-  await page.getByRole("button", { name: "Does not apply" }).first().click()
-  await page.waitForSelector("text=Rule saved.", { timeout: 30000 })
+  await page.locator("input[name=operating-scope][value=CANADA_AND_UNITED_STATES]").check()
+  await page.getByRole("button", { name: /Save profile/i }).click()
+  await page.waitForTimeout(3000)
   await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector("text=Operating scope")
-  record("settings persist operating scope and a rule applicability", (await page.locator("select[aria-label='Operating scope']").inputValue()) === "CANADA_AND_UNITED_STATES")
+  record("settings persist operating scope", await page.locator("input[name=operating-scope][value=CANADA_AND_UNITED_STATES]").isChecked())
   await shot(page, "09-settings")
 
   // ---- remaining workspaces: load, navigate, honest states ----

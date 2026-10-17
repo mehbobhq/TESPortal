@@ -1,11 +1,10 @@
 import React, { useState } from "react"
-import { Archive, ArchiveRestore, FileText, History, Landmark, Pencil, X } from "lucide-react"
+import { Archive, ArchiveRestore, Landmark, Pencil, X } from "lucide-react"
 import { getDeadlineStatus } from "./model"
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import type { AuthorityEvidence, DeadlineRules, SelectedRecord } from "./types"
-import { isDateInsideThreeYears } from "./model"
 import { DeadlineBadge } from "./shared-fields"
-import { CanonicalUnavailable } from "@/src/components/shared/CanonicalUnavailable"
+import { EvidenceAttachments } from "@/src/components/shared/EvidenceAttachments"
 import type { AuthorityRecord } from "./types"
 
 /** Canonical history: every recorded version and regulatory status period, corrected ones flagged (never shown as history). */
@@ -48,91 +47,12 @@ function CanonicalHistory({ record }: { record: AuthorityRecord }) {
   )
 }
 
-function EvidenceHistory({
-  evidence,
-  onPreview,
-}: {
-  evidence: AuthorityEvidence[]
-  onPreview: (evidence: AuthorityEvidence) => void
-}) {
-  const [showOlder, setShowOlder] = useState(false)
-
-  const sorted = [...evidence].sort((a, b) =>
-    (b.documentDate || b.uploadedAt).localeCompare(a.documentDate || a.uploadedAt)
-  )
-
-  const recent = sorted.filter((item) =>
-    isDateInsideThreeYears(item.documentDate || item.uploadedAt)
-  )
-
-  const older = sorted.filter(
-    (item) => !isDateInsideThreeYears(item.documentDate || item.uploadedAt)
-  )
-
-  const visible = showOlder ? sorted : recent
-
-  return (
-    <section className="border-t border-border pt-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            Attached Documents & 3-Year Vault
-          </p>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">
-            Original supporting certificates and filings.
-          </p>
-        </div>
-
-        {older.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowOlder((current) => !current)}
-            className="inline-flex items-center h-7 px-2 text-[10px] font-medium rounded border border-border bg-background hover:bg-muted/50 transition-colors"
-          >
-            <History className="mr-1 size-3" />
-            {showOlder ? "Standard View" : `Older History (${older.length})`}
-          </button>
-        )}
-      </div>
-
-      {visible.length === 0 ? (
-        <div className="mt-3 rounded-lg border border-dashed border-border p-4 text-center">
-          <p className="text-xs text-muted-foreground">
-            No supporting documents attached.
-          </p>
-        </div>
-      ) : (
-        <div className="mt-3 space-y-2">
-          {visible.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onPreview(item)}
-              className="flex w-full items-start gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.025]"
-            >
-              <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground">{item.fileName}</p>
-                <p className="mt-0.5 text-[10px] text-muted-foreground">
-                  {item.documentDate || item.uploadedAt.slice(0, 10)}
-                  {item.ocrConfidence !== undefined &&
-                    ` · OCR ${item.ocrConfidence}%`}
-                </p>
-              </div>
-              <span className="text-[10px] font-semibold text-primary">Preview</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
 /* =========================================================
    INSPECTOR (VIEW = RECORD)
 ========================================================= */
 
 export function RecordInspector({
+  companyId,
   selected,
   evidence,
   rules,
@@ -142,6 +62,7 @@ export function RecordInspector({
   onRestore,
   onPreview,
 }: {
+  companyId: string
   selected: SelectedRecord | null
   evidence: AuthorityEvidence[]
   rules: DeadlineRules
@@ -164,7 +85,6 @@ export function RecordInspector({
   }
 
   const record = selected.record
-  const attached = evidence.filter((item) => record.evidenceIds.includes(item.id))
 
   const title =
     selected.kind === "authority"
@@ -386,11 +306,16 @@ export function RecordInspector({
           </div>
         ) : null}
 
-        <EvidenceHistory evidence={attached} onPreview={onPreview} />
-        <CanonicalUnavailable
-          action="Attaching and previewing supporting documents"
-          reason="authority evidence has no canonical link to a registration record yet, so documents cannot be attached here and none are stored in the browser."
-        />
+        {selected.kind === "authority" ? (
+          // Every record in this workspace (including the IRP / UCR "registration" cards) is a canonical operating authority.
+          <EvidenceAttachments
+            companyId={companyId}
+            targetTable="operating_authorities"
+            targetId={selected.record.id}
+            targetLabel="authority"
+            allowWrite={!record.isArchived}
+          />
+        ) : null}
 
         <div className="flex gap-2 border-t border-border pt-4">
           <button

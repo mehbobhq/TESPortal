@@ -495,6 +495,7 @@ export default function RestoredAuthorities({ companyId }: { companyId: string }
         >
           <div role="dialog" aria-modal="true" aria-label="Authority record details" className="max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl overflow-y-auto rounded-2xl bg-card shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
             <RecordInspector
+              companyId={companyId}
               selected={selected}
               evidence={data.evidence}
               rules={rules}

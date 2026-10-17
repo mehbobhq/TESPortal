@@ -41,7 +41,7 @@ await step("vehicle: a vehicle that another company also has on its current reco
 const solo = `AR${t}`
 const soloVehicle = async () => psql(`select vehicle_id from public.organization_vehicle_relationships where organization_id='${A.id}' and unit_number_display='${solo}' limit 1`)
 await step("vehicle: Archive through the UI keeps the record (status archived) and writes a Master Register event", async () => {
-  const made = await api(`/api/companies/${A.id}/vehicles`, { vehicleTypeCode: "TRAILER", vin: `1HG${t}ARCHIVE00`.slice(0, 17), relationshipType: "OPERATES", unitNumber: solo, effectiveFrom: "2024-01-01T00:00:00Z" })
+  const made = await api(`/api/companies/${A.id}/vehicles`, { vehicleTypeCode: "TRAILER", vin: `1HG${t}ARCHVE00`.slice(0, 17), relationshipType: "OPERATES", unitNumber: solo, effectiveFrom: "2024-01-01T00:00:00Z" })
   if (made.status !== 201) return `!create ${made.status}`
   await go(`/companies/${A.id}/vehicles`); await settle(); await page.locator("tr", { hasText: solo }).first().click(); await page.waitForTimeout(1500)
   const e0 = ev(); const code = await saved(() => page.getByRole("button", { name: "Archive", exact: true }).first().click(), /vehicles\/[0-9a-f-]+$/); await page.waitForTimeout(800)

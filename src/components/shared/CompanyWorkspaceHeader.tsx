@@ -21,7 +21,7 @@ export default function CompanyWorkspaceHeader({
   const router = useRouter()
 
   return (
-    <div className="flex items-center justify-between border-b border-border bg-background px-0 py-3 mb-4">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-background px-0 py-3 mb-4">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -62,7 +62,7 @@ export default function CompanyWorkspaceHeader({
       </div>
 
       {actions ? (
-        <div className="flex items-center gap-2 shrink-0">{actions}</div>
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
       ) : null}
     </div>
   )

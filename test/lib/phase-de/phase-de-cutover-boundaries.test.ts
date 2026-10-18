@@ -91,7 +91,8 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
 
   it("adds no migration in this pass", () => {
     const migrations = readdirSync(path.join(ROOT, "database/migrations")).filter((name) => name.endsWith(".sql")).sort()
-    assert.ok(migrations[migrations.length - 1].startsWith("0029_"), migrations[migrations.length - 1])
+    // The Phase D/E pass added none; 0033 belongs to the Company/Customer profile-facts recovery.
+    assert.ok(migrations[migrations.length - 1].startsWith("0033_"), migrations[migrations.length - 1])
   })
 
   it("makes deferred modules explicit instead of persisting them in the browser", () => {
@@ -101,7 +102,7 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
       "app/companies/[id]/vehicles/page.tsx": /deferred/i,
       "app/companies/[id]/insurance/page.tsx": /deferred/i,
       "app/companies/[id]/credentials/page.tsx": /deferred/i,
-      "app/companies/[id]/edit/page.tsx": /Not yet available/,
+      "app/companies/[id]/edit/page.tsx": /not yet available/i,
     }
     for (const [file, pattern] of Object.entries(deferred)) assert.match(source(file), pattern, file)
   })

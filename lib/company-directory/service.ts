@@ -1,21 +1,15 @@
 import "server-only"
 
-import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
-import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
+import type { PoolClient } from "pg"
+import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
 import * as corporateOperations from "@/lib/corporate-identity/operations"
-import * as customerOperations from "@/lib/customer-relationship/operations"
-import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
-import {
-  addAlias,
-  addIdentifier,
-  correctIdentifier,
-  deactivateAlias,
-  getOrganization,
-  supersedeIdentifier,
-  updateLegalIdentity,
-} from "@/lib/corporate-identity/service"
+import { createCompanyRecord, type CompanyCreationResult } from "@/lib/company-directory/create-company"
+import { applyCompanyDetails, factsPresent, hasDetailsToUpdate, planCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
+import { readCompanyProfile, type CompanyProfileRecord } from "@/lib/company-directory/read-profile"
+import { getOrganization } from "@/lib/corporate-identity/service"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
-import type { ClassificationInput, CreateOrganizationInput, OrganizationRecord } from "@/lib/corporate-identity/types"
+import type { OrganizationRecord } from "@/lib/corporate-identity/types"
 
 type CompanyDirectoryRow = {
   id: string
@@ -56,45 +50,7 @@ export type CustomerDirectoryRecord = {
   tone: "ok" | "warn" | "danger" | "info" | "neutral"
 }
 
-export type CompanyProfileRecord = {
-  id: string
-  name: string
-  kind: string
-  region: string
-  status: "Active" | "Archived" | "Merged"
-  createdAt: string
-  dba: string | null
-  contact: string | null
-  phone: string | null
-  website: string | null
-  email: string | null
-  billingEmail: string | null
-  opRegion: "Canada Only" | "US Only" | "Cross-Border"
-  incorpNo: string | null
-  businessNo: string | null
-  gstHst: string | null
-  regCorpState: string | null
-  usdot: string | null
-  mc: string | null
-  nsc: string | null
-  mvid: string | null
-  scac: string | null
-  carrierCode: string | null
-}
-
-export type CreateCompanyDirectoryInput = {
-  companyName?: unknown
-  dba?: unknown
-  companyType?: unknown
-  opRegion?: unknown
-  regCorpState?: unknown
-  regCorpCountry?: unknown
-  incorpNo?: unknown
-  businessNo?: unknown
-  ein?: unknown
-  startDate?: unknown
-  status?: unknown
-}
+export type { CompanyProfileRecord }
 
 export type UpdateCompanyDirectoryInput = {
   companyName?: unknown
@@ -119,73 +75,12 @@ export class CompanyDirectoryValidationError extends Error {}
 
 export type CreateCompanyDirectoryResult = {
   company: CompanyDirectoryRecord
-}
-
-const CLASSIFICATION_BY_COMPANY_TYPE: Record<string, string | null> = {
-  Customer: null,
-  Prospect: "other",
-  "Owner Operator": "owner_operator",
-  "Service Provider": "service_provider",
-  "Finance/ Leasing Company": "finance_leasing_company",
-  "Insurance Broker": "insurance_broker",
-  "Insurance Company": "insurance_company",
-  "Workers Insurance": "workers_insurance",
-  "Employee Reference": "employee_reference",
-  "Government Agency": "government_agency",
-  "Sub Contractor": "sub_contractor",
-  Other: "other",
+  /** What was actually written to each canonical domain, for the confirmation shown to the user. */
+  recorded: CompanyCreationResult["recorded"]
 }
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
-}
-
-function countryCode(value: unknown): "CA" | "US" | null {
-  const raw = text(value).toUpperCase()
-  if (raw === "CA" || raw === "CANADA") return "CA"
-  if (raw === "US" || raw === "USA" || raw === "UNITED STATES") return "US"
-  return null
-}
-
-function dateToInstant(value: unknown): string {
-  const date = text(value)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return `${date}T00:00:00.000Z`
-  return new Date().toISOString()
-}
-
-function buildCreateOrganizationInput(input: CreateCompanyDirectoryInput): CreateOrganizationInput {
-  const legalName = text(input.companyName)
-  if (!legalName) throw new Error("Company Name is required.")
-
-  const type = text(input.companyType)
-  if (!type) throw new Error("Company Record Type is required.")
-
-  const country = countryCode(input.regCorpCountry)
-  const regionCode = text(input.regCorpState)
-  const formation = country === null ? null : { country, region: regionCode || null }
-  const identifiers: CorporateIdentifierInput[] = []
-  const incorporation = text(input.incorpNo)
-  const businessNumber = text(input.businessNo)
-  const ein = text(input.ein)
-
-  if (incorporation && formation) {
-    identifiers.push({ kind: "INCORPORATION", value: incorporation, country: formation.country, region: formation.region })
-  }
-  if (businessNumber && country !== "US") identifiers.push({ kind: "CRA_BN", value: businessNumber })
-  if (ein) identifiers.push({ kind: "IRS_EIN", value: ein })
-
-  const aliases = text(input.dba) ? [{ alias: text(input.dba), aliasType: "TRADE_NAME" as const }] : []
-  const classificationCode = CLASSIFICATION_BY_COMPANY_TYPE[type]
-  const classifications: ClassificationInput[] = classificationCode ? [{ code: classificationCode, isPrimary: true }] : []
-
-  return {
-    legalName,
-    displayName: legalName,
-    formation,
-    identifiers,
-    aliases,
-    classifications,
-  }
 }
 
 const statusLabel = (status: "active" | "archived" | "merged") =>
@@ -283,77 +178,42 @@ export async function listCustomerDirectory(): Promise<CustomerDirectoryRecord[]
   })
 }
 
-export async function createCompanyDirectoryRecord(input: CreateCompanyDirectoryInput): Promise<CreateCompanyDirectoryResult> {
-  const type = text(input.companyType)
-  const isCustomer = type === "Customer"
-  const organizationInput = buildCreateOrganizationInput(input)
-
-  // Both mutations and their Master Register events commit or roll back together.
-  // Check both capabilities before writing the Organization.
-  return withAuthorizedSystem("ORGANIZATION_CREATE", async (client, decision) => {
-    if (isCustomer && !(await hasAdditionalSystemCapability(client, decision, "CUSTOMER_ESTABLISH"))) {
-      throw new TesAuthorizationDeniedError()
-    }
-
-    const masterRegister = new PostgresMasterRegisterRepository(client)
-    const actor = { id: decision.actor.id, actorType: decision.actor.actorType }
-    const result = await corporateOperations.createOrganization({
-      client,
-      actor,
-      masterRegister,
-      canViewRegistry: () => hasAdditionalSystemCapability(client, decision, "ORGANIZATION_REGISTRY_READ"),
-    }, organizationInput)
-    const organization = result.organization
-
-    if (isCustomer) {
-      // Re-prove CUSTOMER_ESTABLISH for RLS on the same transaction.
-      await client.query(
-        "SELECT set_config('tes.system_capability', $1, true)",
-        ["CUSTOMER_ESTABLISH"],
-      )
-      const rls = await client.query<{ allowed: boolean }>(
-        "SELECT tes_security.system_context_authorized(ARRAY[$1]::text[]) AS allowed",
-        ["CUSTOMER_ESTABLISH"],
-      )
-      if (rls.rows[0]?.allowed !== true) throw new TesAuthorizationDeniedError()
-
-      await customerOperations.establishCustomerRelationship({ client, actor, masterRegister }, {
-        organizationId: organization.id,
-        engagementType: "RECURRING",
-        stage: "ONBOARDING",
-        // Open-ended stages omit plannedEndAt; null fails instant validation.
-        startedAt: dateToInstant(input.startDate),
-      })
-    }
-
-    return {
-      company: {
-        id: organization.id,
-        name: organization.displayName ?? organization.legalName,
-        kind: primaryKind(organization.classifications.find((classification) => classification.isPrimary)?.code ?? null, isCustomer),
-        region: region(organization.formationCountry, organization.formationRegion),
-        status: statusLabel(organization.status),
-        tone: statusTone(organization.status),
-      },
-    }
-  })
+/**
+ * Creates a company with every supported field persisted to its canonical domain in one transaction (see
+ * create-company.ts and creation-input.ts for the field contract). Unsupported or invalid input is refused with explicit issues.
+ */
+export async function createCompanyDirectoryRecord(input: unknown): Promise<CreateCompanyDirectoryResult> {
+  const result = await createCompanyRecord(input)
+  const isCustomer = result.recorded.customer
+  return {
+    company: {
+      id: result.organizationId,
+      name: result.displayName,
+      kind: isCustomer ? "Customer" : result.primaryClassification ?? "Organization",
+      region: region(result.formationCountry, result.formationRegion),
+      status: statusLabel(result.status),
+      tone: statusTone(result.status),
+    },
+    recorded: result.recorded,
+  }
 }
 
+/** The full profile, assembled from the canonical domains (see read-profile.ts). */
 export async function getCompanyProfile(organizationId: string): Promise<CompanyProfileRecord | null> {
+  return readCompanyProfile(organizationId)
+}
+
+/** Light identity summary used where only the name, kind, status and formation region are needed (e.g. onboarding). */
+export async function getCompanyIdentitySummary(organizationId: string): Promise<{ id: string; name: string; kind: string; region: string; status: "Active" | "Archived" | "Merged" } | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(organizationId)) return null
   return withAuthorizedSystem("ORGANIZATION_REGISTRY_READ", async (client) => {
-    const result = await client.query<
-      CompanyDirectoryRow & {
-        created_at: Date
-        is_customer: boolean
-      }
-    >(
+    const result = await client.query<CompanyDirectoryRow & { is_customer: boolean }>(
       `SELECT o.id,
               o.legal_name,
               o.display_name,
               o.status,
               o.country_code,
               o.region_code,
-              o.created_at,
               EXISTS (SELECT 1 FROM public.customers c WHERE c.organization_id = o.id) AS is_customer,
               pc.classification_code AS primary_classification
          FROM public.organizations o
@@ -367,67 +227,16 @@ export async function getCompanyProfile(organizationId: string): Promise<Company
             LIMIT 1
          ) pc ON true
         WHERE o.id = $1`,
-      [organizationId],
+      [organizationId.toLowerCase()],
     )
     const row = result.rows[0]
     if (!row) return null
-
-    const identifiers = await client.query<{
-      kind: string | null
-      identifier_type: string
-      namespace: string
-      value: string
-      status: string
-    }>(
-      `SELECT identifier_type AS kind, identifier_type, namespace, value, status
-         FROM public.organization_identifiers
-        WHERE organization_id = $1
-        ORDER BY created_at, id`,
-      [organizationId],
-    )
-    const ids = identifiers.rows.map((identifier) => ({
-      kind: identifier.kind,
-      identifierType: identifier.identifier_type,
-      namespace: identifier.namespace,
-      value: identifier.value,
-      status: identifier.status,
-    }))
-
-    const aliases = await client.query<{ alias: string }>(
-      `SELECT alias
-         FROM public.organization_aliases
-        WHERE organization_id = $1
-          AND upper(alias_type) = 'TRADE_NAME'
-          AND status = 'active'
-        ORDER BY created_at, id
-        LIMIT 1`,
-      [organizationId],
-    )
-
     return {
       id: row.id,
       name: row.display_name ?? row.legal_name,
       kind: primaryKind(row.primary_classification, row.is_customer),
       region: region(row.country_code, row.region_code),
       status: statusLabel(row.status),
-      createdAt: row.created_at.toISOString(),
-      dba: aliases.rows[0]?.alias ?? null,
-      contact: null,
-      phone: null,
-      website: null,
-      email: null,
-      billingEmail: null,
-      opRegion: row.country_code === "US" ? "US Only" : "Canada Only",
-      incorpNo: identifierValue(ids, ["INCORPORATION", "CORPORATE_REGISTRATION"]),
-      businessNo: identifierValue(ids, ["BUSINESS_NUMBER", "EIN", "TAX_ID"]),
-      gstHst: identifierValue(ids, ["GST_HST", "SALES_TAX"]),
-      regCorpState: row.region_code,
-      usdot: identifierValue(ids, ["USDOT"]),
-      mc: identifierValue(ids, ["MC"]),
-      nsc: identifierValue(ids, ["NSC", "CVOR"]),
-      mvid: identifierValue(ids, ["MVID", "RIN"]),
-      scac: identifierValue(ids, ["SCAC"]),
-      carrierCode: identifierValue(ids, ["CARRIER_CODE"]),
     }
   })
 }
@@ -453,15 +262,29 @@ export async function getCompanyEditRecord(organizationId: string): Promise<Comp
 }
 
 /**
- * Edits only the canonical corporate-identity fields: legal name, trade-name alias and the INCORPORATION / CRA_BN / IRS_EIN
- * identifiers. A field that is omitted is left alone; an empty string ends the current value. Every step is an existing
- * corporate-identity operation (its own authorized transaction and Master Register event).
+ * The identity part of an edit on a transaction the caller opened (ORGANIZATION_UPDATE): legal name, trade-name alias and the
+ * INCORPORATION / CRA_BN / IRS_EIN identifiers. A field that is omitted is left alone; an empty string ends the current value.
+ * Every step is an existing corporate-identity operation (with its own Master Register event); none commits on its own here.
  */
-export async function updateCompanyDirectoryRecord(
+async function applyIdentityEdit(
+  client: PoolClient,
+  decision: SystemAuthorizationDecision,
   organizationId: string,
   input: UpdateCompanyDirectoryInput,
-): Promise<CompanyEditRecord> {
-  let organization = await getOrganization(organizationId)
+): Promise<OrganizationRecord> {
+  const ctx = domainContext(client, decision, "ORGANIZATION_REGISTRY_READ")
+  // The same two capabilities the separate operations needed: the registry read to see the record, the update to change it.
+  const read = async () => {
+    await enterSystemCapability(client, "ORGANIZATION_REGISTRY_READ")
+    return corporateOperations.readOrganization(client, organizationId)
+  }
+  const write = async <T>(work: () => Promise<T>): Promise<T> => {
+    await enterSystemCapability(client, "ORGANIZATION_UPDATE")
+    const result = await work()
+    await runDeferredChecks(client)
+    return result
+  }
+  let organization = await read()
   const current = toEditRecord(organization)
   const has = (value: unknown) => typeof value === "string"
 
@@ -470,7 +293,7 @@ export async function updateCompanyDirectoryRecord(
     if (!legalName) throw new CompanyDirectoryValidationError("Company Name is required.")
     if (legalName !== organization.legalName) {
       const keepDisplay = organization.displayName === organization.legalName
-      organization = (await updateLegalIdentity(organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName })).organization
+      organization = (await write(() => corporateOperations.updateLegalIdentity(ctx, organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName }))).organization
     }
   }
 
@@ -478,16 +301,12 @@ export async function updateCompanyDirectoryRecord(
     const dba = text(input.dba)
     if (dba !== current.dba) {
       const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType?.toUpperCase() === "TRADE_NAME")
-      if (existing) organization = (await deactivateAlias(organizationId, existing.id)).organization
-      if (dba) organization = (await addAlias(organizationId, { alias: dba, aliasType: "TRADE_NAME" })).organization
+      if (existing) organization = (await write(() => corporateOperations.deactivateAlias(ctx, organizationId, existing.id))).organization
+      if (dba) organization = (await write(() => corporateOperations.addAlias(ctx, organizationId, { alias: dba, aliasType: "TRADE_NAME" }))).organization
     }
   }
 
-  const applyIdentifier = async (
-    kind: "INCORPORATION" | "CRA_BN" | "IRS_EIN",
-    raw: unknown,
-    previous: string,
-  ) => {
+  const applyIdentifier = async (kind: "INCORPORATION" | "CRA_BN" | "IRS_EIN", raw: unknown, previous: string) => {
     if (!has(raw)) return
     const value = text(raw)
     if (value === previous) return
@@ -503,14 +322,46 @@ export async function updateCompanyDirectoryRecord(
         replacement = { kind, value }
       }
     }
-    if (existing && replacement) organization = (await correctIdentifier(organizationId, existing.id, replacement)).organization
-    else if (existing) organization = (await supersedeIdentifier(organizationId, existing.id)).organization
-    else if (replacement) organization = (await addIdentifier(organizationId, replacement)).organization
+    if (existing && replacement) organization = (await write(() => corporateOperations.correctIdentifier(ctx, organizationId, existing.id, replacement))).organization
+    else if (existing) organization = (await write(() => corporateOperations.supersedeIdentifier(ctx, organizationId, existing.id))).organization
+    else if (replacement) organization = (await write(() => corporateOperations.addIdentifier(ctx, organizationId, replacement))).organization
   }
 
   await applyIdentifier("INCORPORATION", input.incorpNo, current.incorpNo)
   await applyIdentifier("CRA_BN", input.businessNo, current.businessNo)
   await applyIdentifier("IRS_EIN", input.ein, current.ein)
 
-  return toEditRecord(organization)
+  return organization
+}
+
+/** Edits only the canonical corporate-identity fields, as one transaction (see applyIdentityEdit). */
+export async function updateCompanyDirectoryRecord(
+  organizationId: string,
+  input: UpdateCompanyDirectoryInput,
+): Promise<CompanyEditRecord> {
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => toEditRecord(await applyIdentityEdit(client, decision, organizationId, input)))
+}
+
+const IDENTITY_KEYS = ["companyName", "dba", "incorpNo", "businessNo", "ein"] as const
+
+export type CompanyEditResult = { company: CompanyEditRecord; details: CompanyDetailsUpdate | null }
+
+/**
+ * The whole edit: identity (corporate-identity operations) and details (operating region, addresses, website, cargo, fleet
+ * providers and billing preference) in ONE transaction. Both parts are validated BEFORE anything is written, and every write
+ * commits or rolls back together with its Master Register events, so a failure in any part - a refused capability, an identifier
+ * collision, a concurrent change - leaves the record exactly as it was. `details` says what the details part saved.
+ */
+export async function editCompany(organizationId: string, raw: unknown): Promise<CompanyEditResult> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CompanyDirectoryValidationError("A JSON object is required.")
+  const body = raw as Record<string, unknown>
+  const detailsPlan = planCompanyDetails(body) // always: also refuses any field that cannot be edited, so nothing is silently discarded
+  const wantsDetails = hasDetailsToUpdate(body) || factsPresent(detailsPlan.facts)
+  const identity: UpdateCompanyDirectoryInput = {}
+  for (const key of IDENTITY_KEYS) if (key in body) identity[key] = body[key]
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
+    const company = toEditRecord(await applyIdentityEdit(client, decision, organizationId, identity))
+    const details = wantsDetails ? await applyCompanyDetails(client, decision, organizationId, detailsPlan) : null
+    return { company, details }
+  })
 }

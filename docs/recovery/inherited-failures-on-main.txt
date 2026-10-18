@@ -1,0 +1,70 @@
+5. two connections inserting the same active account directly: the second waits, then fails with the named index
+6. the database alone arbitrates racing writers that bypass the service (one current per fact)
+A9 consistency: a customer is listed if and only if the evaluator allows it
+C1 the correct customer with an assignment-specific grant is allowed; ids are normalized
+C10 another actor's assignments and grants cannot be borrowed
+C2 a different customer is denied
+C3 a grant tied to one assignment cannot be used through another assignment of the same relationship
+C4 a broad grant applies to every assigned customer and to no other
+CUSTOMER scope
+Company Credentials (real authorization, real transactions, real Master Register)
+Company Operating Profile (real authorization, real transactions, real Master Register)
+Contacts (real authorization, real transactions, real Master Register)
+Customer Relationship (real authorization, real transactions, real Master Register)
+DB backstops reachable when the service is bypassed (direct runtime-role SQL)
+Insurance (real authorization, real transactions, real Master Register)
+K3 the declared TypeScript scope equals the 'Intended scope' sentence in the database description
+Master Account may open an existing customer but not a nonexistent one
+Operating Authorities (real authorization, real transactions, real Master Register)
+Organization Locations (real authorization, real transactions, real Master Register)
+TES authorization core (real PostgreSQL, runtime role)
+Tax Registrations (real authorization, real transactions, real Master Register)
+a corrected version cannot be re-pointed at another replacement, even by the runtime role's column grants
+a policy needs an active term and a term needs a coverage by the end of the transaction
+accessible customers
+authorization layer boundaries
+broker rules: an active policy, an ACTIVE relationship with the brokerage firm itself, one current period
+capability catalogue drift (TypeScript references vs PostgreSQL)
+concurrency (real PostgreSQL, distinct authorized actors)
+concurrency (real PostgreSQL, distinct authorized actors)
+corrected rows are frozen
+coverage rules: limit by type, currency by amount, family by composite key, window, overlap and one open row
+credentials: active account, active system, active Organization, current status, identity, FK scopes and check constraints
+database backstops (reachable when the service is bypassed)
+database backstops (service bypassed)
+database backstops (the service bypassed, as the runtime role)
+endorsement rules: inside an active, uncancelled term; one active number per term; no endorsement on a corrected term
+every person has exactly one current name at commit; no path leaves one nameless
+no SECURITY DEFINER, no RLS, no policy on the Contacts tables; no driver data columns
+no SECURITY DEFINER, no RLS, no policy on the new tables; every new function is invoker with a fixed search_path and no PUBLIC execute
+no SECURITY DEFINER, no RLS, no policy on the new tables; every new function is invoker with a fixed search_path and no PUBLIC execute
+no SECURITY DEFINER, no RLS, no policy on the new tables; every new function is invoker with a fixed search_path and no PUBLIC execute
+no SECURITY DEFINER, no RLS, no policy; every new function is invoker with a fixed search_path and no PUBLIC execute
+no new capability, no unintended SECURITY DEFINER, no RLS, no policy
+no unintended SECURITY DEFINER, no RLS, no policy; every function is invoker with a fixed search_path and no PUBLIC execute
+only lib/auth may import the authorization entry, core or SQL modules (application code uses the wrappers)
+policy rules: insurer differs from insured, both Organizations are active, a renewal keeps Organization and family, a term needs an active policy
+races that bypass the service: the database serializes number claims, open coverage rows, current brokers and overlapping terms
+registration is not authority, filing, payment, decal or credential: no such table or column exists
+runtime privileges: no DELETE/TRUNCATE anywhere, no content rewrites, no RLS
+schema (migration 0012)
+schema (migration 0013)
+schema (migration 0014)
+schema (migration 0015)
+schema (migration 0016)
+schema (migration 0017)
+schema (migration 0018)
+schema (migration 0019)
+secret hygiene
+status periods, verifications and slots: parents must be active; one current period; content and state are immutable
+system names: duplicates, name-vs-alias and alias-vs-name are refused by the database
+term rules: periods, expiry, cancellation window, overlap and the per-insurer number namespace
+test/lib/operational-identity/normalization.test.ts
+the Organization lifecycle guard refuses a registration for an archived or merged Organization, and for a missing one
+the RUNTIME role reaches the same backstops by writing SQL directly
+the SYSTEM wrapper never writes tenant context
+the number namespace is per insurer at the database; an archived or ended holder still holds it
+the runtime role cannot rewrite identity or content, even with its column grants
+the secret_reference CHECK rejects anything that is not a resource name, as the runtime role and as the owner
+two connections inserting one system name: the second waits for the first, then fails with a named constraint
+versions and status periods cannot be added to an archived registration, nor registrations without both current rows, nor in the wrong namespace

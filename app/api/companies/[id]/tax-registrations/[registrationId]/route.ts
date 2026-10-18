@@ -4,8 +4,11 @@ import {
   archiveRegistration,
   changeRegistrationStatus,
   changeRegistrationVersion,
+  correctRegistrationStatus,
+  correctRegistrationVersion,
   restoreRegistration,
   type ChangeVersionInput,
+  type CorrectVersionInput,
 } from "@/lib/tax-registrations/service"
 import { isRegistrationStatus } from "@/lib/tax-registrations/definitions"
 
@@ -14,7 +17,7 @@ export const dynamic = "force-dynamic"
 
 type Context = { params: Promise<{ id: string; registrationId: string }> }
 
-/** PATCH { action: "status" | "version" | "archive" | "restore", ... } maps one-to-one onto the canonical operations. */
+/** PATCH { action: "status" | "version" | "correctVersion" | "correctStatus" | "archive" | "restore", ... } maps one-to-one onto the canonical operations. */
 export async function PATCH(request: NextRequest, context: Context) {
   try {
     const { id, registrationId } = await context.params
@@ -30,6 +33,13 @@ export async function PATCH(request: NextRequest, context: Context) {
         const { action: _action, ...fields } = body
         return NextResponse.json(await changeRegistrationVersion({ ...(fields as ChangeVersionInput), ...target }), { status: 200 })
       }
+      case "correctVersion": {
+        const { action: _action, ...fields } = body
+        return NextResponse.json(await correctRegistrationVersion({ ...(fields as CorrectVersionInput), ...target }), { status: 200 })
+      }
+      case "correctStatus":
+        if (!isRegistrationStatus(body.status)) return NextResponse.json({ error: "A valid registration status is required." }, { status: 400 })
+        return NextResponse.json({ view: await correctRegistrationStatus({ ...target, status: body.status }) }, { status: 200 })
       case "archive":
         return NextResponse.json({ view: await archiveRegistration(target) }, { status: 200 })
       case "restore":

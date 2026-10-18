@@ -23,6 +23,7 @@ async function loadKit() {
     co: await import("@/lib/contacts/service"),
     ev: await import("@/lib/evidence-payload/service"),
     fx: await import("@/test/helpers/evidence-payload-fixtures"),
+    dir: await import("@/lib/company-directory/service"),
   };
 }
 type Kit = Awaited<ReturnType<typeof loadKit>>;
@@ -485,6 +486,96 @@ describe("Contracts foundation (migration 0031, real authorization, real Master 
         [contract.statusHistory.map((event) => event.masterRegisterEventId)],
       );
       assert.equal(Number(mr.rows[0].count), contract.statusHistory.length);
+    });
+
+    it("the company profile derives Service Type from a SIGNED contract only: read-only, never typed in, and 'Not contracted' otherwise", async () => {
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const w = await world();
+      const { contractId } = await readyDraft(w);
+      const confirmation = await evidence(w.organizationId, "CONTRACT_READY_CONFIRMATION");
+      const serviceType = async () => (await K.dir.getCompanyProfile(w.organizationId))?.serviceType;
+
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a draft contract is not authoritative");
+      await K.ct.advanceContractStatus({ contractId, toStatus: "ready_for_signature", evidenceDocumentId: confirmation });
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "ready for signature is not signed");
+      const signedDoc = await evidence(w.organizationId, "SIGNED_CONTRACT_DOCUMENT");
+      await K.ct.linkContractEvidence({ contractId, ruleCode: "SIGNED_CONTRACT_DOCUMENT", evidenceDocumentId: signedDoc });
+      await K.ct.advanceContractStatus({ contractId, toStatus: "signed", evidenceDocumentId: signedDoc });
+      const signed = await serviceType();
+      assert.equal(signed?.state, "contracted");
+      assert.deepEqual(signed && "packages" in signed ? signed.packages : null, ["Monthly compliance"], "the package name comes from the signed contract line");
+
+      // The only way to change it is the contract workflow: an ordinary profile edit is refused, and nothing changes.
+      await assert.rejects(K.dir.editCompany(w.organizationId, { svcType: "Premium" }), (error: unknown) => error instanceof Error && error.name === "CompanyCreationValidationError");
+      assert.deepEqual(await serviceType(), signed);
+
+      // A caller who may not read contracts sees "restricted", never a guessed value.
+      await signInWith("ORGANIZATION_REGISTRY_READ", "CUSTOMER_RELATIONSHIP_READ", "COMPANY_PROFILE_READ", "PERSON_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const restricted = await K.dir.getCompanyProfile(w.organizationId);
+      assert.deepEqual(restricted?.serviceType, { state: "restricted" });
+      assert.equal(restricted?.sections.contracts, "not_permitted");
+
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      await K.ct.advanceContractStatus({ contractId, toStatus: "superseded", evidenceDocumentId: confirmation });
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a superseded contract no longer defines the service");
+    });
+
+    it("Service Type follows the CURRENT engagement only: sign -> end -> rejoin -> new contract; earlier contracts stay as history", async () => {
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const w = await world();
+      const first = await readyDraft(w);
+      const confirmation = await evidence(w.organizationId, "CONTRACT_READY_CONFIRMATION");
+      const sign = async (contractId: string) => {
+        await K.ct.advanceContractStatus({ contractId, toStatus: "ready_for_signature", evidenceDocumentId: confirmation });
+        const signedDoc = await evidence(w.organizationId, "SIGNED_CONTRACT_DOCUMENT");
+        await K.ct.linkContractEvidence({ contractId, ruleCode: "SIGNED_CONTRACT_DOCUMENT", evidenceDocumentId: signedDoc });
+        await K.ct.advanceContractStatus({ contractId, toStatus: "signed", evidenceDocumentId: signedDoc });
+      };
+      const serviceType = async () => (await K.dir.getCompanyProfile(w.organizationId))?.serviceType;
+      const names = (value: Awaited<ReturnType<typeof serviceType>>) => (value && "packages" in value ? value.packages : null);
+
+      assert.deepEqual(await serviceType(), { state: "not_contracted" });
+      await sign(first.contractId);
+      assert.deepEqual(names(await serviceType()), ["Monthly compliance"]);
+
+      // leave: the signed contract stays signed history, but nothing is current
+      const { ENGAGEMENT_END_REASONS } = await import("@/lib/customer-relationship/definitions");
+      await K.cr.endEngagement({ engagementId: w.engagementId, endReason: ENGAGEMENT_END_REASONS[0] });
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "an ended engagement has no current contract");
+
+      // rejoin: a new engagement without a signed contract is Not contracted; the old contract is neither reactivated nor altered
+      const rejoined = await K.cr.establishCustomerRelationship({ organizationId: w.organizationId, engagementType: "RECURRING", stage: "ONBOARDING" });
+      const newEngagementId = rejoined.engagement.engagement.id;
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a rejoin does not revive the earlier signed contract");
+      const history = (await workspace(w)).contracts;
+      assert.deepEqual(history.map((c) => [c.id, c.engagementId, c.contractStatus]), [[first.contractId, w.engagementId, "signed"]], "the earlier contract is still readable, still signed, still bound to its own engagement");
+
+      // a new signed contract for the new engagement defines the service
+      const scope = (await K.cr.addScope({ engagementId: newEngagementId, productLevel: "COMPLIANCE" })).current.scopes[0].id;
+      await K.cr.assumeResponsibility({ scopeId: scope });
+      await K.ct.definePackage(w.organizationId, { packageCode: `PKG_${run}_NEW${Math.floor(Math.random() * 1e5)}`, packageName: "Renewed compliance", pricingBasis: "monthly_package" });
+      const pkg = (await workspace(w)).packages.find((p) => p.packageName === "Renewed compliance")!.packageCode;
+      await K.ct.createContractDraft(w.organizationId, { contractReference: `CTR-${run}-NEW${Math.floor(Math.random() * 1e6)}` });
+      const draft = (await workspace(w)).contracts.find((c) => c.engagementId === newEngagementId)!;
+      await K.ct.attachServiceScopes({ contractId: draft.id, scopeIds: [scope] });
+      const lineId = (await workspace(w)).contracts.find((c) => c.id === draft.id)!.lines[0].id;
+      const decision = await evidence(w.organizationId, "SERVICE_SCOPE_CONFIRMATION");
+      const today = new Date().toISOString().slice(0, 10);
+      await K.ct.defineResponsibilityBoundary({ lineItemId: lineId, decisionEvidenceDocumentId: decision, rows: [{ responsibilityArea: "COMPLIANCE_MONITORING", responsibleParty: "TES", effectiveResponsibilityDate: today }] });
+      await K.ct.assignPricingPackage({ lineItemId: lineId, decisionEvidenceDocumentId: decision, pricingBasis: "monthly_package", packageCode: pkg, feeMinorUnits: 99000, feeCurrency: "CAD" });
+      for (const rule of ["CUSTOMER_AUTHORITY_NOTICE", "SERVICE_SCOPE_CONFIRMATION", "RESPONSIBILITY_START_CONFIRMATION", "REQUIRED_SETTINGS_CONFIRMATION", "PRICING_PACKAGE_CONFIRMATION"]) {
+        await K.ct.linkContractEvidence({ contractId: draft.id, ruleCode: rule, evidenceDocumentId: rule === "CUSTOMER_AUTHORITY_NOTICE" ? first.notice : await evidence(w.organizationId, rule) });
+      }
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a draft for the new engagement is not yet a service");
+      await sign(draft.id);
+      const current = await serviceType();
+      assert.equal(current?.state, "contracted");
+      assert.deepEqual(names(current), ["Renewed compliance"], "only the new engagement's contract, not the earlier package");
+      assert.equal(current && "contractReference" in current ? current.contractReference : null, draft.contractReference);
+
+      // both contracts remain in the workspace history, the old one untouched
+      const all = (await workspace(w)).contracts;
+      assert.deepEqual(all.map((c) => [c.engagementId, c.contractStatus]).sort(), [[newEngagementId, "signed"], [w.engagementId, "signed"]].sort());
     });
 
     it("an authority replacement returns a ready contract to draft and invalidates the old authority's decisions", async () => {

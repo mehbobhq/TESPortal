@@ -647,13 +647,14 @@ function coverageInsert(id: string, termId: string, policyId: string, organizati
  * as history.
  */
 export async function renewPolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId", "policyNumber", "termStart", "termEnd", "coverages"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId", "policyNumber", "termStart", "termEnd", "coverages"])
   const policyId = parseUuid(input.policyId, "policyId")
   const explicitNumber = input.policyNumber === undefined || input.policyNumber === null ? null : prepareNumber(input.policyNumber, "policyNumber")
   const termStart = parseCalendarDate(input.termStart, "termStart")
   const termEnd = optionalDate(input.termEnd, "termEnd")
 
   const { organizationId, policy } = await lockPolicy(ctx, policyId, { requireActivePolicy: true })
+  assertScopedOrganization(input.organizationId, organizationId)
   assertPeriod(policy.family, termStart, termEnd)
   const coverages = parseCoverageList(input.coverages, policy.family, "coverages")
   await requireActiveInsurer(ctx, policy.insurerOrganizationId)
@@ -699,19 +700,29 @@ export async function renewPolicy(ctx: OperationContext, rawInput: unknown): Pro
   return loadPolicy(ctx, policyId)
 }
 
+/**
+ * When a caller names the Organization a request is made under (the company route does), the policy must belong to it.
+ * A mismatch looks exactly like a missing policy, so a URL cannot be used to touch another company's record.
+ */
+function assertScopedOrganization(requested: unknown, actual: string): void {
+  if (requested === undefined) return
+  if (parseUuid(requested, "organizationId") !== actual) throw new InsuranceNotFoundError("Policy")
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // cancelTerm
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The one-way cancellation fact: a date inside the term (never in the future) and a controlled reason. */
 export async function cancelTerm(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["termId", "cancelledOn", "reason"])
+  const input = requireObject(rawInput, "input", ["termId", "organizationId", "cancelledOn", "reason"])
   const termId = parseUuid(input.termId, "termId")
   const cancelledOn = parseCalendarDate(input.cancelledOn, "cancelledOn")
   if (!isCancellationReason(input.reason)) throw new InsuranceValidationError("reason", "reason must be a supported cancellation reason.")
   const reason: CancellationReason = input.reason
 
   const { organizationId, policy, term } = await lockTerm(ctx, termId)
+  assertScopedOrganization(input.organizationId, organizationId)
   if (term.cancelledOn !== null) throw new InsuranceStateError("This term is already cancelled; correct the term to change the cancellation.")
   if (cancelledOn < term.termStart || (term.termEnd !== null && cancelledOn > term.termEnd)) {
     throw new InsuranceValidationError("cancelledOn", "The cancellation date must fall within the term.")
@@ -1244,9 +1255,10 @@ export async function correctBroker(ctx: OperationContext, rawInput: unknown): P
 
 /** Archive is RECORD lifecycle, not policy status: nothing about the policy's facts changes. */
 export async function archivePolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId"])
   const policyId = parseUuid(input.policyId, "policyId")
   const { organizationId, policy } = await lockPolicy(ctx, policyId, { requireActivePolicy: false })
+  assertScopedOrganization(input.organizationId, organizationId)
   if (policy.recordStatus === "archived") throw new InsuranceStateError("This policy is already archived.")
   await guarded(() => repo.setPolicyArchived(ctx.client, policyId, true))
   await record(ctx, "RECORD_ARCHIVED", "archivePolicy", { resourceType: "insurance_policy", resourceId: policyId, organizationId }, [
@@ -1256,9 +1268,10 @@ export async function archivePolicy(ctx: OperationContext, rawInput: unknown): P
 }
 
 export async function restorePolicy(ctx: OperationContext, rawInput: unknown): Promise<PolicyView> {
-  const input = requireObject(rawInput, "input", ["policyId"])
+  const input = requireObject(rawInput, "input", ["policyId", "organizationId"])
   const policyId = parseUuid(input.policyId, "policyId")
   const { organizationId, policy } = await lockPolicy(ctx, policyId, { requireActivePolicy: false })
+  assertScopedOrganization(input.organizationId, organizationId)
   if (policy.recordStatus !== "archived") throw new InsuranceStateError("This policy is not archived.")
   await guarded(() => repo.setPolicyArchived(ctx.client, policyId, false))
   await record(ctx, "RECORD_RESTORED", "restorePolicy", { resourceType: "insurance_policy", resourceId: policyId, organizationId }, [

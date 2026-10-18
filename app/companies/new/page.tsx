@@ -92,6 +92,13 @@ const CARGO_OPTIONS = [
   "Bulk & Other",
 ]
 
+/**
+ * "Cargo Information" is mandatory for a Customer in the original TES form, but there is no canonical storage for it yet (the
+ * operating-profile rules are regulation-specific, not cargo categories). While that is true the field stays on the form,
+ * disabled, and its mandatory rule cannot be enforced; flip this when a canonical owner exists. See docs/company-recovery.md.
+ */
+const CARGO_STORAGE_AVAILABLE = false
+
 const COMPANY_TYPES = [
   "Customer",
   "Prospect",
@@ -789,6 +796,82 @@ function evaluateDuplicates(form: HTMLFormElement) {
 }
 
 /* =========================================================
+   EXPLICIT CHOICES (no guessing: the canonical system needs
+   the issuing jurisdiction and the number type stated)
+========================================================= */
+const SELECT_CLASS =
+  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+function RegionSelect({
+  name,
+  label,
+  canadaOnly = false,
+}: {
+  name: string
+  label: string
+  canadaOnly?: boolean
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={name}>{label}</Label>
+      <select id={name} name={name} defaultValue="" className={SELECT_CLASS}>
+        <option value="">Not specified</option>
+        {REGIONS.filter((item) => !canadaOnly || item.country === "Canada").map((item) => (
+          <option key={`${item.country}-${item.code}`} value={item.code}>
+            {item.name} ({item.code})
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function NativeChoice({
+  name,
+  label,
+  options,
+}: {
+  name: string
+  label: string
+  options: Array<[string, string]>
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={name}>{label}</Label>
+      <select id={name} name={name} defaultValue={options[0][0]} className={SELECT_CLASS}>
+        {options.map(([value, text]) => (
+          <option key={value} value={value}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function UnavailableFieldsBanner() {
+  return (
+    <div className="rounded-lg border border-dashed border-amber-500/50 bg-amber-50/50 p-3 text-xs dark:bg-amber-950/20" role="note">
+      <p className="font-semibold text-foreground">Some fields on this form cannot be saved yet</p>
+      <p className="mt-1 text-muted-foreground">
+        Website, GST/HST account, service type and status, end date, payment method, cargo information, fleet provider names and
+        assessment date are kept here exactly as defined, but TES has no canonical storage for them yet. They are disabled and
+        marked &quot;Unavailable&quot; so nothing you type is lost silently. A new customer starts in onboarding.
+      </p>
+    </div>
+  )
+}
+
+/** Marks a field that is kept on the form (definition intact) but cannot be saved: it has no canonical storage yet. */
+function UnavailableNote() {
+  return (
+    <p className="text-[11px] text-amber-700 dark:text-amber-400" data-unavailable-note>
+      Unavailable: no canonical storage exists for this yet, so it is disabled rather than silently discarded.
+    </p>
+  )
+}
+
+/* =========================================================
    ADDRESS BLOCK
 ========================================================= */
 
@@ -1105,6 +1188,7 @@ export default function NewCompanyPage() {
   const [einNumber, setEinNumber] = useState("")
 
   const [selectedCargo, setSelectedCargo] = useState<string[]>([])
+  const [submitIssues, setSubmitIssues] = useState<Array<{ field: string; message: string }>>([])
 
   const [blockingFindings, setBlockingFindings] = useState<
     DuplicateFinding[]
@@ -1230,7 +1314,7 @@ export default function NewCompanyPage() {
     if (!companyName.trim()) return false
     if (!opRegion) return false
 
-    if (isCustomer && selectedCargo.length === 0) {
+    if (CARGO_STORAGE_AVAILABLE && isCustomer && selectedCargo.length === 0) {
       return false
     }
 
@@ -1295,6 +1379,7 @@ export default function NewCompanyPage() {
     }
 
     if (
+      CARGO_STORAGE_AVAILABLE &&
       isCustomer &&
       selectedCargo.length === 0
     ) {
@@ -1312,10 +1397,27 @@ export default function NewCompanyPage() {
       }
     }
 
+    {
+      const entered = new FormData(form)
+      const fullName = String(entered.get("contactPerson") || "").trim()
+      if (fullName && !String(entered.get("contactGivenName") || "").trim() && !String(entered.get("contactFamilyName") || "").trim()) {
+        setSubmitIssues([
+          {
+            field: "contactPerson",
+            message: "Enter the contact's given and/or family name below the full name; a full name is never split automatically.",
+          },
+        ])
+        return
+      }
+    }
+
     setSubmitting(true)
+    setSubmitIssues([])
 
     try {
       const formData = new FormData(form)
+      // The full name is the original field; what is saved is the confirmed given/family name beneath it.
+      formData.delete("contactPerson")
       const formEntries = Object.fromEntries(
         formData.entries()
       )
@@ -1332,19 +1434,22 @@ export default function NewCompanyPage() {
           opRegion,
           regCorpState: businessRegion,
           regCorpCountry: businessCountry,
-          businessNo:
-            opRegion === "US Only"
-              ? einNumber
-              : businessNumber,
-          ein: einNumber,
-          cargoTypes: selectedCargo,
+          // The Canadian Business Number and the US EIN are separate identifiers; neither is ever copied into the other.
+          businessNo: isCanada ? businessNumber : "",
+          ein: isUS ? einNumber : "",
         }),
       })
 
-      const result = await response.json()
+      const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        throw new Error(result.error || "Unable to create company.")
+        setSubmitIssues(
+          Array.isArray(result.issues) && result.issues.length > 0
+            ? result.issues
+            : [{ field: "", message: result.error || "Unable to create company." }]
+        )
+        setSubmitting(false)
+        return
       }
 
       const newCompany = result.company
@@ -1371,15 +1476,13 @@ export default function NewCompanyPage() {
         `/companies/${newCompany.id}/profile`
       )
     } catch (error) {
-      console.error(
-        "Unable to create company:",
-        error
-      )
-
-      window.alert(
-        "The company record could not be created. No record was intentionally removed."
-      )
-
+      console.error("Unable to create company:", error)
+      setSubmitIssues([
+        {
+          field: "",
+          message: "The company record could not be created and nothing was saved. Check your connection and try again.",
+        },
+      ])
       setSubmitting(false)
     }
   }
@@ -1413,6 +1516,8 @@ export default function NewCompanyPage() {
         onChange={handleFormChange}
         className="flex max-w-6xl flex-col gap-7"
       >
+        <UnavailableFieldsBanner />
+
         {/* ===================================================
             SECTION 1 — MASTER IDENTITY
         =================================================== */}
@@ -1543,7 +1648,30 @@ export default function NewCompanyPage() {
                 id="contactPerson"
                 name="contactPerson"
                 placeholder="Full Name"
+                onBlur={(event) => {
+                  const form = event.currentTarget.form
+                  if (!form) return
+                  const given = form.elements.namedItem("contactGivenName") as HTMLInputElement | null
+                  const family = form.elements.namedItem("contactFamilyName") as HTMLInputElement | null
+                  if (!given || !family || given.value || family.value) return
+                  const parts = event.currentTarget.value.trim().split(/\s+/).filter(Boolean)
+                  if (parts.length === 0) return
+                  // A suggestion for the person to confirm or correct below; it is never saved unseen.
+                  given.value = parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0]
+                  family.value = parts.length > 1 ? parts[parts.length - 1] : ""
+                }}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contactGivenName">Contact given name (confirm)</Label>
+              <Input id="contactGivenName" name="contactGivenName" placeholder="Given name" />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contactFamilyName">Contact family name (confirm)</Label>
+              <Input id="contactFamilyName" name="contactFamilyName" placeholder="Family name" />
+              <p className="text-[11px] text-muted-foreground">Filled from the full name as a suggestion; correct it if needed. This is what is saved.</p>
             </div>
 
             <div className="space-y-2">
@@ -1569,7 +1697,9 @@ export default function NewCompanyPage() {
                 name="website"
                 type="url"
                 placeholder="https://"
+                disabled
               />
+              <UnavailableNote />
             </div>
 
             <div className="space-y-2">
@@ -1771,17 +1901,7 @@ export default function NewCompanyPage() {
                   maxLength={10}
                 />
 
-                {/*
-                  US-only compatibility with current TES consumers
-                  that still read businessNo as BN/EIN.
-                */}
-                {opRegion === "US Only" && (
-                  <input
-                    type="hidden"
-                    name="businessNo"
-                    value={einNumber}
-                  />
-                )}
+                {/* The EIN is recorded as an EIN only; it is never copied into the Canadian Business Number. */}
               </div>
             )}
 
@@ -1796,12 +1916,14 @@ export default function NewCompanyPage() {
 
               <Input
                 name="gstHst"
+                disabled
                 placeholder={
                   businessCountry === "Canada"
                     ? "123456789 RT 0001"
                     : "Tax registration number"
                 }
               />
+              <UnavailableNote />
             </div>
           </CardContent>
         </Card>
@@ -1832,6 +1954,7 @@ export default function NewCompanyPage() {
                   <Select
                     name="svcType"
                     defaultValue="Premium"
+                    disabled
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1851,6 +1974,7 @@ export default function NewCompanyPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  <UnavailableNote />
                 </div>
 
                 <div className="space-y-2">
@@ -1859,6 +1983,7 @@ export default function NewCompanyPage() {
                   <Select
                     name="status"
                     defaultValue="Active"
+                    disabled
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1878,6 +2003,7 @@ export default function NewCompanyPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  <UnavailableNote />
                 </div>
 
                 <div className="space-y-2">
@@ -1900,7 +2026,10 @@ export default function NewCompanyPage() {
                   <Input
                     name="endDate"
                     type="date"
+                    disabled
                   />
+                  <UnavailableNote />
+                  <p className="text-[11px] text-muted-foreground">A new customer cannot start already ended. End a customer&apos;s service later from Edit, with a reason.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -1909,6 +2038,7 @@ export default function NewCompanyPage() {
                   <Select
                     name="payMethod"
                     defaultValue="E-Transfer"
+                    disabled
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1932,6 +2062,7 @@ export default function NewCompanyPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  <UnavailableNote />
                 </div>
 
                 <div className="flex flex-col space-y-2">
@@ -1944,6 +2075,7 @@ export default function NewCompanyPage() {
                       <Button
                         type="button"
                         variant="outline"
+                        disabled
                         className={`h-auto min-h-10 w-full justify-between px-3 py-2 ${
                           selectedCargo.length === 0
                             ? "text-muted-foreground"
@@ -2014,7 +2146,9 @@ export default function NewCompanyPage() {
                     type="hidden"
                     name="cargoTypes"
                     value={JSON.stringify(selectedCargo)}
+                    disabled
                   />
+                  <UnavailableNote />
                 </div>
               </CardContent>
             </Card>
@@ -2025,6 +2159,10 @@ export default function NewCompanyPage() {
                 <CardTitle className="text-sm">
                   Carrier Information
                 </CardTitle>
+
+                <CardDescription className="text-xs">
+                  Each number is recorded under the authority it belongs to; say which one it is and who issued it.
+                </CardDescription>
               </CardHeader>
 
               <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-4">
@@ -2035,10 +2173,22 @@ export default function NewCompanyPage() {
                       <Input name="mvid" />
                     </div>
 
+                    <NativeChoice name="mvidKind" label="Number type" options={[["MVID", "MVID"], ["RIN", "RIN (Ontario)"]]} />
+
+                    <RegionSelect name="mvidRegion" label="MVID issuing province" canadaOnly />
+
+                    <div className="hidden lg:block" />
+
                     <div className="space-y-2">
                       <Label>NSC / CVOR #</Label>
                       <Input name="nsc" />
                     </div>
+
+                    <NativeChoice name="nscKind" label="Number type" options={[["NSC", "NSC"], ["CVOR", "CVOR (Ontario)"]]} />
+
+                    <RegionSelect name="nscRegion" label="NSC issuing province" canadaOnly />
+
+                    <div className="hidden lg:block" />
                   </>
                 )}
 
@@ -2066,7 +2216,7 @@ export default function NewCompanyPage() {
                 </CardTitle>
 
                 <CardDescription className="text-xs">
-                  Account identifiers are treated as strong duplicate signals.
+                  Account identifiers are treated as strong duplicate signals. An IRP or IFTA account needs its base jurisdiction.
                 </CardDescription>
               </CardHeader>
 
@@ -2076,10 +2226,18 @@ export default function NewCompanyPage() {
                   <Input name="accIrp" />
                 </div>
 
+                <RegionSelect name="irpBase" label="IRP Base Province / State" />
+
+                <div className="hidden lg:block" />
+
                 <div className="space-y-2">
                   <Label>IFTA Account #</Label>
                   <Input name="accIfta" />
                 </div>
+
+                <RegionSelect name="iftaBase" label="IFTA Base Province / State" />
+
+                <div className="hidden lg:block" />
 
                 {isUS && (
                   <>
@@ -2150,12 +2308,14 @@ export default function NewCompanyPage() {
                 <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Truck GPS Provider</Label>
-                    <Input name="gpsProvider" />
+                    <Input name="gpsProvider" disabled />
+                    <UnavailableNote />
                   </div>
 
                   <div className="space-y-2">
                     <Label>Fuel Provider</Label>
-                    <Input name="fuelProvider" />
+                    <Input name="fuelProvider" disabled />
+                    <UnavailableNote />
                   </div>
 
                   <div className="space-y-2 sm:col-span-2">
@@ -2163,7 +2323,9 @@ export default function NewCompanyPage() {
                     <Input
                       name="assessmentDate"
                       type="date"
+                      disabled
                     />
+                    <UnavailableNote />
                   </div>
                 </CardContent>
               </Card>
@@ -2240,6 +2402,25 @@ export default function NewCompanyPage() {
             />
           </CardContent>
         </Card>
+
+        {submitIssues.length > 0 && (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"
+          >
+            <p className="font-semibold text-destructive">
+              The record was not created. Nothing was saved.
+            </p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-destructive">
+              {submitIssues.map((issue, index) => (
+                <li key={`${issue.field}-${index}`}>
+                  {issue.field ? <span className="font-mono text-xs">{issue.field}: </span> : null}
+                  {issue.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* ===================================================
             SAVE

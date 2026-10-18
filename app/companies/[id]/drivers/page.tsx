@@ -1,5 +1,9 @@
 "use client"
 
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyDriversPage from "./legacy-drivers"
+import { CompanyMissing } from "@/components/company-missing"
+import { readCompanyLookup } from "@/lib/company-lookup"
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
@@ -17,11 +21,12 @@ type DriverRow = {
 }
 type Company = { id: string; name: string; kind: string; status: string }
 
-export default function DriversPage() {
+function CanonicalDrivers() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
   const [company, setCompany] = useState<Company | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [drivers, setDrivers] = useState<DriverRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -31,7 +36,11 @@ export default function DriversPage() {
     Promise.all([fetch(`${base}/profile`, { cache: "no-store" }), fetch(`${base}/drivers`, { cache: "no-store" })])
       .then(async ([profile, list]) => {
         if (cancelled) return
-        setCompany(profile.ok ? (await profile.json()).company : null)
+        {
+          const lookup = await readCompanyLookup<Company>(profile)
+          setCompany(lookup.company)
+          setLookupFailed(lookup.failed)
+        }
         if (list.ok) setDrivers((await list.json()).drivers ?? [])
         else setError((await list.json().catch(() => null))?.error ?? "Unable to load drivers.")
       })
@@ -43,7 +52,7 @@ export default function DriversPage() {
   }, [base])
 
   if (loading) return <div className="p-10 text-center">Loading...</div>
-  if (!company) return <div className="p-10 text-center">Company not found.</div>
+  if (!company) return <CompanyMissing failed={lookupFailed} />
 
   return (
     <div className="flex flex-col gap-6 pb-10">
@@ -84,5 +93,20 @@ export default function DriversPage() {
         they have no canonical PostgreSQL storage yet.
       </p>
     </div>
+  )
+}
+
+export default function DriversPage(props: { params: Promise<{ id: string }> }) {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Drivers"
+      description="The original driver register (Add Driver, existing-driver check, licence, filters, driver detail with qualifications, training, screening and performance) saves only in this browser; its drivers are separate from the canonical drivers listed under TES records and none of it is in the TES database. It is kept unchanged so nothing is lost. Nothing here was changed or deleted."
+      canonical={<CanonicalDrivers />}
+    >
+      <LegacyDriversPage params={props.params} />
+    </LegacyWorkspaceGate>
   )
 }

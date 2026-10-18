@@ -16,9 +16,12 @@ import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { LoadingState, EmptyState } from "@/src/components/shared/StateDisplays"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 
+type SectionState = "ok" | "not_permitted"
+
 type CompanyProfile = {
   id: string
   name: string
+  legalName: string
   kind: string
   region: string
   status: string
@@ -26,50 +29,46 @@ type CompanyProfile = {
   dba: string | null
   contact: string | null
   phone: string | null
-  website: string | null
   email: string | null
   billingEmail: string | null
-  opRegion: "Canada Only" | "US Only" | "Cross-Border"
+  opRegion: "Canada Only" | "US Only" | "Cross-Border" | null
   incorpNo: string | null
   businessNo: string | null
-  gstHst: string | null
+  ein: string | null
   regCorpState: string | null
+  regCorpCountry: string | null
   usdot: string | null
   mc: string | null
   nsc: string | null
   mvid: string | null
   scac: string | null
   carrierCode: string | null
-  assessmentDate?: string | null
-  svcType?: string | null
-  startDate?: string | null
-  endDate?: string | null
-  payMethod?: string | null
-  cargoInfo?: string | null
-  accIrp?: string | null
-  accIfta?: string | null
-  accNyhut?: string | null
-  accNm?: string | null
-  accKyu?: string | null
-  accOr?: string | null
-  accCt?: string | null
-  gpsProvider?: string | null
-  fuelProvider?: string | null
-  reg_street?: string | null
-  reg_city?: string | null
-  reg_state?: string | null
-  reg_zip?: string | null
-  reg_country?: string | null
-  mail_street?: string | null
-  mail_city?: string | null
-  mail_state?: string | null
-  mail_zip?: string | null
-  mail_country?: string | null
-  yard_street?: string | null
-  yard_city?: string | null
-  yard_state?: string | null
-  yard_zip?: string | null
-  yard_country?: string | null
+  accIrp: string | null
+  accIfta: string | null
+  accNyhut: string | null
+  accNm: string | null
+  accKyu: string | null
+  accOr: string | null
+  accCt: string | null
+  startDate: string | null
+  serviceStage: string | null
+  reg_street: string | null
+  reg_city: string | null
+  reg_state: string | null
+  reg_zip: string | null
+  reg_country: string | null
+  mail_street: string | null
+  mail_city: string | null
+  mail_state: string | null
+  mail_zip: string | null
+  mail_country: string | null
+  yard_street: string | null
+  yard_city: string | null
+  yard_state: string | null
+  yard_zip: string | null
+  yard_country: string | null
+  sections: Record<"identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations", SectionState>
+  notRecordedYet: string[]
 }
 
 const ACTIVITY_FILTERS: { label: string; value: string }[] = [
@@ -138,6 +137,8 @@ export default function CompanyProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [activityFilter, setActivityFilter] = useState<string>("all")
   const [activityLimit, setActivityLimit] = useState(20)
+  // Real counts from the canonical lists (the original bar showed hard-coded zeros). null = not loaded, "denied" = not permitted.
+  const [fleet, setFleet] = useState<{ trucks: number; trailers: number; drivers: number } | "denied" | null>(null)
 
   useEffect(() => {
     const id = params?.id as string
@@ -174,6 +175,32 @@ export default function CompanyProfilePage() {
     }
   }, [params?.id])
 
+  useEffect(() => {
+    const id = params?.id as string
+    if (!id) return
+    let cancelled = false
+    Promise.all([
+      fetch(`/api/companies/${encodeURIComponent(id)}/vehicles`, { cache: "no-store" }),
+      fetch(`/api/companies/${encodeURIComponent(id)}/drivers`, { cache: "no-store" }),
+    ])
+      .then(async ([vehicles, drivers]) => {
+        if (cancelled) return
+        if (!vehicles.ok || !drivers.ok) return setFleet("denied")
+        const v = ((await vehicles.json()).vehicles ?? []) as Array<{ vehicleType?: string; effectiveTo?: string | null }>
+        const d = ((await drivers.json()).drivers ?? []) as Array<{ effectiveTo?: string | null }>
+        const open = v.filter((item) => !item.effectiveTo)
+        setFleet({
+          trailers: open.filter((item) => item.vehicleType === "TRAILER").length,
+          trucks: open.filter((item) => item.vehicleType === "TRUCK_TRACTOR" || item.vehicleType === "STRAIGHT_TRUCK").length,
+          drivers: d.filter((item) => !item.effectiveTo).length,
+        })
+      })
+      .catch(() => !cancelled && setFleet("denied"))
+    return () => {
+      cancelled = true
+    }
+  }, [params?.id])
+
   // Deferred: no canonical activity read service exists yet; the browser-stored feed was removed.
   const activity: ActivityEntry[] = []
 
@@ -204,10 +231,13 @@ export default function CompanyProfilePage() {
 
   // --- Dynamic Visibility Logic ---
   const isCustomer = company.kind === "Customer"
-  const opRegion = company.opRegion || "Canada Only"
-  const isCanada = opRegion === "Canada Only" || opRegion === "Cross-Border"
-  const isUS = opRegion === "US Only" || opRegion === "Cross-Border"
-  const showCustoms = opRegion === "Cross-Border"
+  // The recorded operating region decides which jurisdiction-specific sections are shown; when none is recorded, show all.
+  const opRegion = company.opRegion
+  const isCanada = opRegion === null || opRegion === "Canada Only" || opRegion === "Cross-Border"
+  const isUS = opRegion === null || opRegion === "US Only" || opRegion === "Cross-Border"
+  const showCustoms = opRegion === null || opRegion === "Cross-Border" || Boolean(company.scac || company.carrierCode)
+  const NO_CANONICAL = "Not recorded (no canonical storage yet)"
+  const withheld = (section: keyof CompanyProfile["sections"]) => company.sections[section] === "not_permitted"
 
   const formatAddress = (prefix: "reg" | "mail" | "yard") => {
     const street = company[`${prefix}_street`]
@@ -216,12 +246,13 @@ export default function CompanyProfilePage() {
     const zip = company[`${prefix}_zip`]
     const country = company[`${prefix}_country`]
 
+    if (withheld("locations")) return <p className="text-sm text-muted-foreground font-medium">Not permitted to view</p>
     if (!street && !city && !state) return null
     return (
       <div className="text-sm font-medium leading-snug">
         {street}
         <br />
-        {city && state ? `${city}, ${state} ${zip}` : ""}
+        {city && state ? `${city}, ${state}${zip ? ` ${zip}` : ""}` : ""}
         <br />
         {country}
       </div>
@@ -239,13 +270,17 @@ export default function CompanyProfilePage() {
       </button>
       <button
         type="button"
-        className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted text-foreground transition-colors shadow-2xs"
+        disabled
+        title="Not available yet"
+        className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground opacity-60 shadow-2xs"
       >
         Check Status
       </button>
       <button
         type="button"
-        className="inline-flex items-center justify-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
+        disabled
+        title="Not available yet"
+        className="inline-flex items-center justify-center rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground opacity-50 shadow-2xs"
       >
         New Case
       </button>
@@ -256,50 +291,33 @@ export default function CompanyProfilePage() {
     <div className="flex flex-col gap-4 pb-10">
       <CompanyWorkspaceHeader company={company} section="Profile" actions={profileActions} />
 
-      {/* 1. STATS BAR */}
+      {/* 1. RECORD SUMMARY (values read from PostgreSQL; nothing here is estimated) */}
       <div className="bg-card rounded-lg border border-border shadow-xs p-4 flex flex-col gap-4">
-        {/* COMPACT STATS BAR */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-x-6 sm:gap-x-8 gap-y-3 text-sm">
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Operating Region</p>
-              <p className="font-medium">{company.region}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Staff</p>
-              <p className="font-medium">0</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Trucks</p>
-              <p className="font-medium">0</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Trailers</p>
-              <p className="font-medium">0</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Accounts</p>
-              <p className="font-medium flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="size-3.5" /> Good
-              </p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Items</p>
-              <p className="font-medium flex items-center gap-1 text-amber-500">
-                <AlertCircle className="size-3.5" /> Pending
-              </p>
-            </div>
+        <div className="flex flex-wrap items-center gap-x-6 sm:gap-x-8 gap-y-3 text-sm">
+          <div>
+            <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Operating Region</p>
+            <p className="font-medium">{withheld("operatingProfile") ? "Not permitted to view" : company.opRegion ?? "Not recorded"}</p>
           </div>
-
-          <div className="bg-muted/40 border border-border rounded-md px-4 py-1.5 text-right shrink-0">
-            <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-0.5">
-              Assessment Date
-            </p>
-            <p className="font-semibold text-sm flex items-center justify-end gap-1.5 text-primary">
-              <Calendar className="size-3.5" />
-              {company.assessmentDate || "Pending"}
-            </p>
+          <div>
+            <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Registered In</p>
+            <p className="font-medium">{company.region}</p>
           </div>
+          <div>
+            <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Record Status</p>
+            <p className="font-medium">{company.status}</p>
+          </div>
+          {([["Trucks", "trucks"], ["Trailers", "trailers"], ["Drivers", "drivers"]] as const).map(([label, key]) => (
+            <div key={key}>
+              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">{label}</p>
+              <p className="font-medium">{fleet === null ? "…" : fleet === "denied" ? "Not permitted to view" : fleet[key]}</p>
+            </div>
+          ))}
+          {isCustomer && (
+            <div>
+              <p className="text-muted-foreground text-[11px] uppercase tracking-wider mb-0.5">Service Stage</p>
+              <p className="font-medium">{withheld("customer") ? "Not permitted to view" : company.serviceStage ?? "Not recorded"}</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -317,11 +335,11 @@ export default function CompanyProfilePage() {
               <ReadOnlyField label="Company Name" value={company.name} />
               <ReadOnlyField label="Company Record Type" value={company.kind} />
               <ReadOnlyField label="DBA" value={company.dba} />
-              <ReadOnlyField label="Phone" value={company.phone} />
-              <ReadOnlyField label="Website" value={company.website} />
-              <ReadOnlyField label="Account Email" value={company.email} />
-              <ReadOnlyField label="Billing Email" value={company.billingEmail} />
-              <ReadOnlyField label="Primary Contact" value={company.contact} />
+              <ReadOnlyField label="Phone" value={withheld("contacts") ? "Not permitted to view" : company.phone} />
+              <ReadOnlyField label="Website" value={NO_CANONICAL} />
+              <ReadOnlyField label="Account Email" value={withheld("contacts") ? "Not permitted to view" : company.email} />
+              <ReadOnlyField label="Billing Email" value={withheld("contacts") ? "Not permitted to view" : company.billingEmail} />
+              <ReadOnlyField label="Primary Contact" value={withheld("contacts") ? "Not permitted to view" : company.contact} />
             </div>
           </div>
 
@@ -353,57 +371,38 @@ export default function CompanyProfilePage() {
           </div>
 
           {isCustomer && (
-            <>
               <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden">
                 <div className="bg-muted/30 py-2.5 px-4 border-b border-border">
                   <h3 className="text-sm font-semibold text-primary">Customer Information</h3>
                 </div>
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <ReadOnlyField label="Service Type" value={company.svcType} />
+                  <ReadOnlyField label="Service Type" value={NO_CANONICAL} />
                   <ReadOnlyField label="Service Status" value={company.status} />
-                  <ReadOnlyField label="Start Date" value={company.startDate} />
-                  <ReadOnlyField label="End Date" value={company.endDate} />
-                  <ReadOnlyField label="Operating Region" value={company.opRegion} />
-                  <ReadOnlyField label="Payment Method" value={company.payMethod} />
-                  <ReadOnlyField label="Cargo Information" value={company.cargoInfo} />
+                  <ReadOnlyField label="Service Start Date" value={withheld("customer") ? "Not permitted to view" : company.startDate} />
+                  <ReadOnlyField label="End Date" value={NO_CANONICAL} />
+                  <ReadOnlyField label="Service Stage" value={withheld("customer") ? "Not permitted to view" : company.serviceStage} />
+                  <ReadOnlyField label="Operating Region" value={withheld("operatingProfile") ? "Not permitted to view" : company.opRegion} />
+                  <ReadOnlyField label="Payment Method" value={NO_CANONICAL} />
+                  <ReadOnlyField label="Cargo Information" value={NO_CANONICAL} />
                 </div>
               </div>
+          )}
 
+          <>
               <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden">
                 <div className="bg-muted/30 py-2.5 px-4 border-b border-border">
                   <h3 className="text-sm font-semibold text-primary">Business Information</h3>
                 </div>
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <ReadOnlyField
-                    label={
-                      opRegion === "Canada Only"
-                        ? "Canadian Corporate Number"
-                        : opRegion === "US Only"
-                        ? "State File / Charter Number"
-                        : "Incorporation # / State File"
-                    }
+                    label="Incorporation / Charter Number"
                     value={company.incorpNo}
                   />
                   <ReadOnlyField
-                    label={
-                      opRegion === "Canada Only"
-                        ? "CRA Business Number (BN)"
-                        : opRegion === "US Only"
-                        ? "IRS Employer ID (EIN)"
-                        : "Business Number / EIN"
-                    }
+                    label="CRA Business Number (BN)"
                     value={company.businessNo}
                   />
-                  <ReadOnlyField
-                    label={
-                      opRegion === "Canada Only"
-                        ? "GST / HST Account"
-                        : opRegion === "US Only"
-                        ? "State Sales Tax ID"
-                        : "Tax Registration #"
-                    }
-                    value={company.gstHst}
-                  />
+                  <ReadOnlyField label="IRS Employer ID (EIN)" value={company.ein} />
                   <ReadOnlyField label="Registered Province/State" value={company.regCorpState} />
                 </div>
               </div>
@@ -415,14 +414,14 @@ export default function CompanyProfilePage() {
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {isCanada && (
                     <>
-                      <ReadOnlyField label="MVID / RIN #" value={company.mvid} />
-                      <ReadOnlyField label="NSC / CVOR #" value={company.nsc} />
+                      <ReadOnlyField label="MVID / RIN #" value={withheld("authorities") ? "Not permitted to view" : company.mvid} />
+                      <ReadOnlyField label="NSC / CVOR #" value={withheld("authorities") ? "Not permitted to view" : company.nsc} />
                     </>
                   )}
                   {isUS && (
                     <>
-                      <ReadOnlyField label="US DOT #" value={company.usdot} />
-                      <ReadOnlyField label="MC #" value={company.mc} />
+                      <ReadOnlyField label="US DOT #" value={withheld("authorities") ? "Not permitted to view" : company.usdot} />
+                      <ReadOnlyField label="MC #" value={withheld("authorities") ? "Not permitted to view" : company.mc} />
                     </>
                   )}
                 </div>
@@ -433,15 +432,15 @@ export default function CompanyProfilePage() {
                   <h3 className="text-sm font-semibold text-primary">Tax & Compliance Accounts</h3>
                 </div>
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <ReadOnlyField label="IRP Account #" value={company.accIrp} />
-                  <ReadOnlyField label="IFTA Account #" value={company.accIfta} />
+                  <ReadOnlyField label="IRP Account #" value={withheld("authorities") ? "Not permitted to view" : company.accIrp} />
+                  <ReadOnlyField label="IFTA Account #" value={withheld("registrations") ? "Not permitted to view" : company.accIfta} />
                   {isUS && (
                     <>
-                      <ReadOnlyField label="NY HUT Account #" value={company.accNyhut} />
-                      <ReadOnlyField label="NM WDT Account #" value={company.accNm} />
-                      <ReadOnlyField label="Kentucky KYU #" value={company.accKyu} />
-                      <ReadOnlyField label="Oregon Account #" value={company.accOr} />
-                      <ReadOnlyField label="CT DRS Account #" value={company.accCt} />
+                      <ReadOnlyField label="NY HUT Account #" value={withheld("registrations") ? "Not permitted to view" : company.accNyhut} />
+                      <ReadOnlyField label="NM WDT Account #" value={withheld("registrations") ? "Not permitted to view" : company.accNm} />
+                      <ReadOnlyField label="Kentucky KYU #" value={withheld("registrations") ? "Not permitted to view" : company.accKyu} />
+                      <ReadOnlyField label="Oregon Account #" value={withheld("registrations") ? "Not permitted to view" : company.accOr} />
+                      <ReadOnlyField label="CT DRS Account #" value={withheld("registrations") ? "Not permitted to view" : company.accCt} />
                     </>
                   )}
                 </div>
@@ -454,8 +453,8 @@ export default function CompanyProfilePage() {
                       <h3 className="text-sm font-semibold text-primary">Customs Information</h3>
                     </div>
                     <div className="p-4 grid gap-4">
-                      <ReadOnlyField label="SCAC" value={company.scac} />
-                      <ReadOnlyField label="Carrier Code" value={company.carrierCode} />
+                      <ReadOnlyField label="SCAC" value={withheld("registrations") ? "Not permitted to view" : company.scac} />
+                      <ReadOnlyField label="Carrier Code" value={withheld("registrations") ? "Not permitted to view" : company.carrierCode} />
                     </div>
                   </div>
                 )}
@@ -465,13 +464,21 @@ export default function CompanyProfilePage() {
                     <h3 className="text-sm font-semibold text-primary">Fleet Information</h3>
                   </div>
                   <div className="p-4 grid sm:grid-cols-2 gap-4">
-                    <ReadOnlyField label="Truck GPS Provider" value={company.gpsProvider} />
-                    <ReadOnlyField label="Fuel Provider" value={company.fuelProvider} />
+                    <ReadOnlyField label="Truck GPS Provider" value={NO_CANONICAL} />
+                    <ReadOnlyField label="Fuel Provider" value={NO_CANONICAL} />
+                    <ReadOnlyField label="Assessment Date" value={NO_CANONICAL} />
                   </div>
                 </div>
+
+                <div className={`rounded-xl border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground ${!showCustoms ? "sm:col-span-2" : ""}`}>
+                  <p className="font-semibold text-foreground">Not recorded by the canonical system yet</p>
+                  <p className="mt-1">
+                    GST/HST account, website, cargo types, service type, payment method, assessment date and fleet provider
+                    names have no canonical home yet, so no value is shown for them (an empty field would suggest none exists).
+                  </p>
+                </div>
               </div>
-            </>
-          )}
+          </>
         </div>
 
         {/* RIGHT COLUMN: Sticky Sidebar */}
@@ -486,22 +493,25 @@ export default function CompanyProfilePage() {
                   <FileText className="size-3.5" />
                 </div>
                 <div className="flex flex-col">
-                  <p className="text-sm font-medium">Record Created</p>
+                  <p className="text-sm font-medium">Record created</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {company.createdAt ? new Date(company.createdAt).toISOString().split("T")[0] : "Unknown Date"} • Admin
+                    {company.createdAt ? new Date(company.createdAt).toISOString().split("T")[0] : "Unknown Date"}
                   </p>
                 </div>
               </div>
 
               <div className="pt-3 border-t border-border flex flex-col gap-2">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quick Note</label>
+                <label htmlFor="quick-note" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quick Note</label>
                 <textarea
-                  placeholder="Add a quick note..."
-                  className="min-h-[90px] w-full rounded-lg border border-border bg-background p-2.5 text-xs focus:border-primary focus:outline-hidden resize-none"
+                  id="quick-note"
+                  disabled
+                  placeholder="Notes have no canonical storage yet"
+                  className="min-h-[90px] w-full rounded-lg border border-border bg-background p-2.5 text-xs resize-none opacity-60"
                 />
                 <button
                   type="button"
-                  className="w-full rounded-lg bg-primary py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-2xs"
+                  disabled
+                  className="w-full rounded-lg bg-primary py-1.5 text-xs font-semibold text-primary-foreground opacity-50 shadow-2xs"
                 >
                   Save Note
                 </button>

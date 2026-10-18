@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { DriverWorkspace } from "@/src/components/drivers/DriverWorkspace"
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
 import {
   getCompany,
   loadCompanyDriverStore,
@@ -24,7 +25,7 @@ type DriverPageProps = {
   }>
 }
 
-export default function DriverPage({ params }: DriverPageProps) {
+function LegacyDriverPage({ params }: DriverPageProps) {
   const { id: companyId, driverId } = use(params)
   const router = useRouter()
 
@@ -229,5 +230,19 @@ const allDriversCohort = companyStore.relationships
       onBack={() => router.push(`/companies/${companyId}/drivers`)}
       onRefresh={refresh}
     />
+  )
+}
+
+
+export default function DriverPage(props: DriverPageProps) {
+  const { id: companyId } = use(props.params)
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Driver compliance record"
+      description="The detailed driver compliance record (qualifications, training, roadside events, documents) is saved only in this browser. Canonical drivers appear in the Drivers list; their detailed record is not in the TES database yet. Nothing here was changed or deleted."
+    >
+      <LegacyDriverPage {...props} />
+    </LegacyWorkspaceGate>
   )
 }

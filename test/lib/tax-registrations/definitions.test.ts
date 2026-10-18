@@ -21,14 +21,16 @@ before(async () => {
 
 const invalid = (fn: () => unknown) => assert.throws(fn, (error) => error instanceof E.RegistrationValidationError);
 const PROGRAMS = ["IFTA", "CT_HUF", "NY_HUT", "KYU", "NM_WDT", "OR_WMT", "FUEL_CHARGE", "TX_EXCISE", "AR_MFT", "ON_TOBACCO", "SCAC", "CA_CARRIER_CODE"] as const;
+/** The twelve programs of migration 0016 plus GST_HST (migration 0034). */
+const ALL_PROGRAMS = [...PROGRAMS, "GST_HST"] as const;
 
 describe("registration programs and statuses", () => {
-  it("has exactly the twelve seeded programs, in catalogue order", () => {
-    assert.deepEqual([...D.PROGRAM_CODES], [...PROGRAMS]);
-    assert.deepEqual(Object.keys(D.PROGRAM_DEFINITIONS), [...PROGRAMS]);
-    for (const program of PROGRAMS) assert.equal(D.PROGRAM_DEFINITIONS[program].program, program);
-    const orders = PROGRAMS.map((program) => D.PROGRAM_DEFINITIONS[program].sortOrder);
-    assert.deepEqual(orders, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]);
+  it("has exactly the twelve programs of 0016 plus GST_HST (0034), in catalogue order", () => {
+    assert.deepEqual([...D.PROGRAM_CODES], [...ALL_PROGRAMS]);
+    assert.deepEqual(Object.keys(D.PROGRAM_DEFINITIONS), [...ALL_PROGRAMS]);
+    for (const program of ALL_PROGRAMS) assert.equal(D.PROGRAM_DEFINITIONS[program].program, program);
+    const orders = ALL_PROGRAMS.map((program) => D.PROGRAM_DEFINITIONS[program].sortOrder);
+    assert.deepEqual(orders, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130]);
   });
 
   it("is not an authority register: no operating-authority kind and no Form 2290 is a program", () => {
@@ -84,7 +86,28 @@ describe("number normalization", () => {
       assert.equal(typeof rule.source === "string" && rule.source.length > 0, rule.classification === "AUTHORITATIVE", rule.version);
       assert.match(rule.version, /\.v\d+$/);
     }
-    assert.deepEqual(PROGRAMS.filter((program) => D.PROGRAM_DEFINITIONS[program].rule.classification === "AUTHORITATIVE"), ["SCAC"]);
+    assert.deepEqual(ALL_PROGRAMS.filter((program) => D.PROGRAM_DEFINITIONS[program].rule.classification === "AUTHORITATIVE"), ["SCAC", "GST_HST"]);
+  });
+
+  it("GST_HST (AUTHORITATIVE, CRA): nine digits, RT, four digits; spacing and case are not significant; a national Canadian number space", () => {
+    const def = D.PROGRAM_DEFINITIONS.GST_HST;
+    assert.deepEqual([def.family, def.jurisdictionScope, def.issuerCountry, def.regionRequired, def.fixedRegion], ["SALES_TAX", "NATIONAL", "CA", false, null]);
+    assert.equal(def.rule.classification, "AUTHORITATIVE");
+    for (const ok of ["123456782 RT 0001", "123456782RT0001", "123456782-rt-0001", " 123456782 rt0001 "]) {
+      assert.equal(D.prepareRegistrationNumber("GST_HST", ok).normalized, "123456782RT0001", ok);
+    }
+    assert.equal(D.prepareRegistrationNumber("GST_HST", "123456782 RT 0001").ruleVersion, "gst_hst.cra_program_account.v1");
+    for (const bad of ["", "123456782", "12345678 RT 0001", "123456782 RC 0001", "123456782 RT 001", "123456782 RT 00012", "ABCDEFGHI RT 0001"]) invalid(() => D.prepareRegistrationNumber("GST_HST", bad));
+    assert.deepEqual(D.resolveJurisdiction("GST_HST", undefined), { country: "CA", region: null });
+    invalid(() => D.resolveJurisdiction("GST_HST", { country: "CA", region: "ON" }));
+  });
+
+  it("only a base-jurisdiction program (IFTA) may be explicitly unresolved, and only when stated", () => {
+    assert.deepEqual(D.resolveJurisdiction("IFTA", { unresolved: true }), { country: null, region: null });
+    invalid(() => D.resolveJurisdiction("IFTA", undefined));
+    invalid(() => D.resolveJurisdiction("IFTA", { unresolved: false }));
+    invalid(() => D.resolveJurisdiction("IFTA", { unresolved: true, region: "ON" }));
+    for (const program of ["NY_HUT", "FUEL_CHARGE", "SCAC", "GST_HST"] as const) invalid(() => D.resolveJurisdiction(program, { unresolved: true }));
   });
 
   it("SCAC (AUTHORITATIVE, NMFTA): two to four letters, trimmed and upper-cased", () => {
@@ -210,9 +233,9 @@ describe("drift against the seeded catalogue (PostgreSQL)", { skip: !dbEnabled }
     const pools = db.openPools();
     try {
       const rows = (await pools.admin.query(`SELECT * FROM public.registration_programs ORDER BY sort_order`)).rows;
-      assert.deepEqual(rows.map((row) => row.code), [...PROGRAMS]);
+      assert.deepEqual(rows.map((row) => row.code), [...ALL_PROGRAMS]);
       for (const row of rows) {
-        const def = D.PROGRAM_DEFINITIONS[row.code as (typeof PROGRAMS)[number]];
+        const def = D.PROGRAM_DEFINITIONS[row.code as (typeof ALL_PROGRAMS)[number]];
         assert.ok(def, row.code);
         assert.equal(row.program_family, def.family, row.code);
         assert.equal(row.jurisdiction_scope, def.jurisdictionScope, row.code);

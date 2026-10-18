@@ -434,6 +434,11 @@ function mergeVersionFields(definition: ProgramDefinition, current: VersionRecor
       ? resolveJurisdiction(definition.program, source.jurisdiction, "jurisdiction")
       : { country: current.jurisdictionCountry, region: current.jurisdictionRegion }
 
+  // A recorded version stays unresolved only as the INITIAL one; every later version names its jurisdiction (migration 0034).
+  if (definition.jurisdictionScope === "BASE_JURISDICTION" && jurisdiction.country === null) {
+    throw new RegistrationValidationError("jurisdiction", `The base jurisdiction of this ${definition.program} account is not established yet; give it (as a correction) together with any other change.`)
+  }
+
   const issuedOn = source.issuedOn === undefined ? current.issuedOn : source.issuedOn === null ? null : parseDate(source.issuedOn, "issuedOn")
   const expiresOn = source.expiresOn === undefined ? current.expiresOn : source.expiresOn === null ? null : parseDate(source.expiresOn, "expiresOn")
   if (issuedOn !== null && expiresOn !== null && expiresOn < issuedOn) {

@@ -30,7 +30,7 @@ type Version = {
   effectiveFrom?: string
   effectiveTo?: string | null
   numberDisplay: string
-  jurisdictionCountry: string
+  jurisdictionCountry: string | null
   jurisdictionRegion: string | null
   issuedOn: string | null
   expiresOn: string | null
@@ -41,6 +41,9 @@ type View = {
   statusPeriods?: Array<Record<string, string | null>>
 } & Record<string, unknown>
 type CompanyHeader = { id: string; name: string; kind: string; status: string }
+
+/** Numbers whose issuing / base jurisdiction can be recorded as not yet established (set later by a correction). */
+const JURISDICTION_DEPENDENT = new Set(["MVID", "SAFETY_FITNESS", "IRP", "IFTA"])
 
 export default function CanonicalRegistryPanel({ config }: { config: RegistryPanelConfig }) {
   const params = useParams()
@@ -136,6 +139,7 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                 const version = view.current.version
                 const status = view.current.status?.[config.statusKey] ?? "—"
                 const archived = record.recordStatus === "archived"
+                const unresolved = JURISDICTION_DEPENDENT.has(record[config.typeField]) && !!version && !version.jurisdictionRegion
                 return (
                   <div key={record.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -144,7 +148,7 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                         {archived ? " (archived)" : ""}
                       </p>
                       <p className="text-[11px] text-muted-foreground">
-                        {[version?.jurisdictionRegion, version?.jurisdictionCountry].filter(Boolean).join(", ")}
+                        {unresolved ? "Jurisdiction not set" : [version?.jurisdictionRegion, version?.jurisdictionCountry].filter(Boolean).join(", ")}
                         {version?.issuedOn ? ` · issued ${version.issuedOn}` : ""}
                         {version?.expiresOn ? ` · expires ${version.expiresOn}` : ""}
                       </p>
@@ -206,8 +210,9 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                           <Input name="issuedOn" type="date" defaultValue={version?.issuedOn ?? ""} aria-label="Issued" />
                           <Input name="expiresOn" type="date" defaultValue={version?.expiresOn ?? ""} aria-label="Expires" />
                           <Button type="submit" size="sm" disabled={busy}>Save</Button>
-                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="change" defaultChecked /> A real-world change (the earlier version stays as history)</label>
-                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="correct" /> The recorded value was wrong (correct it; the wrong one is kept and flagged)</label>
+                          {unresolved ? <p className="sm:col-span-6 text-muted-foreground">The jurisdiction of this number has not been established. Enter it and save as a correction; the earlier version is kept.</p> : null}
+                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="change" defaultChecked={!unresolved} disabled={unresolved} /> A real-world change (the earlier version stays as history)</label>
+                          <label className="sm:col-span-6 flex items-center gap-2"><input type="radio" name="mode" value="correct" defaultChecked={unresolved} /> The recorded value was wrong (correct it; the wrong one is kept and flagged)</label>
                         </form>
                         <div className="pt-2 flex items-center gap-2">
                           <span>Correct status</span>
@@ -230,7 +235,7 @@ export default function CanonicalRegistryPanel({ config }: { config: RegistryPan
                           {(view.versions ?? []).map((v, index) => (
                             <li key={`${v.numberDisplay}-${v.effectiveFrom ?? index}`}>
                               {v.numberDisplay}
-                              {[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).length ? ` · ${[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).join(", ")}` : ""}
+                              {[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).length ? ` · ${[v.jurisdictionRegion, v.jurisdictionCountry].filter(Boolean).join(", ")}` : JURISDICTION_DEPENDENT.has(record[config.typeField]) ? " · jurisdiction not set" : ""}
                               {v.effectiveFrom ? ` · from ${v.effectiveFrom.slice(0, 10)}` : ""}
                               {v.effectiveTo ? ` to ${v.effectiveTo.slice(0, 10)}` : ""}
                               {v.recordStatus === "corrected" ? " · corrected (not genuine history)" : ""}

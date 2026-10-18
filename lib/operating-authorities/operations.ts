@@ -441,6 +441,11 @@ function mergeVersionFields(definition: KindDefinition, current: VersionRecord, 
       ? resolveJurisdiction(definition.kind, source.jurisdiction, "jurisdiction")
       : { country: current.jurisdictionCountry, region: current.jurisdictionRegion }
 
+  // Only the INITIAL version may be unresolved (migration 0034); every later version names its jurisdiction.
+  if (definition.regionRequired && jurisdiction.region === null) {
+    throw new OperatingAuthorityValidationError("jurisdiction", `The issuing jurisdiction of this ${definition.kind} is not established yet; give it (as a correction) together with any other change.`)
+  }
+
   const issuedOn = source.issuedOn === undefined ? current.issuedOn : source.issuedOn === null ? null : parseDate(source.issuedOn, "issuedOn")
   const expiresOn = source.expiresOn === undefined ? current.expiresOn : source.expiresOn === null ? null : parseDate(source.expiresOn, "expiresOn")
   if (expiresOn !== null && !definition.hasExpiry) {

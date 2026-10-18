@@ -80,7 +80,8 @@ export type VersionRecord = {
   numberDisplay: string
   numberNormalized: string
   normalizationRuleVersion: string
-  jurisdictionCountry: string
+  /** null only for an explicitly unresolved IRP base; an unresolved MVID / NSC keeps Canada and has no region. */
+  jurisdictionCountry: string | null
   jurisdictionRegion: string | null
   issuedOn: string | null
   expiresOn: string | null

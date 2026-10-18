@@ -8,12 +8,20 @@
  *     silently dropped), and an empty value is ignored, or
  *   - unknown: refused.
  *
- * Fields that need extra information the old form never collected (the issuing province of an MVID / NSC, the base jurisdiction
- * of an IRP / IFTA account, the given/family split of a contact name) now have their own explicit inputs, so nothing has to be
- * inferred from another field.
+ * Jurisdiction is never guessed. The creation form does not ask for the issuing province of an MVID / NSC or the base
+ * jurisdiction of an IRP / IFTA account. A jurisdiction that is fixed by the kind (RIN and CVOR are Ontario) is derived; a
+ * jurisdiction that the caller states through the optional companion inputs (mvidRegion, nscRegion, irpBase, iftaBase) is used;
+ * every other case is recorded as EXPLICITLY UNRESOLVED (migration 0034) and is set later by a correction in the
+ * registration-management workflow. The place of incorporation and the registered address are deliberately NOT used: neither is
+ * necessarily the regulatory base of the company.
+ *
+ * The Primary Contact is one field. Either an existing person is chosen (contactPersonId, an explicit decision by the user) or a
+ * full name is typed (contactPerson); the name is stored exactly as typed in the given-name part and is never split by guesswork
+ * (the Contacts workspace remains authoritative and can correct the structure). Names are never matched and merged automatically.
  */
 import { prepareChannel } from "@/lib/contacts/definitions"
 import { prepareProviderName, resolveCargoCategory, resolvePaymentMethod } from "@/lib/company-profile/definitions"
+import { prepareRegistrationNumber } from "@/lib/tax-registrations/definitions"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
 import type { ClassificationInput, CreateOrganizationInput } from "@/lib/corporate-identity/types"
 import { resolveCountryForJurisdiction } from "@/lib/jurisdictions"
@@ -41,6 +49,8 @@ export const FIELD_OWNERS = {
   ein: "organization_identifiers IRS_EIN (corporate identity)",
   startDate: "customer_engagements.started_at (customer relationship); Customer only",
   opRegion: "company_operating_scope_periods (company operating profile)",
+  contactPerson: "persons + person_name_versions + organization_person_relationships, purpose PRIMARY (contacts); the full name as typed, structure unconfirmed",
+  contactPersonId: "organization_person_relationships, purpose PRIMARY (contacts); an EXISTING person chosen by the user, never matched by name",
   contactGivenName: "persons + person_name_versions + organization_person_relationships, purpose PRIMARY (contacts)",
   contactFamilyName: "persons + person_name_versions + organization_person_relationships, purpose PRIMARY (contacts)",
   phone: "organization_channels PHONE / GENERAL (contacts)",
@@ -57,10 +67,11 @@ export const FIELD_OWNERS = {
   yard_: "locations + organization_location_assignments, role HOME_YARD (organization locations); Customer only",
   usdot: "operating_authorities USDOT (operating authorities)",
   mc: "operating_authorities MC (operating authorities)",
-  mvid: "operating_authorities MVID or RIN, per mvidKind (operating authorities)",
-  nsc: "operating_authorities SAFETY_FITNESS (NSC) or CVOR, per nscKind (operating authorities)",
-  accIrp: "operating_authorities IRP, base jurisdiction irpBase (operating authorities)",
-  accIfta: "registrations, program IFTA, base jurisdiction iftaBase (tax registrations)",
+  mvid: "operating_authorities MVID or RIN, per mvidKind (operating authorities); issuing province unresolved until established",
+  nsc: "operating_authorities SAFETY_FITNESS (NSC) or CVOR, per nscKind (operating authorities); issuing province unresolved until established",
+  accIrp: "operating_authorities IRP (operating authorities); base jurisdiction unresolved until established",
+  accIfta: "registrations, program IFTA (tax registrations); base jurisdiction unresolved until established",
+  gstHst: "registrations, program GST_HST (tax registrations); a format-checked CRA program account, no filing or tax-collection claim",
   accNyhut: "registrations, program NY_HUT (tax registrations)",
   accNm: "registrations, program NM_WDT (tax registrations)",
   accKyu: "registrations, program KYU (tax registrations)",
@@ -70,17 +81,15 @@ export const FIELD_OWNERS = {
   carrierCode: "registrations, program CA_CARRIER_CODE (tax registrations)",
 } as const
 
-/** Companion inputs that qualify a supported field; accepted only together with it. */
+/** Optional companion inputs that state a jurisdiction the caller really knows (API use); the creation form does not ask for them. */
 const COMPANIONS = ["mvidKind", "mvidRegion", "nscKind", "nscRegion", "irpBase", "iftaBase"] as const
 
 /** Present on the old form, but with no canonical owner today. Refused (when non-empty) rather than dropped. */
 export const UNSUPPORTED_FIELDS: Readonly<Record<string, string>> = {
-  gstHst: "GST/HST account numbers have no canonical owner: no registration program exists for them (the Canada Business Number is recorded in Business Number), and the US State Tax Registration # has no program either.",
   status: "Service status is the Customer's engagement stage. A new Customer always starts in ONBOARDING; later stages are recorded through the engagement lifecycle, never chosen at creation.",
   endDate: "A Customer engagement is ended through its lifecycle (Edit, with a reason), not at creation.",
   svcType: "Service type is contract-governed: it is the package on a signed contract line, decided by the Customer's Service Decision Authority with evidence. It is shown on the profile, derived from the contract, and cannot be set here.",
   assessmentDate: "The assessment date is recorded by a company documentation assessment, which cannot be typed in. No assessment engine exists yet, so every record is shown as not yet assessed.",
-  contactPerson: "Send contactGivenName and contactFamilyName; a full name is never split by guesswork.",
   cargoInfo: "Send cargoTypes (a list of cargo categories).",
 }
 
@@ -89,7 +98,7 @@ const ADDRESS_PARTS = ["street", "city", "state", "zip", "country"] as const
 
 export const SUPPORTED_FIELD_KEYS: ReadonlySet<string> = new Set([
   "companyName", "dba", "companyType", "regCorpState", "regCorpCountry", "incorpNo", "businessNo", "ein", "startDate", "opRegion",
-  "contactGivenName", "contactFamilyName", "phone", "email", "billingEmail", "website",
+  "contactPerson", "contactPersonId", "contactGivenName", "contactFamilyName", "phone", "email", "billingEmail", "website", "gstHst",
   "cargoTypes", "eldProvider", "gpsProvider", "fuelProvider", "payMethod",
   "usdot", "mc", "mvid", "nsc", "accIrp", "accIfta", "accNyhut", "accNm", "accKyu", "accOr", "accCt", "scac", "carrierCode",
   ...COMPANIONS,
@@ -123,18 +132,25 @@ export type PlannedAddress = {
   address: { country: string; region: string; locality: string; postalCode: string | null; addressLine1: string }
 }
 export type PlannedChannel = { type: "PHONE" | "EMAIL" | "WEBSITE"; usage: "GENERAL" | "ACCOUNTING"; value: string }
+/** A jurisdiction that is known, or one explicitly recorded as not yet established (never a guess). */
+export type PlannedJurisdiction = { country: string; region: string } | { unresolved: true }
 export type PlannedAuthority = {
   field: string
   kind: "USDOT" | "MC" | "MVID" | "RIN" | "CVOR" | "SAFETY_FITNESS" | "IRP"
   number: string
-  jurisdiction?: { country: string; region: string }
+  jurisdiction?: PlannedJurisdiction
 }
 export type PlannedRegistration = {
   field: string
-  program: "IFTA" | "NY_HUT" | "NM_WDT" | "KYU" | "OR_WMT" | "CT_HUF" | "SCAC" | "CA_CARRIER_CODE"
+  program: "IFTA" | "NY_HUT" | "NM_WDT" | "KYU" | "OR_WMT" | "CT_HUF" | "SCAC" | "CA_CARRIER_CODE" | "GST_HST"
   number: string
-  jurisdiction?: { country: string; region: string }
+  jurisdiction?: PlannedJurisdiction
 }
+
+/** The Primary Contact: a person typed as a full name (structure unconfirmed), a person the user chose, or the legacy given/family pair. */
+export type PlannedContact =
+  | { kind: "new"; givenName: string | null; familyName: string | null }
+  | { kind: "existing"; personId: string }
 
 export type CompanyCreationPlan = {
   organization: CreateOrganizationInput
@@ -142,7 +158,7 @@ export type CompanyCreationPlan = {
   /** ISO instant (UTC midnight of the submitted date); Customer only. */
   customerStartedAt: string | null
   operatingScope: OperatingScopeValue
-  contact: { givenName: string | null; familyName: string | null } | null
+  contact: PlannedContact | null
   channels: PlannedChannel[]
   addresses: PlannedAddress[]
   authorities: PlannedAuthority[]
@@ -271,7 +287,21 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
   // --- contacts -------------------------------------------------------------------------------------------------------
   const givenName = text(input.contactGivenName)
   const familyName = text(input.contactFamilyName)
-  const contact = givenName || familyName ? { givenName: givenName || null, familyName: familyName || null } : null
+  const fullName = text(input.contactPerson)
+  const personId = text(input.contactPersonId)
+  let contact: PlannedContact | null = null
+  if (personId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(personId)) issue("contactPersonId", "The selected person is not a valid record.")
+    else if (givenName || familyName) issue("contactGivenName", "Choose an existing person or give a name, not both.")
+    else contact = { kind: "existing", personId: personId.toLowerCase() }
+  } else if (fullName) {
+    if (givenName || familyName) issue("contactPerson", "Give the Primary Contact once: either as a full name or as given and family names.")
+    else if (fullName.length > 200) issue("contactPerson", "The Primary Contact name must not exceed 200 characters.")
+    // Stored exactly as typed; the name's structure is not guessed (Contacts can correct it).
+    else contact = { kind: "new", givenName: fullName, familyName: null }
+  } else if (givenName || familyName) {
+    contact = { kind: "new", givenName: givenName || null, familyName: familyName || null }
+  }
   const channels: PlannedChannel[] = []
   if (text(input.phone)) channels.push({ type: "PHONE", usage: "GENERAL", value: text(input.phone) })
   if (text(input.email)) channels.push({ type: "EMAIL", usage: "GENERAL", value: text(input.email) })
@@ -353,8 +383,8 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
     else if (mvidKind === "RIN") authorities.push({ field: "mvid", kind: "RIN", number: mvid, jurisdiction: { country: "CA", region: "ON" } })
     else {
       const region = text(input.mvidRegion).toUpperCase()
-      if (!region || regionCountry(region) !== "CA") issue("mvidRegion", "An MVID needs the Canadian province or territory that issued it.")
-      else authorities.push({ field: "mvid", kind: "MVID", number: mvid, jurisdiction: { country: "CA", region } })
+      if (region && regionCountry(region) !== "CA") issue("mvidRegion", "The MVID issuing province must be a Canadian province or territory.")
+      else authorities.push({ field: "mvid", kind: "MVID", number: mvid, jurisdiction: region ? { country: "CA", region } : { unresolved: true } })
     }
   } else if (text(input.mvidRegion)) issue("mvidRegion", "An issuing province was given without an MVID / RIN number.")
 
@@ -365,8 +395,8 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
     else if (nscKind === "CVOR") authorities.push({ field: "nsc", kind: "CVOR", number: nsc, jurisdiction: { country: "CA", region: "ON" } })
     else {
       const region = text(input.nscRegion).toUpperCase()
-      if (!region || regionCountry(region) !== "CA") issue("nscRegion", "An NSC number needs the Canadian province or territory that issued it.")
-      else authorities.push({ field: "nsc", kind: "SAFETY_FITNESS", number: nsc, jurisdiction: { country: "CA", region } })
+      if (region && regionCountry(region) !== "CA") issue("nscRegion", "The NSC issuing province must be a Canadian province or territory.")
+      else authorities.push({ field: "nsc", kind: "SAFETY_FITNESS", number: nsc, jurisdiction: region ? { country: "CA", region } : { unresolved: true } })
     }
   } else if (text(input.nscRegion)) issue("nscRegion", "An issuing province was given without an NSC / CVOR number.")
 
@@ -377,17 +407,28 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
   }
   if (text(input.accIrp)) {
     const jurisdiction = base("irpBase")
-    if (!jurisdiction) issue("irpBase", "An IRP account needs its base province or state.")
-    else authorities.push({ field: "accIrp", kind: "IRP", number: text(input.accIrp), jurisdiction })
+    if (text(input.irpBase) && !jurisdiction) issue("irpBase", "The IRP base must be a recognised province or state.")
+    else authorities.push({ field: "accIrp", kind: "IRP", number: text(input.accIrp), jurisdiction: jurisdiction ?? { unresolved: true } })
   } else if (text(input.irpBase)) issue("irpBase", "A base jurisdiction was given without an IRP account number.")
 
   // --- tax registrations ------------------------------------------------------------------------------------------------
   const registrations: PlannedRegistration[] = []
   if (text(input.accIfta)) {
     const jurisdiction = base("iftaBase")
-    if (!jurisdiction) issue("iftaBase", "An IFTA account needs its base province or state.")
-    else registrations.push({ field: "accIfta", program: "IFTA", number: text(input.accIfta), jurisdiction })
+    if (text(input.iftaBase) && !jurisdiction) issue("iftaBase", "The IFTA base must be a recognised province or state.")
+    else registrations.push({ field: "accIfta", program: "IFTA", number: text(input.accIfta), jurisdiction: jurisdiction ?? { unresolved: true } })
   } else if (text(input.iftaBase)) issue("iftaBase", "A base jurisdiction was given without an IFTA account number.")
+  if (text(input.gstHst)) {
+    try {
+      const account = prepareRegistrationNumber("GST_HST", text(input.gstHst), "gstHst")
+      // The account's first nine digits ARE the Business Number; a different Business Number on the same record is a contradiction.
+      const bn = text(input.businessNo).replace(/\D/g, "")
+      if (bn.length === 9 && !account.normalized.startsWith(bn)) issue("gstHst", "The GST/HST account must begin with this company's Business Number.")
+      else registrations.push({ field: "gstHst", program: "GST_HST", number: text(input.gstHst) })
+    } catch (error) {
+      issue("gstHst", error instanceof Error ? error.message : "Enter a valid GST/HST account (for example 123456789 RT 0001).")
+    }
+  }
   const fixed: Array<[string, PlannedRegistration["program"]]> = [
     ["accNyhut", "NY_HUT"], ["accNm", "NM_WDT"], ["accKyu", "KYU"], ["accOr", "OR_WMT"], ["accCt", "CT_HUF"], ["scac", "SCAC"], ["carrierCode", "CA_CARRIER_CODE"],
   ]

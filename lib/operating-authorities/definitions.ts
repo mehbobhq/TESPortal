@@ -189,8 +189,12 @@ export function prepareAuthorityNumber(kind: AuthorityKind, value: unknown, fiel
 // Jurisdiction
 // ---------------------------------------------------------------------------------------------------------------
 
-export type JurisdictionInput = { country?: string; region: string }
-export type ResolvedJurisdiction = { country: string; region: string | null }
+export type JurisdictionInput = { country?: string; region?: string; unresolved?: boolean }
+/**
+ * `country` and `region` are null only for an explicitly UNRESOLVED jurisdiction (migration 0034): an IRP account whose base
+ * is not yet established has neither; an MVID / NSC has its issuing country (Canada) but no province yet.
+ */
+export type ResolvedJurisdiction = { country: string | null; region: string | null }
 
 function viaJurisdiction<T>(field: string, parse: () => T): T {
   try {
@@ -203,7 +207,9 @@ function viaJurisdiction<T>(field: string, parse: () => T): T {
 
 /**
  * Resolves the issuing jurisdiction of one version from the caller's input and the kind's rules. National kinds take no
- * jurisdiction (it is the issuing country); CVOR defaults to its fixed region; everything else needs a region.
+ * jurisdiction (it is the issuing country); CVOR defaults to its fixed region; everything else needs a region, or the
+ * explicit `{ unresolved: true }` (MVID, NSC and IRP only), which records that the jurisdiction is not yet established
+ * instead of guessing one. An unresolved version is only ever the INITIAL one; a correction later names the jurisdiction.
  */
 export function resolveJurisdiction(kind: AuthorityKind, input: unknown, field = "jurisdiction"): ResolvedJurisdiction {
   const definition = KIND_DEFINITIONS[kind]
@@ -224,9 +230,19 @@ export function resolveJurisdiction(kind: AuthorityKind, input: unknown, field =
   }
   const source = input as Record<string, unknown>
   for (const key of Object.keys(source)) {
-    if (key !== "country" && key !== "region") {
+    if (key !== "country" && key !== "region" && key !== "unresolved") {
       throw new OperatingAuthorityValidationError(`${field}.${key}`, `${field}.${key} is not accepted.`)
     }
+  }
+  if (source.unresolved !== undefined) {
+    if (source.unresolved !== true) throw new OperatingAuthorityValidationError(`${field}.unresolved`, `${field}.unresolved may only be true.`)
+    if (definition.fixedRegion) {
+      throw new OperatingAuthorityValidationError(`${field}.unresolved`, `${kind} always has a known jurisdiction; it cannot be left unresolved.`)
+    }
+    if (source.country !== undefined || source.region !== undefined) {
+      throw new OperatingAuthorityValidationError(`${field}.unresolved`, "An unresolved jurisdiction cannot also name a country or region.")
+    }
+    return { country: definition.issuerCountry, region: null }
   }
 
   const country = viaJurisdiction(`${field}.country`, () =>

@@ -171,8 +171,8 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     await signInWith(...ALL);
     const before = await orgCount();
     await assert.rejects(
-      K.dir.createCompanyDirectoryRecord(fullPayload("C", { gstHst: "123456789 RT 0001", svcType: "Premium", status: "Active", assessmentDate: "2026-01-01", endDate: "2030-01-01" })),
-      (error: unknown) => error instanceof K.input.CompanyCreationValidationError && ["assessmentDate", "endDate", "gstHst", "status", "svcType"].every((f) => error.issues.some((i) => i.field === f)),
+      K.dir.createCompanyDirectoryRecord(fullPayload("C", { svcType: "Premium", status: "Active", assessmentDate: "2026-01-01", endDate: "2030-01-01" })),
+      (error: unknown) => error instanceof K.input.CompanyCreationValidationError && ["assessmentDate", "endDate", "status", "svcType"].every((f) => error.issues.some((i) => i.field === f)),
     );
     assert.equal(await orgCount(), before);
   });

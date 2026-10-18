@@ -30,7 +30,7 @@ one transaction; capabilities are pre-checked and re-proven by row-level securit
 | --- | --- | --- | --- | --- |
 | website | `organization_channels` channel type WEBSITE, usage GENERAL (server vocabulary, no migration; rule `website.http_https_permissive.v1`) | every company type | CONTACT_MANAGE | add / change / correct / end(clear) / void |
 | cargoTypes | `company_cargo_category_periods` + controlled `cargo_categories` (6 descriptive categories) | Customer | COMPANY_PROFILE_MANAGE | set semantics: removed = ended (change) or voided (correct); at least one required |
-| gpsProvider, fuelProvider | `company_fleet_provider_periods` (kind GPS / FUEL; name only; one current per kind) | Customer | COMPANY_PROFILE_MANAGE | add / change / correct / clear (end or void) |
+| eldProvider, gpsProvider, fuelProvider | `company_fleet_providers` (one identity row per provider name per company) + `company_fleet_provider_periods` per service category (`fleet_service_categories`: ELD_HOS, GPS_TELEMATICS, FUEL_SERVICES); name only; one current per company and category | Customer | COMPANY_PROFILE_MANAGE | add / change / correct / clear (end or void); the same vendor may serve several categories without a second identity |
 | payMethod | `customer_billing_preference_periods` + controlled `billing_payment_methods` | Customer | CUSTOMER_RELATIONSHIP_MANAGE | add / change / correct / clear |
 
 All four are effective-dated with correction history (`corrected` links to its replacement and inherits its business time; `voided` is an entry made
@@ -44,11 +44,28 @@ An edit sends a fact only when it changed (absent = untouched; empty = an explic
 
 | Form field | Derived from | Never set by |
 | --- | --- | --- |
-| svcType (Service Type) | the package on a **signed** contract line (`customer_contracts` / `customer_contract_line_pricing`); "Not contracted" when no signed contract exists; "Not permitted to view" without CONTRACT_READ | a profile create or edit (refused with the reason) |
+| svcType (Service Type) | the package name on a **signed** contract line (`customer_contracts` / `customer_contract_line_pricing`); "Not contracted" when no signed contract exists; "Not permitted to view" without CONTRACT_READ. The Basic / Standard / Premium commercial families are **not modelled**: `contract_package_definitions` has only a code, a name and a pricing basis (no family, no configurable level) and is deliberately unseeded, so a label is displayed only when a signed contract uses a package of that name, and a label never grants an entitlement. Showing families with levels needs an additive contracts-domain extension (package family and level on `contract_package_definitions`, decided by the Service Decision Authority), not a parallel model here | a profile create or edit (refused with the reason) |
 | status (Service Status) | the engagement stage (`customer_engagement_stages`); a new Customer is always ONBOARDING | a profile create or edit |
 | endDate | `customer_engagements.ended_at`, set only by the Edit page's "End this customer's service" (reason required) | the create form |
-| assessmentDate | the latest `onboarding_readiness_snapshots.computed_at`; no date when none exists; withheld without EVIDENCE_READ | typing |
-| startDate | `customer_engagements.started_at`: required at creation, fixed afterwards. A verified correction (reason + immutable history) needs a start-correction ledger that does not exist (only terminations have one) and is a separate approved change | the Edit page |
+| assessmentDate | **nothing yet.** An onboarding readiness snapshot measures evidence readiness for an engagement (status, counts, blockers), not a company documentation assessment, so it is NOT relabelled as one. Shown as "Not yet assessed" until the future Documentation Status Engine records a real assessment (dependency, not built here) | typing |
+| startDate | `customer_engagements.started_at` of the CURRENT engagement (the open one, else the most recent): required at creation, fixed afterwards. Join / leave / rejoin is supported: ending an engagement then `establishCustomerRelationship` reuses the same Customer and starts a new engagement (cannot overlap or precede the last end), so history is kept and nothing is overwritten. A verified correction (reason + immutable history) needs a start-correction ledger that does not exist (only terminations have one) and is a separate approved change | the Edit page |
+
+## A4. Edit atomicity and the Cargo rule
+
+`editCompany` runs the identity part (legal name, trade name, identifiers) and the details part (region, addresses, website, cargo, fleet providers,
+billing preference) in ONE `ORGANIZATION_UPDATE` transaction. Each domain re-proves its own capability on the same connection before it writes; any
+failure (a missing capability, an identifier collision, a concurrent change) rolls back everything, including the Master Register events. Previously
+the identity operations each committed on their own, so a later refusal left a renamed company without its other changes.
+
+Cargo Information is mandatory for a Customer at the server: creation refuses an absent or empty list (nothing is created), and an edit that sends an
+empty list is refused. An edit that does not mention cargo never trips the rule, so a Customer recorded before the rule existed stays editable.
+
+## A5. Tax registration fields
+
+The Business Number (CRA BN) is offered only for a Canadian formation, the EIN only for a US formation, and the tax registration field only for those
+two jurisdictions (GST/HST account for Canada, state tax registration for the US); there is no generic fallback field. Operating cross-border is an
+operating scope on the one legal entity, never a second company or a second set of identifiers. GST/HST and US state tax registration remain disabled and
+unsupported (section B): no registration program exists, and no value is stored in another field.
 
 ## B. Fields investigated and still **not** supportable
 

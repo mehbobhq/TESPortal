@@ -1914,26 +1914,26 @@ export default function NewCompanyPage() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>
-                {businessCountry === "Canada"
-                  ? "GST / HST Program Account"
-                  : businessCountry === "United States"
-                  ? "State Tax Registration #"
-                  : "Tax Registration #"}
-              </Label>
+            {/* Shown only for the formation jurisdictions it applies to: the GST/HST account for a Canadian legal entity, a state tax
+                registration for a US one. Operating cross-border never creates a second company or a second set of fields. */}
+            {(businessCountry === "Canada" || businessCountry === "United States") && (
+              <div className="space-y-2">
+                <Label>
+                  {businessCountry === "Canada" ? "GST / HST Program Account" : "State Tax Registration #"}
+                </Label>
 
-              <Input
-                name="gstHst"
-                disabled
-                placeholder={
-                  businessCountry === "Canada"
-                    ? "123456789 RT 0001"
-                    : "Tax registration number"
-                }
-              />
-              <UnavailableNote />
-            </div>
+                <Input
+                  name="gstHst"
+                  disabled
+                  placeholder={
+                    businessCountry === "Canada"
+                      ? "123456789 RT 0001"
+                      : "Tax registration number"
+                  }
+                />
+                <UnavailableNote />
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -2273,9 +2273,15 @@ export default function NewCompanyPage() {
 
                 <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
                   <div className="space-y-2">
+                    <Label>ELD / HOS Provider</Label>
+                    <Input name="eldProvider" maxLength={120} />
+                    <p className="text-[11px] text-muted-foreground">The electronic logging device provider&apos;s name as the customer gives it. No provider record is created.</p>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label>Truck GPS Provider</Label>
                     <Input name="gpsProvider" maxLength={120} />
-                    <p className="text-[11px] text-muted-foreground">The provider&apos;s name as the customer gives it. No provider record is created.</p>
+                    <p className="text-[11px] text-muted-foreground">The GPS / telematics provider&apos;s name. The same vendor may be entered for more than one service.</p>
                   </div>
 
                   <div className="space-y-2">
@@ -2286,10 +2292,10 @@ export default function NewCompanyPage() {
 
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Assessment Date</Label>
-                    <Input name="assessmentDate" value="No assessment yet" readOnly disabled />
+                    <Input name="assessmentDate" value="Not yet assessed" readOnly disabled />
                     <DerivedNote>
-                      Read-only. This is the date of the latest readiness assessment; it is recorded by the assessment itself and appears on
-                      the profile once one exists.
+                      Read-only. A company documentation assessment records this date; none has been completed yet, so nothing is shown
+                      as assessed.
                     </DerivedNote>
                   </div>
                 </CardContent>

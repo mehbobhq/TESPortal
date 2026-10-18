@@ -15,7 +15,7 @@ import * as locationOperations from "@/lib/organization-locations/operations"
 import * as taxOperations from "@/lib/tax-registrations/operations"
 
 export type ProfileSectionState = "ok" | "not_permitted"
-export type ProfileSection = "identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts" | "assessment"
+export type ProfileSection = "identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts"
 
 /**
  * Service Type is CONTRACT-GOVERNED and read-only here: it is the package on a SIGNED contract line, decided by the Customer's
@@ -44,6 +44,7 @@ export type CompanyProfileRecord = {
   website: string | null
   /** Cargo category display labels in catalogue order; empty when none are recorded. */
   cargoTypes: string[]
+  eldProvider: string | null
   gpsProvider: string | null
   fuelProvider: string | null
   /** The Customer's preferred billing payment method (a preference, not contract terms); null when none is recorded. */
@@ -51,8 +52,14 @@ export type CompanyProfileRecord = {
   payMethodCode: string | null
   /** Derived from the signed contract; see ServiceTypeState. null for a record that is not a Customer. */
   serviceType: ServiceTypeState | null
-  /** The date of the latest readiness assessment (YYYY-MM-DD), or null when none exists or it may not be read. */
-  assessmentDate: string | null
+  /**
+   * The company documentation assessment. No engine records one yet (the Documentation Status Engine is a future dependency), and the
+   * existing onboarding readiness snapshots measure only onboarding-evidence readiness for an engagement, which is a different
+   * scope, so they are deliberately NOT presented as an assessment. Until an engine exists the truthful state is "not yet assessed".
+   */
+  assessment: { state: "not_yet_assessed" }
+  /** Every engagement this Customer has had, oldest first (join, leave, rejoin). Empty for a record that is not a Customer. */
+  engagements: Array<{ id: string; startedAt: string; endedAt: string | null; current: boolean }>
   /** The recorded operating scope, or null when none has been recorded. Never defaulted. */
   opRegion: "Canada Only" | "US Only" | "Cross-Border" | null
   incorpNo: string | null
@@ -191,7 +198,9 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       return found.length ? found.map((view) => numberWithJurisdiction(program, view.current.version!.numberDisplay, withBase ? view.current.version!.jurisdictionRegion : null, false)).join(" / ") : null
     }
 
-    const engagement = customer?.openEngagement ?? customer?.engagements[0] ?? null
+    // The open engagement when there is one; otherwise the MOST RECENT one (engagements are ordered oldest first). A customer who left
+    // and rejoined therefore shows the current engagement's start date, and one who left shows when they left.
+    const engagement = customer?.openEngagement ?? customer?.engagements[customer.engagements.length - 1] ?? null
 
     // Contract-derived, read-only Service Type: only for a Customer, only from a SIGNED contract, only for a caller who may read contracts.
     let serviceType: ServiceTypeState | null = null
@@ -219,20 +228,6 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       }
     }
 
-    // The latest ACTUAL readiness assessment (a server-computed snapshot); nothing is shown when there is none.
-    let assessmentDate: string | null = null
-    sections.assessment = "ok"
-    if (isCustomer) {
-      if (!(await hasAdditionalSystemCapability(client, decision, "EVIDENCE_READ"))) sections.assessment = "not_permitted"
-      else {
-        await enterSystemCapability(client, "EVIDENCE_READ")
-        const latest = await client.query<{ day: string | null }>(
-          `SELECT to_char(max(computed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day FROM public.onboarding_readiness_snapshots WHERE organization_id = $1`,
-          [id],
-        )
-        assessmentDate = latest.rows[0]?.day ?? null
-      }
-    }
     const scope = profile?.operatingScope.assertion?.operatingScope ?? null
 
     return {
@@ -250,12 +245,14 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       billingEmail: channel("EMAIL", "ACCOUNTING"),
       website: channel("WEBSITE", "GENERAL"),
       cargoTypes: (operatingFacts?.cargo ?? []).map((category) => category.displayName),
+      eldProvider: operatingFacts?.fleetProviders.ELD?.name ?? null,
       gpsProvider: operatingFacts?.fleetProviders.GPS?.name ?? null,
       fuelProvider: operatingFacts?.fleetProviders.FUEL?.name ?? null,
       payMethod: customerBundle?.billing?.current?.displayName ?? null,
       payMethodCode: customerBundle?.billing?.current?.code ?? null,
       serviceType,
-      assessmentDate,
+      assessment: { state: "not_yet_assessed" },
+      engagements: (customer?.engagements ?? []).map((view) => ({ id: view.engagement.id, startedAt: view.engagement.startedAt.slice(0, 10), endedAt: view.engagement.endedAt ? view.engagement.endedAt.slice(0, 10) : null, current: view.engagement.id === engagement?.engagement.id })),
       opRegion: scope ? SCOPE_LABEL[scope] : null,
       incorpNo: activeIdentifier("INCORPORATION"),
       businessNo: activeIdentifier("CRA_BN") ?? null,

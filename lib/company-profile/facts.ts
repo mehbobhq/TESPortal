@@ -40,21 +40,22 @@ import * as repo from "@/lib/company-profile/repository"
 import { recordEvent } from "@/lib/master-register/record-event"
 import type { FieldChange } from "@/lib/master-register/types"
 
-import { isFleetProviderKind, type FleetProviderKind } from "@/lib/company-profile/definitions"
-export { FLEET_PROVIDER_KINDS, isFleetProviderKind, normalizeProviderName, prepareProviderName, type FleetProviderKind } from "@/lib/company-profile/definitions"
+import { FLEET_SERVICE_CATEGORY_CODE, isFleetProviderKind, type FleetProviderKind } from "@/lib/company-profile/definitions"
+export { FLEET_PROVIDER_KINDS, FLEET_SERVICE_CATEGORY_CODE, FLEET_SERVICE_CATEGORY_LABEL, isFleetProviderKind, normalizeProviderName, prepareProviderName, type FleetProviderKind } from "@/lib/company-profile/definitions"
 
 export type FactMode = "change" | "correct"
 export const isFactMode = (value: unknown): value is FactMode => value === "change" || value === "correct"
 
 export type CatalogueOption = { code: string; displayName: string }
 export type CargoCategoryFact = { id: string; code: string; displayName: string; effectiveFrom: string }
-export type FleetProviderFact = { id: string; kind: FleetProviderKind; name: string; effectiveFrom: string }
+/** The CURRENT provider of one service category: the active period that has not ended. A superseded provider is history only. */
+export type FleetProviderFact = { id: string; providerId: string; kind: FleetProviderKind; name: string; effectiveFrom: string }
 export type BillingPreferenceFact = { id: string; code: string; displayName: string; effectiveFrom: string }
 export type FactHistoryRow = { id: string; value: string; effectiveFrom: string; effectiveTo: string | null; recordStatus: "active" | "corrected" | "voided" }
 
 export type CompanyFacts = {
   cargo: CargoCategoryFact[]
-  fleetProviders: { GPS: FleetProviderFact | null; FUEL: FleetProviderFact | null }
+  fleetProviders: Record<FleetProviderKind, FleetProviderFact | null>
   history: { cargo: FactHistoryRow[]; fleetProviders: FactHistoryRow[] }
 }
 
@@ -74,7 +75,7 @@ export const CARGO_CURRENT_CONSTRAINT = "company_cargo_category_periods_current_
 export const FLEET_CURRENT_CONSTRAINT = "company_fleet_provider_periods_current_uq"
 export const BILLING_CURRENT_CONSTRAINT = "customer_billing_preference_periods_current_uq"
 const CURRENT_CONSTRAINTS = [CARGO_CURRENT_CONSTRAINT, FLEET_CURRENT_CONSTRAINT, BILLING_CURRENT_CONSTRAINT]
-const CATALOGUE_CONSTRAINTS = ["company_cargo_category_periods_category_active", "customer_billing_preference_periods_method_active", "company_cargo_category_periods_cargo_category_code_fkey", "customer_billing_preference_periods_payment_method_code_fkey"]
+const CATALOGUE_CONSTRAINTS = ["company_cargo_category_periods_category_active", "company_fleet_provider_periods_category_active", "company_fleet_provider_periods_service_category_code_fkey", "customer_billing_preference_periods_method_active", "company_cargo_category_periods_cargo_category_code_fkey", "customer_billing_preference_periods_payment_method_code_fkey"]
 
 type PeriodTable = "company_cargo_category_periods" | "company_fleet_provider_periods" | "customer_billing_preference_periods"
 
@@ -86,10 +87,11 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
     if (constraint === undefined) throw error
     if (CURRENT_CONSTRAINTS.includes(constraint)) throw new CompanyProfileConflictError("A concurrent change was made to this profile fact; retry the operation.")
     if (constraint === repo.ORGANIZATION_ACTIVE_CONSTRAINT) throw new CompanyProfileStateError("This Organization is not active.")
+    if (constraint === "company_fleet_providers_name_uq") throw new CompanyProfileConflictError("A concurrent change was made to this profile fact; retry the operation.")
     if (CATALOGUE_CONSTRAINTS.includes(constraint)) throw new CompanyProfileValidationError("value", "The value is not an active catalogue entry.")
     if (constraint === "customer_billing_preference_periods_customer_exists") throw new CompanyProfileStateError("A billing preference can only be recorded for a Customer.")
     if (constraint.endsWith("_effective_window_valid")) throw new CompanyProfileValidationError("effectiveFrom", "The change must be after the current record began.")
-    if (constraint === "company_fleet_provider_periods_name_valid" || constraint === "company_fleet_provider_periods_name_normalized_valid") {
+    if (constraint === "company_fleet_providers_name_valid" || constraint === "company_fleet_providers_name_normalized_valid") {
       throw new CompanyProfileValidationError("providerName", "The provider name is not accepted.")
     }
     throw error
@@ -192,10 +194,10 @@ export async function readCompanyFacts(client: Queryable, rawOrganizationId: unk
       ORDER BY c.sort_order, c.code`,
     [organizationId],
   )
-  const providers = await client.query<{ id: string; kind: FleetProviderKind; name: string; effective_from: string }>(
-    `SELECT id, provider_kind AS kind, provider_name AS name, ${ISO("effective_from")} AS effective_from
-       FROM public.company_fleet_provider_periods
-      WHERE organization_id = $1 AND record_status = 'active' AND effective_to IS NULL`,
+  const providers = await client.query<{ id: string; provider_id: string; code: string; name: string; effective_from: string }>(
+    `SELECT p.id, p.provider_id, p.service_category_code AS code, v.provider_name AS name, ${ISO("p.effective_from")} AS effective_from
+       FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id AND v.organization_id = p.organization_id
+      WHERE p.organization_id = $1 AND p.record_status = 'active' AND p.effective_to IS NULL`,
     [organizationId],
   )
   const cargoHistory = await client.query<{ id: string; value: string; effective_from: string; effective_to: string | null; record_status: FactHistoryRow["recordStatus"] }>(
@@ -204,8 +206,9 @@ export async function readCompanyFacts(client: Queryable, rawOrganizationId: unk
     [organizationId],
   )
   const providerHistory = await client.query<{ id: string; value: string; effective_from: string; effective_to: string | null; record_status: FactHistoryRow["recordStatus"] }>(
-    `SELECT id, provider_kind || ':' || provider_name AS value, ${ISO("effective_from")} AS effective_from, ${ISO_NULL("effective_to")} AS effective_to, record_status
-       FROM public.company_fleet_provider_periods WHERE organization_id = $1 ORDER BY effective_from, created_at, id`,
+    `SELECT p.id, p.service_category_code || ':' || v.provider_name AS value, ${ISO("p.effective_from")} AS effective_from, ${ISO_NULL("p.effective_to")} AS effective_to, p.record_status
+       FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id AND v.organization_id = p.organization_id
+      WHERE p.organization_id = $1 ORDER BY p.effective_from, p.created_at, p.id`,
     [organizationId],
   )
   const row = (r: { id: string; value: string; effective_from: string; effective_to: string | null; record_status: FactHistoryRow["recordStatus"] }): FactHistoryRow => ({
@@ -216,12 +219,12 @@ export async function readCompanyFacts(client: Queryable, rawOrganizationId: unk
     recordStatus: r.record_status,
   })
   const byKind = (kind: FleetProviderKind): FleetProviderFact | null => {
-    const found = providers.rows.find((r) => r.kind === kind)
-    return found ? { id: found.id, kind, name: found.name, effectiveFrom: found.effective_from } : null
+    const found = providers.rows.find((r) => r.code === FLEET_SERVICE_CATEGORY_CODE[kind])
+    return found ? { id: found.id, providerId: found.provider_id, kind, name: found.name, effectiveFrom: found.effective_from } : null
   }
   return {
     cargo: cargo.rows.map((r) => ({ id: r.id, code: r.code, displayName: r.display_name, effectiveFrom: r.effective_from })),
-    fleetProviders: { GPS: byKind("GPS"), FUEL: byKind("FUEL") },
+    fleetProviders: { ELD: byKind("ELD"), GPS: byKind("GPS"), FUEL: byKind("FUEL") },
     history: { cargo: cargoHistory.rows.map(row), fleetProviders: providerHistory.rows.map(row) },
   }
 }
@@ -326,6 +329,23 @@ export async function setCargoCategories(ctx: OperationContext, rawInput: unknow
 // Fleet providers
 // ---------------------------------------------------------------------------------------------------------------
 
+/** The company's identity row for a provider name (case- and spacing-insensitive), created on first use. Never creates an Organization. */
+async function ensureProvider(ctx: OperationContext, organizationId: string, name: string, normalized: string): Promise<string> {
+  const existing = await ctx.client.query<{ id: string }>(
+    `SELECT id FROM public.company_fleet_providers WHERE organization_id = $1 AND provider_name_normalized = $2`,
+    [organizationId, normalized],
+  )
+  if (existing.rows[0]) return existing.rows[0].id
+  const id = randomUUID()
+  await guarded(() =>
+    ctx.client.query(`INSERT INTO public.company_fleet_providers (id, organization_id, provider_name, provider_name_normalized) VALUES ($1, $2, $3, $4)`, [id, organizationId, name, normalized]),
+  )
+  await record(ctx, "RECORD_CREATED", "registerFleetProvider", "company-profile", { resourceType: "company_fleet_provider", resourceId: id, organizationId }, [
+    { field: "provider", before: literal("none"), after: reference("company_fleet_providers", id) },
+  ])
+  return id
+}
+
 /**
  * Sets, changes, corrects or clears one fleet provider NAME. `providerName` null or empty clears it: in change mode the current
  * provider is ended (no replacement); in correct mode a provider recorded in error is voided.
@@ -335,17 +355,18 @@ export async function setFleetProvider(ctx: OperationContext, rawInput: unknown)
   if (typeof input !== "object" || input === null || Array.isArray(input)) throw new CompanyProfileValidationError("input", "input must be an object.")
   const organizationId = parseOrganizationId(input.organizationId)
   const mode = parseMode(input.mode)
-  if (!isFleetProviderKind(input.kind)) throw new CompanyProfileValidationError("kind", "kind must be GPS or FUEL.")
+  if (!isFleetProviderKind(input.kind)) throw new CompanyProfileValidationError("kind", "kind must be ELD, GPS or FUEL.")
   const kind = input.kind
   const clearing = input.providerName === undefined || input.providerName === null || (typeof input.providerName === "string" && input.providerName.trim() === "")
   const name = clearing ? null : prepareProviderName(input.providerName)
 
   await lockActiveOrganization(ctx, organizationId)
-  const open = await ctx.client.query<{ id: string; name: string; normalized: string; effective_from: string; effective_to: string | null }>(
-    `SELECT id, provider_name AS name, provider_name_normalized AS normalized, ${ISO("effective_from")} AS effective_from, ${ISO_NULL("effective_to")} AS effective_to
-       FROM public.company_fleet_provider_periods
-      WHERE organization_id = $1 AND provider_kind = $2 AND record_status = 'active' AND effective_to IS NULL FOR NO KEY UPDATE`,
-    [organizationId, kind],
+  const code = FLEET_SERVICE_CATEGORY_CODE[kind]
+  const open = await ctx.client.query<{ id: string; provider_id: string; normalized: string; effective_from: string; effective_to: string | null }>(
+    `SELECT p.id, p.provider_id, v.provider_name_normalized AS normalized, ${ISO("p.effective_from")} AS effective_from, ${ISO_NULL("p.effective_to")} AS effective_to
+       FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id AND v.organization_id = p.organization_id
+      WHERE p.organization_id = $1 AND p.service_category_code = $2 AND p.record_status = 'active' AND p.effective_to IS NULL FOR NO KEY UPDATE OF p`,
+    [organizationId, code],
   )
   const current = open.rows[0]
   const table = "company_fleet_provider_periods"
@@ -359,14 +380,14 @@ export async function setFleetProvider(ctx: OperationContext, rawInput: unknown)
       if (at <= current.effective_from) throw new CompanyProfileValidationError("effectiveFrom", "The change must be after the current record began.")
       await guarded(() => endPeriod(ctx.client, table, current.id, organizationId, at))
       await record(ctx, "RECORD_UPDATED", "endFleetProvider", "company-profile", target(current.id), [
-        { field: "providerKind", before: literal(kind), after: literal(kind) },
+        { field: "serviceCategory", before: literal(code), after: literal(code) },
         { field: "provider", before: reference(table, current.id), after: literal("ended") },
       ])
       result.ended = 1
     } else {
       await guarded(() => markPeriod(ctx.client, table, current.id, organizationId, "voided", null))
       await record(ctx, "RECORD_CORRECTED", "voidFleetProvider", "company-profile", target(current.id), [
-        { field: "providerKind", before: literal(kind), after: literal(kind) },
+        { field: "serviceCategory", before: literal(code), after: literal(code) },
         { field: "provider", before: reference(table, current.id), after: literal("voided") },
       ])
       result.voided = 1
@@ -376,25 +397,27 @@ export async function setFleetProvider(ctx: OperationContext, rawInput: unknown)
   }
 
   const normalized = normalizeProviderName(name)
-  if (current && current.normalized === normalized && current.name === name) return result
+  if (current && current.normalized === normalized) return result
   const replacementId = randomUUID()
+  // One identity per provider name per company: a vendor that already serves another category is reused, never duplicated.
+  const providerId = await ensureProvider(ctx, organizationId, name, normalized)
 
   if (!current) {
     const at = await repo.databaseNow(ctx.client)
     const previousEnd = await ctx.client.query<{ latest: string | null }>(
-      `SELECT ${ISO_NULL("max(effective_to)")} AS latest FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND provider_kind = $2 AND record_status = 'active'`,
-      [organizationId, kind],
+      `SELECT ${ISO_NULL("max(effective_to)")} AS latest FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND service_category_code = $2 AND record_status = 'active'`,
+      [organizationId, code],
     )
     const latest = previousEnd.rows[0]?.latest ?? null
     const start = latest !== null && at < latest ? latest : at
     await guarded(() =>
       ctx.client.query(
-        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_kind, provider_name, provider_name_normalized, effective_from) VALUES ($1, $2, $3, $4, $5, $6::timestamptz)`,
-        [replacementId, organizationId, kind, name, normalized, start],
+        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_id, service_category_code, effective_from) VALUES ($1, $2, $3, $4, $5::timestamptz)`,
+        [replacementId, organizationId, providerId, code, start],
       ),
     )
     await record(ctx, "RECORD_CREATED", "addFleetProvider", "company-profile", target(replacementId), [
-      { field: "providerKind", before: literal("none"), after: literal(kind) },
+      { field: "serviceCategory", before: literal("none"), after: literal(code) },
       { field: "provider", before: literal("none"), after: reference(table, replacementId) },
     ])
     result.created = 1
@@ -404,12 +427,12 @@ export async function setFleetProvider(ctx: OperationContext, rawInput: unknown)
     await guarded(() => endPeriod(ctx.client, table, current.id, organizationId, at))
     await guarded(() =>
       ctx.client.query(
-        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_kind, provider_name, provider_name_normalized, effective_from) VALUES ($1, $2, $3, $4, $5, $6::timestamptz)`,
-        [replacementId, organizationId, kind, name, normalized, at],
+        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_id, service_category_code, effective_from) VALUES ($1, $2, $3, $4, $5::timestamptz)`,
+        [replacementId, organizationId, providerId, code, at],
       ),
     )
     await record(ctx, "RECORD_UPDATED", "changeFleetProvider", "company-profile", target(replacementId), [
-      { field: "providerKind", before: literal(kind), after: literal(kind) },
+      { field: "serviceCategory", before: literal(code), after: literal(code) },
       { field: "provider", before: reference(table, current.id), after: reference(table, replacementId) },
     ])
     result.created = 1
@@ -418,12 +441,12 @@ export async function setFleetProvider(ctx: OperationContext, rawInput: unknown)
     await guarded(() => markPeriod(ctx.client, table, current.id, organizationId, "corrected", replacementId))
     await guarded(() =>
       ctx.client.query(
-        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_kind, provider_name, provider_name_normalized, effective_from, effective_to) VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz)`,
-        [replacementId, organizationId, kind, name, normalized, current.effective_from, current.effective_to],
+        `INSERT INTO public.company_fleet_provider_periods (id, organization_id, provider_id, service_category_code, effective_from, effective_to) VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz)`,
+        [replacementId, organizationId, providerId, code, current.effective_from, current.effective_to],
       ),
     )
     await record(ctx, "RECORD_CORRECTED", "correctFleetProvider", "company-profile", target(replacementId), [
-      { field: "providerKind", before: literal(kind), after: literal(kind) },
+      { field: "serviceCategory", before: literal(code), after: literal(code) },
       { field: "provider", before: reference(table, current.id), after: reference(table, replacementId) },
     ])
     result.created = 1

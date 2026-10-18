@@ -5,9 +5,11 @@
 --   1. public.cargo_categories                         controlled catalogue of descriptive cargo categories (seeded, 6 rows)
 --   2. public.billing_payment_methods                  controlled catalogue of billing payment method names (seeded, 4 rows)
 --   3. public.company_cargo_category_periods           effective-dated cargo categories a company carries (company operating profile)
---   4. public.company_fleet_provider_periods           effective-dated GPS / fuel provider NAMES a company uses (company operating profile)
---   5. public.customer_billing_preference_periods      effective-dated preferred billing payment method of a Customer (customer relationship)
---   6. integrity triggers, row-level security policies and column-level runtime grants for the three period tables
+--   4. public.fleet_service_categories                 controlled catalogue of fleet service categories: ELD/HOS, GPS/Telematics, Fuel Services (seeded, 3 rows)
+--   5. public.company_fleet_providers                  one identity row per provider NAME a company uses (never an Organization)
+--   6. public.company_fleet_provider_periods           effective-dated assignment of a provider to a service category (company operating profile)
+--   7. public.customer_billing_preference_periods      effective-dated preferred billing payment method of a Customer (customer relationship)
+--   8. integrity triggers, row-level security policies and column-level runtime grants for the new tables
 --
 -- WHY THESE ARE THEIR OWN TYPED TABLES. The company creation form collects Cargo Information, Truck GPS Provider, Fuel Provider and
 -- Payment Method. None had a canonical owner (docs/recovery/canonical-field-ownership.md, class C). Migration 0019 states there is
@@ -17,9 +19,17 @@
 --                      regulation applies (that is company_rule_applicability_periods, 0019, whose rules are jurisdiction specific
 --                      and are never derived from these categories). The catalogue is the six categories of the original form.
 --                      A company may carry several at once, so the unit of history is one category membership, not a list.
---   Fleet providers    The NAME the company gives for its truck GPS provider or fuel provider. Names only: creating one never
---                      creates an Organization, a credential or a registry entry (a future migration may link a name to an
---                      Organization additively). One current provider per company and kind.
+--   Fleet providers    The NAME the company gives for a provider of a fleet service. Names only: creating one never creates an
+--                      Organization, a credential or a registry entry (a future migration may link a name to an Organization
+--                      additively). Three distinct service categories exist - ELD/HOS, GPS/Telematics and Fuel Services - because
+--                      one vendor commonly supplies several of them and a company may use different vendors for each. A provider
+--                      is ONE identity row per company (company_fleet_providers); each category it serves is its own
+--                      effective-dated period (company_fleet_provider_periods), so the identity is never duplicated, and replacing
+--                      FleetHunt with Motive for one category ends one period and starts another while the history is kept.
+--                      Today one current provider per company and category (assignment_scope = 'COMPANY'). A fleet may in future
+--                      use different vendors per vehicle: that is an ADDITIVE extension of the same period table (relax the
+--                      assignment_scope check, add a vehicle reference and widen the current-uniqueness index) and needs no
+--                      change to the identity table or to existing rows.
 --   Billing preference The payment method a Customer PREFERS to be billed by. It is explicitly NOT contractual payment terms
 --                      (those live in the contract model, 0030/0031, and are decided by the Service Decision Authority), NOT a
 --                      payment transaction, and holds no account, card or bank detail. Controlled names only. Customers only.
@@ -141,8 +151,55 @@ CREATE INDEX company_cargo_category_periods_history_idx
 
 
 -- ============================================================
--- 3. Fleet provider periods
+-- 3. Fleet service categories, provider identities and provider periods
 -- ============================================================
+
+CREATE TABLE public.fleet_service_categories (
+    code text PRIMARY KEY,
+    display_name text NOT NULL,
+    is_active boolean NOT NULL DEFAULT true,
+    sort_order integer NOT NULL,
+
+    CONSTRAINT fleet_service_categories_code_shape CHECK (code ~ '^[A-Z][A-Z0-9_]{1,47}$'),
+    CONSTRAINT fleet_service_categories_display_name_not_blank CHECK (btrim(display_name) <> '')
+);
+
+INSERT INTO public.fleet_service_categories (code, display_name, sort_order)
+VALUES
+    ('ELD_HOS', 'ELD / Hours of Service', 10),
+    ('GPS_TELEMATICS', 'GPS / Telematics', 20),
+    ('FUEL_SERVICES', 'Fuel Card / Fuel Services', 30);
+
+-- One identity per provider NAME per company. The name is a label, not an Organization. Immutable: a misspelt name is corrected
+-- by voiding the period that uses it and recording the right name; an unused identity row is harmless and is never shown.
+CREATE TABLE public.company_fleet_providers (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    organization_id uuid NOT NULL
+        REFERENCES public.organizations(id)
+        ON DELETE RESTRICT,
+
+    provider_name text NOT NULL,
+    provider_name_normalized text NOT NULL,
+
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT company_fleet_providers_name_valid
+        CHECK (
+            provider_name = btrim(provider_name)
+            AND char_length(provider_name) BETWEEN 1 AND 120
+            AND provider_name !~ '[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]'
+        ),
+
+    CONSTRAINT company_fleet_providers_name_normalized_valid
+        CHECK (btrim(provider_name_normalized) <> '' AND char_length(provider_name_normalized) <= 120),
+
+    CONSTRAINT company_fleet_providers_name_uq
+        UNIQUE (organization_id, provider_name_normalized),
+
+    CONSTRAINT company_fleet_providers_id_organization_uq
+        UNIQUE (id, organization_id)
+);
 
 CREATE TABLE public.company_fleet_provider_periods (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -151,11 +208,15 @@ CREATE TABLE public.company_fleet_provider_periods (
         REFERENCES public.organizations(id)
         ON DELETE RESTRICT,
 
-    provider_kind text NOT NULL,
+    provider_id uuid NOT NULL,
 
-    -- The name exactly as recorded, and its matching form. A name never creates an Organization.
-    provider_name text NOT NULL,
-    provider_name_normalized text NOT NULL,
+    service_category_code text NOT NULL
+        REFERENCES public.fleet_service_categories(code)
+        ON DELETE RESTRICT,
+
+    -- Today the provider serves the whole company for the category. A per-vehicle assignment is a future additive extension
+    -- (see the header); until then the only admitted scope is COMPANY.
+    assignment_scope text NOT NULL DEFAULT 'COMPANY',
 
     effective_from timestamptz NOT NULL,
     effective_to timestamptz,
@@ -167,18 +228,13 @@ CREATE TABLE public.company_fleet_provider_periods (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
 
-    CONSTRAINT company_fleet_provider_periods_kind_valid
-        CHECK (provider_kind IN ('GPS', 'FUEL')),
+    CONSTRAINT company_fleet_provider_periods_provider_fk
+        FOREIGN KEY (provider_id, organization_id)
+        REFERENCES public.company_fleet_providers (id, organization_id)
+        ON DELETE RESTRICT,
 
-    CONSTRAINT company_fleet_provider_periods_name_valid
-        CHECK (
-            provider_name = btrim(provider_name)
-            AND char_length(provider_name) BETWEEN 1 AND 120
-            AND provider_name !~ '[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]'
-        ),
-
-    CONSTRAINT company_fleet_provider_periods_name_normalized_valid
-        CHECK (btrim(provider_name_normalized) <> '' AND char_length(provider_name_normalized) <= 120),
+    CONSTRAINT company_fleet_provider_periods_scope_valid
+        CHECK (assignment_scope = 'COMPANY'),
 
     CONSTRAINT company_fleet_provider_periods_effective_window_valid
         CHECK (effective_to IS NULL OR effective_to > effective_from),
@@ -207,13 +263,16 @@ CREATE TABLE public.company_fleet_provider_periods (
         DEFERRABLE INITIALLY DEFERRED
 );
 
--- At most one current provider per company and kind.
+-- At most one current provider per company, service category and scope.
 CREATE UNIQUE INDEX company_fleet_provider_periods_current_uq
-    ON public.company_fleet_provider_periods (organization_id, provider_kind)
+    ON public.company_fleet_provider_periods (organization_id, service_category_code, assignment_scope)
     WHERE record_status = 'active' AND effective_to IS NULL;
 
 CREATE INDEX company_fleet_provider_periods_history_idx
-    ON public.company_fleet_provider_periods (organization_id, provider_kind, effective_from);
+    ON public.company_fleet_provider_periods (organization_id, service_category_code, effective_from);
+
+CREATE INDEX company_fleet_provider_periods_provider_idx
+    ON public.company_fleet_provider_periods (provider_id);
 
 
 -- ============================================================
@@ -377,6 +436,42 @@ BEGIN
 END;
 $$;
 
+-- A fleet provider period may only be recorded against an ACTIVE service category.
+CREATE FUNCTION tes_security.guard_company_fleet_provider_period_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.fleet_service_categories AS c
+         WHERE c.code = NEW.service_category_code
+           AND c.is_active
+    ) THEN
+        RAISE EXCEPTION 'The fleet service category is not an active catalogue category'
+            USING ERRCODE = '23514',
+                  CONSTRAINT = 'company_fleet_provider_periods_category_active';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- A provider identity row is never rewritten.
+CREATE FUNCTION tes_security.prevent_company_fleet_provider_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $$ BEGIN
+    RAISE EXCEPTION '% content is immutable; record the right name as a new provider', TG_TABLE_NAME
+        USING ERRCODE = '55000';
+END;
+$$;
+
+REVOKE ALL ON FUNCTION tes_security.guard_company_fleet_provider_period_insert() FROM PUBLIC;
+REVOKE ALL ON FUNCTION tes_security.prevent_company_fleet_provider_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_company_cargo_category_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_customer_billing_preference_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION tes_security.guard_company_fact_period_update() FROM PUBLIC;
@@ -390,6 +485,31 @@ CREATE TRIGGER company_fleet_provider_periods_guard_active_organization
 BEFORE INSERT ON public.company_fleet_provider_periods
 FOR EACH ROW
 EXECUTE FUNCTION tes_security.guard_active_organization('organization_id');
+
+CREATE TRIGGER company_fleet_providers_guard_active_organization
+BEFORE INSERT ON public.company_fleet_providers
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.guard_active_organization('organization_id');
+
+CREATE TRIGGER company_fleet_provider_periods_guard_insert
+BEFORE INSERT ON public.company_fleet_provider_periods
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.guard_company_fleet_provider_period_insert();
+
+CREATE TRIGGER company_fleet_providers_no_update
+BEFORE UPDATE ON public.company_fleet_providers
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.prevent_company_fleet_provider_update();
+
+CREATE TRIGGER company_fleet_providers_no_delete
+BEFORE DELETE ON public.company_fleet_providers
+FOR EACH ROW
+EXECUTE FUNCTION tes_security.prevent_company_profile_data_removal();
+
+CREATE TRIGGER company_fleet_providers_no_truncate
+BEFORE TRUNCATE ON public.company_fleet_providers
+FOR EACH STATEMENT
+EXECUTE FUNCTION tes_security.prevent_company_profile_data_removal();
 
 CREATE TRIGGER customer_billing_preference_periods_guard_active_organization
 BEFORE INSERT ON public.customer_billing_preference_periods
@@ -414,7 +534,7 @@ EXECUTE FUNCTION tes_security.guard_company_fact_period_update('organization_id'
 CREATE TRIGGER company_fleet_provider_periods_guard_update
 BEFORE UPDATE ON public.company_fleet_provider_periods
 FOR EACH ROW
-EXECUTE FUNCTION tes_security.guard_company_fact_period_update('organization_id', 'provider_kind', 'provider_name', 'provider_name_normalized', 'effective_from', 'created_at');
+EXECUTE FUNCTION tes_security.guard_company_fact_period_update('organization_id', 'provider_id', 'service_category_code', 'assignment_scope', 'effective_from', 'created_at');
 
 CREATE TRIGGER customer_billing_preference_periods_guard_update
 BEFORE UPDATE ON public.customer_billing_preference_periods
@@ -457,10 +577,15 @@ EXECUTE FUNCTION tes_security.prevent_company_profile_data_removal();
 -- ============================================================
 
 ALTER TABLE public.company_cargo_category_periods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.company_fleet_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_fleet_provider_periods ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customer_billing_preference_periods ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY company_cargo_category_periods_system ON public.company_cargo_category_periods FOR ALL
+    USING (tes_security.system_context_authorized(ARRAY['COMPANY_PROFILE_READ', 'COMPANY_PROFILE_MANAGE']))
+    WITH CHECK (tes_security.system_context_authorized(ARRAY['COMPANY_PROFILE_MANAGE']));
+
+CREATE POLICY company_fleet_providers_system ON public.company_fleet_providers FOR ALL
     USING (tes_security.system_context_authorized(ARRAY['COMPANY_PROFILE_READ', 'COMPANY_PROFILE_MANAGE']))
     WITH CHECK (tes_security.system_context_authorized(ARRAY['COMPANY_PROFILE_MANAGE']));
 
@@ -485,7 +610,9 @@ REVOKE ALL
 ON TABLE
     public.cargo_categories,
     public.billing_payment_methods,
+    public.fleet_service_categories,
     public.company_cargo_category_periods,
+    public.company_fleet_providers,
     public.company_fleet_provider_periods,
     public.customer_billing_preference_periods
 FROM PUBLIC;
@@ -494,7 +621,9 @@ GRANT SELECT
 ON TABLE
     public.cargo_categories,
     public.billing_payment_methods,
+    public.fleet_service_categories,
     public.company_cargo_category_periods,
+    public.company_fleet_providers,
     public.company_fleet_provider_periods,
     public.customer_billing_preference_periods
 TO "tes-backend@tes-production-510007.iam";
@@ -507,7 +636,11 @@ GRANT UPDATE (effective_to, record_status, corrected_at, superseded_by_period_id
 ON public.company_cargo_category_periods
 TO "tes-backend@tes-production-510007.iam";
 
-GRANT INSERT (id, organization_id, provider_kind, provider_name, provider_name_normalized, effective_from, effective_to)
+GRANT INSERT (id, organization_id, provider_name, provider_name_normalized)
+ON public.company_fleet_providers
+TO "tes-backend@tes-production-510007.iam";
+
+GRANT INSERT (id, organization_id, provider_id, service_category_code, effective_from, effective_to)
 ON public.company_fleet_provider_periods
 TO "tes-backend@tes-production-510007.iam";
 

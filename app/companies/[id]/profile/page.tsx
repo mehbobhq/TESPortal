@@ -51,7 +51,9 @@ type CompanyProfile = {
   fuelProvider: string | null
   payMethod: string | null
   serviceType: ServiceTypeState | null
-  assessmentDate: string | null
+  assessment: { state: "not_yet_assessed" }
+  engagements: Array<{ id: string; startedAt: string; endedAt: string | null; current: boolean }>
+  eldProvider: string | null
   endDate: string | null
   opRegion: "Canada Only" | "US Only" | "Cross-Border" | null
   incorpNo: string | null
@@ -89,7 +91,7 @@ type CompanyProfile = {
   yard_state: string | null
   yard_zip: string | null
   yard_country: string | null
-  sections: Record<"identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts" | "assessment", SectionState>
+  sections: Record<"identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts", SectionState>
   notRecordedYet: string[]
 }
 
@@ -409,6 +411,12 @@ export default function CompanyProfilePage() {
                   <ReadOnlyField label="Service Status" value={withheld("customer") ? "Not permitted to view" : stageLabel} />
                   <ReadOnlyField label="Service Start Date" value={withheld("customer") ? "Not permitted to view" : company.startDate} />
                   <ReadOnlyField label="End Date" value={withheld("customer") ? "Not permitted to view" : company.endDate} />
+                  {!withheld("customer") && company.engagements.length > 1 && (
+                    <ReadOnlyField
+                      label="Previous Engagements"
+                      value={company.engagements.filter((engagement) => !engagement.current).map((engagement) => `${engagement.startedAt} to ${engagement.endedAt ?? "open"}`).join("; ")}
+                    />
+                  )}
                   <ReadOnlyField label="Company Status" value={company.status} />
                   <ReadOnlyField label="Operating Region" value={withheld("operatingProfile") ? "Not permitted to view" : company.opRegion} />
                   <ReadOnlyField label="Payment Method" value={withheld("customer") ? "Not permitted to view" : company.payMethod} />
@@ -493,9 +501,10 @@ export default function CompanyProfilePage() {
                     <h3 className="text-sm font-semibold text-primary">Fleet Information</h3>
                   </div>
                   <div className="p-4 grid sm:grid-cols-2 gap-4">
+                    <ReadOnlyField label="ELD / HOS Provider" value={withheld("operatingProfile") ? "Not permitted to view" : company.eldProvider} />
                     <ReadOnlyField label="Truck GPS Provider" value={withheld("operatingProfile") ? "Not permitted to view" : company.gpsProvider} />
                     <ReadOnlyField label="Fuel Provider" value={withheld("operatingProfile") ? "Not permitted to view" : company.fuelProvider} />
-                    <ReadOnlyField label="Assessment Date" value={withheld("assessment") ? "Not permitted to view" : company.assessmentDate ?? "No assessment yet"} />
+                    <ReadOnlyField label="Assessment Date" value="Not yet assessed" />
                   </div>
                 </div>
 

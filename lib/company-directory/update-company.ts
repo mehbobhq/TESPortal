@@ -1,7 +1,8 @@
 import "server-only"
 
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
-import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import type { PoolClient } from "pg"
+import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
 import {
   addressBlockPresent,
@@ -24,7 +25,7 @@ import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres
 import * as locationOperations from "@/lib/organization-locations/operations"
 
 /** Profile facts whose key may be present with an EMPTY value, which means "clear it" (an absent key means "leave it alone"). */
-const FACT_KEYS = ["website", "cargoTypes", "gpsProvider", "fuelProvider", "payMethod"] as const
+const FACT_KEYS = ["website", "cargoTypes", "eldProvider", "gpsProvider", "fuelProvider", "payMethod"] as const
 
 const UPDATE_KEYS = new Set([
   "opRegion",
@@ -45,7 +46,7 @@ export type CompanyDetailsUpdate = {
   addresses: Array<{ role: PlannedAddress["role"]; action: "created" | "changed" | "corrected" | "unchanged" }>
   website: "created" | "changed" | "corrected" | "cleared" | "unchanged" | null
   cargo: profileFacts.FactChangeResult | null
-  fleetProviders: Array<{ kind: "GPS" | "FUEL"; result: profileFacts.FactChangeResult }>
+  fleetProviders: Array<{ kind: "ELD" | "GPS" | "FUEL"; result: profileFacts.FactChangeResult }>
   billingPreference: profileFacts.FactChangeResult | null
 }
 
@@ -54,7 +55,7 @@ export type FactsPlan = {
   mode: "change" | "correct"
   website: { value: string } | { clear: true } | null
   cargo: string[] | null
-  providers: Array<{ kind: "GPS" | "FUEL"; name: string | null }>
+  providers: Array<{ kind: "ELD" | "GPS" | "FUEL"; name: string | null }>
   payment: { code: string } | { clear: true } | null
 }
 
@@ -136,7 +137,7 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
       facts.cargo = codes
     }
   }
-  for (const [field, kind] of [["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
+  for (const [field, kind] of [["eldProvider", "ELD"], ["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
     if (!present(input[field])) continue
     if (typeof input[field] !== "string") issues.push({ field, message: "A provider name must be text." })
     else if ((input[field] as string).trim() === "") facts.providers.push({ kind, name: null })
@@ -167,9 +168,20 @@ export function hasDetailsToUpdate(raw: unknown): boolean {
   return Object.entries(raw as Record<string, unknown>).some(([key, value]) => UPDATE_KEYS.has(key) && key !== "addressMode" && typeof value === "string" && value.trim() !== "")
 }
 
+export type CompanyDetailsPlan = ReturnType<typeof planCompanyDetails>
+
 export async function updateCompanyDetails(organizationId: string, raw: unknown): Promise<CompanyDetailsUpdate> {
-  const { mode, scope, planned, facts } = planCompanyDetails(raw)
-  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
+  const plan = planCompanyDetails(raw)
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", (client, decision) => applyCompanyDetails(client, decision, organizationId, plan))
+}
+
+/**
+ * The details writes on a transaction the caller already opened (ORGANIZATION_UPDATE), so a whole edit - identity and details -
+ * can commit or roll back as one unit (see editCompany). Every capability is still proven per fact before anything is written.
+ */
+export async function applyCompanyDetails(client: PoolClient, decision: SystemAuthorizationDecision, organizationId: string, plan: CompanyDetailsPlan): Promise<CompanyDetailsUpdate> {
+  const { mode, scope, planned, facts } = plan
+  {
     const required = new Set<TesSystemCapability>()
     if (scope) required.add("COMPANY_PROFILE_MANAGE")
     if (planned.some((p) => p.role !== "REGISTERED")) required.add("CUSTOMER_RELATIONSHIP_READ")
@@ -200,7 +212,7 @@ export async function updateCompanyDetails(organizationId: string, raw: unknown)
         const issues: CompanyCreationIssue[] = []
         if (planned.some((p) => p.role !== "REGISTERED")) issues.push({ field: "mail_street", message: "Mailing and yard addresses apply to Customer records only." })
         if (facts.cargo !== null) issues.push({ field: "cargoTypes", message: "Cargo Information applies to Customer records only." })
-        for (const provider of facts.providers) issues.push({ field: provider.kind === "GPS" ? "gpsProvider" : "fuelProvider", message: "Fleet providers apply to Customer records only." })
+        for (const provider of facts.providers) issues.push({ field: provider.kind === "ELD" ? "eldProvider" : provider.kind === "GPS" ? "gpsProvider" : "fuelProvider", message: "Fleet providers apply to Customer records only." })
         if (facts.payment) issues.push({ field: "payMethod", message: "A billing payment method applies to Customer records only." })
         throw new CompanyCreationValidationError(issues)
       }
@@ -304,6 +316,5 @@ export async function updateCompanyDetails(organizationId: string, raw: unknown)
       await runDeferredChecks(client)
     }
     return result
-  })
+  }
 }
-

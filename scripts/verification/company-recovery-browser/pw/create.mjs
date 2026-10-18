@@ -13,7 +13,7 @@ try {
   record("creation form shows the read-only / unavailable fields notice up front", await page.getByText("Some fields on this form are read-only or cannot be saved yet").isVisible())
   await shot(page, "01-new-form-initial")
   await pick(page, page.locator("button:has-text('Select entity type')"), "Customer")
-  record("derived fields stay on the form read-only, GST/HST stays disabled and labelled; persisted fields are live", (await Promise.all(["gstHst", "endDate", "assessmentDate", "svcType", "status"].map((n) => page.locator(`[name=${n}]`).first().isDisabled()))).every(Boolean) && (await Promise.all(["website", "gpsProvider", "fuelProvider"].map((n) => page.locator(`[name=${n}]`).first().isEnabled()))).every(Boolean) && (await page.locator("[data-unavailable-note]").count()) >= 1 && (await page.locator("[data-derived-note]").count()) >= 4)
+  record("derived fields stay on the form read-only, the tax registration field is hidden until a Canadian/US formation is chosen; persisted fields are live", (await Promise.all(["endDate", "assessmentDate", "svcType", "status"].map((n) => page.locator(`[name=${n}]`).first().isDisabled()))).every(Boolean) && (await Promise.all(["website", "gpsProvider", "fuelProvider"].map((n) => page.locator(`[name=${n}]`).first().isEnabled()))).every(Boolean) && (await page.locator("[name=gstHst]").count()) === 0 && (await page.locator("[data-derived-note]").count()) >= 4)
   await page.fill("#companyName", name)
   await page.fill("#dba", `E2E Trade ${tag}`)
   await page.fill("#contactPerson", "Jane Roe")
@@ -60,7 +60,7 @@ try {
   const expect = { name, dba: `E2E Trade ${tag}`, phone: data.phone, email: data.email, billing: data.billing, ein: data.ein, bn: data.bn, incorp: data.incorp, usdot: data.usdot, mc: data.mc, mvid: data.mvid, nsc: data.nsc, irp: data.irp, ifta: data.ifta, reg: "100 King St W", mail: "PO Box 12", yard: "55 Yard Rd", contact: "Jane Roe", start: "2024-01-15", scope: "Cross-Border" }
   const missing = Object.entries(expect).filter(([, v]) => !body.includes(v)).map(([k]) => k)
   record("reopened profile shows every persisted value", missing.length === 0, missing.length ? "missing: " + missing.join(",") : "")
-  record("profile shows the persisted facts and the derived states", ["https://create-flow.example.com", "Samsara", "WEX Fleet", "Cheque", "General Freight", "Not contracted", "Onboarding", "No assessment yet"].every((v) => body.includes(v)))
+  record("profile shows the persisted facts and the derived states", ["https://create-flow.example.com", "Samsara", "WEX Fleet", "Cheque", "General Freight", "Not contracted", "Onboarding", "Not yet assessed"].every((v) => body.includes(v)))
 } catch (e) {
   record("scenario error", false, String(e).slice(0, 300))
   await shot(page, "99-error")

@@ -212,7 +212,7 @@ describe("Company-scoped workspaces stay inside their own company", { skip: !ena
     await signInWith("ORGANIZATION_CREATE", "ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ", "COMPANY_PROFILE_MANAGE", "COMPANY_PROFILE_READ", "CUSTOMER_ESTABLISH", "CUSTOMER_RELATIONSHIP_READ", "CUSTOMER_RELATIONSHIP_MANAGE");
     const dir = await import("@/lib/company-directory/service");
     const rel = await import("@/lib/customer-relationship/service");
-    const made = await dir.createCompanyDirectoryRecord({ companyName: `WS End ${run} ${randomInt(1000, 9999)} Ltd`, companyType: "Customer", opRegion: "Canada Only", startDate: "2024-01-15" });
+    const made = await dir.createCompanyDirectoryRecord({ companyName: `WS End ${run} ${randomInt(1000, 9999)} Ltd`, companyType: "Customer", opRegion: "Canada Only", startDate: "2024-01-15", cargoTypes: JSON.stringify(["General Freight"]) });
     const id = made.company.id;
     const open = (await rel.getCustomerRelationship(id)).openEngagement;
     assert.ok(open, "the new customer has an open engagement");

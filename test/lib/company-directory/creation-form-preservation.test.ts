@@ -18,7 +18,7 @@ const UNAVAILABLE_FIELDS = ["gstHst"]
 /** Fields whose value is owned by another workflow (contract, engagement lifecycle, assessment): shown read-only, never posted. */
 const DERIVED_READ_ONLY_FIELDS = ["assessmentDate", "endDate", "status", "svcType"]
 /** Fields that now persist to a canonical owner: they must be live (not disabled) and post their value. */
-const PERSISTED_FIELDS = ["cargoTypes", "fuelProvider", "gpsProvider", "payMethod", "website"]
+const PERSISTED_FIELDS = ["cargoTypes", "eldProvider", "fuelProvider", "gpsProvider", "payMethod", "website"]
 
 describe("company creation form keeps every original field", () => {
   for (const field of ORIGINAL_FIELDS) {
@@ -67,5 +67,21 @@ describe("company creation form keeps every original field", () => {
     assert.match(form, /businessNo: isCanada \? businessNumber : ""/)
     assert.match(form, /contactGivenName/)
     assert.match(form, /formData\.delete\("contactPerson"\)/)
+  })
+  it("shows the tax registration field only for the jurisdictions it applies to, and never as a second company", () => {
+    const at = form.indexOf('name="gstHst"')
+    const before = form.slice(Math.max(0, at - 700), at)
+    assert.match(before, /businessCountry === "Canada" \|\| businessCountry === "United States"/, "the tax registration field is conditional on the formation country")
+    assert.match(before, /GST \/ HST Program Account/)
+    assert.match(before, /State Tax Registration #/)
+    assert.doesNotMatch(form, /: "Tax Registration #"/, "there is no generic fallback label for an unspecified jurisdiction")
+    // the Canadian Business Number is Canada-only and the EIN is US-only
+    assert.match(form, /\{isCanada && \(\s*<div className="space-y-2">\s*<Label>\s*CRA Business Number/)
+    assert.match(form, /\{isUS && \(\s*<div className="space-y-2">\s*<Label>\s*IRS Employer Identification Number/)
+  })
+
+  it("shows the assessment date truthfully: 'Not yet assessed', never an invented date", () => {
+    const at = form.indexOf('name="assessmentDate"')
+    assert.match(form.slice(at, at + 200), /value="Not yet assessed"/)
   })
 })

@@ -1,18 +1,13 @@
 import "server-only"
 
-import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import type { PoolClient } from "pg"
+import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
+import * as corporateOperations from "@/lib/corporate-identity/operations"
 import { createCompanyRecord, type CompanyCreationResult } from "@/lib/company-directory/create-company"
-import { factsPresent, hasDetailsToUpdate, planCompanyDetails, updateCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
+import { applyCompanyDetails, factsPresent, hasDetailsToUpdate, planCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
 import { readCompanyProfile, type CompanyProfileRecord } from "@/lib/company-directory/read-profile"
-import {
-  addAlias,
-  addIdentifier,
-  correctIdentifier,
-  deactivateAlias,
-  getOrganization,
-  supersedeIdentifier,
-  updateLegalIdentity,
-} from "@/lib/corporate-identity/service"
+import { getOrganization } from "@/lib/corporate-identity/service"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
 import type { OrganizationRecord } from "@/lib/corporate-identity/types"
 
@@ -267,15 +262,29 @@ export async function getCompanyEditRecord(organizationId: string): Promise<Comp
 }
 
 /**
- * Edits only the canonical corporate-identity fields: legal name, trade-name alias and the INCORPORATION / CRA_BN / IRS_EIN
- * identifiers. A field that is omitted is left alone; an empty string ends the current value. Every step is an existing
- * corporate-identity operation (its own authorized transaction and Master Register event).
+ * The identity part of an edit on a transaction the caller opened (ORGANIZATION_UPDATE): legal name, trade-name alias and the
+ * INCORPORATION / CRA_BN / IRS_EIN identifiers. A field that is omitted is left alone; an empty string ends the current value.
+ * Every step is an existing corporate-identity operation (with its own Master Register event); none commits on its own here.
  */
-export async function updateCompanyDirectoryRecord(
+async function applyIdentityEdit(
+  client: PoolClient,
+  decision: SystemAuthorizationDecision,
   organizationId: string,
   input: UpdateCompanyDirectoryInput,
-): Promise<CompanyEditRecord> {
-  let organization = await getOrganization(organizationId)
+): Promise<OrganizationRecord> {
+  const ctx = domainContext(client, decision, "ORGANIZATION_REGISTRY_READ")
+  // The same two capabilities the separate operations needed: the registry read to see the record, the update to change it.
+  const read = async () => {
+    await enterSystemCapability(client, "ORGANIZATION_REGISTRY_READ")
+    return corporateOperations.readOrganization(client, organizationId)
+  }
+  const write = async <T>(work: () => Promise<T>): Promise<T> => {
+    await enterSystemCapability(client, "ORGANIZATION_UPDATE")
+    const result = await work()
+    await runDeferredChecks(client)
+    return result
+  }
+  let organization = await read()
   const current = toEditRecord(organization)
   const has = (value: unknown) => typeof value === "string"
 
@@ -284,7 +293,7 @@ export async function updateCompanyDirectoryRecord(
     if (!legalName) throw new CompanyDirectoryValidationError("Company Name is required.")
     if (legalName !== organization.legalName) {
       const keepDisplay = organization.displayName === organization.legalName
-      organization = (await updateLegalIdentity(organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName })).organization
+      organization = (await write(() => corporateOperations.updateLegalIdentity(ctx, organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName }))).organization
     }
   }
 
@@ -292,16 +301,12 @@ export async function updateCompanyDirectoryRecord(
     const dba = text(input.dba)
     if (dba !== current.dba) {
       const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType?.toUpperCase() === "TRADE_NAME")
-      if (existing) organization = (await deactivateAlias(organizationId, existing.id)).organization
-      if (dba) organization = (await addAlias(organizationId, { alias: dba, aliasType: "TRADE_NAME" })).organization
+      if (existing) organization = (await write(() => corporateOperations.deactivateAlias(ctx, organizationId, existing.id))).organization
+      if (dba) organization = (await write(() => corporateOperations.addAlias(ctx, organizationId, { alias: dba, aliasType: "TRADE_NAME" }))).organization
     }
   }
 
-  const applyIdentifier = async (
-    kind: "INCORPORATION" | "CRA_BN" | "IRS_EIN",
-    raw: unknown,
-    previous: string,
-  ) => {
+  const applyIdentifier = async (kind: "INCORPORATION" | "CRA_BN" | "IRS_EIN", raw: unknown, previous: string) => {
     if (!has(raw)) return
     const value = text(raw)
     if (value === previous) return
@@ -317,16 +322,24 @@ export async function updateCompanyDirectoryRecord(
         replacement = { kind, value }
       }
     }
-    if (existing && replacement) organization = (await correctIdentifier(organizationId, existing.id, replacement)).organization
-    else if (existing) organization = (await supersedeIdentifier(organizationId, existing.id)).organization
-    else if (replacement) organization = (await addIdentifier(organizationId, replacement)).organization
+    if (existing && replacement) organization = (await write(() => corporateOperations.correctIdentifier(ctx, organizationId, existing.id, replacement))).organization
+    else if (existing) organization = (await write(() => corporateOperations.supersedeIdentifier(ctx, organizationId, existing.id))).organization
+    else if (replacement) organization = (await write(() => corporateOperations.addIdentifier(ctx, organizationId, replacement))).organization
   }
 
   await applyIdentifier("INCORPORATION", input.incorpNo, current.incorpNo)
   await applyIdentifier("CRA_BN", input.businessNo, current.businessNo)
   await applyIdentifier("IRS_EIN", input.ein, current.ein)
 
-  return toEditRecord(organization)
+  return organization
+}
+
+/** Edits only the canonical corporate-identity fields, as one transaction (see applyIdentityEdit). */
+export async function updateCompanyDirectoryRecord(
+  organizationId: string,
+  input: UpdateCompanyDirectoryInput,
+): Promise<CompanyEditRecord> {
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => toEditRecord(await applyIdentityEdit(client, decision, organizationId, input)))
 }
 
 const IDENTITY_KEYS = ["companyName", "dba", "incorpNo", "businessNo", "ein"] as const
@@ -334,9 +347,10 @@ const IDENTITY_KEYS = ["companyName", "dba", "incorpNo", "businessNo", "ein"] as
 export type CompanyEditResult = { company: CompanyEditRecord; details: CompanyDetailsUpdate | null }
 
 /**
- * The whole edit: identity (corporate-identity operations) and details (operating region and the three addresses). Both parts
- * are validated BEFORE anything is written, so a bad submission changes nothing. The two parts are separate canonical
- * transactions, so the result says exactly what was saved (see `details`).
+ * The whole edit: identity (corporate-identity operations) and details (operating region, addresses, website, cargo, fleet
+ * providers and billing preference) in ONE transaction. Both parts are validated BEFORE anything is written, and every write
+ * commits or rolls back together with its Master Register events, so a failure in any part - a refused capability, an identifier
+ * collision, a concurrent change - leaves the record exactly as it was. `details` says what the details part saved.
  */
 export async function editCompany(organizationId: string, raw: unknown): Promise<CompanyEditResult> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CompanyDirectoryValidationError("A JSON object is required.")
@@ -345,7 +359,9 @@ export async function editCompany(organizationId: string, raw: unknown): Promise
   const wantsDetails = hasDetailsToUpdate(body) || factsPresent(detailsPlan.facts)
   const identity: UpdateCompanyDirectoryInput = {}
   for (const key of IDENTITY_KEYS) if (key in body) identity[key] = body[key]
-  const company = await updateCompanyDirectoryRecord(organizationId, identity)
-  const details = wantsDetails ? await updateCompanyDetails(organizationId, body) : null
-  return { company, details }
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
+    const company = toEditRecord(await applyIdentityEdit(client, decision, organizationId, identity))
+    const details = wantsDetails ? await applyCompanyDetails(client, decision, organizationId, detailsPlan) : null
+    return { company, details }
+  })
 }

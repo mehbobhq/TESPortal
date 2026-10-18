@@ -55,12 +55,12 @@ const report = (field: string, destination: string, phase: Phase, result: string
 const DEST = {
   website: "organization_channels (WEBSITE / GENERAL)",
   cargoTypes: "company_cargo_category_periods + cargo_categories",
-  gpsProvider: "company_fleet_provider_periods (GPS)",
-  fuelProvider: "company_fleet_provider_periods (FUEL)",
+  gpsProvider: "company_fleet_providers + company_fleet_provider_periods (GPS_TELEMATICS)",
+  fuelProvider: "company_fleet_providers + company_fleet_provider_periods (FUEL_SERVICES)",
   payMethod: "customer_billing_preference_periods + billing_payment_methods",
   svcType: "derived: signed customer_contracts line package (read-only)",
   status: "derived: customer_engagement_stages (read-only)",
-  assessmentDate: "derived: onboarding_readiness_snapshots (read-only)",
+  assessmentDate: "none yet: no documentation assessment engine exists (read-only 'Not yet assessed')",
   endDate: "customer_engagements.ended_at via the end-service workflow",
   startDate: "customer_engagements.started_at",
   opRegion: "company_operating_scope_periods",
@@ -165,8 +165,8 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.deepEqual([website.value_display, website.value_normalized, website.channel_usage], ["Example-Transport.com", "https://example-transport.com", "GENERAL"]);
     const cargo = (await rows<{ code: string }>(`SELECT cargo_category_code AS code FROM public.company_cargo_category_periods WHERE organization_id = $1 AND record_status = 'active' AND effective_to IS NULL ORDER BY code`, [id])).map((r) => r.code);
     assert.deepEqual(cargo, ["GENERAL_FREIGHT", "HAZARDOUS_MATERIALS", "TEMPERATURE_CONTROLLED_FOOD"]);
-    const providers = await rows<{ provider_kind: string; provider_name: string; provider_name_normalized: string }>(`SELECT provider_kind, provider_name, provider_name_normalized FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND effective_to IS NULL ORDER BY provider_kind`, [id]);
-    assert.deepEqual(providers.map((p) => [p.provider_kind, p.provider_name, p.provider_name_normalized]), [["FUEL", "WEX Fleet", "wex fleet"], ["GPS", "Samsara", "samsara"]]);
+    const providers = await rows<{ category: string; provider_name: string; provider_name_normalized: string }>(`SELECT p.service_category_code AS category, v.provider_name, v.provider_name_normalized FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id WHERE p.organization_id = $1 AND p.effective_to IS NULL ORDER BY p.service_category_code`, [id]);
+    assert.deepEqual(providers.map((p) => [p.category, p.provider_name, p.provider_name_normalized]), [["FUEL_SERVICES", "WEX Fleet", "wex fleet"], ["GPS_TELEMATICS", "Samsara", "samsara"]]);
     assert.equal(await count(`SELECT count(*) AS n FROM public.organizations WHERE legal_name IN ('Samsara', 'WEX Fleet')`), 0, "a provider name never creates an Organization");
     assert.equal((await one<{ payment_method_code: string }>(`SELECT payment_method_code FROM public.customer_billing_preference_periods WHERE organization_id = $1 AND effective_to IS NULL`, [id])).payment_method_code, "CHEQUE");
 
@@ -183,7 +183,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.equal(profile.startDate, "2024-01-15");
     assert.equal(profile.opRegion, payload.opRegion);
     assert.deepEqual(profile.serviceType, { state: "not_contracted" });
-    assert.equal(profile.assessmentDate, null);
+    assert.deepEqual(profile.assessment, { state: "not_yet_assessed" });
     assert.equal(profile.endDate, null);
     assert.ok(Object.values(profile.sections).every((state) => state === "ok"), JSON.stringify(profile.sections));
     assert.deepEqual(profile.notRecordedYet, ["gstHst"]);
@@ -265,8 +265,8 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     const cargo = await rows<{ id: string; code: string; open: boolean }>(`SELECT id, cargo_category_code AS code, (effective_to IS NULL) AS open FROM public.company_cargo_category_periods WHERE organization_id = $1 AND record_status = 'active' ORDER BY code, effective_from`, [id]);
     assert.deepEqual(cargo.map((c) => [c.code, c.open]), [["BULK_OTHER", true], ["GENERAL_FREIGHT", true], ["HAZARDOUS_MATERIALS", false], ["TEMPERATURE_CONTROLLED_FOOD", true]]);
     assert.equal(cargo.find((c) => c.code === "GENERAL_FREIGHT")?.id, cargoIds.get("GENERAL_FREIGHT"), "a kept category is the same row, not re-created");
-    const fleet = await rows<{ kind: string; name: string; open: boolean }>(`SELECT provider_kind AS kind, provider_name AS name, (effective_to IS NULL) AS open FROM public.company_fleet_provider_periods WHERE organization_id = $1 ORDER BY provider_kind, effective_from`, [id]);
-    assert.deepEqual(fleet.map((f) => [f.kind, f.name, f.open]), [["FUEL", "WEX Fleet", false], ["GPS", "Samsara", false], ["GPS", "Geotab", true]]);
+    const fleet = await rows<{ kind: string; name: string; open: boolean }>(`SELECT p.service_category_code AS kind, v.provider_name AS name, (p.effective_to IS NULL) AS open FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id WHERE p.organization_id = $1 ORDER BY p.service_category_code, p.effective_from`, [id]);
+    assert.deepEqual(fleet.map((f) => [f.kind, f.name, f.open]), [["FUEL_SERVICES", "WEX Fleet", false], ["GPS_TELEMATICS", "Samsara", false], ["GPS_TELEMATICS", "Geotab", true]]);
     const billing = await rows<{ code: string; open: boolean }>(`SELECT payment_method_code AS code, (effective_to IS NULL) AS open FROM public.customer_billing_preference_periods WHERE organization_id = $1 ORDER BY effective_from`, [id]);
     assert.deepEqual(billing.map((b) => [b.code, b.open]), [["CHEQUE", false], ["CREDIT_CARD", true]]);
 
@@ -324,7 +324,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.equal((await one<{ record_status: string; corrected_at: string | null }>(`SELECT record_status, corrected_at FROM public.company_cargo_category_periods WHERE organization_id = $1 AND cargo_category_code = 'HAZARDOUS_MATERIALS'`, [id])).record_status, "voided", "a category recorded in error is voided");
     const gps = await rows<{ record_status: string; superseded: boolean; same_start: boolean }>(
       `SELECT old.record_status, (old.superseded_by_period_id = new.id) AS superseded, (old.effective_from = new.effective_from) AS same_start
-         FROM public.company_fleet_provider_periods old JOIN public.company_fleet_provider_periods new ON new.id = old.superseded_by_period_id WHERE old.organization_id = $1 AND old.provider_kind = 'GPS'`,
+         FROM public.company_fleet_provider_periods old JOIN public.company_fleet_provider_periods new ON new.id = old.superseded_by_period_id WHERE old.organization_id = $1 AND old.service_category_code = 'GPS_TELEMATICS'`,
       [id],
     );
     assert.deepEqual(gps.map((g) => [g.record_status, g.superseded, g.same_start]), [["corrected", true, true]], "the replacement inherits the business time");
@@ -334,7 +334,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     await K.dir.editCompany(id, { factMode: "correct", fuelProvider: "", website: "" });
     assert.equal((await K.dir.getCompanyProfile(id))?.fuelProvider, null);
     assert.equal((await K.dir.getCompanyProfile(id))?.website, null);
-    assert.equal((await one<{ record_status: string }>(`SELECT record_status FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND provider_kind = 'FUEL'`, [id])).record_status, "voided");
+    assert.equal((await one<{ record_status: string }>(`SELECT record_status FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND service_category_code = 'FUEL_SERVICES'`, [id])).record_status, "voided");
     await K.dir.editCompany(id, { payMethod: "" });
     assert.equal((await K.dir.getCompanyProfile(id))?.payMethod, null);
     const ended = await one<{ record_status: string; ended: boolean }>(`SELECT record_status, (effective_to IS NOT NULL) AS ended FROM public.customer_billing_preference_periods WHERE organization_id = $1 AND payment_method_code = 'WIRE_TRANSFER'`, [id]);
@@ -361,7 +361,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
 
     // A failure AFTER the profile facts were written (a registry number already taken) rolls the whole record back.
     const usdot = digits(7);
-    const first = await K.dir.createCompanyDirectoryRecord(customerPayload("D1", { usdot }));
+    const first = await K.dir.createCompanyDirectoryRecord(customerPayload("D1", { cargoTypes: FACTS.cargoTypes, usdot }));
     const cargoBefore = await count(`SELECT count(*) AS n FROM public.company_cargo_category_periods`);
     const namedBefore = await orgCount();
     await assert.rejects(K.dir.createCompanyDirectoryRecord(customerPayload("D2", { ...FACTS, usdot })));
@@ -468,9 +468,9 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.equal(seen?.payMethod, null);
     await signInWith(...without("CONTRACT_READ", "EVIDENCE_READ"));
     seen = await K.dir.getCompanyProfile(id);
-    assert.deepEqual([seen?.sections.contracts, seen?.sections.assessment], ["not_permitted", "not_permitted"]);
+    assert.equal(seen?.sections.contracts, "not_permitted");
     assert.deepEqual(seen?.serviceType, { state: "restricted" });
-    assert.equal(seen?.assessmentDate, null);
+    assert.deepEqual(seen?.assessment, { state: "not_yet_assessed" });
     await signInWith();
     await assert.rejects(K.dir.getCompanyProfile(id));
     K.db.setClerkUser(null);
@@ -520,20 +520,26 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     await assert.rejects(pools.admin.query(`DELETE FROM public.company_cargo_category_periods WHERE id = $1`, [cargo.id]), /preserved/);
     await assert.rejects(pools.admin.query(`TRUNCATE public.company_fleet_provider_periods`), /preserved/);
     await assert.rejects(pools.admin.query(`DELETE FROM public.customer_billing_preference_periods WHERE organization_id = $1`, [id]), /preserved/);
-    // the provider NAME is part of the immutable content
-    const provider = await one<{ id: string }>(`SELECT id FROM public.company_fleet_provider_periods WHERE organization_id = $1 LIMIT 1`, [id]);
-    await assert.rejects(pools.admin.query(`UPDATE public.company_fleet_provider_periods SET provider_name = 'Edited' WHERE id = $1`, [provider.id]), /immutable/);
+    // the provider identity (its NAME) and the period content are immutable
+    const provider = await one<{ id: string; provider_id: string }>(`SELECT id, provider_id FROM public.company_fleet_provider_periods WHERE organization_id = $1 LIMIT 1`, [id]);
+    await assert.rejects(pools.admin.query(`UPDATE public.company_fleet_providers SET provider_name = 'Edited' WHERE id = $1`, [provider.provider_id]), /immutable/);
+    await assert.rejects(pools.admin.query(`UPDATE public.company_fleet_provider_periods SET service_category_code = 'ELD_HOS' WHERE id = $1`, [provider.id]), /immutable/);
+    await assert.rejects(pools.admin.query(`DELETE FROM public.company_fleet_providers WHERE id = $1`, [provider.provider_id]), /preserved/);
 
     // one current row per company and category / kind / customer
     await assert.rejects(pools.admin.query(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'GENERAL_FREIGHT', now())`, [id]), /company_cargo_category_periods_current_uq/);
-    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_kind, provider_name, provider_name_normalized, effective_from) VALUES ($1, 'GPS', 'Second', 'second', now())`, [id]), /company_fleet_provider_periods_current_uq/);
+    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_id, service_category_code, effective_from) SELECT organization_id, provider_id, service_category_code, now() FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND service_category_code = 'GPS_TELEMATICS' LIMIT 1`, [id]), /company_fleet_provider_periods_current_uq/);
     await assert.rejects(pools.admin.query(`INSERT INTO public.customer_billing_preference_periods (organization_id, payment_method_code, effective_from) VALUES ($1, 'CHEQUE', now())`, [id]), /customer_billing_preference_periods_current_uq/);
 
     // a billing preference belongs to a Customer only; payment methods and cargo categories are controlled
     await assert.rejects(pools.admin.query(`INSERT INTO public.customer_billing_preference_periods (organization_id, payment_method_code, effective_from) VALUES ($1, 'CHEQUE', now())`, [nonCustomer.company.id]), /only be recorded for a Customer/);
     await assert.rejects(pools.admin.query(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'LIVESTOCK', now())`, [nonCustomer.company.id]), /not an active catalogue category/);
-    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_kind, provider_name, provider_name_normalized, effective_from) VALUES ($1, 'RADIO', 'x', 'x', now())`, [nonCustomer.company.id]), /periods_kind_valid/);
-    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_kind, provider_name, provider_name_normalized, effective_from) VALUES ($1, 'GPS', ' padded ', 'padded', now())`, [nonCustomer.company.id]), /name_valid/);
+    const orphan = (await one<{ id: string }>(`INSERT INTO public.company_fleet_providers (organization_id, provider_name, provider_name_normalized) VALUES ($1, 'Backstop', 'backstop') RETURNING id`, [nonCustomer.company.id])).id;
+    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_id, service_category_code, effective_from) VALUES ($1, $2, 'RADIO', now())`, [nonCustomer.company.id, orphan]), /not an active catalogue category/);
+    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_providers (organization_id, provider_name, provider_name_normalized) VALUES ($1, ' padded ', 'padded')`, [nonCustomer.company.id]), /company_fleet_providers_name_valid/);
+    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_providers (organization_id, provider_name, provider_name_normalized) VALUES ($1, 'BACKSTOP', 'backstop')`, [nonCustomer.company.id]), /company_fleet_providers_name_uq/);
+    // a period can only use a provider of the SAME company (tenant isolation at the database)
+    await assert.rejects(pools.admin.query(`INSERT INTO public.company_fleet_provider_periods (organization_id, provider_id, service_category_code, effective_from) VALUES ($1, $2, 'ELD_HOS', now())`, [id, orphan]), /company_fleet_provider_periods_provider_fk/);
     await pools.admin.query(`UPDATE public.cargo_categories SET is_active = false WHERE code = 'BULK_OTHER'`);
     try {
       await assert.rejects(pools.admin.query(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'BULK_OTHER', now())`, [nonCustomer.company.id]), /not an active catalogue category/);
@@ -572,7 +578,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     const state = await snapshot(id);
 
     for (const [field, value] of [["svcType", "Premium"], ["status", "Active"], ["endDate", "2030-01-01"], ["assessmentDate", "2026-01-01"], ["gstHst", "123456789 RT 0001"]] as const) {
-      const created = await validationOf(K.dir.createCompanyDirectoryRecord(customerPayload("J2", { [field]: value })));
+      const created = await validationOf(K.dir.createCompanyDirectoryRecord(customerPayload("J2", { cargoTypes: FACTS.cargoTypes, [field]: value })));
       const edited = await validationOf(K.dir.editCompany(id, { [field]: value }));
       assert.equal(created[0].field, field);
       assert.equal(edited[0].field, field);
@@ -585,13 +591,14 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     // a new customer always starts in ONBOARDING, whatever the form says
     assert.equal((await K.dir.getCompanyProfile(id))?.serviceStage, "ONBOARDING");
 
-    // Assessment Date: shown only when an actual readiness assessment exists
+    // Assessment Date: an onboarding READINESS snapshot measures evidence readiness for an engagement, not a company documentation
+    // assessment, so it is never relabelled as one. The profile stays "not yet assessed" even once a snapshot exists.
     const engagementId = (await one<{ id: string }>(`SELECT e.id FROM public.customer_engagements e JOIN public.customers c ON c.id = e.customer_id WHERE c.organization_id = $1`, [id])).id;
-    assert.equal((await K.dir.getCompanyProfile(id))?.assessmentDate, null);
+    assert.deepEqual((await K.dir.getCompanyProfile(id))?.assessment, { state: "not_yet_assessed" });
     await K.onboarding.snapshotReadiness({ organizationId: id, engagementId, readinessStatus: "not_ready", completedCount: 0, totalCount: 3, blockers: ["EVIDENCE"] });
-    const today = new Date().toISOString().slice(0, 10);
-    assert.equal((await K.dir.getCompanyProfile(id))?.assessmentDate, today);
-    report("assessmentDate", DEST.assessmentDate, "reload", "PASS: shows the latest actual assessment date; none -> no date");
+    assert.equal(await count(`SELECT count(*) AS n FROM public.onboarding_readiness_snapshots WHERE organization_id = $1`, [id]), 1, "a readiness snapshot exists");
+    assert.deepEqual((await K.dir.getCompanyProfile(id))?.assessment, { state: "not_yet_assessed" }, "and is not presented as a documentation assessment");
+    report("assessmentDate", DEST.assessmentDate, "reload", "PASS: truthful 'Not yet assessed'; a readiness snapshot is not relabelled");
 
     // End Date: only through the end-service workflow (with a reason); the profile then reads it back
     assert.equal((await K.dir.getCompanyProfile(id))?.endDate, null);

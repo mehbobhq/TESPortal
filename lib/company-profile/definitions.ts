@@ -174,8 +174,15 @@ export const resolveCargoCategory = (value: unknown) => byCodeOrLabel(CARGO_CATE
 /** Resolves a payment method given as its code or its display label; undefined when it is neither. */
 export const resolvePaymentMethod = (value: unknown) => byCodeOrLabel(PAYMENT_METHOD_DEFINITIONS, value)
 
-export const FLEET_PROVIDER_KINDS = ["GPS", "FUEL"] as const
+/**
+ * The three fleet service categories a provider name can be recorded for. The kind is the short key used by forms and the API;
+ * the code is the controlled catalogue entry (fleet_service_categories) that is stored. ELD/HOS, GPS/Telematics and Fuel are
+ * distinct services: one vendor may supply several of them, and a company may use a different vendor for each.
+ */
+export const FLEET_PROVIDER_KINDS = ["ELD", "GPS", "FUEL"] as const
 export type FleetProviderKind = (typeof FLEET_PROVIDER_KINDS)[number]
+export const FLEET_SERVICE_CATEGORY_CODE: Record<FleetProviderKind, string> = { ELD: "ELD_HOS", GPS: "GPS_TELEMATICS", FUEL: "FUEL_SERVICES" }
+export const FLEET_SERVICE_CATEGORY_LABEL: Record<FleetProviderKind, string> = { ELD: "ELD / Hours of Service", GPS: "GPS / Telematics", FUEL: "Fuel Card / Fuel Services" }
 export const isFleetProviderKind = (value: unknown): value is FleetProviderKind => typeof value === "string" && (FLEET_PROVIDER_KINDS as readonly string[]).includes(value)
 
 /** The matching form of a provider name: case-folded, whitespace collapsed. Advisory matching only. */

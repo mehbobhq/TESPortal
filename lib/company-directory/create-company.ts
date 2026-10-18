@@ -27,7 +27,7 @@ export type CompanyCreationRecorded = {
   authorities: string[]
   registrations: string[]
   cargoCategories: number
-  fleetProviders: Array<"GPS" | "FUEL">
+  fleetProviders: Array<"ELD" | "GPS" | "FUEL">
   billingPreference: boolean
 }
 

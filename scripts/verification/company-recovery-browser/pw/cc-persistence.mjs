@@ -19,14 +19,15 @@ await step("create form: Website, Cargo, GPS, Fuel and Payment Method are live; 
   await go("/companies/new"); await page.waitForSelector("#companyName", { timeout: 90000 })
   await pick(page, page.locator("button:has-text('Select entity type')"), "Customer")
   await page.waitForSelector("[name=startDate]")
-  const state = async (n) => ({ disabled: await page.locator(`[name=${n}]`).first().isDisabled().catch(() => null), present: (await page.locator(`[name=${n}]`).count()) > 0 })
-  const live = await Promise.all(["website", "gpsProvider", "fuelProvider", "startDate"].map(async (n) => [n, (await state(n)).disabled === false]))
-  const derived = await Promise.all(["svcType", "status", "endDate", "assessmentDate", "gstHst"].map(async (n) => [n, (await state(n)).disabled === true]))
+  const state = async (n) => { const present = (await page.locator(`[name=${n}]`).count()) > 0; return { present, disabled: present ? await page.locator(`[name=${n}]`).first().isDisabled() : null } }
+  const live = await Promise.all(["website", "eldProvider", "gpsProvider", "fuelProvider", "startDate"].map(async (n) => [n, (await state(n)).disabled === false]))
+  const derived = await Promise.all(["svcType", "status", "endDate", "assessmentDate"].map(async (n) => [n, (await state(n)).disabled === true]))
+  const taxHidden = [["gstHst", (await state("gstHst")).present === false]] // only shown once a Canadian or US formation country is chosen
   const text = await body()
   const values = { svcType: await page.inputValue("[name=svcType]"), status: await page.inputValue("[name=status]"), assessmentDate: await page.inputValue("[name=assessmentDate]") }
   await shot(page, "cc-01-create-form")
-  const bad = [...live, ...derived].filter(([, ok]) => !ok).map(([n]) => n)
-  return bad.length === 0 && values.svcType === "Not contracted" && values.status === "Onboarding" && values.assessmentDate === "No assessment yet" && /Cargo Information \*/.test(text) ? "live: website/gps/fuel/startDate; read-only: svcType/status/endDate/assessmentDate; gstHst disabled" : `!${bad}`
+  const bad = [...live, ...derived, ...taxHidden].filter(([, ok]) => !ok).map(([n]) => n)
+  return bad.length === 0 && values.svcType === "Not contracted" && values.status === "Onboarding" && values.assessmentDate === "Not yet assessed" && /Cargo Information \*/.test(text) ? "live: website/eld/gps/fuel/startDate; read-only: svcType/status/endDate/assessmentDate; tax registration hidden until a Canadian/US formation is chosen" : `!${bad}`
 })
 
 await step("create: Cargo Information is mandatory for a Customer (the original rule), and a refused form creates nothing", async () => {
@@ -44,7 +45,7 @@ await step("create: an invalid website is refused with a per-field message and n
   await page.locator("button:has-text('Select cargo types')").click()
   for (const c of CARGO) await page.locator("label", { hasText: c }).first().click()
   await page.keyboard.press("Escape")
-  await page.fill("[name=gpsProvider]", "Samsara"); await page.fill("[name=fuelProvider]", "WEX Fleet")
+  await page.fill("[name=eldProvider]", "Motive"); await page.fill("[name=gpsProvider]", "Samsara"); await page.fill("[name=fuelProvider]", "WEX Fleet")
   await pick(page, page.locator("button:has-text('Not specified')"), "Cheque")
   await submit(() => page.click("button:has-text('Create Record')"), false)
   await page.waitForSelector("[role=alert]", { timeout: 30000 })
@@ -64,15 +65,15 @@ await step("reopen: a refreshed profile shows every saved value and the derived 
   await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector("text=Company Name", { timeout: 60000 })
   await page.waitForFunction(() => document.body.innerText.includes("Samsara"), null, { timeout: 30000 })
   const text = await body(); await shot(page, "cc-03-profile-after-create")
-  const need = { website: "https://Example-Transport.com", gps: "Samsara", fuel: "WEX Fleet", pay: "Cheque", cargo1: "General Freight", cargo2: "Hazardous Materials", cargo3: "Temperature-Controlled & Food", stage: "Onboarding", svc: "Not contracted", assess: "No assessment yet", start: "2024-01-15" }
+  const need = { website: "https://Example-Transport.com", eld: "Motive", gps: "Samsara", fuel: "WEX Fleet", pay: "Cheque", cargo1: "General Freight", cargo2: "Hazardous Materials", cargo3: "Temperature-Controlled & Food", stage: "Onboarding", svc: "Not contracted", assess: "Not yet assessed", start: "2024-01-15" }
   const missing = Object.entries(need).filter(([, v]) => !text.includes(v)).map(([k]) => k)
   const rows = {
     channel: one(`select value_normalized from organization_channels where organization_id='${id}' and channel_type='WEBSITE' and effective_to is null`),
     cargo: one(`select string_agg(cargo_category_code, ',' order by cargo_category_code) from company_cargo_category_periods where organization_id='${id}' and effective_to is null`),
-    providers: one(`select string_agg(provider_kind||':'||provider_name, ',' order by provider_kind) from company_fleet_provider_periods where organization_id='${id}' and effective_to is null`),
+    providers: one(`select string_agg(p.service_category_code||':'||v.provider_name, ',' order by p.service_category_code) from company_fleet_provider_periods p join company_fleet_providers v on v.id=p.provider_id where p.organization_id='${id}' and p.effective_to is null`),
     pay: one(`select payment_method_code from customer_billing_preference_periods where organization_id='${id}' and effective_to is null`),
   }
-  return missing.length === 0 && rows.channel === "https://example-transport.com" && rows.cargo === "GENERAL_FREIGHT,HAZARDOUS_MATERIALS,TEMPERATURE_CONTROLLED_FOOD" && rows.providers === "FUEL:WEX Fleet,GPS:Samsara" && rows.pay === "CHEQUE" ? `all values on screen; canonical rows: ${JSON.stringify(rows)}` : `!missing=${missing} rows=${JSON.stringify(rows)}`
+  return missing.length === 0 && rows.channel === "https://example-transport.com" && rows.cargo === "GENERAL_FREIGHT,HAZARDOUS_MATERIALS,TEMPERATURE_CONTROLLED_FOOD" && rows.providers === "ELD_HOS:Motive,FUEL_SERVICES:WEX Fleet,GPS_TELEMATICS:Samsara" && rows.pay === "CHEQUE" ? `all values on screen; canonical rows: ${JSON.stringify(rows)}` : `!missing=${missing} rows=${JSON.stringify(rows)}`
 })
 
 await step("edit page: opens prefilled from the canonical record, derived fields are read-only text", async () => {
@@ -81,7 +82,7 @@ await step("edit page: opens prefilled from the canonical record, derived fields
   const v = { website: await page.inputValue("#website"), gps: await page.inputValue("#gpsProvider"), fuel: await page.inputValue("#fuelProvider"), pay: await page.inputValue("#payMethod") }
   const cargo = await Promise.all(CARGO.map((c) => page.getByLabel(c, { exact: true }).isChecked()))
   const text = await body(); await shot(page, "cc-04-edit-form")
-  return v.website === "https://Example-Transport.com" && v.gps === "Samsara" && v.fuel === "WEX Fleet" && v.pay === "Cheque" && cargo.every(Boolean) && /Not contracted/.test(text) && /Onboarding/.test(text) && /2024-01-15/.test(text) && /No assessment yet/.test(text) ? "prefilled: website, gps, fuel, payment, 3 cargo; service type/status/start/assessment shown read-only" : `!${JSON.stringify(v)} ${cargo}`
+  return v.website === "https://Example-Transport.com" && v.gps === "Samsara" && v.fuel === "WEX Fleet" && v.pay === "Cheque" && cargo.every(Boolean) && /Not contracted/.test(text) && /Onboarding/.test(text) && /2024-01-15/.test(text) && /Not yet assessed/.test(text) ? "prefilled: website, gps, fuel, payment, 3 cargo; service type/status/start/assessment shown read-only" : `!${JSON.stringify(v)} ${cargo}`
 })
 
 await step("cancel: editing then Cancel persists nothing", async () => {
@@ -121,14 +122,14 @@ await step("edit -> save -> refresh: changes across sections persist (identity, 
   const checks = { name: text.includes(renamed), region: text.includes("Cross-Border"), website: text.includes("https://new-site.example.org/home/"), gps: text.includes("Geotab") && !text.includes("Samsara"), fuel: !text.includes("WEX Fleet"), pay: text.includes("Credit Card") && !text.includes("Cheque"), cargo: text.includes("Bulk & Other") && !text.includes("Hazardous Materials") && text.includes("General Freight"), addr: text.includes("200 Bay St"), start: text.includes("2024-01-15") }
   const bad = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k)
   const history = { channels: one(`select count(*) from organization_channels where organization_id='${id}' and channel_type='WEBSITE'`), cargo: one(`select count(*) from company_cargo_category_periods where organization_id='${id}'`), fleet: one(`select count(*) from company_fleet_provider_periods where organization_id='${id}'`), billing: one(`select count(*) from customer_billing_preference_periods where organization_id='${id}'`) }
-  return bad.length === 0 && history.channels === "2" && history.cargo === "4" && history.fleet === "3" && history.billing === "2" ? `every change persisted after refresh; history kept ${JSON.stringify(history)}` : `!bad=${bad} ${JSON.stringify(history)}`
+  return bad.length === 0 && history.channels === "2" && history.cargo === "4" && history.fleet === "4" && history.billing === "2" ? `every change persisted after refresh; history kept ${JSON.stringify(history)}` : `!bad=${bad} ${JSON.stringify(history)}`
 })
 
 await step("edit: 'wrong value' mode corrects (flags the wrong row) instead of recording history", async () => {
   await go(`/companies/${id}/edit`); await page.waitForSelector("#companyName"); await page.waitForFunction(() => document.querySelector("#gpsProvider") !== null)
   await page.locator("input[name=factMode][value=correct]").check(); await page.fill("#gpsProvider", "Geotab Inc")
   await submit(() => page.click("button:has-text('Save Changes')"), true, () => page.waitForURL(/\/profile/, { timeout: 60000 }))
-  const status = one(`select string_agg(record_status, ',' order by created_at) from company_fleet_provider_periods where organization_id='${id}' and provider_kind='GPS'`)
+  const status = one(`select string_agg(record_status, ',' order by created_at) from company_fleet_provider_periods where organization_id='${id}' and service_category_code='GPS_TELEMATICS'`)
   return status.endsWith("corrected,active") ? `GPS rows: ${status}` : `!${status}`
 })
 
@@ -239,10 +240,10 @@ await r.step("authorization: a read-only user sees the saved facts, the write is
 })
 await r.browser.close()
 r = await start("user_e2e_noevidence")
-await r.step("authorization: without evidence/contract access the Assessment Date is 'Not permitted to view' (not blank, not guessed)", async () => {
+await r.step("assessment: whoever reads the profile sees the truthful 'Not yet assessed' (no date is invented, none is withheld)", async () => {
   await r.go(`/companies/${id}/profile`); await r.settle(); await r.page.waitForFunction(() => document.body.innerText.includes("Geotab"), null, { timeout: 30000 }).catch(() => {})
   const text = await r.page.innerText("body")
-  return /assessment date/i.test(text) && /not permitted to view/i.test(text) ? "Assessment Date withheld, not invented" : `!${text.slice(0, 200)}`
+  return /assessment date/i.test(text) && /not yet assessed/i.test(text) ? "Assessment Date: Not yet assessed" : `!${text.slice(0, 200)}`
 })
 await r.browser.close()
 r = await start("user_e2e_none")

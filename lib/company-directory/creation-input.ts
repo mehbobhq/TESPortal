@@ -48,8 +48,9 @@ export const FIELD_OWNERS = {
   billingEmail: "organization_channels EMAIL / ACCOUNTING (contacts)",
   website: "organization_channels WEBSITE / GENERAL (contacts); http(s) address, normalized",
   cargoTypes: "company_cargo_category_periods + cargo_categories catalogue (company operating profile); Customer only; descriptive, not a compliance claim",
-  gpsProvider: "company_fleet_provider_periods, kind GPS (company operating profile); a NAME, no Organization is created; Customer only",
-  fuelProvider: "company_fleet_provider_periods, kind FUEL (company operating profile); a NAME, no Organization is created; Customer only",
+  eldProvider: "company_fleet_providers + company_fleet_provider_periods, category ELD_HOS (company operating profile); a NAME, no Organization is created; Customer only",
+  gpsProvider: "company_fleet_providers + company_fleet_provider_periods, category GPS_TELEMATICS (company operating profile); a NAME, no Organization is created; Customer only",
+  fuelProvider: "company_fleet_providers + company_fleet_provider_periods, category FUEL_SERVICES (company operating profile); a NAME, no Organization is created; Customer only",
   payMethod: "customer_billing_preference_periods + billing_payment_methods catalogue (customer relationship); a preference, not contract terms; Customer only",
   reg_: "locations + organization_location_assignments, role REGISTERED (organization locations)",
   mail_: "locations + organization_location_assignments, role MAILING (organization locations); Customer only",
@@ -78,7 +79,7 @@ export const UNSUPPORTED_FIELDS: Readonly<Record<string, string>> = {
   status: "Service status is the Customer's engagement stage. A new Customer always starts in ONBOARDING; later stages are recorded through the engagement lifecycle, never chosen at creation.",
   endDate: "A Customer engagement is ended through its lifecycle (Edit, with a reason), not at creation.",
   svcType: "Service type is contract-governed: it is the package on a signed contract line, decided by the Customer's Service Decision Authority with evidence. It is shown on the profile, derived from the contract, and cannot be set here.",
-  assessmentDate: "The assessment date is the date of the latest readiness assessment. It is recorded by the assessment itself and cannot be typed in.",
+  assessmentDate: "The assessment date is recorded by a company documentation assessment, which cannot be typed in. No assessment engine exists yet, so every record is shown as not yet assessed.",
   contactPerson: "Send contactGivenName and contactFamilyName; a full name is never split by guesswork.",
   cargoInfo: "Send cargoTypes (a list of cargo categories).",
 }
@@ -89,7 +90,7 @@ const ADDRESS_PARTS = ["street", "city", "state", "zip", "country"] as const
 export const SUPPORTED_FIELD_KEYS: ReadonlySet<string> = new Set([
   "companyName", "dba", "companyType", "regCorpState", "regCorpCountry", "incorpNo", "businessNo", "ein", "startDate", "opRegion",
   "contactGivenName", "contactFamilyName", "phone", "email", "billingEmail", "website",
-  "cargoTypes", "gpsProvider", "fuelProvider", "payMethod",
+  "cargoTypes", "eldProvider", "gpsProvider", "fuelProvider", "payMethod",
   "usdot", "mc", "mvid", "nsc", "accIrp", "accIfta", "accNyhut", "accNm", "accKyu", "accOr", "accCt", "scac", "carrierCode",
   ...COMPANIONS,
   ...ADDRESS_PREFIXES.flatMap((prefix) => ADDRESS_PARTS.map((part) => `${prefix}_${part}`)),
@@ -149,7 +150,7 @@ export type CompanyCreationPlan = {
   /** Cargo category CODES (Customer only). */
   cargoCategories: string[]
   /** Fleet provider NAMES by kind (Customer only). */
-  fleetProviders: Array<{ kind: "GPS" | "FUEL"; name: string }>
+  fleetProviders: Array<{ kind: "ELD" | "GPS" | "FUEL"; name: string }>
   /** Billing payment method CODE (Customer only), or null when none was chosen. */
   paymentMethod: string | null
 }
@@ -288,6 +289,7 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
   const cargoCategories: string[] = []
   const rawCargo = parseCargoList(input.cargoTypes)
   if (rawCargo === "invalid") issue("cargoTypes", "Cargo Information must be a list of cargo categories.")
+  else if (rawCargo.length === 0 && isCustomer) issue("cargoTypes", "Cargo Information is mandatory for a Customer record; choose at least one category.")
   else if (rawCargo.length > 0) {
     if (!isCustomer) issue("cargoTypes", "Cargo Information applies to Customer records only.")
     else
@@ -297,8 +299,8 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
         else if (!cargoCategories.includes(category.code)) cargoCategories.push(category.code)
       }
   }
-  const fleetProviders: Array<{ kind: "GPS" | "FUEL"; name: string }> = []
-  for (const [field, kind] of [["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
+  const fleetProviders: Array<{ kind: "ELD" | "GPS" | "FUEL"; name: string }> = []
+  for (const [field, kind] of [["eldProvider", "ELD"], ["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
     if (!text(input[field])) continue
     if (!isCustomer) {
       issue(field, "Fleet providers apply to Customer records only.")

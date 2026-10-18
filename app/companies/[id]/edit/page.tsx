@@ -22,11 +22,11 @@ type Details = Record<string, string | string[] | ServiceTypeState | null | unde
   opRegion?: string | null
   website?: string | null
   cargoTypes?: string[]
+  eldProvider?: string | null
   gpsProvider?: string | null
   fuelProvider?: string | null
   payMethod?: string | null
   serviceType?: ServiceTypeState | null
-  assessmentDate?: string | null
   serviceStage?: string | null
   startDate?: string | null
 }
@@ -72,9 +72,9 @@ const DEFERRED_SECTIONS = [
   "Contact person, phone and email — managed in the Contacts workspace",
   "Carrier numbers (USDOT, MC, NSC, MVID) — managed in Authorities",
   "Tax programme accounts and customs codes (SCAC, Carrier Code) — managed in Tax Filing registrations",
-  "GST/HST account — no canonical storage yet",
+  "GST/HST account and US state tax registration — no canonical tax registration program exists yet",
   "TES Service Start Date — fixed once recorded; a verified correction with a reason is a separate dependency",
-  "Service type (from the signed contract), service status (the engagement stage) and assessment date (the latest readiness assessment) — shown read-only",
+  "Service type (from the signed contract), service status (the engagement stage) and assessment date (a future company documentation assessment; Not yet assessed until one exists) — shown read-only",
 ]
 
 export default function EditCompanyPage() {
@@ -127,6 +127,7 @@ export default function EditCompanyPage() {
     if (details.kind === "Customer") {
       const before = [...(Array.isArray(details.cargoTypes) ? details.cargoTypes : [])].sort().join("|")
       if ([...cargo].sort().join("|") !== before) detailFields.cargoTypes = JSON.stringify(cargo)
+      if (field("eldProvider").trim() !== asText(details.eldProvider)) detailFields.eldProvider = field("eldProvider").trim()
       if (field("gpsProvider").trim() !== asText(details.gpsProvider)) detailFields.gpsProvider = field("gpsProvider").trim()
       if (field("fuelProvider").trim() !== asText(details.fuelProvider)) detailFields.fuelProvider = field("fuelProvider").trim()
       if (field("payMethod") !== asText(details.payMethod)) detailFields.payMethod = field("payMethod")
@@ -310,6 +311,10 @@ export default function EditCompanyPage() {
               </CardHeader>
               <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-2">
+                  <Label htmlFor="eldProvider">ELD / HOS Provider</Label>
+                  <Input id="eldProvider" name="eldProvider" maxLength={120} defaultValue={typeof details.eldProvider === "string" ? details.eldProvider : ""} />
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="gpsProvider">Truck GPS Provider</Label>
                   <Input id="gpsProvider" name="gpsProvider" maxLength={120} defaultValue={typeof details.gpsProvider === "string" ? details.gpsProvider : ""} />
                 </div>
@@ -319,8 +324,8 @@ export default function EditCompanyPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Assessment Date</Label>
-                  <p className="text-sm" data-testid="assessment-date">{details.assessmentDate ?? "No assessment yet"}</p>
-                  <p className="text-[11px] text-muted-foreground">Read-only. The date of the latest readiness assessment.</p>
+                  <p className="text-sm" data-testid="assessment-date">Not yet assessed</p>
+                  <p className="text-[11px] text-muted-foreground">Read-only. Shown when a company documentation assessment has been completed; none has been yet.</p>
                 </div>
               </CardContent>
             </Card>

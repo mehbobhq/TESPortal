@@ -10,7 +10,7 @@ const ROOT = process.cwd()
 const source = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8")
 
 const base = { companyName: "Acme Transport Ltd", companyType: "Owner Operator", opRegion: "Canada Only" }
-const customer = { ...base, companyType: "Customer", startDate: "2024-01-15" }
+const customer = { ...base, companyType: "Customer", startDate: "2024-01-15", cargoTypes: ["General Freight"] }
 const issuesOf = (payload: unknown): Array<{ field: string; message: string }> => {
   try {
     I.parseCreateCompanyInput(payload)
@@ -144,7 +144,10 @@ describe("company creation input contract", () => {
     assert.deepEqual(issuesOf({ ...base, ...address }).map((i) => i.field), ["mail_street"])
     assert.deepEqual(issuesOf({ ...base, startDate: "2024-01-01" }).map((i) => i.field), ["startDate"])
     assert.deepEqual(issuesOf({ ...customer, ...address }), [])
-    assert.deepEqual(issuesOf({ ...base, companyType: "Customer" }).map((i) => i.field), ["startDate"])
+    assert.deepEqual(issuesOf({ ...base, companyType: "Customer", cargoTypes: ["General Freight"] }).map((i) => i.field), ["startDate"])
+    assert.deepEqual(issuesOf({ ...base, companyType: "Customer", startDate: "2024-01-15" }).map((i) => i.field), ["cargoTypes"], "Cargo Information is mandatory for a Customer at the server")
+    assert.deepEqual(issuesOf({ ...customer, cargoTypes: [] }).map((i) => i.field), ["cargoTypes"])
+    assert.deepEqual(issuesOf({ ...customer, cargoTypes: "[]" }).map((i) => i.field), ["cargoTypes"])
     assert.deepEqual(issuesOf({ ...customer, startDate: "2024-02-31" }).map((i) => i.field), ["startDate"])
   })
 

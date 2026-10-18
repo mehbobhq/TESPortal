@@ -69,7 +69,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
   function fullPayload(label: string, overrides: Record<string, unknown> = {}) {
     const tag = `${label}${digits(4)}`;
     return {
-      companyName: `Recovery ${run} ${tag} Transport Ltd`, dba: `Recovery ${tag}`, companyType: "Customer", opRegion: "Cross-Border",
+      companyName: `Recovery ${run} ${tag} Transport Ltd`, dba: `Recovery ${tag}`, companyType: "Customer", opRegion: "Cross-Border", cargoTypes: JSON.stringify(["General Freight"]),
       regCorpState: "ON", regCorpCountry: "Canada", incorpNo: digits(7), businessNo: "", ein: `${digits(2)}-${digits(7)}`, startDate: "2024-01-15",
       contactGivenName: "Jane", contactFamilyName: "Roe", phone: `+1 416 555 ${digits(4)}`, email: `ops-${tag.toLowerCase()}@example.test`, billingEmail: `billing-${tag.toLowerCase()}@example.test`,
       reg_street: "100 King St W", reg_city: "Toronto", reg_state: "ON", reg_zip: "M5X 1A9", reg_country: "Canada",
@@ -318,7 +318,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
 
   it("refuses a mailing address on a non-Customer and an edit without the needed capability", async () => {
     await signInWith(...ALL);
-    const supplier = await K.dir.createCompanyDirectoryRecord(fullPayload("M", { companyType: "Sub Contractor", startDate: "", mail_street: "", mail_city: "", mail_state: "", mail_zip: "", mail_country: "", yard_street: "", yard_city: "", yard_state: "", yard_zip: "", yard_country: "", ein: "" }));
+    const supplier = await K.dir.createCompanyDirectoryRecord(fullPayload("M", { companyType: "Sub Contractor", startDate: "", cargoTypes: "", mail_street: "", mail_city: "", mail_state: "", mail_zip: "", mail_country: "", yard_street: "", yard_city: "", yard_state: "", yard_zip: "", yard_country: "", ein: "" }));
     await assert.rejects(K.dir.editCompany(supplier.company.id, { mail_street: "PO Box 1", mail_city: "Ottawa", mail_state: "ON" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
     await signInWith("ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ");
     await assert.rejects(K.dir.editCompany(supplier.company.id, { opRegion: "US Only" }), (e: unknown) => e instanceof K.create.CompanyCreationCapabilityError);

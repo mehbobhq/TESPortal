@@ -146,6 +146,18 @@ CREATE UNIQUE INDEX company_cargo_category_periods_current_uq
     ON public.company_cargo_category_periods (organization_id, cargo_category_code)
     WHERE record_status = 'active' AND effective_to IS NULL;
 
+-- No two ACTIVE periods of the same company and cargo category may overlap in time, closed or current (same semantics and reasoning as
+-- company_fleet_provider_periods_no_overlap below: half-open ranges allow an exact hand-over; corrected and voided rows are no longer
+-- 'active' and never block their replacement or a fresh period; different categories may be active at once). Requires btree_gist (0023).
+ALTER TABLE public.company_cargo_category_periods
+    ADD CONSTRAINT company_cargo_category_periods_no_overlap
+    EXCLUDE USING gist (
+        organization_id WITH =,
+        cargo_category_code WITH =,
+        tstzrange(effective_from, effective_to, '[)') WITH &&
+    )
+    WHERE (record_status = 'active');
+
 CREATE INDEX company_cargo_category_periods_history_idx
     ON public.company_cargo_category_periods (organization_id, effective_from);
 
@@ -347,6 +359,17 @@ CREATE TABLE public.customer_billing_preference_periods (
 CREATE UNIQUE INDEX customer_billing_preference_periods_current_uq
     ON public.customer_billing_preference_periods (organization_id)
     WHERE record_status = 'active' AND effective_to IS NULL;
+
+-- A Customer has at most one ACTIVE billing preference at any moment: no two active periods of the same company may overlap, closed or
+-- current. Half-open ranges allow an exact hand-over to a new preference; corrected and voided rows are excluded, so history, corrections
+-- and voids are untouched. This is a preference only: it never constrains contract payment terms or payment transactions.
+ALTER TABLE public.customer_billing_preference_periods
+    ADD CONSTRAINT customer_billing_preference_periods_no_overlap
+    EXCLUDE USING gist (
+        organization_id WITH =,
+        tstzrange(effective_from, effective_to, '[)') WITH &&
+    )
+    WHERE (record_status = 'active');
 
 CREATE INDEX customer_billing_preference_periods_history_idx
     ON public.customer_billing_preference_periods (organization_id, effective_from);

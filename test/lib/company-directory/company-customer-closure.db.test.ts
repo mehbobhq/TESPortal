@@ -262,6 +262,78 @@ describe("Company and Customer persistence closure (fleet categories, cargo rule
     assert.ok(statuses.some((r) => r.status === "corrected") && statuses.some((r) => r.status === "voided"));
   });
 
+  it("CARGO AND BILLING PERIODS: the database refuses contradictory overlaps; hand-overs, other categories, corrections and voids stay legal", async () => {
+    await signInWith(...ALL);
+    const id = await createCustomer("P1", { cargoTypes: JSON.stringify(["General Freight", "Hazardous Materials"]), payMethod: "Cheque" });
+    const overlapCargo = /company_cargo_category_periods_no_overlap/;
+    const overlapBilling = /customer_billing_preference_periods_no_overlap/;
+    const refusedCargo = /company_cargo_category_periods_(no_overlap|current_uq)/; // an open-ended duplicate is caught first by the one-current index
+    const refusedBilling = /customer_billing_preference_periods_(no_overlap|current_uq)/;
+    const cargoInsert = (category: string, from: string, to: string | null, client: { query: (sql: string, params: unknown[]) => Promise<unknown> } = pools.admin) =>
+      client.query(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from, effective_to) VALUES ($1, $2, $3::timestamptz, $4::timestamptz)`, [id, category, from, to]);
+    const billingInsert = (method: string, from: string, to: string | null, client: { query: (sql: string, params: unknown[]) => Promise<unknown> } = pools.admin) =>
+      client.query(`INSERT INTO public.customer_billing_preference_periods (organization_id, payment_method_code, effective_from, effective_to) VALUES ($1, $2, $3::timestamptz, $4::timestamptz)`, [id, method, from, to]);
+
+    // service: drop a category and re-add it, change the payment method twice (clean hand-overs)
+    await K.dir.editCompany(id, { cargoTypes: JSON.stringify(["General Freight"]) });
+    await K.dir.editCompany(id, { cargoTypes: JSON.stringify(["General Freight", "Hazardous Materials", "Bulk & Other"]) });
+    await K.dir.editCompany(id, { payMethod: "Wire Transfer" });
+    await K.dir.editCompany(id, { payMethod: "E-Transfer" });
+    const hazardous = await rows<{ from: string; to: string | null }>(`SELECT effective_from::text AS "from", effective_to::text AS "to" FROM public.company_cargo_category_periods WHERE organization_id = $1 AND cargo_category_code = 'HAZARDOUS_MATERIALS' ORDER BY effective_from`, [id]);
+    assert.equal(hazardous.length, 2, "the category was ended and re-added");
+    assert.ok(hazardous[0].to !== null && hazardous[1].to === null && hazardous[0].to <= hazardous[1].from);
+    const billing = await rows<{ code: string; from: string; to: string | null }>(`SELECT payment_method_code AS code, effective_from::text AS "from", effective_to::text AS "to" FROM public.customer_billing_preference_periods WHERE organization_id = $1 ORDER BY effective_from`, [id]);
+    assert.deepEqual(billing.map((b) => b.code), ["CHEQUE", "WIRE_TRANSFER", "E_TRANSFER"]);
+    assert.equal(billing[0].to, billing[1].from, "exact billing hand-over");
+    assert.equal(billing[1].to, billing[2].from);
+
+    // direct SQL as the table owner: same category / same customer, closed or open
+    await assert.rejects(cargoInsert("HAZARDOUS_MATERIALS", hazardous[0].from, hazardous[0].to), overlapCargo, "duplicate of a closed cargo period");
+    await assert.rejects(cargoInsert("HAZARDOUS_MATERIALS", "1999-01-01T00:00:00Z", null), refusedCargo, "open-ended cargo period covering history");
+    await assert.rejects(cargoInsert("HAZARDOUS_MATERIALS", "2999-01-01T00:00:00Z", null), refusedCargo, "open-ended cargo period inside the current one");
+    await cargoInsert("LIVESTOCK_NOT_A_CATEGORY", "1999-01-01T00:00:00Z", "1999-06-01T00:00:00Z").then(() => assert.fail("catalogue still enforced"), (e: Error) => assert.match(e.message, /not an active catalogue category/));
+    await assert.rejects(billingInsert("CREDIT_CARD", billing[0].from, billing[0].to), overlapBilling, "duplicate of a closed billing period");
+    const middle = await one<{ t: string }>(`SELECT ($1::timestamptz + ($2::timestamptz - $1::timestamptz) / 2)::text AS t`, [billing[1].from, billing[1].to]);
+    await assert.rejects(billingInsert("CREDIT_CARD", middle.t, billing[2].to), refusedBilling, "straddling a hand-over (open-ended)");
+    const handoverEnd = await one<{ t: string }>(`SELECT ($1::timestamptz + interval '1 microsecond')::text AS t`, [middle.t]);
+    await assert.rejects(billingInsert("CREDIT_CARD", middle.t, handoverEnd.t), overlapBilling, "a closed period inside a closed one");
+    await assert.rejects(billingInsert("CREDIT_CARD", "1999-01-01T00:00:00Z", null), refusedBilling, "open-ended billing period covering history");
+    await assert.rejects(billingInsert("CREDIT_CARD", "2999-01-01T00:00:00Z", null), refusedBilling, "open-ended billing period inside the current one");
+    await billingInsert("CREDIT_CARD", "1999-01-01T00:00:00Z", "1999-06-01T00:00:00Z"); // well before the first preference: a valid closed period
+    await assert.rejects(billingInsert("CHEQUE", "1999-03-01T00:00:00Z", "1999-09-01T00:00:00Z"), overlapBilling, "two closed billing periods that overlap");
+
+    // the same refusal through the RUNTIME role (it holds INSERT on effective_to)
+    await assert.rejects(K.sys.withAuthorizedSystem("COMPANY_PROFILE_MANAGE", async (client) => { await cargoInsert("HAZARDOUS_MATERIALS", hazardous[0].from, hazardous[0].to, client); }), overlapCargo);
+    await assert.rejects(K.sys.withAuthorizedSystem("CUSTOMER_RELATIONSHIP_MANAGE", async (client) => { await billingInsert("CREDIT_CARD", billing[0].from, billing[0].to, client); }), overlapBilling);
+
+    // legal: different categories active at once, another company with the same window, and a closed period that merely touches
+    await cargoInsert("BULK_OTHER", "1999-01-01T00:00:00Z", "1999-06-01T00:00:00Z"); // history of a category that is also current today
+    await billingInsert("CHEQUE", "1999-06-01T00:00:00Z", "1999-07-01T00:00:00Z"); // touches the 1999 card period exactly: a hand-over
+    const other = await createCustomer("P2", { cargoTypes: JSON.stringify(["General Freight", "Hazardous Materials"]), payMethod: "Cheque" });
+    assert.equal((await K.dir.getCompanyProfile(other))?.payMethod, "Cheque");
+    assert.deepEqual((await K.dir.getCompanyProfile(id))?.cargoTypes, ["General Freight", "Hazardous Materials", "Bulk & Other"]);
+
+    // corrections and voids keep working and never block their replacement (service level)
+    await K.dir.editCompany(id, { factMode: "correct", payMethod: "Credit Card" });
+    assert.equal((await K.dir.getCompanyProfile(id))?.payMethod, "Credit Card");
+    const corrected = await rows<{ status: string; same: boolean }>(
+      `SELECT old.record_status AS status, (old.effective_from = new.effective_from AND old.effective_to IS NOT DISTINCT FROM new.effective_to) AS same
+         FROM public.customer_billing_preference_periods old JOIN public.customer_billing_preference_periods new ON new.id = old.superseded_by_period_id WHERE old.organization_id = $1`, [id]);
+    assert.deepEqual(corrected.map((c) => [c.status, c.same]), [["corrected", true]]);
+    await K.dir.editCompany(id, { factMode: "correct", payMethod: "" }); // void
+    assert.equal((await K.dir.getCompanyProfile(id))?.payMethod, null);
+    await K.dir.editCompany(id, { payMethod: "Cheque" }); // fresh period after a void
+    assert.equal((await K.dir.getCompanyProfile(id))?.payMethod, "Cheque");
+    await K.dir.editCompany(id, { factMode: "correct", cargoTypes: JSON.stringify(["General Freight", "Bulk & Other"]) }); // voids Hazardous Materials
+    assert.deepEqual((await K.dir.getCompanyProfile(id))?.cargoTypes, ["General Freight", "Bulk & Other"]);
+    await K.dir.editCompany(id, { cargoTypes: JSON.stringify(["General Freight", "Hazardous Materials", "Bulk & Other"]) }); // re-add after a void
+    assert.equal((await K.dir.getCompanyProfile(id))?.cargoTypes.length, 3);
+
+    // nothing was deleted: corrected and voided rows are still there
+    assert.ok((await count(`SELECT count(*) AS n FROM public.customer_billing_preference_periods WHERE organization_id = $1 AND record_status IN ('corrected','voided')`, [id])) >= 2);
+    assert.ok((await count(`SELECT count(*) AS n FROM public.company_cargo_category_periods WHERE organization_id = $1 AND record_status = 'voided'`, [id])) >= 1);
+  });
+
   // ===========================================================================================================
   it("CARGO RULE: a Customer needs at least one cargo category at the server, on create and on edit; other company types are unaffected", async () => {
     await signInWith(...ALL);

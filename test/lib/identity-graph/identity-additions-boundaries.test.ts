@@ -68,7 +68,23 @@ describe("Identity graph additions: migrations", () => {
     for (const [name, expected] of Object.entries(CLOSED_MIGRATIONS)) {
       assert.equal(createHash("sha256").update(readFileSync(path.join(MIGRATIONS_DIR, name))).digest("hex"), expected, name);
     }
-    assert.deepEqual(present, [...Object.keys(CLOSED_MIGRATIONS), ...Object.keys(ADDED), ...Object.keys(POLICY_ONLY)]);
+    // This suite owns 0001-0028. Later migrations (0029 onward) belong to other recovery work and are checked here only for what this
+    // suite cares about: that they continue the sequence contiguously, without gaps or duplicates, and cannot rewrite the closed ones.
+    const owned = [...Object.keys(CLOSED_MIGRATIONS), ...Object.keys(ADDED), ...Object.keys(POLICY_ONLY)];
+    assert.deepEqual(present.slice(0, owned.length), owned);
+    present.slice(owned.length).forEach((name, index) => {
+      assert.match(name, /^\d{4}_[a-z0-9_]+\.sql$/, name);
+      assert.equal(Number(name.slice(0, 4)), owned.length + index + 1, `${name} continues the sequence contiguously`);
+    });
+  });
+
+  it("migration 0033 (Company/Customer profile facts) is frozen at its approved checksum", () => {
+    const name = "0033_company_customer_profile_facts.sql";
+    assert.equal(
+      createHash("sha256").update(readFileSync(path.join(MIGRATIONS_DIR, name))).digest("hex"),
+      "47f3e9e12489a0feecb4aefda209dbbdf7dc22cb45db6109b540a2ec28256eb7",
+      "0033 changed after approval; it is unapplied outside disposable databases, so a change needs a new approval and a new checksum here",
+    );
   });
 
   for (const [name, spec] of Object.entries(ADDED)) {

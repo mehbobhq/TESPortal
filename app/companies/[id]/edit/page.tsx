@@ -12,7 +12,46 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-type Details = Record<string, string | null> & { kind?: string; opRegion?: string | null }
+type ServiceTypeState =
+  | { state: "contracted"; packages: string[]; contractReference: string | null }
+  | { state: "not_contracted" }
+  | { state: "restricted" }
+
+type Details = Record<string, string | string[] | ServiceTypeState | null | undefined> & {
+  kind?: string
+  opRegion?: string | null
+  website?: string | null
+  cargoTypes?: string[]
+  gpsProvider?: string | null
+  fuelProvider?: string | null
+  payMethod?: string | null
+  serviceType?: ServiceTypeState | null
+  assessmentDate?: string | null
+  serviceStage?: string | null
+  startDate?: string | null
+}
+
+/** The cargo categories and payment methods of the original form (the database catalogues are authoritative). */
+const CARGO_OPTIONS = ["General Freight", "Specialized Equipment", "Household Goods", "Temperature-Controlled & Food", "Hazardous Materials", "Bulk & Other"]
+const PAYMENT_METHODS = ["E-Transfer", "Credit Card", "Wire Transfer", "Cheque"]
+
+const STAGE_LABEL: Record<string, string> = {
+  ONBOARDING: "Onboarding",
+  TRIAL: "Trial",
+  ACTIVE: "Active",
+  MANAGED_PROBATION: "Managed probation",
+  SUSPENDED: "Suspended",
+  ENDED: "Ended",
+}
+
+const asText = (value: unknown): string => (typeof value === "string" ? value : "")
+
+function serviceTypeText(state: ServiceTypeState | null | undefined): string {
+  if (!state) return "Not recorded"
+  if (state.state === "restricted") return "Not permitted to view"
+  if (state.state === "not_contracted") return "Not contracted"
+  return state.packages.length > 0 ? state.packages.join(", ") : "Contracted (no package recorded)"
+}
 
 type EditableCompany = {
   id: string
@@ -31,11 +70,11 @@ const ADDRESS_BLOCKS = [
 
 const DEFERRED_SECTIONS = [
   "Contact person, phone and email — managed in the Contacts workspace",
-  "Website (no canonical storage yet)",
-  "Customer service type, status, dates, payment method and cargo types",
   "Carrier numbers (USDOT, MC, NSC, MVID) — managed in Authorities",
-  "Tax programme accounts — managed in Tax Filing registrations",
-  "Customs codes and fleet providers",
+  "Tax programme accounts and customs codes (SCAC, Carrier Code) — managed in Tax Filing registrations",
+  "GST/HST account — no canonical storage yet",
+  "TES Service Start Date — fixed once recorded; a verified correction with a reason is a separate dependency",
+  "Service type (from the signed contract), service status (the engagement stage) and assessment date (the latest readiness assessment) — shown read-only",
 ]
 
 export default function EditCompanyPage() {
@@ -48,6 +87,7 @@ export default function EditCompanyPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cargo, setCargo] = useState<string[]>([])
 
   useEffect(() => {
     const id = params.id as string
@@ -64,6 +104,7 @@ export default function EditCompanyPage() {
       setCompany(found.company ?? null)
       setLookupFailed(found.failed)
       setDetails(profile ?? {})
+      setCargo(Array.isArray(profile?.cargoTypes) ? profile.cargoTypes : [])
       setLoading(false)
     })
     return () => {
@@ -79,7 +120,17 @@ export default function EditCompanyPage() {
     setSaving(true)
     setError(null)
     setIssues([])
-    const detailFields: Record<string, string> = { addressMode: field("addressMode") || "change", opRegion: field("opRegion") }
+    const detailFields: Record<string, string> = { addressMode: field("addressMode") || "change", opRegion: field("opRegion"), factMode: field("factMode") || "change" }
+    // Profile facts are sent only when they CHANGED from the loaded value, so an untouched field is never rewritten and a
+    // cleared field is an explicit, intentional "clear" (an empty string).
+    if (field("website").trim() !== asText(details.website)) detailFields.website = field("website").trim()
+    if (details.kind === "Customer") {
+      const before = [...(Array.isArray(details.cargoTypes) ? details.cargoTypes : [])].sort().join("|")
+      if ([...cargo].sort().join("|") !== before) detailFields.cargoTypes = JSON.stringify(cargo)
+      if (field("gpsProvider").trim() !== asText(details.gpsProvider)) detailFields.gpsProvider = field("gpsProvider").trim()
+      if (field("fuelProvider").trim() !== asText(details.fuelProvider)) detailFields.fuelProvider = field("fuelProvider").trim()
+      if (field("payMethod") !== asText(details.payMethod)) detailFields.payMethod = field("payMethod")
+    }
     for (const block of ADDRESS_BLOCKS) {
       for (const part of ["street", "city", "state", "zip", "country"]) detailFields[`${block.prefix}_${part}`] = field(`${block.prefix}_${part}`)
     }
@@ -141,6 +192,11 @@ export default function EditCompanyPage() {
               <Label htmlFor="dba">DBA</Label>
               <Input id="dba" name="dba" defaultValue={company.dba} />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="website">Website</Label>
+              <Input id="website" name="website" type="url" placeholder="https://" maxLength={254} defaultValue={typeof details.website === "string" ? details.website : ""} />
+              <p className="text-[11px] text-muted-foreground">Clear the field to remove the recorded website.</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -190,12 +246,101 @@ export default function EditCompanyPage() {
               {(["street", "city", "state", "zip", "country"] as const).map((part) => (
                 <div className="space-y-2" key={part}>
                   <Label htmlFor={`${block.prefix}_${part}`}>{part === "zip" ? "Postal / ZIP" : part === "state" ? "Province / State (code)" : part[0].toUpperCase() + part.slice(1)}</Label>
-                  <Input id={`${block.prefix}_${part}`} name={`${block.prefix}_${part}`} defaultValue={details[`${block.prefix}_${part}`] ?? ""} />
+                  <Input id={`${block.prefix}_${part}`} name={`${block.prefix}_${part}`} defaultValue={asText(details[`${block.prefix}_${part}`])} />
                 </div>
               ))}
             </CardContent>
           </Card>
         ))}
+
+        {details.kind === "Customer" ? (
+          <>
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm">Customer Information</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label>Service Type</Label>
+                  <p className="text-sm" data-testid="service-type">{serviceTypeText(details.serviceType)}</p>
+                  <p className="text-[11px] text-muted-foreground">Read-only. It comes from the signed contract and cannot be changed here.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Service Status</Label>
+                  <p className="text-sm" data-testid="service-stage">{details.serviceStage ? (STAGE_LABEL[details.serviceStage] ?? details.serviceStage) : "Not recorded"}</p>
+                  <p className="text-[11px] text-muted-foreground">Read-only. It is the engagement stage, recorded through the engagement lifecycle.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>TES Service Start Date</Label>
+                  <p className="text-sm" data-testid="service-start">{details.startDate ?? "Not recorded"}</p>
+                  <p className="text-[11px] text-muted-foreground">Fixed once recorded.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="payMethod">Payment Method</Label>
+                  <select id="payMethod" name="payMethod" defaultValue={typeof details.payMethod === "string" ? details.payMethod : ""} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                    <option value="">Not specified</option>
+                    {PAYMENT_METHODS.map((method) => (
+                      <option key={method} value={method}>{method}</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">The preferred way to bill this customer. A preference only; contract payment terms are agreed separately.</p>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Cargo Information</Label>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2" role="group" aria-label="Cargo Information">
+                    {CARGO_OPTIONS.map((option) => (
+                      <label key={option} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={cargo.includes(option)}
+                          onChange={(event) => setCargo((current) => (event.target.checked ? [...current.filter((item) => item !== option), option] : current.filter((item) => item !== option)))}
+                        />
+                        {option}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">The kinds of freight the customer hauls. Descriptive only; it does not decide which regulations apply. At least one is required.</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="bg-muted/30 py-3 border-b">
+                <CardTitle className="text-sm">Fleet Information</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="gpsProvider">Truck GPS Provider</Label>
+                  <Input id="gpsProvider" name="gpsProvider" maxLength={120} defaultValue={typeof details.gpsProvider === "string" ? details.gpsProvider : ""} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="fuelProvider">Fuel Provider</Label>
+                  <Input id="fuelProvider" name="fuelProvider" maxLength={120} defaultValue={typeof details.fuelProvider === "string" ? details.fuelProvider : ""} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Assessment Date</Label>
+                  <p className="text-sm" data-testid="assessment-date">{details.assessmentDate ?? "No assessment yet"}</p>
+                  <p className="text-[11px] text-muted-foreground">Read-only. The date of the latest readiness assessment.</p>
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        ) : null}
+
+        <Card>
+          <CardHeader className="bg-muted/30 py-3 border-b">
+            <CardTitle className="text-sm">When a website, cargo, provider or payment method is edited</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 text-sm space-y-2">
+            <label className="flex items-center gap-2">
+              <input type="radio" name="factMode" value="change" defaultChecked /> It really changed — keep the earlier value as history
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="factMode" value="correct" /> The recorded value was wrong — correct it
+            </label>
+            <p className="text-xs text-muted-foreground">An unchanged value is not re-saved. Clearing a field ends it (or, for a correction, removes the wrong entry); nothing is deleted.</p>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b">
@@ -214,10 +359,10 @@ export default function EditCompanyPage() {
 
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b">
-            <CardTitle className="text-sm">Not yet available</CardTitle>
+            <CardTitle className="text-sm">Managed elsewhere, read-only, or not yet available</CardTitle>
           </CardHeader>
           <CardContent className="pt-4 text-xs text-muted-foreground">
-            <p className="mb-2">These fields have no canonical PostgreSQL storage yet and cannot be edited here:</p>
+            <p className="mb-2">These are not edited on this page:</p>
             <ul className="list-disc pl-5 space-y-1">
               {DEFERRED_SECTIONS.map((section) => (
                 <li key={section}>{section}</li>

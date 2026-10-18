@@ -12,15 +12,25 @@ import {
   type PlannedAddress,
 } from "@/lib/company-directory/creation-input"
 import { CompanyCreationCapabilityError } from "@/lib/company-directory/create-company"
+import { parseCargoList } from "@/lib/company-directory/creation-input"
+import * as contactOperations from "@/lib/contacts/operations"
+import { prepareChannel } from "@/lib/contacts/definitions"
+import { prepareProviderName, resolveCargoCategory, resolvePaymentMethod } from "@/lib/company-profile/definitions"
 import { CompanyProfileConflictError } from "@/lib/company-profile/errors"
+import * as profileFacts from "@/lib/company-profile/facts"
 import * as profileOperations from "@/lib/company-profile/operations"
 import * as customerOperations from "@/lib/customer-relationship/operations"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as locationOperations from "@/lib/organization-locations/operations"
 
+/** Profile facts whose key may be present with an EMPTY value, which means "clear it" (an absent key means "leave it alone"). */
+const FACT_KEYS = ["website", "cargoTypes", "gpsProvider", "fuelProvider", "payMethod"] as const
+
 const UPDATE_KEYS = new Set([
   "opRegion",
   "addressMode",
+  "factMode",
+  ...FACT_KEYS,
   ...(["reg", "mail", "yard"] as const).flatMap((prefix) => (["street", "city", "state", "zip", "country"] as const).map((part) => `${prefix}_${part}`)),
 ])
 
@@ -29,8 +39,23 @@ const IDENTITY_EDIT_KEYS = new Set(["companyName", "dba", "incorpNo", "businessN
 export type CompanyDetailsUpdate = {
   /** "change": the address really moved (the old one stays as history). "correct": the old one was recorded wrongly. */
   addressMode: "change" | "correct"
+  /** The same distinction for website, cargo, fleet providers and billing preference. */
+  factMode: "change" | "correct"
   operatingScope: { changed: boolean; value: string | null }
   addresses: Array<{ role: PlannedAddress["role"]; action: "created" | "changed" | "corrected" | "unchanged" }>
+  website: "created" | "changed" | "corrected" | "cleared" | "unchanged" | null
+  cargo: profileFacts.FactChangeResult | null
+  fleetProviders: Array<{ kind: "GPS" | "FUEL"; result: profileFacts.FactChangeResult }>
+  billingPreference: profileFacts.FactChangeResult | null
+}
+
+/** What an edit asks for beyond region and addresses. null = the key was absent (untouched). A clear is explicit. */
+export type FactsPlan = {
+  mode: "change" | "correct"
+  website: { value: string } | { clear: true } | null
+  cargo: string[] | null
+  providers: Array<{ kind: "GPS" | "FUEL"; name: string | null }>
+  payment: { code: string } | { clear: true } | null
 }
 
 const prefixes = ["reg", "mail", "yard"] as const
@@ -43,7 +68,18 @@ const prefixes = ["reg", "mail", "yard"] as const
  * Every write is the existing domain operation (own validation, own Master Register event). An address that already exists is
  * revised with changeLocationAddress (real move; history kept) or correctLocationAddress (it was wrong), per `addressMode`.
  */
-export type DetailsPlan = { mode: "change" | "correct"; scope: string | null; planned: PlannedAddress[] }
+export type DetailsPlan = { mode: "change" | "correct"; scope: string | null; planned: PlannedAddress[]; facts: FactsPlan }
+
+const present = (value: unknown): boolean => value !== undefined && value !== null
+
+export function factsPresent(facts: FactsPlan): boolean {
+  return facts.website !== null || facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null
+}
+
+/** Customer-only facts: cargo, fleet providers and billing preference. */
+export function customerFactsPresent(facts: FactsPlan): boolean {
+  return facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null
+}
 
 /** Pure validation of the details part of an edit; throws CompanyCreationValidationError listing every problem. */
 export function planCompanyDetails(raw: unknown): DetailsPlan {
@@ -70,8 +106,60 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
     if ("field" in result) issues.push(result)
     else planned.push(result)
   }
+  // --- profile facts ---------------------------------------------------------------------------------------------------
+  const factMode = input.factMode === undefined || input.factMode === "" ? "change" : input.factMode
+  if (factMode !== "change" && factMode !== "correct") issues.push({ field: "factMode", message: "factMode must be 'change' or 'correct'." })
+  const facts: FactsPlan = { mode: factMode === "correct" ? "correct" : "change", website: null, cargo: null, providers: [], payment: null }
+
+  if (present(input.website)) {
+    if (typeof input.website !== "string") issues.push({ field: "website", message: "The website must be text." })
+    else if (input.website.trim() === "") facts.website = { clear: true }
+    else {
+      try {
+        prepareChannel("WEBSITE", input.website, undefined, "website")
+        facts.website = { value: input.website.trim() }
+      } catch (error) {
+        issues.push({ field: "website", message: error instanceof Error ? error.message : "Enter a valid website address." })
+      }
+    }
+  }
+  if (present(input.cargoTypes)) {
+    const list = parseCargoList(input.cargoTypes)
+    if (list === "invalid") issues.push({ field: "cargoTypes", message: "Cargo Information must be a list of cargo categories." })
+    else {
+      const codes: string[] = []
+      for (const entry of list) {
+        const category = resolveCargoCategory(entry)
+        if (!category) issues.push({ field: "cargoTypes", message: `'${String(entry)}' is not a cargo category.` })
+        else if (!codes.includes(category.code)) codes.push(category.code)
+      }
+      facts.cargo = codes
+    }
+  }
+  for (const [field, kind] of [["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
+    if (!present(input[field])) continue
+    if (typeof input[field] !== "string") issues.push({ field, message: "A provider name must be text." })
+    else if ((input[field] as string).trim() === "") facts.providers.push({ kind, name: null })
+    else {
+      try {
+        facts.providers.push({ kind, name: prepareProviderName(input[field], field) })
+      } catch (error) {
+        issues.push({ field, message: error instanceof Error ? error.message : "The provider name is not accepted." })
+      }
+    }
+  }
+  if (present(input.payMethod)) {
+    if (typeof input.payMethod !== "string") issues.push({ field: "payMethod", message: "The payment method must be text." })
+    else if (input.payMethod.trim() === "") facts.payment = { clear: true }
+    else {
+      const method = resolvePaymentMethod(input.payMethod)
+      if (!method) issues.push({ field: "payMethod", message: `'${input.payMethod.trim()}' is not a billing payment method.` })
+      else facts.payment = { code: method.code }
+    }
+  }
+
   if (issues.length > 0) throw new CompanyCreationValidationError(issues)
-  return { mode: mode as "change" | "correct", scope, planned }
+  return { mode: mode as "change" | "correct", scope, planned, facts }
 }
 
 export function hasDetailsToUpdate(raw: unknown): boolean {
@@ -80,23 +168,41 @@ export function hasDetailsToUpdate(raw: unknown): boolean {
 }
 
 export async function updateCompanyDetails(organizationId: string, raw: unknown): Promise<CompanyDetailsUpdate> {
-  const { mode, scope, planned } = planCompanyDetails(raw)
+  const { mode, scope, planned, facts } = planCompanyDetails(raw)
   return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
-    const required: TesSystemCapability[] = []
-    if (scope) required.push("COMPANY_PROFILE_MANAGE")
-    if (planned.some((p) => p.role !== "REGISTERED")) required.push("CUSTOMER_RELATIONSHIP_READ")
+    const required = new Set<TesSystemCapability>()
+    if (scope) required.add("COMPANY_PROFILE_MANAGE")
+    if (planned.some((p) => p.role !== "REGISTERED")) required.add("CUSTOMER_RELATIONSHIP_READ")
+    if (facts.website) required.add("CONTACT_MANAGE")
+    if (facts.cargo !== null || facts.providers.length > 0) required.add("COMPANY_PROFILE_MANAGE")
+    if (facts.payment) required.add("CUSTOMER_RELATIONSHIP_MANAGE")
+    if (customerFactsPresent(facts)) required.add("CUSTOMER_RELATIONSHIP_READ")
     const missing: TesSystemCapability[] = []
     for (const capability of required) if (!(await hasAdditionalSystemCapability(client, decision, capability))) missing.push(capability)
     if (missing.length > 0) throw new CompanyCreationCapabilityError(missing)
 
-    const result: CompanyDetailsUpdate = { addressMode: mode, operatingScope: { changed: false, value: scope }, addresses: [] }
+    const result: CompanyDetailsUpdate = {
+      addressMode: mode,
+      factMode: facts.mode,
+      operatingScope: { changed: false, value: scope },
+      addresses: [],
+      website: null,
+      cargo: null,
+      fleetProviders: [],
+      billingPreference: null,
+    }
     const actor = { id: decision.actor.id, actorType: decision.actor.actorType }
 
-    if (planned.some((p) => p.role !== "REGISTERED")) {
+    if (planned.some((p) => p.role !== "REGISTERED") || customerFactsPresent(facts)) {
       await enterSystemCapability(client, "CUSTOMER_RELATIONSHIP_READ")
       const relationship = await customerOperations.readCustomerRelationship(client, organizationId)
       if (!relationship.customer) {
-        throw new CompanyCreationValidationError([{ field: "mail_street", message: "Mailing and yard addresses apply to Customer records only." }])
+        const issues: CompanyCreationIssue[] = []
+        if (planned.some((p) => p.role !== "REGISTERED")) issues.push({ field: "mail_street", message: "Mailing and yard addresses apply to Customer records only." })
+        if (facts.cargo !== null) issues.push({ field: "cargoTypes", message: "Cargo Information applies to Customer records only." })
+        for (const provider of facts.providers) issues.push({ field: provider.kind === "GPS" ? "gpsProvider" : "fuelProvider", message: "Fleet providers apply to Customer records only." })
+        if (facts.payment) issues.push({ field: "payMethod", message: "A billing payment method applies to Customer records only." })
+        throw new CompanyCreationValidationError(issues)
       }
     }
 
@@ -108,6 +214,62 @@ export async function updateCompanyDetails(organizationId: string, raw: unknown)
       } catch (error) {
         if (!(error instanceof CompanyProfileConflictError)) throw error
       }
+      await runDeferredChecks(client)
+    }
+
+    // Website: an Organization channel (any company type).
+    if (facts.website) {
+      await enterSystemCapability(client, "CONTACT_MANAGE")
+      const contactContext = domainContext(client, decision, "PERSON_REGISTRY_READ")
+      const contacts = await contactOperations.readOrganizationContacts(client, organizationId)
+      const current = contacts.currentChannels.find((channel) => channel.channelType === "WEBSITE" && channel.usage === "GENERAL" && channel.recordStatus === "active")
+      if ("clear" in facts.website) {
+        if (!current) result.website = "unchanged"
+        else {
+          if (facts.mode === "correct") await contactOperations.voidOrganizationChannel(contactContext, { organizationId, channelId: current.id })
+          else await contactOperations.endOrganizationChannel(contactContext, { organizationId, channelId: current.id })
+          result.website = "cleared"
+        }
+      } else if (!current) {
+        await contactOperations.addOrganizationChannel(contactContext, { organizationId, channel: { type: "WEBSITE", value: facts.website.value, usage: "GENERAL" } })
+        result.website = "created"
+      } else {
+        const next = prepareChannel("WEBSITE", facts.website.value, undefined, "website")
+        if (next.normalized === current.valueNormalized && next.display === current.valueDisplay) result.website = "unchanged"
+        else {
+          const args = { organizationId, channelId: current.id, value: facts.website.value }
+          if (facts.mode === "correct") await contactOperations.correctOrganizationChannel(contactContext, args)
+          else await contactOperations.changeOrganizationChannel(contactContext, args)
+          result.website = facts.mode === "correct" ? "corrected" : "changed"
+        }
+      }
+      await runDeferredChecks(client)
+    }
+
+    // Cargo categories and fleet provider names: the company operating profile.
+    if (facts.cargo !== null || facts.providers.length > 0) {
+      await enterSystemCapability(client, "COMPANY_PROFILE_MANAGE")
+      const factsContext = { client, actor, masterRegister: new PostgresMasterRegisterRepository(client) }
+      if (facts.cargo !== null) {
+        if (facts.cargo.length === 0) {
+          const existing = await profileFacts.readCompanyFacts(client, organizationId)
+          if (existing.cargo.length > 0) throw new CompanyCreationValidationError([{ field: "cargoTypes", message: "Cargo Information is required for a Customer; choose at least one category." }])
+        }
+        result.cargo = await profileFacts.setCargoCategories(factsContext, { organizationId, categories: facts.cargo, mode: facts.mode })
+      }
+      for (const provider of facts.providers) {
+        result.fleetProviders.push({ kind: provider.kind, result: await profileFacts.setFleetProvider(factsContext, { organizationId, kind: provider.kind, providerName: provider.name, mode: facts.mode }) })
+      }
+      await runDeferredChecks(client)
+    }
+
+    // The Customer's billing preference.
+    if (facts.payment) {
+      await enterSystemCapability(client, "CUSTOMER_RELATIONSHIP_MANAGE")
+      result.billingPreference = await profileFacts.setBillingPreference(
+        { client, actor, masterRegister: new PostgresMasterRegisterRepository(client) },
+        { organizationId, paymentMethod: "clear" in facts.payment ? null : facts.payment.code, mode: facts.mode },
+      )
       await runDeferredChecks(client)
     }
 

@@ -12,6 +12,8 @@
  * of an IRP / IFTA account, the given/family split of a contact name) now have their own explicit inputs, so nothing has to be
  * inferred from another field.
  */
+import { prepareChannel } from "@/lib/contacts/definitions"
+import { prepareProviderName, resolveCargoCategory, resolvePaymentMethod } from "@/lib/company-profile/definitions"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
 import type { ClassificationInput, CreateOrganizationInput } from "@/lib/corporate-identity/types"
 import { resolveCountryForJurisdiction } from "@/lib/jurisdictions"
@@ -44,6 +46,11 @@ export const FIELD_OWNERS = {
   phone: "organization_channels PHONE / GENERAL (contacts)",
   email: "organization_channels EMAIL / GENERAL (contacts)",
   billingEmail: "organization_channels EMAIL / ACCOUNTING (contacts)",
+  website: "organization_channels WEBSITE / GENERAL (contacts); http(s) address, normalized",
+  cargoTypes: "company_cargo_category_periods + cargo_categories catalogue (company operating profile); Customer only; descriptive, not a compliance claim",
+  gpsProvider: "company_fleet_provider_periods, kind GPS (company operating profile); a NAME, no Organization is created; Customer only",
+  fuelProvider: "company_fleet_provider_periods, kind FUEL (company operating profile); a NAME, no Organization is created; Customer only",
+  payMethod: "customer_billing_preference_periods + billing_payment_methods catalogue (customer relationship); a preference, not contract terms; Customer only",
   reg_: "locations + organization_location_assignments, role REGISTERED (organization locations)",
   mail_: "locations + organization_location_assignments, role MAILING (organization locations); Customer only",
   yard_: "locations + organization_location_assignments, role HOME_YARD (organization locations); Customer only",
@@ -67,18 +74,13 @@ const COMPANIONS = ["mvidKind", "mvidRegion", "nscKind", "nscRegion", "irpBase",
 
 /** Present on the old form, but with no canonical owner today. Refused (when non-empty) rather than dropped. */
 export const UNSUPPORTED_FIELDS: Readonly<Record<string, string>> = {
-  gstHst: "GST/HST account numbers have no canonical owner yet (the Canada Business Number is recorded in Business Number).",
-  website: "Websites have no canonical owner yet (organization channels support phone and email only).",
-  status: "The service status of a new Customer is managed by the Onboarding lifecycle (a new Customer starts in onboarding).",
-  endDate: "A Customer engagement is ended through its lifecycle, not at creation.",
-  svcType: "Service type has no canonical owner yet.",
-  payMethod: "Payment method has no canonical owner (the customer domain deliberately records no payment details).",
-  assessmentDate: "Assessment date has no canonical owner yet.",
-  cargoTypes: "Cargo types have no canonical owner yet (the operating-profile rules are specific cargo regulations, not these categories).",
-  gpsProvider: "Fleet provider names have no canonical owner yet.",
-  fuelProvider: "Fleet provider names have no canonical owner yet.",
+  gstHst: "GST/HST account numbers have no canonical owner: no registration program exists for them (the Canada Business Number is recorded in Business Number), and the US State Tax Registration # has no program either.",
+  status: "Service status is the Customer's engagement stage. A new Customer always starts in ONBOARDING; later stages are recorded through the engagement lifecycle, never chosen at creation.",
+  endDate: "A Customer engagement is ended through its lifecycle (Edit, with a reason), not at creation.",
+  svcType: "Service type is contract-governed: it is the package on a signed contract line, decided by the Customer's Service Decision Authority with evidence. It is shown on the profile, derived from the contract, and cannot be set here.",
+  assessmentDate: "The assessment date is the date of the latest readiness assessment. It is recorded by the assessment itself and cannot be typed in.",
   contactPerson: "Send contactGivenName and contactFamilyName; a full name is never split by guesswork.",
-  cargoInfo: "Cargo information has no canonical owner yet.",
+  cargoInfo: "Send cargoTypes (a list of cargo categories).",
 }
 
 const ADDRESS_PREFIXES = ["reg", "mail", "yard"] as const
@@ -86,7 +88,8 @@ const ADDRESS_PARTS = ["street", "city", "state", "zip", "country"] as const
 
 export const SUPPORTED_FIELD_KEYS: ReadonlySet<string> = new Set([
   "companyName", "dba", "companyType", "regCorpState", "regCorpCountry", "incorpNo", "businessNo", "ein", "startDate", "opRegion",
-  "contactGivenName", "contactFamilyName", "phone", "email", "billingEmail",
+  "contactGivenName", "contactFamilyName", "phone", "email", "billingEmail", "website",
+  "cargoTypes", "gpsProvider", "fuelProvider", "payMethod",
   "usdot", "mc", "mvid", "nsc", "accIrp", "accIfta", "accNyhut", "accNm", "accKyu", "accOr", "accCt", "scac", "carrierCode",
   ...COMPANIONS,
   ...ADDRESS_PREFIXES.flatMap((prefix) => ADDRESS_PARTS.map((part) => `${prefix}_${part}`)),
@@ -118,7 +121,7 @@ export type PlannedAddress = {
   role: "REGISTERED" | "MAILING" | "HOME_YARD"
   address: { country: string; region: string; locality: string; postalCode: string | null; addressLine1: string }
 }
-export type PlannedChannel = { type: "PHONE" | "EMAIL"; usage: "GENERAL" | "ACCOUNTING"; value: string }
+export type PlannedChannel = { type: "PHONE" | "EMAIL" | "WEBSITE"; usage: "GENERAL" | "ACCOUNTING"; value: string }
 export type PlannedAuthority = {
   field: string
   kind: "USDOT" | "MC" | "MVID" | "RIN" | "CVOR" | "SAFETY_FITNESS" | "IRP"
@@ -143,6 +146,12 @@ export type CompanyCreationPlan = {
   addresses: PlannedAddress[]
   authorities: PlannedAuthority[]
   registrations: PlannedRegistration[]
+  /** Cargo category CODES (Customer only). */
+  cargoCategories: string[]
+  /** Fleet provider NAMES by kind (Customer only). */
+  fleetProviders: Array<{ kind: "GPS" | "FUEL"; name: string }>
+  /** Billing payment method CODE (Customer only), or null when none was chosen. */
+  paymentMethod: string | null
 }
 
 const text = (value: unknown): string => (typeof value === "string" ? value.trim() : "")
@@ -266,6 +275,50 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
   if (text(input.phone)) channels.push({ type: "PHONE", usage: "GENERAL", value: text(input.phone) })
   if (text(input.email)) channels.push({ type: "EMAIL", usage: "GENERAL", value: text(input.email) })
   if (text(input.billingEmail)) channels.push({ type: "EMAIL", usage: "ACCOUNTING", value: text(input.billingEmail) })
+  if (text(input.website)) {
+    try {
+      prepareChannel("WEBSITE", text(input.website), undefined, "website")
+      channels.push({ type: "WEBSITE", usage: "GENERAL", value: text(input.website) })
+    } catch (error) {
+      issue("website", error instanceof Error ? error.message : "Enter a valid website address.")
+    }
+  }
+
+  // --- customer profile facts (Customer records only) ---------------------------------------------------------------------
+  const cargoCategories: string[] = []
+  const rawCargo = parseCargoList(input.cargoTypes)
+  if (rawCargo === "invalid") issue("cargoTypes", "Cargo Information must be a list of cargo categories.")
+  else if (rawCargo.length > 0) {
+    if (!isCustomer) issue("cargoTypes", "Cargo Information applies to Customer records only.")
+    else
+      for (const entry of rawCargo) {
+        const category = resolveCargoCategory(entry)
+        if (!category) issue("cargoTypes", `'${String(entry)}' is not a cargo category.`)
+        else if (!cargoCategories.includes(category.code)) cargoCategories.push(category.code)
+      }
+  }
+  const fleetProviders: Array<{ kind: "GPS" | "FUEL"; name: string }> = []
+  for (const [field, kind] of [["gpsProvider", "GPS"], ["fuelProvider", "FUEL"]] as const) {
+    if (!text(input[field])) continue
+    if (!isCustomer) {
+      issue(field, "Fleet providers apply to Customer records only.")
+      continue
+    }
+    try {
+      fleetProviders.push({ kind, name: prepareProviderName(input[field], field) })
+    } catch (error) {
+      issue(field, error instanceof Error ? error.message : "The provider name is not accepted.")
+    }
+  }
+  let paymentMethod: string | null = null
+  if (text(input.payMethod)) {
+    if (!isCustomer) issue("payMethod", "A billing payment method applies to Customer records only.")
+    else {
+      const method = resolvePaymentMethod(input.payMethod)
+      if (!method) issue("payMethod", `'${text(input.payMethod)}' is not a billing payment method.`)
+      else paymentMethod = method.code
+    }
+  }
 
   // --- addresses (three independent roles; a block is all-or-nothing) ---------------------------------------------------------
   const addresses: PlannedAddress[] = []
@@ -357,5 +410,23 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
     addresses,
     authorities,
     registrations,
+    cargoCategories,
+    fleetProviders,
+    paymentMethod,
+  }
+}
+
+/** Cargo categories arrive as a list or as the form's JSON-encoded list; anything else is refused, never guessed. */
+export function parseCargoList(value: unknown): unknown[] | "invalid" {
+  if (value === undefined || value === null) return []
+  if (Array.isArray(value)) return value
+  if (typeof value !== "string") return "invalid"
+  const raw = value.trim()
+  if (raw === "") return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : "invalid"
+  } catch {
+    return "invalid"
   }
 }

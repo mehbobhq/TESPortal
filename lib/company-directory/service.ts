@@ -2,7 +2,7 @@ import "server-only"
 
 import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 import { createCompanyRecord, type CompanyCreationResult } from "@/lib/company-directory/create-company"
-import { hasDetailsToUpdate, planCompanyDetails, updateCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
+import { factsPresent, hasDetailsToUpdate, planCompanyDetails, updateCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
 import { readCompanyProfile, type CompanyProfileRecord } from "@/lib/company-directory/read-profile"
 import {
   addAlias,
@@ -341,8 +341,8 @@ export type CompanyEditResult = { company: CompanyEditRecord; details: CompanyDe
 export async function editCompany(organizationId: string, raw: unknown): Promise<CompanyEditResult> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CompanyDirectoryValidationError("A JSON object is required.")
   const body = raw as Record<string, unknown>
-  const wantsDetails = hasDetailsToUpdate(body)
-  planCompanyDetails(body) // always: also refuses any field that cannot be edited, so nothing is silently discarded
+  const detailsPlan = planCompanyDetails(body) // always: also refuses any field that cannot be edited, so nothing is silently discarded
+  const wantsDetails = hasDetailsToUpdate(body) || factsPresent(detailsPlan.facts)
   const identity: UpdateCompanyDirectoryInput = {}
   for (const key of IDENTITY_KEYS) if (key in body) identity[key] = body[key]
   const company = await updateCompanyDirectoryRecord(organizationId, identity)

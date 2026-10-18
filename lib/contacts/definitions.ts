@@ -11,12 +11,15 @@
  *           removing dots from a Gmail local part), which would equate distinct mailboxes.
  *   phone   digits only; a leading + keeps the international form, a bare 10-digit or 1+10-digit number is read as North
  *           American. Anything else must be given in international (+) form.
+ *   website an http or https address; a missing scheme is read as https. Host lower-cased, default port and fragment dropped,
+ *           a bare "/" path dropped. Structural only: no reachability check. Credentials in the URL, other schemes, IP-address
+ *           hosts and hosts without a dot are refused. A WEBSITE belongs to an Organization channel (usage GENERAL), never a person.
  * Rule names say so, and every version stays resolvable so a stricter rule can be added without rewriting history.
  */
 
 import { ContactValidationError } from "@/lib/contacts/errors"
 
-export const CHANNEL_TYPES = ["EMAIL", "PHONE"] as const
+export const CHANNEL_TYPES = ["EMAIL", "PHONE", "WEBSITE"] as const
 export type ChannelType = (typeof CHANNEL_TYPES)[number]
 
 export const ORGANIZATION_CHANNEL_USAGES = ["GENERAL", "DISPATCH", "OFFICE", "ACCOUNTING", "SAFETY"] as const
@@ -82,13 +85,41 @@ const PHONE_RULE: ChannelRule = {
   },
 }
 
+const WEBSITE_RULE: ChannelRule = {
+  version: "website.http_https_permissive.v1",
+  apply(raw) {
+    const value = raw.normalize("NFKC").trim()
+    if (value === "" || /\s/.test(value)) return { ok: false, reason: "A website address cannot contain spaces." }
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+    if (!hasScheme && /^[a-z][a-z0-9+.-]*:/i.test(value) && !/^[^/]*:\d+(\/|$)/.test(value)) {
+      return { ok: false, reason: "A website address must start with http:// or https://." }
+    }
+    let url: URL
+    try {
+      url = new URL(hasScheme ? value : `https://${value}`)
+    } catch {
+      return { ok: false, reason: "Enter a valid website address, for example https://example.com." }
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return { ok: false, reason: "A website address must start with http:// or https://." }
+    if (url.username !== "" || url.password !== "") return { ok: false, reason: "A website address cannot contain a user name or password." }
+    const host = url.hostname
+    if (!host.includes(".") || host.startsWith(".") || host.endsWith(".")) return { ok: false, reason: "A website address needs a domain name such as example.com." }
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[")) return { ok: false, reason: "Use the website's domain name, not an IP address." }
+    const path = url.pathname === "/" ? "" : url.pathname
+    const normalized = `${url.protocol}//${url.host}${path}${url.search}`
+    if (normalized.length > 254) return { ok: false, reason: "A website address is limited to 254 characters." }
+    return { ok: true, normalized }
+  },
+}
+
 /** Every rule version ever stored must remain here, unchanged. */
 export const CHANNEL_RULES: Readonly<Record<string, ChannelRule>> = {
   [EMAIL_RULE.version]: EMAIL_RULE,
   [PHONE_RULE.version]: PHONE_RULE,
+  [WEBSITE_RULE.version]: WEBSITE_RULE,
 }
 
-const CURRENT_CHANNEL_RULE: Readonly<Record<ChannelType, ChannelRule>> = { EMAIL: EMAIL_RULE, PHONE: PHONE_RULE }
+const CURRENT_CHANNEL_RULE: Readonly<Record<ChannelType, ChannelRule>> = { EMAIL: EMAIL_RULE, PHONE: PHONE_RULE, WEBSITE: WEBSITE_RULE }
 
 export type PreparedChannel = {
   display: string

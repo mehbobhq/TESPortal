@@ -14,7 +14,11 @@ const ORIGINAL_FIELDS = [
   "svcType", "usdot", "website",
 ]
 /** Fields with no canonical storage: kept on the form with their definition, disabled and labelled, never silently dropped. */
-const UNAVAILABLE_FIELDS = ["assessmentDate", "cargoTypes", "endDate", "fuelProvider", "gpsProvider", "gstHst", "payMethod", "status", "svcType", "website"]
+const UNAVAILABLE_FIELDS = ["gstHst"]
+/** Fields whose value is owned by another workflow (contract, engagement lifecycle, assessment): shown read-only, never posted. */
+const DERIVED_READ_ONLY_FIELDS = ["assessmentDate", "endDate", "status", "svcType"]
+/** Fields that now persist to a canonical owner: they must be live (not disabled) and post their value. */
+const PERSISTED_FIELDS = ["cargoTypes", "fuelProvider", "gpsProvider", "payMethod", "website"]
 
 describe("company creation form keeps every original field", () => {
   for (const field of ORIGINAL_FIELDS) {
@@ -34,8 +38,26 @@ describe("company creation form keeps every original field", () => {
     assert.match(form, /UnavailableFieldsBanner/, "the form announces unavailable fields up front")
   })
 
-  it("keeps the original cargo rule defined and switchable instead of deleting it", () => {
-    assert.match(form, /CARGO_STORAGE_AVAILABLE/)
+  it("shows contract-, lifecycle- and assessment-owned fields read-only and never posts them", () => {
+    for (const field of DERIVED_READ_ONLY_FIELDS) {
+      const at = form.indexOf(`name="${field}"`)
+      assert.ok(at >= 0, field)
+      assert.match(form.slice(at, at + 300), /disabled/, `${field} must not be editable`)
+      assert.match(form.slice(at, at + 1200), /DerivedNote/, `${field} must say where its value comes from`)
+    }
+  })
+
+  it("makes every persisted field live: not disabled, not marked unavailable", () => {
+    for (const field of PERSISTED_FIELDS) {
+      const at = form.indexOf(`name="${field}"`)
+      assert.ok(at >= 0, field)
+      assert.doesNotMatch(form.slice(at, at + 160), /\bdisabled\b/, `${field} must be live`)
+      assert.doesNotMatch(form.slice(at, at + 900), /UnavailableNote/, `${field} must not be marked unavailable`)
+    }
+  })
+
+  it("enforces the original cargo rule now that cargo has a canonical owner", () => {
+    assert.match(form, /const CARGO_STORAGE_AVAILABLE = true/)
     assert.match(form, /Cargo Information is mandatory for a Customer record\./)
     assert.match(form, /CARGO_OPTIONS/)
   })

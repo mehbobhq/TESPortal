@@ -18,6 +18,20 @@ import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHead
 
 type SectionState = "ok" | "not_permitted"
 
+type ServiceTypeState =
+  | { state: "contracted"; packages: string[]; contractReference: string | null }
+  | { state: "not_contracted" }
+  | { state: "restricted" }
+
+const STAGE_LABEL: Record<string, string> = {
+  ONBOARDING: "Onboarding",
+  TRIAL: "Trial",
+  ACTIVE: "Active",
+  MANAGED_PROBATION: "Managed probation",
+  SUSPENDED: "Suspended",
+  ENDED: "Ended",
+}
+
 type CompanyProfile = {
   id: string
   name: string
@@ -31,6 +45,14 @@ type CompanyProfile = {
   phone: string | null
   email: string | null
   billingEmail: string | null
+  website: string | null
+  cargoTypes: string[]
+  gpsProvider: string | null
+  fuelProvider: string | null
+  payMethod: string | null
+  serviceType: ServiceTypeState | null
+  assessmentDate: string | null
+  endDate: string | null
   opRegion: "Canada Only" | "US Only" | "Cross-Border" | null
   incorpNo: string | null
   businessNo: string | null
@@ -67,7 +89,7 @@ type CompanyProfile = {
   yard_state: string | null
   yard_zip: string | null
   yard_country: string | null
-  sections: Record<"identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations", SectionState>
+  sections: Record<"identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts" | "assessment", SectionState>
   notRecordedYet: string[]
 }
 
@@ -236,7 +258,14 @@ export default function CompanyProfilePage() {
   const isCanada = opRegion === null || opRegion === "Canada Only" || opRegion === "Cross-Border"
   const isUS = opRegion === null || opRegion === "US Only" || opRegion === "Cross-Border"
   const showCustoms = opRegion === null || opRegion === "Cross-Border" || Boolean(company.scac || company.carrierCode)
-  const NO_CANONICAL = "Not recorded (no canonical storage yet)"
+  const stageLabel = company.serviceStage ? (STAGE_LABEL[company.serviceStage] ?? company.serviceStage) : null
+  const serviceTypeText = (() => {
+    const state = company.serviceType
+    if (!state) return null
+    if (state.state === "restricted") return "Not permitted to view"
+    if (state.state === "not_contracted") return "Not contracted"
+    return state.packages.length > 0 ? state.packages.join(", ") : "Contracted (no package recorded)"
+  })()
   const withheld = (section: keyof CompanyProfile["sections"]) => company.sections[section] === "not_permitted"
 
   const formatAddress = (prefix: "reg" | "mail" | "yard") => {
@@ -336,7 +365,7 @@ export default function CompanyProfilePage() {
               <ReadOnlyField label="Company Record Type" value={company.kind} />
               <ReadOnlyField label="DBA" value={company.dba} />
               <ReadOnlyField label="Phone" value={withheld("contacts") ? "Not permitted to view" : company.phone} />
-              <ReadOnlyField label="Website" value={NO_CANONICAL} />
+              <ReadOnlyField label="Website" value={withheld("contacts") ? "Not permitted to view" : company.website} />
               <ReadOnlyField label="Account Email" value={withheld("contacts") ? "Not permitted to view" : company.email} />
               <ReadOnlyField label="Billing Email" value={withheld("contacts") ? "Not permitted to view" : company.billingEmail} />
               <ReadOnlyField label="Primary Contact" value={withheld("contacts") ? "Not permitted to view" : company.contact} />
@@ -376,14 +405,14 @@ export default function CompanyProfilePage() {
                   <h3 className="text-sm font-semibold text-primary">Customer Information</h3>
                 </div>
                 <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <ReadOnlyField label="Service Type" value={NO_CANONICAL} />
-                  <ReadOnlyField label="Service Status" value={company.status} />
+                  <ReadOnlyField label="Service Type" value={serviceTypeText} />
+                  <ReadOnlyField label="Service Status" value={withheld("customer") ? "Not permitted to view" : stageLabel} />
                   <ReadOnlyField label="Service Start Date" value={withheld("customer") ? "Not permitted to view" : company.startDate} />
-                  <ReadOnlyField label="End Date" value={NO_CANONICAL} />
-                  <ReadOnlyField label="Service Stage" value={withheld("customer") ? "Not permitted to view" : company.serviceStage} />
+                  <ReadOnlyField label="End Date" value={withheld("customer") ? "Not permitted to view" : company.endDate} />
+                  <ReadOnlyField label="Company Status" value={company.status} />
                   <ReadOnlyField label="Operating Region" value={withheld("operatingProfile") ? "Not permitted to view" : company.opRegion} />
-                  <ReadOnlyField label="Payment Method" value={NO_CANONICAL} />
-                  <ReadOnlyField label="Cargo Information" value={NO_CANONICAL} />
+                  <ReadOnlyField label="Payment Method" value={withheld("customer") ? "Not permitted to view" : company.payMethod} />
+                  <ReadOnlyField label="Cargo Information" value={withheld("operatingProfile") ? "Not permitted to view" : company.cargoTypes.length > 0 ? company.cargoTypes.join(", ") : null} />
                 </div>
               </div>
           )}
@@ -464,17 +493,18 @@ export default function CompanyProfilePage() {
                     <h3 className="text-sm font-semibold text-primary">Fleet Information</h3>
                   </div>
                   <div className="p-4 grid sm:grid-cols-2 gap-4">
-                    <ReadOnlyField label="Truck GPS Provider" value={NO_CANONICAL} />
-                    <ReadOnlyField label="Fuel Provider" value={NO_CANONICAL} />
-                    <ReadOnlyField label="Assessment Date" value={NO_CANONICAL} />
+                    <ReadOnlyField label="Truck GPS Provider" value={withheld("operatingProfile") ? "Not permitted to view" : company.gpsProvider} />
+                    <ReadOnlyField label="Fuel Provider" value={withheld("operatingProfile") ? "Not permitted to view" : company.fuelProvider} />
+                    <ReadOnlyField label="Assessment Date" value={withheld("assessment") ? "Not permitted to view" : company.assessmentDate ?? "No assessment yet"} />
                   </div>
                 </div>
 
                 <div className={`rounded-xl border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground ${!showCustoms ? "sm:col-span-2" : ""}`}>
                   <p className="font-semibold text-foreground">Not recorded by the canonical system yet</p>
                   <p className="mt-1">
-                    GST/HST account, website, cargo types, service type, payment method, assessment date and fleet provider
-                    names have no canonical home yet, so no value is shown for them (an empty field would suggest none exists).
+                    The GST/HST account has no canonical home yet, so no value is shown for it (an empty field would suggest none
+                    exists). Service type comes from the signed contract, service status is the engagement stage, and the
+                    assessment date is the latest readiness assessment; none of those is typed in.
                   </p>
                 </div>
               </div>

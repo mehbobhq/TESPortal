@@ -102,7 +102,12 @@ Verified by `company-creation.db.test.ts` (each value read from the canonical ta
 | reg_*, mail_*, yard_* | `locations` + `organization_location_assignments` REGISTERED / MAILING / HOME_YARD (independent; mail/yard Customer only) | Edit page |
 | usdot, mc, mvid(+kind/region), nsc(+kind/region), accIrp(+base) | `operating_authorities` | Authorities |
 | accIfta(+base), accNyhut, accNm, accKyu, accOr, accCt, scac, carrierCode | `registrations` | Tax Filing |
-| **website, gstHst, svcType, status, endDate, payMethod, cargoTypes, gpsProvider, fuelProvider, assessmentDate** | **no canonical owner: field kept on the form and profile, disabled/“Not recorded (no canonical storage yet)”; the server also refuses them if sent** | – |
+| website | `organization_channels` WEBSITE / GENERAL (http/https, normalized) | Edit page |
+| cargoTypes (Customer) | `company_cargo_category_periods` + `cargo_categories` (migration 0033; descriptive, not a compliance claim) | Edit page |
+| gpsProvider, fuelProvider (Customer) | `company_fleet_provider_periods` (migration 0033; a name, no Organization is created) | Edit page |
+| payMethod (Customer) | `customer_billing_preference_periods` + `billing_payment_methods` (migration 0033; a preference, not contract terms) | Edit page |
+| svcType, status, endDate, assessmentDate | **derived and read-only**: signed contract package, engagement stage, engagement end (end-service workflow), latest readiness assessment | contract / lifecycle / assessment |
+| **gstHst** | **no canonical owner (no registration program): kept on the form, disabled; the server refuses it** | – |
 
 ## Workspace-by-workspace verification
 

@@ -24,24 +24,37 @@ one transaction; capabilities are pre-checked and re-proven by row-level securit
 | usdot, mc, mvid(+kind/region), nsc(+kind/region), accIrp(+base) | `operating_authorities` | explicit kind and issuing region; number namespace collisions refused | ORGANIZATION_UPDATE | Authorities workspace (change/correct) | profile, Authorities |
 | accIfta(+base), accNyhut, accNm, accKyu, accOr, accCt, scac, carrierCode | `registrations` (tax programs) | program normalisation rules | TAX_REGISTRATION_MANAGE | Tax Filing workspace (change/correct) | profile, Tax Filing |
 
-## B. Fields investigated for a canonical owner and **not** supportable today
+## A2. Fields given a canonical owner by migration 0033 (Company and Customer profile facts)
 
-Each was checked against the approved foundations (migrations incl. header comments, docs, definitions, tests). Class: A = already supported,
-B = supportable by an existing domain without schema or semantic change, C = needs a new approved model or migration (or an explicit
-decision). None is class A. The field and its original definition stay on the form and profile, disabled/"Not recorded", and the server
-refuses them if sent.
+| Form field | Domain / table | Applies to | Capability (write) | Edit semantics |
+| --- | --- | --- | --- | --- |
+| website | `organization_channels` channel type WEBSITE, usage GENERAL (server vocabulary, no migration; rule `website.http_https_permissive.v1`) | every company type | CONTACT_MANAGE | add / change / correct / end(clear) / void |
+| cargoTypes | `company_cargo_category_periods` + controlled `cargo_categories` (6 descriptive categories) | Customer | COMPANY_PROFILE_MANAGE | set semantics: removed = ended (change) or voided (correct); at least one required |
+| gpsProvider, fuelProvider | `company_fleet_provider_periods` (kind GPS / FUEL; name only; one current per kind) | Customer | COMPANY_PROFILE_MANAGE | add / change / correct / clear (end or void) |
+| payMethod | `customer_billing_preference_periods` + controlled `billing_payment_methods` | Customer | CUSTOMER_RELATIONSHIP_MANAGE | add / change / correct / clear |
+
+All four are effective-dated with correction history (`corrected` links to its replacement and inherits its business time; `voided` is an entry made
+in error; nothing is deleted), written through `lib/company-profile/facts.ts` with a Master Register event per row, in the same transaction. Provider
+names are free text and are never placed in an event. Cargo categories are descriptive: they never assert that a regulation applies (rule
+applicability, 0019, is separate). The billing preference is explicitly not contractual payment terms and not a payment transaction.
+
+An edit sends a fact only when it changed (absent = untouched; empty = an explicit clear). An unchanged value writes nothing.
+
+## A3. Fields shown read-only because another workflow owns the value
+
+| Form field | Derived from | Never set by |
+| --- | --- | --- |
+| svcType (Service Type) | the package on a **signed** contract line (`customer_contracts` / `customer_contract_line_pricing`); "Not contracted" when no signed contract exists; "Not permitted to view" without CONTRACT_READ | a profile create or edit (refused with the reason) |
+| status (Service Status) | the engagement stage (`customer_engagement_stages`); a new Customer is always ONBOARDING | a profile create or edit |
+| endDate | `customer_engagements.ended_at`, set only by the Edit page's "End this customer's service" (reason required) | the create form |
+| assessmentDate | the latest `onboarding_readiness_snapshots.computed_at`; no date when none exists; withheld without EVIDENCE_READ | typing |
+| startDate | `customer_engagements.started_at`: required at creation, fixed afterwards. A verified correction (reason + immutable history) needs a start-correction ledger that does not exist (only terminations have one) and is a separate approved change | the Edit page |
+
+## B. Fields investigated and still **not** supportable
 
 | Field | Finding | Evidence | Decision / change needed |
 | --- | --- | --- | --- |
-| website | **C-lite**: no migration (channel type is server policy) but a vocabulary change and a decision | `lib/contacts/definitions.ts` `CHANNEL_TYPES = [EMAIL, PHONE]`; 0014 shape CHECK only | Decide: a website is an organization channel with usage GENERAL? URL normalisation rule? Do not reuse `credential_systems.login_url` |
-| gstHst (CRA RT account) | **C**: migration | `identifier-definitions.ts`: a program account is NOT a BN root; `registration_programs` has no GST_HST; family CHECK has no sales-tax family | New program (+ possibly family) by migration and decision on namespace. The US "State Tax Registration #" half has no owner at all. **Never** map into CRA_BN / IRS_EIN |
-| svcType (Premium/Standard/Basic) | **C** | 0015: `service_catalogue` "deliberately unseeded"; product levels are COMPLIANCE/BUSINESS_INTELLIGENCE/DECISION_SUPPORT, not tiers | Business decision on what the tiers mean; then catalogue seed/model |
-| status (Active/Pending/Inactive) | **B only with an approved mapping; otherwise decision** | `establishCustomerRelationship` accepts a stage; "Active" would skip the onboarding readiness/contract gates; "Inactive" has no clean stage | New customers start in ONBOARDING. Only Pending→ONBOARDING is non-controversial, but it is still an assumption, so it is **not** applied |
-| endDate | **B, post-creation only** (implemented on Edit) | `endEngagement` needs a reason from a closed catalogue and an open engagement; an engagement cannot be created ended | Done via "End this customer's service" with a reason |
-| payMethod | **C / excluded** | 0015 agreements section: "No document binaries, credentials, payment details, prices or invoicing"; contracts-foundation: payments out of scope | Needs an explicit decision and a new model; a method *name* is arguably not "payment details" |
-| assessmentDate | **C** | no assessment model exists (only `master-register/assessment.ts` context type) | Decide what "assessment" is |
-| cargoTypes / cargoInfo | **C** | company-profile rules are jurisdiction-specific regulations (DG_CANADA, DG_US, …); asserting applicability from a cargo checklist is a compliance claim, not a description of freight; most categories map to no rule | New effective-dated cargo-profile model + decision. **The original mandatory-cargo rule for Customers cannot be enforced**: it stays in code behind `CARGO_STORAGE_AVAILABLE = false` (an architectural conflict, reported, not silently dropped) |
-| gpsProvider, fuelProvider | **C** | credentials categories FLEET/FUEL exist, but a credential needs a username and asserts an account; free-text provider names cannot be stored in the controlled system registry | Decide: a "provider used" model (organization → credential system, no username) |
+| gstHst (CRA RT account / US State Tax Registration #) | **No valid registration owner.** `registration_programs` (0016) has no GST/HST program and no sales-tax family, and lists what is deliberately not a program; the US half has no program at all | `database/migrations/0016_tax_registration_foundation.sql` | A new program (and family) by migration plus a decision on namespace and normalization. It is not stored in another field and is not a compliance claim |
 
 ## C. Fields that exist only to support the above
 

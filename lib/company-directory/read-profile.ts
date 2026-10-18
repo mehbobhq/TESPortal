@@ -3,7 +3,9 @@ import "server-only"
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 import { enterSystemCapability } from "@/lib/company-directory/capability-context"
+import * as profileFacts from "@/lib/company-profile/facts"
 import * as profileOperations from "@/lib/company-profile/operations"
+import * as contractOperations from "@/lib/contracts/operations"
 import * as contactOperations from "@/lib/contacts/operations"
 import { CorporateIdentityNotFoundError } from "@/lib/corporate-identity/errors"
 import * as corporateOperations from "@/lib/corporate-identity/operations"
@@ -11,10 +13,19 @@ import * as customerOperations from "@/lib/customer-relationship/operations"
 import * as authorityOperations from "@/lib/operating-authorities/operations"
 import * as locationOperations from "@/lib/organization-locations/operations"
 import * as taxOperations from "@/lib/tax-registrations/operations"
-import { UNSUPPORTED_FIELDS } from "@/lib/company-directory/creation-input"
 
 export type ProfileSectionState = "ok" | "not_permitted"
-export type ProfileSection = "identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations"
+export type ProfileSection = "identity" | "operatingProfile" | "customer" | "locations" | "contacts" | "authorities" | "registrations" | "contracts" | "assessment"
+
+/**
+ * Service Type is CONTRACT-GOVERNED and read-only here: it is the package on a SIGNED contract line, decided by the Customer's
+ * Service Decision Authority with evidence. "not_contracted" means no signed contract exists; "restricted" means the caller may not
+ * read contracts. It is derived on every read and never stored on the company.
+ */
+export type ServiceTypeState =
+  | { state: "contracted"; packages: string[]; contractReference: string | null }
+  | { state: "not_contracted" }
+  | { state: "restricted" }
 
 export type CompanyProfileRecord = {
   id: string
@@ -30,6 +41,18 @@ export type CompanyProfileRecord = {
   phone: string | null
   email: string | null
   billingEmail: string | null
+  website: string | null
+  /** Cargo category display labels in catalogue order; empty when none are recorded. */
+  cargoTypes: string[]
+  gpsProvider: string | null
+  fuelProvider: string | null
+  /** The Customer's preferred billing payment method (a preference, not contract terms); null when none is recorded. */
+  payMethod: string | null
+  payMethodCode: string | null
+  /** Derived from the signed contract; see ServiceTypeState. null for a record that is not a Customer. */
+  serviceType: ServiceTypeState | null
+  /** The date of the latest readiness assessment (YYYY-MM-DD), or null when none exists or it may not be read. */
+  assessmentDate: string | null
   /** The recorded operating scope, or null when none has been recorded. Never defaulted. */
   opRegion: "Canada Only" | "US Only" | "Cross-Border" | null
   incorpNo: string | null
@@ -51,6 +74,8 @@ export type CompanyProfileRecord = {
   accOr: string | null
   accCt: string | null
   startDate: string | null
+  /** The date the open or latest Engagement ended (YYYY-MM-DD), or null while it is open. */
+  endDate: string | null
   serviceStage: string | null
   reg_street: string | null
   reg_city: string | null
@@ -119,8 +144,18 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       return read()
     }
 
-    const customer = await guarded("customer", "CUSTOMER_RELATIONSHIP_READ", () => customerOperations.readCustomerRelationship(client, id))
-    const profile = await guarded("operatingProfile", "COMPANY_PROFILE_READ", () => profileOperations.readCompanyProfile(client, id))
+    const customerBundle = await guarded("customer", "CUSTOMER_RELATIONSHIP_READ", async () => {
+      const relationship = await customerOperations.readCustomerRelationship(client, id)
+      const billing = relationship.customer ? await profileFacts.readBillingPreference(client, id) : null
+      return { relationship, billing }
+    })
+    const customer = customerBundle?.relationship ?? null
+    const profileBundle = await guarded("operatingProfile", "COMPANY_PROFILE_READ", async () => ({
+      profile: await profileOperations.readCompanyProfile(client, id),
+      facts: await profileFacts.readCompanyFacts(client, id),
+    }))
+    const profile = profileBundle?.profile ?? null
+    const operatingFacts = profileBundle?.facts ?? null
     const locations = await guarded("locations", "ORGANIZATION_REGISTRY_READ", () => locationOperations.readOrganizationLocations(client, id))
     const contacts = await guarded("contacts", "PERSON_REGISTRY_READ", () => contactOperations.readOrganizationContacts(client, id))
     const authorities = await guarded("authorities", "ORGANIZATION_REGISTRY_READ", () => authorityOperations.readOrganizationAuthorities(client, id))
@@ -143,7 +178,7 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       } as Record<string, string | null>
     }
 
-    const channel = (type: "PHONE" | "EMAIL", usage: string) => contacts?.currentChannels.find((c) => c.channelType === type && c.usage === usage && c.recordStatus === "active")?.valueDisplay ?? null
+    const channel = (type: "PHONE" | "EMAIL" | "WEBSITE", usage: string) => contacts?.currentChannels.find((c) => c.channelType === type && c.usage === usage && c.recordStatus === "active")?.valueDisplay ?? null
     const primary = contacts?.contacts.find((c) => c.current.purposes.some((p) => p.purpose === "PRIMARY" && p.isPrimary))
     const primaryName = primary?.current.name ? [primary.current.name.givenName, primary.current.name.familyName].filter(Boolean).join(" ") : null
 
@@ -157,6 +192,47 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
     }
 
     const engagement = customer?.openEngagement ?? customer?.engagements[0] ?? null
+
+    // Contract-derived, read-only Service Type: only for a Customer, only from a SIGNED contract, only for a caller who may read contracts.
+    let serviceType: ServiceTypeState | null = null
+    sections.contracts = "ok"
+    if (isCustomer && customer?.customer) {
+      if (!(await hasAdditionalSystemCapability(client, decision, "CONTRACT_READ"))) {
+        sections.contracts = "not_permitted"
+        serviceType = { state: "restricted" }
+      } else {
+        await enterSystemCapability(client, "CONTRACT_READ")
+        const view = await contractOperations.readContractsView(client, id, customer.customer.id)
+        const signed = view.contracts.filter((contract) => contract.contractStatus === "signed")
+        if (signed.length === 0) serviceType = { state: "not_contracted" }
+        else {
+          const names = new Map(view.packages.map((definition) => [definition.packageCode, definition.packageName]))
+          const packages = [
+            ...new Set(
+              signed.flatMap((contract) =>
+                contract.lines.filter((line) => line.lineStatus !== "removed").flatMap((line) => (line.pricing?.packageCode ? [names.get(line.pricing.packageCode) ?? line.pricing.packageCode] : [])),
+              ),
+            ),
+          ]
+          serviceType = { state: "contracted", packages, contractReference: signed[0].contractReference }
+        }
+      }
+    }
+
+    // The latest ACTUAL readiness assessment (a server-computed snapshot); nothing is shown when there is none.
+    let assessmentDate: string | null = null
+    sections.assessment = "ok"
+    if (isCustomer) {
+      if (!(await hasAdditionalSystemCapability(client, decision, "EVIDENCE_READ"))) sections.assessment = "not_permitted"
+      else {
+        await enterSystemCapability(client, "EVIDENCE_READ")
+        const latest = await client.query<{ day: string | null }>(
+          `SELECT to_char(max(computed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day FROM public.onboarding_readiness_snapshots WHERE organization_id = $1`,
+          [id],
+        )
+        assessmentDate = latest.rows[0]?.day ?? null
+      }
+    }
     const scope = profile?.operatingScope.assertion?.operatingScope ?? null
 
     return {
@@ -172,6 +248,14 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       phone: channel("PHONE", "GENERAL"),
       email: channel("EMAIL", "GENERAL"),
       billingEmail: channel("EMAIL", "ACCOUNTING"),
+      website: channel("WEBSITE", "GENERAL"),
+      cargoTypes: (operatingFacts?.cargo ?? []).map((category) => category.displayName),
+      gpsProvider: operatingFacts?.fleetProviders.GPS?.name ?? null,
+      fuelProvider: operatingFacts?.fleetProviders.FUEL?.name ?? null,
+      payMethod: customerBundle?.billing?.current?.displayName ?? null,
+      payMethodCode: customerBundle?.billing?.current?.code ?? null,
+      serviceType,
+      assessmentDate,
       opRegion: scope ? SCOPE_LABEL[scope] : null,
       incorpNo: activeIdentifier("INCORPORATION"),
       businessNo: activeIdentifier("CRA_BN") ?? null,
@@ -192,12 +276,13 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       accOr: registration("OR_WMT"),
       accCt: registration("CT_HUF"),
       startDate: engagement ? engagement.engagement.startedAt.slice(0, 10) : null,
+      endDate: engagement?.engagement.endedAt ? engagement.engagement.endedAt.slice(0, 10) : null,
       serviceStage: engagement?.current.stage?.stage ?? null,
       ...(flat("reg", "REGISTERED") as Pick<CompanyProfileRecord, keyof AddressFlat>),
       ...(flat("mail", "MAILING") as Pick<CompanyProfileRecord, "mail_street" | "mail_city" | "mail_state" | "mail_zip" | "mail_country">),
       ...(flat("yard", "HOME_YARD") as Pick<CompanyProfileRecord, "yard_street" | "yard_city" | "yard_state" | "yard_zip" | "yard_country">),
       sections,
-      notRecordedYet: Object.keys(UNSUPPORTED_FIELDS).filter((field) => !["contactPerson", "cargoInfo"].includes(field)),
+      notRecordedYet: ["gstHst"],
     } as CompanyProfileRecord
   })
 }

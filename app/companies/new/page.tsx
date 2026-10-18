@@ -93,11 +93,11 @@ const CARGO_OPTIONS = [
 ]
 
 /**
- * "Cargo Information" is mandatory for a Customer in the original TES form, but there is no canonical storage for it yet (the
- * operating-profile rules are regulation-specific, not cargo categories). While that is true the field stays on the form,
- * disabled, and its mandatory rule cannot be enforced; flip this when a canonical owner exists. See docs/company-recovery.md.
+ * "Cargo Information" is mandatory for a Customer in the original TES form. Cargo categories now have a canonical owner
+ * (company_cargo_category_periods, migration 0033), so the original rule is enforced again. The categories are descriptive; they
+ * are never a compliance claim. See docs/recovery/canonical-field-ownership.md.
  */
-const CARGO_STORAGE_AVAILABLE = false
+const CARGO_STORAGE_AVAILABLE = true
 
 const COMPANY_TYPES = [
   "Customer",
@@ -852,11 +852,12 @@ function NativeChoice({
 function UnavailableFieldsBanner() {
   return (
     <div className="rounded-lg border border-dashed border-amber-500/50 bg-amber-50/50 p-3 text-xs dark:bg-amber-950/20" role="note">
-      <p className="font-semibold text-foreground">Some fields on this form cannot be saved yet</p>
+      <p className="font-semibold text-foreground">Some fields on this form are read-only or cannot be saved yet</p>
       <p className="mt-1 text-muted-foreground">
-        Website, GST/HST account, service type and status, end date, payment method, cargo information, fleet provider names and
-        assessment date are kept here exactly as defined, but TES has no canonical storage for them yet. They are disabled and
-        marked &quot;Unavailable&quot; so nothing you type is lost silently. A new customer starts in onboarding.
+        Service type, service status, end date and assessment date are shown for reference and are not typed in: service type comes
+        from the signed contract, a new customer always starts in onboarding, a service is ended later from Edit with a reason, and
+        the assessment date is recorded by the assessment itself. The GST/HST account has no canonical storage yet, so it is
+        disabled and marked &quot;Unavailable&quot; so nothing you type is lost silently.
       </p>
     </div>
   )
@@ -867,6 +868,15 @@ function UnavailableNote() {
   return (
     <p className="text-[11px] text-amber-700 dark:text-amber-400" data-unavailable-note>
       Unavailable: no canonical storage exists for this yet, so it is disabled rather than silently discarded.
+    </p>
+  )
+}
+
+/** Marks a field that is shown for reference only: its value is owned by another workflow, so it is never typed here. */
+function DerivedNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[11px] text-muted-foreground" data-derived-note>
+      {children}
     </p>
   )
 }
@@ -1697,9 +1707,8 @@ export default function NewCompanyPage() {
                 name="website"
                 type="url"
                 placeholder="https://"
-                disabled
+                maxLength={254}
               />
-              <UnavailableNote />
             </div>
 
             <div className="space-y-2">
@@ -1951,59 +1960,20 @@ export default function NewCompanyPage() {
                 <div className="space-y-2">
                   <Label>Service Type</Label>
 
-                  <Select
-                    name="svcType"
-                    defaultValue="Premium"
-                    disabled
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      <SelectItem value="Premium">
-                        Premium
-                      </SelectItem>
-
-                      <SelectItem value="Standard">
-                        Standard
-                      </SelectItem>
-
-                      <SelectItem value="Basic">
-                        Basic
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <UnavailableNote />
+                  <Input name="svcType" value="Not contracted" readOnly disabled />
+                  <DerivedNote>
+                    Read-only. Service type is the package on the signed contract; until a contract is signed this customer is not
+                    contracted. It is shown on the profile once a contract exists.
+                  </DerivedNote>
                 </div>
 
                 <div className="space-y-2">
                   <Label>Service Status</Label>
 
-                  <Select
-                    name="status"
-                    defaultValue="Active"
-                    disabled
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      <SelectItem value="Active">
-                        Active
-                      </SelectItem>
-
-                      <SelectItem value="Pending">
-                        Pending
-                      </SelectItem>
-
-                      <SelectItem value="Inactive">
-                        Inactive
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <UnavailableNote />
+                  <Input name="status" value="Onboarding" readOnly disabled />
+                  <DerivedNote>
+                    Read-only. A new customer always starts in onboarding; later stages are recorded through the engagement lifecycle.
+                  </DerivedNote>
                 </div>
 
                 <div className="space-y-2">
@@ -2028,20 +1998,17 @@ export default function NewCompanyPage() {
                     type="date"
                     disabled
                   />
-                  <UnavailableNote />
-                  <p className="text-[11px] text-muted-foreground">A new customer cannot start already ended. End a customer&apos;s service later from Edit, with a reason.</p>
+                  <DerivedNote>
+                    A new customer cannot start already ended. End a customer&apos;s service later from Edit, with a reason.
+                  </DerivedNote>
                 </div>
 
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
 
-                  <Select
-                    name="payMethod"
-                    defaultValue="E-Transfer"
-                    disabled
-                  >
+                  <Select name="payMethod">
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Not specified" />
                     </SelectTrigger>
 
                     <SelectContent>
@@ -2062,7 +2029,9 @@ export default function NewCompanyPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <UnavailableNote />
+                  <p className="text-[11px] text-muted-foreground">
+                    The customer&apos;s preferred way to be billed. A preference only: contract payment terms are agreed separately.
+                  </p>
                 </div>
 
                 <div className="flex flex-col space-y-2">
@@ -2075,7 +2044,6 @@ export default function NewCompanyPage() {
                       <Button
                         type="button"
                         variant="outline"
-                        disabled
                         className={`h-auto min-h-10 w-full justify-between px-3 py-2 ${
                           selectedCargo.length === 0
                             ? "text-muted-foreground"
@@ -2111,33 +2079,30 @@ export default function NewCompanyPage() {
 
                       <div className="space-y-1">
                         {CARGO_OPTIONS.map((option) => {
-                        const checked =
-                         selectedCargo.includes(option)
+                          const checked = selectedCargo.includes(option)
 
                           return (
                             <label
-                             key={option}
+                              key={option}
                               className="flex w-full cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50"
-                           >
+                            >
                               <Checkbox
-                              checked={checked}
-                              onCheckedChange={(nextChecked) =>
-                              setSelectedCargo((current) =>
-                             nextChecked === true
-                             ? current.includes(option)
-                ? current
-                : [...current, option]
-              : current.filter(
-                  (item) => item !== option
-                )
-          )
-        }
-      />
+                                checked={checked}
+                                onCheckedChange={(nextChecked) =>
+                                  setSelectedCargo((current) =>
+                                    nextChecked === true
+                                      ? current.includes(option)
+                                        ? current
+                                        : [...current, option]
+                                      : current.filter((item) => item !== option)
+                                  )
+                                }
+                              />
 
-      <span>{option}</span>
-    </label>
-  )
-})}
+                              <span>{option}</span>
+                            </label>
+                          )
+                        })}
                       </div>
                     </PopoverContent>
                   </Popover>
@@ -2146,9 +2111,10 @@ export default function NewCompanyPage() {
                     type="hidden"
                     name="cargoTypes"
                     value={JSON.stringify(selectedCargo)}
-                    disabled
                   />
-                  <UnavailableNote />
+                  <p className="text-[11px] text-muted-foreground">
+                    The kinds of freight the customer hauls. Descriptive only; it does not decide which regulations apply.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -2308,24 +2274,23 @@ export default function NewCompanyPage() {
                 <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Truck GPS Provider</Label>
-                    <Input name="gpsProvider" disabled />
-                    <UnavailableNote />
+                    <Input name="gpsProvider" maxLength={120} />
+                    <p className="text-[11px] text-muted-foreground">The provider&apos;s name as the customer gives it. No provider record is created.</p>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Fuel Provider</Label>
-                    <Input name="fuelProvider" disabled />
-                    <UnavailableNote />
+                    <Input name="fuelProvider" maxLength={120} />
+                    <p className="text-[11px] text-muted-foreground">The provider&apos;s name as the customer gives it. No provider record is created.</p>
                   </div>
 
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Assessment Date</Label>
-                    <Input
-                      name="assessmentDate"
-                      type="date"
-                      disabled
-                    />
-                    <UnavailableNote />
+                    <Input name="assessmentDate" value="No assessment yet" readOnly disabled />
+                    <DerivedNote>
+                      Read-only. This is the date of the latest readiness assessment; it is recorded by the assessment itself and appears on
+                      the profile once one exists.
+                    </DerivedNote>
                   </div>
                 </CardContent>
               </Card>

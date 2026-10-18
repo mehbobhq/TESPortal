@@ -10,12 +10,10 @@ fs.writeFileSync("/tmp/tes-e2e/created.json", JSON.stringify(data))
 try {
   await page.goto(`${BASE}/companies/new`, { waitUntil: "domcontentloaded", timeout: 120000 })
   await page.waitForSelector("#companyName")
-  record("creation form shows the unavailable-fields notice up front", await page.getByText("Some fields on this form cannot be saved yet").isVisible())
-  const disabled = []
-  for (const n of ["website", "gstHst", "endDate", "gpsProvider", "fuelProvider", "assessmentDate"]) disabled.push(await page.locator(`[name=${n}]`).first().isDisabled().catch(() => false))
+  record("creation form shows the read-only / unavailable fields notice up front", await page.getByText("Some fields on this form are read-only or cannot be saved yet").isVisible())
   await shot(page, "01-new-form-initial")
   await pick(page, page.locator("button:has-text('Select entity type')"), "Customer")
-  record("original fields stay on the form, disabled and labelled", (await Promise.all(["website", "gstHst", "endDate", "gpsProvider", "fuelProvider", "assessmentDate", "svcType", "status", "payMethod", "cargoTypes"].map((n) => page.locator(`[name=${n}]`).first().isDisabled()))).every(Boolean) && (await page.locator("[data-unavailable-note]").count()) >= 8)
+  record("derived fields stay on the form read-only, GST/HST stays disabled and labelled; persisted fields are live", (await Promise.all(["gstHst", "endDate", "assessmentDate", "svcType", "status"].map((n) => page.locator(`[name=${n}]`).first().isDisabled()))).every(Boolean) && (await Promise.all(["website", "gpsProvider", "fuelProvider"].map((n) => page.locator(`[name=${n}]`).first().isEnabled()))).every(Boolean) && (await page.locator("[data-unavailable-note]").count()) >= 1 && (await page.locator("[data-derived-note]").count()) >= 4)
   await page.fill("#companyName", name)
   await page.fill("#dba", `E2E Trade ${tag}`)
   await page.fill("#contactPerson", "Jane Roe")
@@ -39,6 +37,9 @@ try {
   await addr("mail", "PO Box 12", "Ottawa", "Ontario", "K1P 5G3")
   await addr("yard", "55 Yard Rd", "Chicago", "Illinois", "60601")
   await page.fill("[name=startDate]", "2024-01-15")
+  await page.fill("#website", "https://create-flow.example.com"); await page.fill("[name=gpsProvider]", "Samsara"); await page.fill("[name=fuelProvider]", "WEX Fleet")
+  await page.locator("button:has-text('Select cargo types')").click(); await page.locator("label", { hasText: "General Freight" }).first().click(); await page.keyboard.press("Escape")
+  await pick(page, page.locator("button:has-text('Not specified')"), "Cheque")
   await page.fill("[name=mvid]", data.mvid); await page.selectOption("[name=mvidKind]", "MVID"); await page.selectOption("[name=mvidRegion]", "ON")
   await page.fill("[name=nsc]", data.nsc); await page.selectOption("[name=nscKind]", "NSC"); await page.selectOption("[name=nscRegion]", "AB")
   await page.fill("[name=usdot]", data.usdot); await page.fill("[name=mc]", data.mc)
@@ -59,7 +60,7 @@ try {
   const expect = { name, dba: `E2E Trade ${tag}`, phone: data.phone, email: data.email, billing: data.billing, ein: data.ein, bn: data.bn, incorp: data.incorp, usdot: data.usdot, mc: data.mc, mvid: data.mvid, nsc: data.nsc, irp: data.irp, ifta: data.ifta, reg: "100 King St W", mail: "PO Box 12", yard: "55 Yard Rd", contact: "Jane Roe", start: "2024-01-15", scope: "Cross-Border" }
   const missing = Object.entries(expect).filter(([, v]) => !body.includes(v)).map(([k]) => k)
   record("reopened profile shows every persisted value", missing.length === 0, missing.length ? "missing: " + missing.join(",") : "")
-  record("profile keeps the original unavailable fields as 'Not recorded (no canonical storage yet)'", (body.match(/Not recorded \(no canonical storage yet\)/g) || []).length >= 6)
+  record("profile shows the persisted facts and the derived states", ["https://create-flow.example.com", "Samsara", "WEX Fleet", "Cheque", "General Freight", "Not contracted", "Onboarding", "No assessment yet"].every((v) => body.includes(v)))
 } catch (e) {
   record("scenario error", false, String(e).slice(0, 300))
   await shot(page, "99-error")

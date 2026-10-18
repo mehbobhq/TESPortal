@@ -23,6 +23,7 @@ async function loadKit() {
     co: await import("@/lib/contacts/service"),
     ev: await import("@/lib/evidence-payload/service"),
     fx: await import("@/test/helpers/evidence-payload-fixtures"),
+    dir: await import("@/lib/company-directory/service"),
   };
 }
 type Kit = Awaited<ReturnType<typeof loadKit>>;
@@ -485,6 +486,38 @@ describe("Contracts foundation (migration 0031, real authorization, real Master 
         [contract.statusHistory.map((event) => event.masterRegisterEventId)],
       );
       assert.equal(Number(mr.rows[0].count), contract.statusHistory.length);
+    });
+
+    it("the company profile derives Service Type from a SIGNED contract only: read-only, never typed in, and 'Not contracted' otherwise", async () => {
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const w = await world();
+      const { contractId } = await readyDraft(w);
+      const confirmation = await evidence(w.organizationId, "CONTRACT_READY_CONFIRMATION");
+      const serviceType = async () => (await K.dir.getCompanyProfile(w.organizationId))?.serviceType;
+
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a draft contract is not authoritative");
+      await K.ct.advanceContractStatus({ contractId, toStatus: "ready_for_signature", evidenceDocumentId: confirmation });
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "ready for signature is not signed");
+      const signedDoc = await evidence(w.organizationId, "SIGNED_CONTRACT_DOCUMENT");
+      await K.ct.linkContractEvidence({ contractId, ruleCode: "SIGNED_CONTRACT_DOCUMENT", evidenceDocumentId: signedDoc });
+      await K.ct.advanceContractStatus({ contractId, toStatus: "signed", evidenceDocumentId: signedDoc });
+      const signed = await serviceType();
+      assert.equal(signed?.state, "contracted");
+      assert.deepEqual(signed && "packages" in signed ? signed.packages : null, ["Monthly compliance"], "the package name comes from the signed contract line");
+
+      // The only way to change it is the contract workflow: an ordinary profile edit is refused, and nothing changes.
+      await assert.rejects(K.dir.editCompany(w.organizationId, { svcType: "Premium" }), (error: unknown) => error instanceof Error && error.name === "CompanyCreationValidationError");
+      assert.deepEqual(await serviceType(), signed);
+
+      // A caller who may not read contracts sees "restricted", never a guessed value.
+      await signInWith("ORGANIZATION_REGISTRY_READ", "CUSTOMER_RELATIONSHIP_READ", "COMPANY_PROFILE_READ", "PERSON_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const restricted = await K.dir.getCompanyProfile(w.organizationId);
+      assert.deepEqual(restricted?.serviceType, { state: "restricted" });
+      assert.equal(restricted?.sections.contracts, "not_permitted");
+
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      await K.ct.advanceContractStatus({ contractId, toStatus: "superseded", evidenceDocumentId: confirmation });
+      assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a superseded contract no longer defines the service");
     });
 
     it("an authority replacement returns a ready contract to draft and invalidates the old authority's decisions", async () => {

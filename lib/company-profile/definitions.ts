@@ -1,3 +1,5 @@
+import { CompanyProfileValidationError } from "@/lib/company-profile/errors"
+
 /**
  * Company Operating Profile vocabulary. PostgreSQL's catalogue (company_profile_rules, seeded by migration 0019) is
  * authoritative; this file only lets application code name the codes it may request, and a drift test proves the two agree.
@@ -136,3 +138,58 @@ export function isRuleRelevantToScope(rule: Pick<RuleDefinition, "appliesToRegio
   if (rule.appliesToRegion === "BOTH" || scope === "CANADA_AND_UNITED_STATES") return true
   return rule.appliesToRegion === scope
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Company and Customer profile facts (migration 0033). The database catalogues are authoritative; a drift test proves these agree.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Descriptive cargo categories (cargo_categories). Never a compliance claim; see facts.ts. */
+export const CARGO_CATEGORY_DEFINITIONS = [
+  { code: "GENERAL_FREIGHT", displayName: "General Freight" },
+  { code: "SPECIALIZED_EQUIPMENT", displayName: "Specialized Equipment" },
+  { code: "HOUSEHOLD_GOODS", displayName: "Household Goods" },
+  { code: "TEMPERATURE_CONTROLLED_FOOD", displayName: "Temperature-Controlled & Food" },
+  { code: "HAZARDOUS_MATERIALS", displayName: "Hazardous Materials" },
+  { code: "BULK_OTHER", displayName: "Bulk & Other" },
+] as const
+export type CargoCategoryCode = (typeof CARGO_CATEGORY_DEFINITIONS)[number]["code"]
+
+/** Billing payment method names (billing_payment_methods): a PREFERENCE, never contract terms or payment details. */
+export const PAYMENT_METHOD_DEFINITIONS = [
+  { code: "E_TRANSFER", displayName: "E-Transfer" },
+  { code: "CREDIT_CARD", displayName: "Credit Card" },
+  { code: "WIRE_TRANSFER", displayName: "Wire Transfer" },
+  { code: "CHEQUE", displayName: "Cheque" },
+] as const
+export type PaymentMethodCode = (typeof PAYMENT_METHOD_DEFINITIONS)[number]["code"]
+
+const byCodeOrLabel = <T extends { code: string; displayName: string }>(definitions: readonly T[], value: unknown): T | undefined => {
+  if (typeof value !== "string") return undefined
+  const wanted = value.trim().toLowerCase()
+  return definitions.find((definition) => definition.code.toLowerCase() === wanted || definition.displayName.toLowerCase() === wanted)
+}
+
+/** Resolves a cargo category given as its code or its display label; undefined when it is neither. */
+export const resolveCargoCategory = (value: unknown) => byCodeOrLabel(CARGO_CATEGORY_DEFINITIONS, value)
+/** Resolves a payment method given as its code or its display label; undefined when it is neither. */
+export const resolvePaymentMethod = (value: unknown) => byCodeOrLabel(PAYMENT_METHOD_DEFINITIONS, value)
+
+export const FLEET_PROVIDER_KINDS = ["GPS", "FUEL"] as const
+export type FleetProviderKind = (typeof FLEET_PROVIDER_KINDS)[number]
+export const isFleetProviderKind = (value: unknown): value is FleetProviderKind => typeof value === "string" && (FLEET_PROVIDER_KINDS as readonly string[]).includes(value)
+
+/** The matching form of a provider name: case-folded, whitespace collapsed. Advisory matching only. */
+export function normalizeProviderName(name: string): string {
+  return name.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+/** A provider name as stored: trimmed, internal whitespace collapsed, 1-120 characters, no control characters. */
+export function prepareProviderName(value: unknown, field = "providerName"): string {
+  if (typeof value !== "string") throw new CompanyProfileValidationError(field, "A provider name must be text.")
+  const name = value.normalize("NFC").replace(/\s+/g, " ").trim()
+  if (name === "") throw new CompanyProfileValidationError(field, "A provider name cannot be blank.")
+  if (name.length > 120) throw new CompanyProfileValidationError(field, "A provider name is limited to 120 characters.")
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(name)) throw new CompanyProfileValidationError(field, "A provider name cannot contain control characters.")
+  return name
+}
+

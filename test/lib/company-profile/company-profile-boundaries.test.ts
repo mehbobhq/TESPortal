@@ -36,7 +36,7 @@ const CLOSED_MIGRATIONS: Record<string, string> = {
 
 describe("Company Operating Profile boundaries", () => {
   it("the domain ships exactly the expected modules", () => {
-    assert.deepEqual([...files].sort(), ["definitions.ts", "errors.ts", "legacy.ts", "operations.ts", "repository.ts", "service.ts", "types.ts"]);
+    assert.deepEqual([...files].sort(), ["definitions.ts", "errors.ts", "facts.ts", "legacy.ts", "operations.ts", "repository.ts", "service.ts", "types.ts"]);
   });
 
   it("the service is the server-only entry point; domain modules stay testable", () => {

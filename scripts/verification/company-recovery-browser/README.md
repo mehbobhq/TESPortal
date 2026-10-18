@@ -7,3 +7,4 @@ Throwaway tooling used for `docs/evidence/company-recovery/`. Nothing here runs 
 3. `next dev --webpack -p 3100`, then in `pw/` (with `playwright-core` and the Chromium in `/opt/pw-browsers`): `node create.mjs && node edit.mjs && node workspaces.mjs && node isolation.mjs && node failed-ui.mjs && node legacy.mjs`.
 
 Never point it at a shared or production database.
+4. Company and Customer profile facts (migration 0033): `node cc-persistence.mjs` from a fresh database (Website, Cargo, GPS/Fuel provider, Payment Method; create, reopen, edit, cancel, correct, authorization with extra actors it seeds itself, tenant isolation, responsive). Run `create.mjs` and `edit.mjs` to re-check the original creation and edit flows.

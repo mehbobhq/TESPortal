@@ -130,6 +130,9 @@ function parseChannelInput(value: unknown, field: string, usage: boolean): {
     if (!isChannelUsage(input.usage)) throw new ContactValidationError(`${field}.usage`, `${field}.usage must be a supported channel usage.`)
     channelUsage = input.usage
   }
+  if (input.type === "WEBSITE" && (!usage || channelUsage !== "GENERAL")) {
+    throw new ContactValidationError(`${field}.type`, "A website belongs to an Organization channel with usage GENERAL.")
+  }
   return { type: input.type, raw: input.value, extension: input.extension, preferred: parseBoolean(input.preferred, `${field}.preferred`, false), usage: channelUsage }
 }
 

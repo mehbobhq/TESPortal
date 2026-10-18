@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-type Channel = { id: string; channelType: "EMAIL" | "PHONE"; usage: string | null; valueDisplay: string; effectiveFrom: string }
+type Channel = { id: string; channelType: "EMAIL" | "PHONE" | "WEBSITE"; usage: string | null; valueDisplay: string; effectiveFrom: string }
 type Contact = {
   relationship: { id: string; effectiveTo: string | null }
   person: { id: string; recordStatus?: string }
@@ -110,7 +110,7 @@ export function CanonicalContacts({ companyId }: { companyId: string }) {
           {view.currentChannels.length === 0 ? <p className="text-sm text-muted-foreground">No company phone or email has been recorded.</p> : null}
           {view.currentChannels.map((channel) => (
             <div key={channel.id} className="flex items-center justify-between text-sm">
-              <span>{channel.channelType === "PHONE" ? "Phone" : "Email"} · {channel.usage ?? "—"} · {channel.valueDisplay}</span>
+              <span>{channel.channelType === "PHONE" ? "Phone" : channel.channelType === "WEBSITE" ? "Website" : "Email"} · {channel.usage ?? "—"} · {channel.valueDisplay}</span>
               <Button size="sm" variant="outline" disabled={busy} onClick={() => act({ action: "endChannel", channelId: channel.id }, "Line ended (kept in history).")}>End</Button>
             </div>
           ))}
@@ -181,7 +181,7 @@ export function CanonicalContacts({ companyId }: { companyId: string }) {
                 {contact.current.purposes.length === 0 ? "No purpose recorded" : null}
               </div>
               {contact.current.channels.map((channel) => (
-                <div key={channel.id}>{channel.channelType === "PHONE" ? "Phone" : "Email"}: {channel.valueDisplay}{" "}
+                <div key={channel.id}>{channel.channelType === "PHONE" ? "Phone" : channel.channelType === "WEBSITE" ? "Website" : "Email"}: {channel.valueDisplay}{" "}
                   <button type="button" className="underline text-[11px]" disabled={busy} onClick={() => act({ action: "endPersonChannel", personId: contact.person.id, channelId: channel.id }, "Line ended.")}>end</button>
                 </div>
               ))}

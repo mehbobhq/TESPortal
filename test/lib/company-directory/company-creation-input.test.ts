@@ -88,12 +88,47 @@ describe("company creation input contract", () => {
   })
 
   it("refuses unsupported and unknown fields explicitly instead of discarding them", () => {
-    const issues = issuesOf({ ...base, gstHst: "123456789 RT 0001", website: "https://x.test", cargoTypes: ["General Freight"], payMethod: "Cheque", svcType: "Premium", mystery: "x" })
+    const issues = issuesOf({ ...base, gstHst: "123456789 RT 0001", svcType: "Premium", status: "Active", endDate: "2030-01-01", assessmentDate: "2026-01-01", mystery: "x" })
     const fields = issues.map((issue) => issue.field).sort()
-    assert.deepEqual(fields, ["cargoTypes", "gstHst", "mystery", "payMethod", "svcType", "website"])
+    assert.deepEqual(fields, ["assessmentDate", "endDate", "gstHst", "mystery", "status", "svcType"])
     for (const issue of issues) assert.ok(issue.message.length > 10)
     // empty values for unsupported fields are ignored (a browser form posts blanks)
-    assert.deepEqual(issuesOf({ ...base, gstHst: "", website: "", cargoTypes: [], payMethod: "" }), [])
+    assert.deepEqual(issuesOf({ ...base, gstHst: "", svcType: "", status: "", endDate: "", assessmentDate: "", website: "", cargoTypes: [], payMethod: "" }), [])
+    // contract-governed and lifecycle-governed fields say why
+    const why = Object.fromEntries(issues.map((issue) => [issue.field, issue.message]))
+    assert.match(why.svcType, /contract/i)
+    assert.match(why.status, /ONBOARDING/)
+    assert.match(why.endDate, /lifecycle/)
+  })
+
+  it("Website, Cargo Information, fleet providers and Payment Method are accepted, validated and planned", () => {
+    const plan = I.parseCreateCompanyInput({
+      ...customer,
+      website: "Example.com/path",
+      cargoTypes: JSON.stringify(["General Freight", "HAZARDOUS_MATERIALS", "general freight"]),
+      gpsProvider: "  Samsara  ",
+      fuelProvider: "Fleet   One",
+      payMethod: "Wire Transfer",
+    })
+    assert.deepEqual(plan.channels.filter((c) => c.type === "WEBSITE"), [{ type: "WEBSITE", usage: "GENERAL", value: "Example.com/path" }])
+    assert.deepEqual(plan.cargoCategories, ["GENERAL_FREIGHT", "HAZARDOUS_MATERIALS"], "labels and codes resolve to codes, duplicates collapse")
+    assert.deepEqual(plan.fleetProviders, [{ kind: "GPS", name: "Samsara" }, { kind: "FUEL", name: "Fleet One" }])
+    assert.equal(plan.paymentMethod, "WIRE_TRANSFER")
+    // a website is for every company type; the rest are Customer-only
+    assert.deepEqual(issuesOf({ ...base, website: "https://example.com" }), [])
+    assert.deepEqual(issuesOf({ ...base, cargoTypes: ["General Freight"], gpsProvider: "X", fuelProvider: "Y", payMethod: "Cheque" }).map((i) => i.field).sort(), ["cargoTypes", "fuelProvider", "gpsProvider", "payMethod"])
+  })
+
+  it("rejects bad values with a per-field message and nothing is planned", () => {
+    for (const website of ["ftp://example.com", "javascript:alert(1)", "https://user:pw@example.com", "http://127.0.0.1", "not a url", "https://localhost"]) {
+      assert.deepEqual(issuesOf({ ...customer, website }).map((i) => i.field), ["website"], website)
+    }
+    assert.deepEqual(issuesOf({ ...customer, cargoTypes: ["Livestock"] }).map((i) => i.field), ["cargoTypes"])
+    assert.deepEqual(issuesOf({ ...customer, cargoTypes: "{not json" }).map((i) => i.field), ["cargoTypes"])
+    assert.deepEqual(issuesOf({ ...customer, cargoTypes: JSON.stringify({ a: 1 }) }).map((i) => i.field), ["cargoTypes"])
+    assert.deepEqual(issuesOf({ ...customer, payMethod: "Bitcoin" }).map((i) => i.field), ["payMethod"])
+    assert.deepEqual(issuesOf({ ...customer, gpsProvider: "x".repeat(121) }).map((i) => i.field), ["gpsProvider"])
+    assert.deepEqual(issuesOf({ ...customer, fuelProvider: "bad\u0007name" }).map((i) => i.field), ["fuelProvider"])
   })
 
   it("refuses a full-name contact, an incomplete address, and an incorporation number without its jurisdiction", () => {

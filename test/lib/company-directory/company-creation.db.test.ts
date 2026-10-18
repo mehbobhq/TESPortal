@@ -32,7 +32,7 @@ if (!enabled && process.env.TES_REQUIRE_DB_TESTS === "1") {
   });
 }
 
-const ALL = ["ORGANIZATION_CREATE", "ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ", "CONTACT_MANAGE", "PERSON_REGISTRY_READ", "COMPANY_PROFILE_MANAGE", "COMPANY_PROFILE_READ", "TAX_REGISTRATION_MANAGE", "TAX_REGISTRATION_READ", "CUSTOMER_ESTABLISH", "CUSTOMER_RELATIONSHIP_READ"];
+const ALL = ["ORGANIZATION_CREATE", "ORGANIZATION_UPDATE", "ORGANIZATION_REGISTRY_READ", "CONTACT_MANAGE", "PERSON_REGISTRY_READ", "COMPANY_PROFILE_MANAGE", "COMPANY_PROFILE_READ", "TAX_REGISTRATION_MANAGE", "TAX_REGISTRATION_READ", "CUSTOMER_ESTABLISH", "CUSTOMER_RELATIONSHIP_READ", "CUSTOMER_RELATIONSHIP_MANAGE", "CONTRACT_READ", "EVIDENCE_READ"];
 
 const digits = (n: number) => Array.from({ length: n }, () => randomInt(0, 10)).join("");
 const letters = (n: number) => Array.from({ length: n }, () => String.fromCharCode(65 + randomInt(0, 26))).join("");
@@ -171,8 +171,8 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     await signInWith(...ALL);
     const before = await orgCount();
     await assert.rejects(
-      K.dir.createCompanyDirectoryRecord(fullPayload("C", { gstHst: "123456789 RT 0001", cargoTypes: ["General Freight"], payMethod: "Cheque", website: "https://x.test" })),
-      (error: unknown) => error instanceof K.input.CompanyCreationValidationError && ["cargoTypes", "gstHst", "payMethod", "website"].every((f) => error.issues.some((i) => i.field === f)),
+      K.dir.createCompanyDirectoryRecord(fullPayload("C", { gstHst: "123456789 RT 0001", svcType: "Premium", status: "Active", assessmentDate: "2026-01-01", endDate: "2030-01-01" })),
+      (error: unknown) => error instanceof K.input.CompanyCreationValidationError && ["assessmentDate", "endDate", "gstHst", "status", "svcType"].every((f) => error.issues.some((i) => i.field === f)),
     );
     assert.equal(await orgCount(), before);
   });
@@ -311,7 +311,7 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     const created = await K.dir.createCompanyDirectoryRecord(fullPayload("L"));
     const id = created.company.id;
     await assert.rejects(K.dir.editCompany(id, { companyName: `Recovery ${run} L${digits(4)} Nope`, reg_street: "1 Main", reg_city: "Toronto" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
-    await assert.rejects(K.dir.editCompany(id, { companyName: `Recovery ${run} L${digits(4)} Nope`, website: "https://x.test" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
+    await assert.rejects(K.dir.editCompany(id, { companyName: `Recovery ${run} L${digits(4)} Nope`, svcType: "Premium" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
     await assert.rejects(K.dir.editCompany(id, { opRegion: "Mars Only" }), (e: unknown) => e instanceof K.input.CompanyCreationValidationError);
     assert.equal((await K.dir.getCompanyProfile(id))?.name, created.company.name, "identity unchanged after a refused edit");
   });

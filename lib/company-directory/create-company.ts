@@ -3,6 +3,7 @@ import "server-only"
 import type { TesSystemCapability } from "@/lib/auth/tes-capabilities"
 import { hasAdditionalSystemCapability, withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 import { CompanyCreationCapabilityError, domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
+import * as profileFacts from "@/lib/company-profile/facts"
 import * as profileOperations from "@/lib/company-profile/operations"
 import * as contactOperations from "@/lib/contacts/operations"
 import * as corporateOperations from "@/lib/corporate-identity/operations"
@@ -25,6 +26,9 @@ export type CompanyCreationRecorded = {
   addresses: Array<"REGISTERED" | "MAILING" | "HOME_YARD">
   authorities: string[]
   registrations: string[]
+  cargoCategories: number
+  fleetProviders: Array<"GPS" | "FUEL">
+  billingPreference: boolean
 }
 
 export type CompanyCreationResult = {
@@ -44,6 +48,7 @@ export function requiredCapabilities(plan: CompanyCreationPlan): TesSystemCapabi
   if (plan.addresses.length > 0 || plan.authorities.length > 0) required.add("ORGANIZATION_UPDATE")
   if (plan.contact || plan.channels.length > 0) required.add("CONTACT_MANAGE")
   if (plan.registrations.length > 0) required.add("TAX_REGISTRATION_MANAGE")
+  if (plan.paymentMethod) required.add("CUSTOMER_RELATIONSHIP_MANAGE")
   return [...required]
 }
 
@@ -77,6 +82,9 @@ export async function createCompanyRecord(raw: unknown): Promise<CompanyCreation
       addresses: [],
       authorities: [],
       registrations: [],
+      cargoCategories: 0,
+      fleetProviders: [],
+      billingPreference: false,
     }
 
     // 1. Corporate identity (ORGANIZATION_CREATE is already in force).
@@ -104,7 +112,24 @@ export async function createCompanyRecord(raw: unknown): Promise<CompanyCreation
     // 3. Operating scope.
     await enterSystemCapability(client, "COMPANY_PROFILE_MANAGE")
     await profileOperations.setOperatingScope({ client, actor, masterRegister }, { organizationId, operatingScope: plan.operatingScope })
+    // 3b. Customer profile facts that belong to the operating profile: cargo categories and fleet provider names.
+    if (plan.cargoCategories.length > 0) {
+      await profileFacts.setCargoCategories({ client, actor, masterRegister }, { organizationId, categories: plan.cargoCategories })
+      recorded.cargoCategories = plan.cargoCategories.length
+    }
+    for (const provider of plan.fleetProviders) {
+      await profileFacts.setFleetProvider({ client, actor, masterRegister }, { organizationId, kind: provider.kind, providerName: provider.name })
+      recorded.fleetProviders.push(provider.kind)
+    }
     await runDeferredChecks(client)
+
+    // 3c. The Customer's billing preference (a preference only; never contract terms).
+    if (plan.paymentMethod) {
+      await enterSystemCapability(client, "CUSTOMER_RELATIONSHIP_MANAGE")
+      await profileFacts.setBillingPreference({ client, actor, masterRegister }, { organizationId, paymentMethod: plan.paymentMethod })
+      recorded.billingPreference = true
+      await runDeferredChecks(client)
+    }
 
     // 4. Addresses: registered, mailing and yard stay independent assignments.
     if (plan.addresses.length > 0 || plan.authorities.length > 0) await enterSystemCapability(client, "ORGANIZATION_UPDATE")

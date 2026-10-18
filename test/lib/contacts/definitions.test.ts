@@ -50,7 +50,7 @@ describe("channel normalization", () => {
 
   it("rule names say they are permissive, and every rule resolves forever", () => {
     for (const rule of Object.values(D.CHANNEL_RULES)) assert.match(rule.version, /permissive\.v\d+$/);
-    assert.deepEqual([...D.CHANNEL_TYPES], ["EMAIL", "PHONE"]);
+    assert.deepEqual([...D.CHANNEL_TYPES], ["EMAIL", "PHONE", "WEBSITE"]);
   });
 });
 

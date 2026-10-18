@@ -10,7 +10,8 @@ Approval needed: one explicit founder authorization covering the merge, migratio
 - Required prerequisite already inside the branch: the PR #20 company-recovery stack (d6782ee). The Company/Customer files import its create-company, read-profile,
   contacts and operational-identity modules, which are not on `main`; a direct cherry-pick onto `main` fails with modify/delete conflicts.
   Consequence: the release is not isolable below that stack, and it also changes sibling company workspaces (insurance, credentials, tax filing, authorities,
-  business, drivers, vehicles) from browser-held data to canonical or "not yet available" states. The founder accepts that behavior change by authorizing this release.
+  business, drivers, vehicles): they open on canonical PostgreSQL views, with the original browser-local view kept as a labelled second tab (section 5).
+  The founder accepts that behavior change by authorizing this release.
 - Not included: the security-containment candidate (driver-application endpoints and related changes), Preview-auth hardening, `src/restored/*`.
   Production behavior in those areas is unchanged. Authorization, RLS and Master Register code are already on `main`; 0033 adds its own RLS and SYSTEM-gated policies.
 
@@ -46,7 +47,17 @@ Approval needed: one explicit founder authorization covering the merge, migratio
   Dropping the new tables, or restoring from the backup in step 2, are last resorts that need separate founder approval; restoring discards later writes.
 - Data containment: 0033 touches no existing row; the runtime role cannot delete or truncate any new table, and fact changes are end-old/start-new or corrected/voided, so history is kept.
 
-## 5. Known limitations at release
-- At 390px width the profile page header actions overflow horizontally (539px). The same header renders the same way on the candidate branch and is unchanged
-  shared code; it is not fixed here to keep the increment minimal.
-- The Production ledger was not read (no Production connection); step 3 is the first check against the real ledger.
+## 5. Sibling workspaces in this release (verified on the release branch)
+- Insurance, Credentials, Authorities, Tax Filing, Business and Drivers open on a "TES records" tab (PostgreSQL) by default. The original workspaces stay available
+  as a second tab labelled "browser-local workspace (not the TES database)", unchanged, so nothing a user kept there is lost. Production (`main`) already had those
+  original workspaces as the only view, so this adds canonical views rather than reintroducing a fallback.
+- Opening the browser-local tab for a canonical company adds a marked, temporary entry to the browser's `tes_companies` so the old screen can find the company;
+  it is removed on leaving the page (verified). The TES records tabs write nothing to browser storage.
+- Drivers has a read-only canonical list in this release (no create path); canonical driver creation is part of the later candidate, not this release.
+- Reading never writes: a fingerprint of all 104 `public` tables (excluding `authentication_identities`, whose `last_authenticated_at` is updated at sign-in)
+  was identical before and after opening every workspace. Actors without capabilities are denied; read-only actors can view and are refused writes (403).
+
+## 6. Known limitations at release
+- The Production ledger was not read (no Production connection); step 3 of section 3 is the first check against the real ledger.
+- The earlier Batch-2 browser scripts (for example `b2-*`, `b3-*`) assert the later candidate UI (restored layouts wired to canonical records, no browser-local tab)
+  and do not apply to this release's sibling pages; they are not release evidence.

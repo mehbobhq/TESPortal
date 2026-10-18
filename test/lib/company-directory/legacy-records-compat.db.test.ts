@@ -124,7 +124,7 @@ describe("Existing company and customer records survive the profile-facts releas
     await signInWith(...ALL);
     const first = await legacyCustomer(`Legacy ${run} Twin Inc`);
     const second = await legacyCustomer(`Legacy ${run} Twin Inc.`);
-    const ids = [first.organizationId, second.organizationId];
+    const ids: string[] = [first.organizationId, second.organizationId];
     const before = await identityRows(ids);
     assert.equal(before.length, 2);
 

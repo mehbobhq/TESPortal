@@ -28,7 +28,7 @@
 --                      FleetHunt with Motive for one category ends one period and starts another while the history is kept.
 --                      Today one current provider per company and category (assignment_scope = 'COMPANY'). A fleet may in future
 --                      use different vendors per vehicle: that is an ADDITIVE extension of the same period table (relax the
---                      assignment_scope check, add a vehicle reference and widen the current-uniqueness index) and needs no
+--                      assignment_scope check, add a vehicle reference and widen the current-uniqueness index and the no-overlap constraint) and needs no
 --                      change to the identity table or to existing rows.
 --   Billing preference The payment method a Customer PREFERS to be billed by. It is explicitly NOT contractual payment terms
 --                      (those live in the contract model, 0030/0031, and are decided by the Service Decision Authority), NOT a
@@ -267,6 +267,22 @@ CREATE TABLE public.company_fleet_provider_periods (
 CREATE UNIQUE INDEX company_fleet_provider_periods_current_uq
     ON public.company_fleet_provider_periods (organization_id, service_category_code, assignment_scope)
     WHERE record_status = 'active' AND effective_to IS NULL;
+
+-- No two ACTIVE periods of the same company, service category and scope may overlap in time, closed or current. Half-open ranges
+-- [from, to) make a clean hand-over (the old provider ends at exactly the instant the new one starts) legal while any real overlap is
+-- refused by the database itself, whatever path wrote it. A corrected or voided row is no longer 'active', so it never blocks its
+-- replacement (a correction marks the wrong row first and then inserts the right one with the same window), and history is untouched.
+-- Different categories (one vendor serving several), different companies and, in future, different scopes never conflict.
+-- Requires btree_gist, which migration 0023 creates.
+ALTER TABLE public.company_fleet_provider_periods
+    ADD CONSTRAINT company_fleet_provider_periods_no_overlap
+    EXCLUDE USING gist (
+        organization_id WITH =,
+        service_category_code WITH =,
+        assignment_scope WITH =,
+        tstzrange(effective_from, effective_to, '[)') WITH &&
+    )
+    WHERE (record_status = 'active');
 
 CREATE INDEX company_fleet_provider_periods_history_idx
     ON public.company_fleet_provider_periods (organization_id, service_category_code, effective_from);

@@ -87,6 +87,7 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
     if (constraint === undefined) throw error
     if (CURRENT_CONSTRAINTS.includes(constraint)) throw new CompanyProfileConflictError("A concurrent change was made to this profile fact; retry the operation.")
     if (constraint === repo.ORGANIZATION_ACTIVE_CONSTRAINT) throw new CompanyProfileStateError("This Organization is not active.")
+    if (constraint === "company_fleet_provider_periods_no_overlap") throw new CompanyProfileConflictError("That provider period overlaps an existing period for the same service category.")
     if (constraint === "company_fleet_providers_name_uq") throw new CompanyProfileConflictError("A concurrent change was made to this profile fact; retry the operation.")
     if (CATALOGUE_CONSTRAINTS.includes(constraint)) throw new CompanyProfileValidationError("value", "The value is not an active catalogue entry.")
     if (constraint === "customer_billing_preference_periods_customer_exists") throw new CompanyProfileStateError("A billing preference can only be recorded for a Customer.")

@@ -18,6 +18,7 @@ async function loadKit() {
     dir: await import("@/lib/company-directory/service"),
     create: await import("@/lib/company-directory/create-company"),
     input: await import("@/lib/company-directory/creation-input"),
+    sys: await import("@/lib/auth/tes-system-context"),
     cr: await import("@/lib/customer-relationship/service"),
     crDefs: await import("@/lib/customer-relationship/definitions"),
     onboarding: await import("@/lib/onboarding-foundation/service"),
@@ -194,6 +195,71 @@ describe("Company and Customer persistence closure (fleet categories, cargo rule
                           SELECT organization_id, provider_id, 'ELD_HOS', 'VEHICLE', now() FROM public.company_fleet_provider_periods WHERE organization_id = $1 LIMIT 1`, [a]),
       /company_fleet_provider_periods_scope_valid/,
     );
+  });
+
+  it("FLEET PROVIDERS: the database refuses overlapping periods (closed or current) for the same company, category and scope", async () => {
+    await signInWith(...ALL);
+    const id = await createCustomer("O1", { gpsProvider: "FleetHunt" });
+    await K.dir.editCompany(id, { gpsProvider: "Motive" }); // clean hand-over: FleetHunt [t0,t1) then Motive [t1,)
+    await K.dir.editCompany(id, { gpsProvider: "Samsara" }); // Motive [t1,t2) then Samsara [t2,)
+    const gps = await rows<{ provider_id: string; from: string; to: string | null; name: string }>(
+      `SELECT p.provider_id, p.effective_from::text AS "from", p.effective_to::text AS "to", v.provider_name AS name
+         FROM public.company_fleet_provider_periods p JOIN public.company_fleet_providers v ON v.id = p.provider_id
+        WHERE p.organization_id = $1 AND p.service_category_code = 'GPS_TELEMATICS' ORDER BY p.effective_from`,
+      [id],
+    );
+    assert.deepEqual(gps.map((g) => g.name), ["FleetHunt", "Motive", "Samsara"]);
+    assert.equal(gps[0].to, gps[1].from, "the hand-over is exact");
+    assert.equal(gps[2].to, null);
+
+    const insert = (provider: string, category: string, from: string, to: string | null, org = id, client: { query: (sql: string, params: unknown[]) => Promise<unknown> } = pools.admin) =>
+      client.query(
+        `INSERT INTO public.company_fleet_provider_periods (organization_id, provider_id, service_category_code, effective_from, effective_to) VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz)`,
+        [org, provider, category, from, to],
+      );
+    const overlap = /company_fleet_provider_periods_no_overlap/;
+    const refused = /company_fleet_provider_periods_(no_overlap|current_uq)/; // an open-ended duplicate is caught first by the one-current index
+    // direct writes (owner): inside a closed period, straddling a boundary, covering everything, and inside the open-ended current one
+    await assert.rejects(insert(gps[0].provider_id, "GPS_TELEMATICS", gps[0].from, gps[0].to), overlap, "an exact duplicate of a closed period");
+    const midpoint = await one<{ t: string }>(`SELECT ($1::timestamptz + ($2::timestamptz - $1::timestamptz) / 2)::text AS t`, [gps[0].from, gps[0].to]);
+    await assert.rejects(insert(gps[0].provider_id, "GPS_TELEMATICS", midpoint.t, gps[1].to), overlap, "straddling a hand-over");
+    await assert.rejects(insert(gps[1].provider_id, "GPS_TELEMATICS", "1999-01-01T00:00:00Z", null), refused, "an open-ended period covering history");
+    await assert.rejects(insert(gps[1].provider_id, "GPS_TELEMATICS", "2999-01-01T00:00:00Z", null), refused, "an open-ended period inside the current open-ended one");
+    await assert.rejects(insert(gps[1].provider_id, "GPS_TELEMATICS", "1999-01-01T00:00:00Z", "1999-06-01T00:00:00Z").then(() => insert(gps[1].provider_id, "GPS_TELEMATICS", "1999-03-01T00:00:00Z", "1999-09-01T00:00:00Z")), overlap, "two closed periods that overlap each other");
+
+    // the same refusal through the RUNTIME role (which holds INSERT on effective_to), so it is not only an owner-level rule
+    await assert.rejects(
+      K.sys.withAuthorizedSystem("COMPANY_PROFILE_MANAGE", async (client) => {
+        await insert(gps[0].provider_id, "GPS_TELEMATICS", gps[0].from, gps[0].to, id, client);
+      }),
+      overlap,
+    );
+
+    // what must stay legal: a clean hand-over, another category by the same vendor, another company, a voided or corrected row
+    const handoverAt = await one<{ t: string }>(`SELECT (now() + interval '10 years')::text AS t`);
+    await K.dir.editCompany(id, { eldProvider: "Samsara" }); // same vendor identity, different category, concurrent in time
+    assert.equal((await K.dir.getCompanyProfile(id))?.eldProvider, "Samsara");
+    assert.equal(await count(`SELECT count(DISTINCT service_category_code)::int AS n FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND provider_id = $2`, [id, gps[2].provider_id]), 2, "one vendor, two categories, overlapping in time");
+    const other = await createCustomer("O2", { gpsProvider: "FleetHunt" });
+    assert.equal((await K.dir.getCompanyProfile(other))?.gpsProvider, "FleetHunt", "another company's identical window never conflicts");
+    await K.dir.editCompany(id, { factMode: "correct", gpsProvider: "Samsara Networks" }); // marks the wrong row corrected, then inserts the same window
+    const corrected = await rows<{ status: string; name: string; same: boolean }>(
+      `SELECT old.record_status AS status, v.provider_name AS name, (old.effective_from = new.effective_from AND old.effective_to IS NOT DISTINCT FROM new.effective_to) AS same
+         FROM public.company_fleet_provider_periods old JOIN public.company_fleet_provider_periods new ON new.id = old.superseded_by_period_id JOIN public.company_fleet_providers v ON v.id = old.provider_id
+        WHERE old.organization_id = $1 AND old.service_category_code = 'GPS_TELEMATICS'`,
+      [id],
+    );
+    assert.deepEqual(corrected.map((c) => [c.status, c.name, c.same]), [["corrected", "Samsara", true]], "a correction reuses the exact window of the row it replaces");
+    await K.dir.editCompany(id, { factMode: "correct", gpsProvider: "" }); // void
+    assert.equal((await K.dir.getCompanyProfile(id))?.gpsProvider, null);
+    await K.dir.editCompany(id, { gpsProvider: "Geotab" }); // a fresh period after a void
+    assert.equal((await K.dir.getCompanyProfile(id))?.gpsProvider, "Geotab");
+    void handoverAt;
+
+    // history is preserved: nothing was removed or rewritten by any of the above
+    const statuses = await rows<{ status: string }>(`SELECT record_status AS status FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND service_category_code = 'GPS_TELEMATICS' ORDER BY effective_from, created_at`, [id]);
+    assert.ok(statuses.length >= 5, "FleetHunt, Motive, the corrected and replacement Samsara rows, the voided and the Geotab rows are all kept");
+    assert.ok(statuses.some((r) => r.status === "corrected") && statuses.some((r) => r.status === "voided"));
   });
 
   // ===========================================================================================================

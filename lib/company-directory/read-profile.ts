@@ -212,7 +212,10 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       } else {
         await enterSystemCapability(client, "CONTRACT_READ")
         const view = await contractOperations.readContractsView(client, id, customer.customer.id)
-        const signed = view.contracts.filter((contract) => contract.contractStatus === "signed")
+        // Only the CURRENT stay's signed contracts define the current service. A contract belongs to one engagement; one from an ended
+        // stay stays in the contracts workspace as history and is never shown as current (no open engagement -> nothing is current).
+        const currentEngagementId = customer.openEngagement?.engagement.id ?? null
+        const signed = view.contracts.filter((contract) => contract.contractStatus === "signed" && currentEngagementId !== null && contract.engagementId === currentEngagementId)
         if (signed.length === 0) serviceType = { state: "not_contracted" }
         else {
           const names = new Map(view.packages.map((definition) => [definition.packageCode, definition.packageName]))

@@ -6,7 +6,8 @@ set -euo pipefail
 #
 # TES_VERIFY_PHASE=pre  checks the ledger is exactly 0001-0032 with the repository checksums, that no 0033 object exists, that the
 #                       objects 0033 builds on are present, and prints a FINGERPRINT of the existing company and customer data.
-# TES_VERIFY_PHASE=post checks 0033 is applied with the APPROVED checksum, that every table, policy, grant, constraint, index,
+# TES_VERIFY_PHASE=post checks 0033 is applied with the APPROVED checksum (0001-0033 exactly; later repository migrations such as 0034 are
+#                       accepted only with their repository checksums), that every table, policy, grant, constraint, index,
 #                       trigger and seeded catalogue row is present, and, when TES_VERIFY_FINGERPRINT (the value printed by the pre
 #                       phase) is given, that the existing company and customer data is byte-for-byte unchanged.
 #
@@ -117,16 +118,31 @@ BEGIN
     RAISE EXCEPTION 'ledger contains unexpected migration(s) at or below %: %', upper_bound, unexpected;
   END IF;
 
-  IF (SELECT count(*) FROM tes_system.schema_migrations WHERE version > upper_bound) > 0 THEN
+  IF phase = 'pre' AND (SELECT count(*) FROM tes_system.schema_migrations WHERE version > upper_bound) > 0 THEN
     RAISE EXCEPTION 'the ledger contains migration(s) after %; this release does not apply to that database', upper_bound;
+  END IF;
+  -- Post phase: a LATER forward-only migration (for example 0034) is legitimate, but only when it is a repository migration with its
+  -- repository checksum; anything else after 0033 is unexpected. 0001-0033 are still checked exactly above.
+  IF phase = 'post' THEN
+    SELECT string_agg(version, ',' ORDER BY version) INTO unexpected
+    FROM (
+      SELECT version, sha256 FROM tes_system.schema_migrations
+      WHERE version > upper_bound
+      EXCEPT
+      SELECT split_part(e, ':', 1), split_part(e, ':', 2)
+      FROM unnest(string_to_array(manifest, ',')) AS e
+    ) d;
+    IF unexpected IS NOT NULL THEN
+      RAISE EXCEPTION 'ledger contains migration(s) after % that are not repository migrations with their repository checksum: %', upper_bound, unexpected;
+    END IF;
   END IF;
 
   IF phase = 'pre' AND (SELECT count(*) FROM tes_system.schema_migrations) <> 32 THEN
     RAISE EXCEPTION 'pre phase expected exactly 32 ledger rows (0001-0032); applying 0033 would ALSO apply every pending migration below it';
   END IF;
   IF phase = 'post' THEN
-    IF (SELECT count(*) FROM tes_system.schema_migrations) <> 33 THEN
-      RAISE EXCEPTION 'post phase expected exactly 33 ledger rows';
+    IF (SELECT count(*) FROM tes_system.schema_migrations WHERE version <= upper_bound) <> 33 THEN
+      RAISE EXCEPTION 'post phase expected exactly 33 ledger rows through 0033';
     END IF;
     SELECT sha256 INTO ledger_sha FROM tes_system.schema_migrations WHERE version = '0033';
     IF ledger_sha IS DISTINCT FROM approved THEN

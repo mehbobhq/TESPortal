@@ -4,6 +4,7 @@ import type { PoolClient } from "pg"
 import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as operations from "@/lib/contacts/operations"
+import { resolveCommunicationRouting, type CommunicationRouting } from "@/lib/contacts/communication-routing"
 import type { PersonDetailView } from "@/lib/contacts/operations"
 import type {
   ContactView,
@@ -62,6 +63,14 @@ const manage = <T>(work: (ctx: operations.OperationContext) => Promise<T>): Prom
 /** SYSTEM registry read of one Organization's contacts and own channels, optionally as of an instant. */
 export async function getOrganizationContacts(organizationId: string, options?: { asOf?: string }): Promise<OrganizationContactsView> {
   return withAuthorizedSystem("PERSON_REGISTRY_READ", (client) => operations.readOrganizationContacts(client, organizationId, options))
+}
+
+/**
+ * Who is copied on this company's communication right now (or as of an instant): the primary contact's email for operational
+ * messages, kept apart from billing routing. A resolver for senders to call, not an email system. See communication-routing.ts.
+ */
+export async function getCommunicationRouting(organizationId: string, options?: { asOf?: string }): Promise<CommunicationRouting> {
+  return resolveCommunicationRouting(await getOrganizationContacts(organizationId, options))
 }
 
 /** SYSTEM registry read of one person across Organizations. */
@@ -170,3 +179,5 @@ export async function archivePerson(input: { organizationId: string; personId: s
 export async function restorePerson(input: { organizationId: string; personId: string }): Promise<PersonRecord> {
   return manage((ctx) => operations.restorePerson(ctx, input))
 }
+export { applyOperationalRouting, resolveCommunicationRouting } from "@/lib/contacts/communication-routing"
+export type { CommunicationRouting, OutgoingMessage, RoutedRecipient } from "@/lib/contacts/communication-routing"

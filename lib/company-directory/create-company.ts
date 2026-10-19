@@ -150,6 +150,9 @@ export async function createCompanyRecord(raw: unknown): Promise<CompanyCreation
         organizationId,
         name: { ...(plan.contact.givenName ? { givenName: plan.contact.givenName } : {}), ...(plan.contact.familyName ? { familyName: plan.contact.familyName } : {}) },
         purposes: [{ purpose: "PRIMARY", primary: true }],
+        // The new person's own designated email is the company's Account Email (a person channel, preferred). The company phone and the
+        // billing email stay company-level channels below and are never assigned to the person.
+        ...(plan.contact.accountEmail ? { channels: [{ type: "EMAIL", value: plan.contact.accountEmail, preferred: true }] } : {}),
       })
       recorded.primaryContact = true
     } else if (plan.contact?.kind === "existing") {

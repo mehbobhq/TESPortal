@@ -173,7 +173,7 @@ describe("Primary Contact continuity and communication routing", { skip: !enable
     assert.deepEqual(K.routing.applyOperationalRouting({ to: ["billing@example.test"], cc: [] }, routing, "BILLING"), { to: ["billing@example.test"], cc: [] }, "the rule never applies to billing mail");
   });
 
-  it("changing or removing the primary contact is an authorized contacts change: it re-routes, keeps the designation history and effective dates, and records the actor", async () => {
+  it("changing or ending the PRIMARY designation (not an email-inclusion preference) is an authorized contacts change: it re-routes, keeps the designation history and effective dates, and records the actor", async () => {
     await signInWith(...ALL);
     const { id, tag } = await company("F");
     const first = (await open(id))[0];
@@ -200,7 +200,7 @@ describe("Primary Contact continuity and communication routing", { skip: !enable
     const events = await count(`SELECT count(*) AS n FROM public.master_register_events e WHERE e::text LIKE '%makePrimary%' AND e::text LIKE '%' || $1 || '%'`, [id]);
     assert.ok(events >= 1, "the change is in the Master Register with its actor");
 
-    // an authorized instruction removes the recipient: the designation ends, routing reports the gap, nothing is guessed
+    // ending the PRIMARY designation is a primary-contact change, not an exclusion preference: routing reports the gap, nothing is guessed
     const assignment = (await open(id)).find((c) => c.person.id === second.contact.person.id)!.current.purposes.find((p) => p.purpose === "PRIMARY")!;
     await K.contacts.endPurpose({ organizationId: id, assignmentId: assignment.id });
     const gap = await K.contacts.getCommunicationRouting(id);

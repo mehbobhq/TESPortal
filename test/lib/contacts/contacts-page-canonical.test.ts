@@ -98,3 +98,17 @@ describe("canonical adapter", () => {
     assert.equal(only[0].isPrimary, false, "an ended relationship is not a current primary designation")
   })
 })
+
+describe("operational email inclusion is a separate concept with no canonical store yet", () => {
+  const routing = readFileSync(path.join(process.cwd(), "lib/contacts/communication-routing.ts"), "utf8")
+  it("documents that the exclusion preference is unsupported and names the minimal schema, keeping the default", () => {
+    assert.match(routing, /OPERATIONAL_INCLUSION_OVERRIDE = \{ supported: false/)
+    assert.match(routing, /effective-dated, audited table/)
+    assert.match(routing, /CANNOT BE RECORDED TODAY/)
+    assert.match(routing, /never require removing the person's email, changing the primary contact or ending the relationship|must never require removing the person's email, changing the primary contact or ending the relationship/)
+  })
+  it("does not offer end-email or end-primary as a way to stop copying the primary contact", () => {
+    const page = readFileSync(path.join(process.cwd(), "app/companies/[id]/contacts/page.tsx"), "utf8")
+    assert.doesNotMatch(page, /stop (copying|including)|exclude from (operational )?email/i)
+  })
+})

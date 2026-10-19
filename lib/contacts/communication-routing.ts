@@ -5,10 +5,17 @@
  * Rules (approved product decisions):
  *  - OPERATIONAL email: the designated PRIMARY contact's own email is included in every operational message, as To (when the message
  *    has no other To) or CC, by default.
- *  - A subsequently authorized instruction may remove or change that recipient. That instruction IS an authorized contacts change
- *    (end or replace the person's email, designate another primary, end the designation): it needs CONTACT_MANAGE, keeps the
- *    previous designation, its effective dates and the actor in history and the Master Register, and is read back "as of" any date.
- *    No second store of overrides exists.
+ *  - Four separate concepts, never conflated: (1) contact IDENTITY (the person and their name), (2) contact DETAILS (their own email and
+ *    phone), (3) the PRIMARY CONTACT designation (a PRIMARY purpose assignment) and (4) OPERATIONAL EMAIL INCLUSION (whether the
+ *    primary contact is copied). A company's authorized instruction to stop including the primary contact in operational email is
+ *    a change to (4) ONLY. It must never require removing the person's email, changing the primary contact or ending the relationship.
+ *  - (4) CANNOT BE RECORDED TODAY. The canonical model has no effective-dated, audited inclusion/exclusion preference: purpose
+ *    assignments are positive designations only (ending PRIMARY changes the primary contact, which is a different decision), and
+ *    the purpose catalogue changes only by migration. Using end-email or end-PRIMARY as an exclusion would silently change concepts
+ *    (2) or (3), so this resolver does NOT do it and keeps the default: the designated primary contact's email is always included.
+ *    See OPERATIONAL_INCLUSION_OVERRIDE for the minimal schema a later implementation needs. No untracked workaround exists.
+ *  - Changing or ending the PRIMARY designation (an authorized CONTACT_MANAGE change, history and actor kept in the Master Register,
+ *    readable "as of" a date) legitimately changes WHO is the primary contact and so who the default routes to; it is not an exclusion.
  *  - BILLING routing is separate: it is the company's billing (ACCOUNTING) email line and the BILLING-purpose contacts. The primary
  *    contact is never added to a billing message by this rule, and the billing line is never used as the primary contact's email.
  *  - Changing the primary contact changes ONLY this routing. The Contract Signatory and the Service Decision Authority are customer
@@ -17,6 +24,17 @@
  * ENFORCEMENT: this module is the single place that answers "who is copied". It is NOT an email system and it does not claim that any
  * integration applies it: no outbound email integration is connected in TES today. A sender must call applyOperationalRouting.
  */
+/**
+ * The missing capability, stated for a later (migration-bearing) change. Not implemented; reading this constant changes nothing.
+ * Minimal requirement: one effective-dated, audited table, e.g. contact_communication_preferences(id, organization_id, person_id,
+ * relationship_id, message_class CHECK IN ('OPERATIONAL'), inclusion CHECK IN ('INCLUDE','EXCLUDE'), effective_from, effective_to,
+ * change_reason, record_status active/corrected/voided, authority/instruction reference, created_by), FK to the organization-person
+ * relationship, an exclusion constraint forbidding overlapping active windows per relationship + message_class, RLS and a
+ * CONTACT_MANAGE-gated service action that writes a Master Register entry. The resolver would then skip an EXCLUDE'd primary
+ * contact for operational messages without touching the person, their email or the PRIMARY designation.
+ */
+export const OPERATIONAL_INCLUSION_OVERRIDE = { supported: false, requires: "migration: effective-dated audited communication-preference table" } as const
+
 import type { ChannelRecord, ContactView, OrganizationContactsView } from "@/lib/contacts/types"
 
 export type RoutedRecipient = {

@@ -13,6 +13,8 @@ import {
   changePersonName,
   correctPersonName,
   createContact,
+  excludeFromOperationalEmail,
+  resumeOperationalEmail,
   endOrganizationChannel,
   endPersonChannel,
   endPurpose,
@@ -21,8 +23,10 @@ import {
   findPersonMatches,
   getOrganizationContacts,
   makePrimary,
+  restoreContact,
   restorePerson,
 } from "@/lib/contacts/service"
+import { createContactWithDetails, saveContact } from "@/lib/contact-identity/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -95,6 +99,25 @@ export async function POST(request: NextRequest, context: Context) {
         return NextResponse.json(await archivePerson({ organizationId: id, personId: String(body.personId ?? "") }), { status: 200, headers: NO_STORE })
       case "restorePerson":
         return NextResponse.json(await restorePerson({ organizationId: id, personId: String(body.personId ?? "") }), { status: 200, headers: NO_STORE })
+      // ONE transaction per save: name, own email / phone, title, Primary Contact designation and (when permitted) identity details commit
+      // together or not at all, and the server works out what differs, so a repeated submit changes nothing instead of failing.
+      case "saveContact":
+        return NextResponse.json(
+          await saveContact({ organizationId: id, personId: String(body.personId ?? ""), name: body.name as never, email: body.email as never, phone: body.phone as never, title: body.title as never, primary: body.primary as never, identity: body.identity as never }),
+          { status: 200, headers: NO_STORE },
+        )
+      case "createContactFull":
+        return NextResponse.json(
+          await createContactWithDetails({ organizationId: id, name: (body.name ?? {}) as never, email: body.email as never, phone: body.phone as never, title: body.title as never, primary: body.primary === true, identity: body.identity as never }),
+          { status: 201, headers: NO_STORE },
+        )
+      // Operational-email inclusion is its own record: it never ends an email, the relationship or the Primary Contact designation.
+      case "excludeFromOperationalEmail":
+        return NextResponse.json(await excludeFromOperationalEmail({ organizationId: id, relationshipId: body.relationshipId, source: body.source, reference: body.reference, instructedByPersonId: body.instructedByPersonId, evidenceDocumentId: body.evidenceDocumentId }), { status: 201, headers: NO_STORE })
+      case "resumeOperationalEmail":
+        return NextResponse.json(await resumeOperationalEmail({ organizationId: id, exclusionId: body.exclusionId }), { status: 200, headers: NO_STORE })
+      case "restoreContact":
+        return NextResponse.json(await restoreContact({ organizationId: id, personId: String(body.personId ?? "") }), { status: 201, headers: NO_STORE })
       case "findMatches":
         return NextResponse.json({ matches: await findPersonMatches(body.query as Parameters<typeof findPersonMatches>[0]) }, { status: 200, headers: NO_STORE })
       default:

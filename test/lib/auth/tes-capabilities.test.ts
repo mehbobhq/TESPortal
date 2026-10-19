@@ -55,9 +55,11 @@ describe("TES capability references", () => {
         EVIDENCE_MANAGE: "SYSTEM",
         CONTRACT_READ: "SYSTEM",
         CONTRACT_MANAGE: "SYSTEM",
+        PERSON_IDENTITY_READ: "SYSTEM",
+        PERSON_IDENTITY_MANAGE: "SYSTEM",
       },
     );
-    assert.equal(TES_CAPABILITY_CODES.length, 31);
+    assert.equal(TES_CAPABILITY_CODES.length, 33);
   });
 
   it("has no delete capability and no CUSTOMER_CREATE", () => {

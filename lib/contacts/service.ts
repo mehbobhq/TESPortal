@@ -2,6 +2,7 @@ import "server-only"
 
 import type { PoolClient } from "pg"
 import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { ContactNotFoundError } from "@/lib/contacts/errors"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as operations from "@/lib/contacts/operations"
 import { resolveCommunicationRouting, type CommunicationRouting } from "@/lib/contacts/communication-routing"
@@ -181,3 +182,25 @@ export async function restorePerson(input: { organizationId: string; personId: s
 }
 export { applyOperationalRouting, resolveCommunicationRouting } from "@/lib/contacts/communication-routing"
 export type { CommunicationRouting, OutgoingMessage, RoutedRecipient } from "@/lib/contacts/communication-routing"
+
+// --- operational-email exclusions and re-association ------------------------------------------------------------------------
+
+/** Records that a contact is not to be copied on OPERATIONAL email (CONTACT_MANAGE). Separate from their email, relationship and PRIMARY designation. */
+export async function excludeFromOperationalEmail(input: unknown): Promise<OrganizationContactsView> {
+  return manage((ctx) => operations.excludeFromOperationalEmail(ctx, input))
+}
+/** Ends an exclusion: the contact is copied on operational email again from now. */
+export async function resumeOperationalEmail(input: unknown): Promise<OrganizationContactsView> {
+  return manage((ctx) => operations.resumeOperationalEmail(ctx, input))
+}
+
+/** Re-associates a contact who left, as the SAME person, in one transaction (the person is restored first when they were archived). */
+export async function restoreContact(input: { organizationId: string; personId: string }): Promise<ContactView> {
+  return manage(async (ctx) => {
+    const view = await operations.readOrganizationContacts(ctx.client, input.organizationId)
+    const person = view.contacts.find((contact) => contact.person.id === input.personId)?.person
+    if (!person) throw new ContactNotFoundError("Person")
+    if (person.recordStatus === "archived") await operations.restorePerson(ctx, { organizationId: input.organizationId, personId: input.personId })
+    return operations.addRelationship(ctx, { organizationId: input.organizationId, personId: input.personId })
+  })
+}

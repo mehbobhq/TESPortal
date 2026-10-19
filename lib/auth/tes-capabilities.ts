@@ -67,6 +67,9 @@ export const TES_CAPABILITY_SCOPES = {
   EVIDENCE_MANAGE: "SYSTEM",
   CONTRACT_READ: "SYSTEM",
   CONTRACT_MANAGE: "SYSTEM",
+  // Restricted person identity details shown in Contacts: date of birth and the person's driving licence record (migration 0035).
+  PERSON_IDENTITY_READ: "SYSTEM",
+  PERSON_IDENTITY_MANAGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

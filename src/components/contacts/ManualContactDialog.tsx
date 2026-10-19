@@ -12,7 +12,6 @@ export interface ManualContactFormState {
   dlExpiry: string;
   dlIssueDate: string;
   dlClass: string;
-  dlRestrictions: string;
   email: string;
   phone: string;
   role: string;
@@ -119,7 +118,7 @@ export function ManualContactDialog({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Company Role *
+                  Company Role
                 </label>
                 <select
                   value={manualForm.role}
@@ -165,6 +164,37 @@ export function ManualContactDialog({
                     </option>
                   ))}
                 </select>
+              </div>
+              </fieldset>
+
+              <fieldset disabled={!!identityFieldsNote} className="contents">
+              <div className={identityFieldsNote ? "opacity-50" : ""}>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Licence Expiry
+                </label>
+                <div className="mt-1">
+                  <ISODateInput
+                    value={manualForm.dlExpiry}
+                    onValueChange={(value) => setManualForm({ ...manualForm, dlExpiry: value })}
+                    className="text-xs"
+                    aria-label="Licence Expiry Date"
+                  />
+                </div>
+              </div>
+              </fieldset>
+
+              <fieldset disabled={!!identityFieldsNote} className="contents">
+              <div className={identityFieldsNote ? "opacity-50" : ""}>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Licence Class
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Class A / AZ"
+                  value={manualForm.dlClass}
+                  onChange={(e) => setManualForm({ ...manualForm, dlClass: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-hidden mt-1"
+                />
               </div>
               </fieldset>
 

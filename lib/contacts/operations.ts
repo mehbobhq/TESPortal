@@ -374,13 +374,18 @@ export async function readOrganizationContacts(
   const id = parseUuid(organizationId, "organizationId")
   if ((await repo.organizationExists(client, id)) === false) throw new ContactNotFoundError("Organization")
   const asOf = options.asOf === undefined ? null : parseInstant(options.asOf, "asOf")
-  const [channels, relationships] = await Promise.all([repo.listOrganizationChannels(client, id), repo.listRelationships(client, id)])
+  const [channels, relationships, operationalEmailExclusions] = await Promise.all([
+    repo.listOrganizationChannels(client, id),
+    repo.listRelationships(client, id),
+    repo.listExclusions(client, id),
+  ])
   return {
     organizationId: id,
     channels,
     currentChannels: channels.filter(isGenuineOpen),
     asOfChannels: asOf === null ? null : channels.filter((row) => inForce(row, normalizeAt(asOf))),
     contacts: await loadContacts(client, relationships, asOf),
+    operationalEmailExclusions,
   }
 }
 
@@ -1080,4 +1085,73 @@ export async function restorePerson(ctx: OperationContext, rawInput: unknown): P
     { field: "recordStatus", before: literal("archived"), after: literal("active") },
   ])
   return (await repo.lockPerson(ctx.client, personId)) as PersonRecord
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// operational-email exclusions
+//
+// "Stop copying this contact on operational email" is its own audited, effective-dated record. It is NOT a change of the person,
+// their email, their company relationship or the PRIMARY designation, and none of those is touched here. Only exclusions exist
+// (inclusion is the default). The authority is CONTACT_MANAGE (a displayed job title never grants it); the instruction's source and a
+// reference to it are mandatory so every exclusion is traceable, and the actor is in the Master Register. This records a decision the
+// resolver reads: it is not an email system and enforces nothing by itself.
+// ---------------------------------------------------------------------------------------------------------------
+
+const EXCLUSION_SOURCES = ["COMPANY_WRITTEN_REQUEST", "COMPANY_VERBAL_CONFIRMED", "TES_DECISION"] as const
+
+/** Records that a current contact is not to be copied on operational email from now (or an explicit past instant). */
+export async function excludeFromOperationalEmail(ctx: OperationContext, rawInput: unknown): Promise<OrganizationContactsView> {
+  const input = requireObject(rawInput, "input", ["organizationId", "relationshipId", "source", "reference", "instructedByPersonId", "evidenceDocumentId", "effectiveFrom"])
+  const organizationId = parseUuid(input.organizationId, "organizationId")
+  const relationshipId = parseUuid(input.relationshipId, "relationshipId")
+  if (typeof input.source !== "string" || !(EXCLUSION_SOURCES as readonly string[]).includes(input.source)) {
+    throw new ContactValidationError("source", "The source of the instruction is required.")
+  }
+  const instructionReference = typeof input.reference === "string" ? input.reference.trim() : ""
+  if (instructionReference.length < 3 || instructionReference.length > 500) throw new ContactValidationError("reference", "Say how the instruction was received (3 to 500 characters).")
+  const instructedBy = input.instructedByPersonId === undefined || input.instructedByPersonId === null || input.instructedByPersonId === "" ? null : parseUuid(input.instructedByPersonId, "instructedByPersonId")
+  const evidenceId = input.evidenceDocumentId === undefined || input.evidenceDocumentId === null || input.evidenceDocumentId === "" ? null : parseUuid(input.evidenceDocumentId, "evidenceDocumentId")
+  const explicitInstant = optionalInstant(input.effectiveFrom, "effectiveFrom")
+
+  const { relationship, person } = await lockManagedRelationship(ctx, organizationId, relationshipId)
+  requireOpenRelationship(relationship, person)
+  if (instructedBy !== null && instructedBy !== relationship.personId && !(await repo.personRelatedToOrganization(ctx.client, organizationId, instructedBy))) {
+    throw new ContactNotFoundError("Person")
+  }
+  const at = await resolveInstant(ctx, explicitInstant, "effectiveFrom")
+  const id = randomUUID()
+  try {
+    await repo.insertExclusion(ctx.client, { id, organizationId, personId: relationship.personId, relationshipId, effectiveFrom: at, source: input.source, reference: instructionReference, instructedByPersonId: instructedBy, evidenceDocumentId: evidenceId })
+  } catch (error) {
+    const constraint = constraintOf(error)
+    if (constraint !== undefined && (repo.CURRENT_EXCLUSION_CONSTRAINTS as readonly string[]).includes(constraint)) throw new ContactConflictError("This contact is already excluded from operational email.")
+    if (constraint === repo.EXCLUSION_EVIDENCE_CONSTRAINT) throw new ContactNotFoundError("Evidence document")
+    if (constraint === repo.EXCLUSION_RELATIONSHIP_CONSTRAINT) throw new ContactStateError("This relationship has ended.")
+    throw error
+  }
+  await record(ctx, "RECORD_CREATED", "excludeFromOperationalEmail", { resourceType: "operational_email_exclusion", resourceId: id, organizationId, personId: relationship.personId }, [
+    { field: "operationalEmail", after: literal("EXCLUDED") },
+    { field: "instructionSource", after: literal(input.source) },
+    ...(evidenceId ? [{ field: "evidence", after: reference("evidence_documents", evidenceId) }] : []),
+  ])
+  return readOrganizationContacts(ctx.client, organizationId)
+}
+
+/** Ends an exclusion: the contact is copied on operational email again from now. The exclusion stays in history. */
+export async function resumeOperationalEmail(ctx: OperationContext, rawInput: unknown): Promise<OrganizationContactsView> {
+  const input = requireObject(rawInput, "input", ["organizationId", "exclusionId", "effectiveTo"])
+  const organizationId = parseUuid(input.organizationId, "organizationId")
+  const exclusionId = parseUuid(input.exclusionId, "exclusionId")
+  const explicitInstant = optionalInstant(input.effectiveTo, "effectiveTo")
+
+  await lockActiveOrganization(ctx, organizationId)
+  const exclusion = await repo.getOpenExclusion(ctx.client, organizationId, exclusionId, true)
+  if (!exclusion) throw new ContactNotFoundError("Exclusion")
+  const at = await resolveInstant(ctx, explicitInstant, "effectiveTo")
+  await guarded(() => repo.endPeriod(ctx.client, "organization_person_operational_email_exclusions", exclusion.id, at))
+  await record(ctx, "RECORD_UPDATED", "resumeOperationalEmail", { resourceType: "operational_email_exclusion", resourceId: exclusion.id, organizationId, personId: exclusion.personId }, [
+    { field: "operationalEmail", before: literal("EXCLUDED"), after: literal("INCLUDED") },
+    { field: "effectiveTo", after: literal(at) },
+  ])
+  return readOrganizationContacts(ctx.client, organizationId)
 }

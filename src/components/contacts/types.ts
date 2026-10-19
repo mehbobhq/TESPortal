@@ -42,6 +42,8 @@ export type ContactEvent = {
     | "RESTORED";
   summary: string;
   actor: string;
+  /** The business operation this entry is shown as (for example "Contact Created"); falls back to `action`. */
+  label?: string;
 };
 
 export type Contact = {

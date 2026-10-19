@@ -19,6 +19,7 @@ import type {
   ChannelRecord,
   ContactRecordStatus,
   NameRecord,
+  OperationalEmailExclusionRecord,
   PersonRecord,
   PurposeAssignmentRecord,
   RelationshipRecord,
@@ -52,6 +53,9 @@ export const ORGANIZATION_ACTIVE_CONSTRAINTS = [
 export const RELATIONSHIP_WINDOW_CONSTRAINT = "contact_records_relationship_window"
 export const PURPOSE_RULES_CONSTRAINT = "contact_purpose_assignments_purpose_rules"
 export const ARCHIVE_BLOCKED_CONSTRAINT = "persons_archive_requires_no_current_relationship"
+export const EXCLUSION_RELATIONSHIP_CONSTRAINT = "operational_email_exclusions_relationship_active"
+export const EXCLUSION_EVIDENCE_CONSTRAINT = "operational_email_exclusions_evidence_fk"
+export const CURRENT_EXCLUSION_CONSTRAINTS = ["operational_email_exclusions_current_uq", "operational_email_exclusions_no_overlap"] as const
 export const DEPENDENTS_BLOCK_CONSTRAINTS = [
   "organization_person_relationships_dependents_block_void",
   "organization_person_relationships_dependents_block_end",
@@ -68,6 +72,7 @@ export type PeriodTable =
   | "organization_person_titles"
   | "contact_purpose_assignments"
   | "organization_person_relationships"
+  | "organization_person_operational_email_exclusions"
 
 // --- clock --------------------------------------------------------------------------------------------------------
 
@@ -601,4 +606,68 @@ export async function listPersonOrganizationIds(client: Queryable, personIds: st
 
 export async function organizationExists(client: Queryable, organizationId: string): Promise<boolean> {
   return ((await client.query(`SELECT 1 FROM public.organizations WHERE id = $1`, [organizationId])).rowCount ?? 0) > 0
+}
+
+// --- operational-email exclusions (migration 0035) ---------------------------------------------------------------------
+
+const EXCLUSION_COLUMNS = `id, organization_id, person_id, relationship_id, ${MICRO_ISO("effective_from")} AS effective_from,
+  ${MICRO_ISO_NULL("effective_to")} AS effective_to, instruction_source, instruction_reference, instructed_by_person_id,
+  evidence_document_id, change_reason, record_status, ${MICRO_ISO("created_at")} AS created_at`
+
+function mapExclusion(row: Record<string, any>): OperationalEmailExclusionRecord {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    personId: row.person_id,
+    relationshipId: row.relationship_id,
+    effectiveFrom: row.effective_from,
+    effectiveTo: row.effective_to,
+    instructionSource: row.instruction_source,
+    instructionReference: row.instruction_reference,
+    instructedByPersonId: row.instructed_by_person_id,
+    evidenceDocumentId: row.evidence_document_id,
+    changeReason: row.change_reason,
+    recordStatus: row.record_status,
+    createdAt: row.created_at,
+  }
+}
+
+export async function listExclusions(client: Queryable, organizationId: string): Promise<OperationalEmailExclusionRecord[]> {
+  const result = await client.query(
+    `SELECT ${EXCLUSION_COLUMNS} FROM public.organization_person_operational_email_exclusions
+      WHERE organization_id = $1 ORDER BY effective_from, created_at, id`,
+    [organizationId],
+  )
+  return result.rows.map(mapExclusion)
+}
+
+export async function getOpenExclusion(client: Queryable, organizationId: string, exclusionId: string, forUpdate = false): Promise<OperationalEmailExclusionRecord | undefined> {
+  const result = await client.query(
+    `SELECT ${EXCLUSION_COLUMNS} FROM public.organization_person_operational_email_exclusions
+      WHERE id = $1 AND organization_id = $2 AND record_status = 'active' AND effective_to IS NULL ${forUpdate ? "FOR UPDATE" : ""}`,
+    [exclusionId, organizationId],
+  )
+  return result.rows[0] ? mapExclusion(result.rows[0]) : undefined
+}
+
+export async function insertExclusion(
+  client: Queryable,
+  v: {
+    id: string
+    organizationId: string
+    personId: string
+    relationshipId: string
+    effectiveFrom: string
+    source: string
+    reference: string
+    instructedByPersonId: string | null
+    evidenceDocumentId: string | null
+  },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO public.organization_person_operational_email_exclusions
+       (id, organization_id, person_id, relationship_id, effective_from, instruction_source, instruction_reference, instructed_by_person_id, evidence_document_id)
+     VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9)`,
+    [v.id, v.organizationId, v.personId, v.relationshipId, v.effectiveFrom, v.source, v.reference, v.instructedByPersonId, v.evidenceDocumentId],
+  )
 }

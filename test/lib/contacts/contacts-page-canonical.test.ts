@@ -6,7 +6,6 @@ import { before, describe, it } from "node:test"
 const ROOT = process.cwd()
 const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8")
 const page = read("app/companies/[id]/contacts/page.tsx")
-const lines = read("app/companies/[id]/contacts/company-lines.tsx")
 const adapter = read("src/components/contacts/canonical-adapter.ts")
 
 describe("Contacts page: one interface on canonical PostgreSQL records", () => {
@@ -22,7 +21,7 @@ describe("Contacts page: one interface on canonical PostgreSQL records", () => {
   })
 
   it("holds no data of its own: no browser storage, no prototype keys, no local evidence store", () => {
-    for (const code of [page, lines, adapter]) assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB|tes_contacts|tes_companies|evidence-storage/i)
+    for (const code of [page, adapter]) assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB|tes_contacts|tes_companies|evidence-storage/i)
     assert.match(page, /fetch\(base/)
     assert.match(page, /const base = `\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}\/contacts`/)
     assert.doesNotMatch(page, /generateContactId|generateGlobalUserId|simulateOCRExtraction|persistContacts/)
@@ -45,7 +44,7 @@ describe("Contacts page: one interface on canonical PostgreSQL records", () => {
   })
 
   it("routes every write through the existing contacts API actions", () => {
-    for (const action of ["createContact", "changeName", "correctName", "addPersonChannel", "changePersonChannel", "endPersonChannel", "addTitle", "changeTitle", "makePrimary", "endPurpose", "endRelationship", "addRelationship", "addChannel", "endChannel"]) {
+    for (const action of ["createContact", "changeName", "correctName", "addPersonChannel", "changePersonChannel", "endPersonChannel", "addTitle", "changeTitle", "makePrimary", "endPurpose", "endRelationship", "addRelationship"]) {
       assert.match(page, new RegExp(`"${action}"`), action)
     }
     const route = read("app/api/companies/[id]/contacts/route.ts")
@@ -110,5 +109,17 @@ describe("operational email inclusion is a separate concept with no canonical st
   it("does not offer end-email or end-primary as a way to stop copying the primary contact", () => {
     const page = readFileSync(path.join(process.cwd(), "app/companies/[id]/contacts/page.tsx"), "utf8")
     assert.doesNotMatch(page, /stop (copying|including)|exclude from (operational )?email/i)
+  })
+})
+
+describe("company phone and email are managed on the Company Profile, not on Contacts", () => {
+  it("has no Company phone & email section, and the page posts no company-channel action", () => {
+    assert.equal(existsSync(path.join(process.cwd(), "app/companies/[id]/contacts/company-lines.tsx")), false)
+    assert.doesNotMatch(page, /CompanyLines|company-lines|Company phone|Add line/i)
+    assert.doesNotMatch(page, /action: "(addChannel|endChannel)"/)
+  })
+  it("keeps the person-level email editing", () => {
+    assert.match(page, /addPersonChannel/)
+    assert.match(page, /changePersonChannel/)
   })
 })

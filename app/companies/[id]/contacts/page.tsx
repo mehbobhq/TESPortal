@@ -21,7 +21,6 @@ import {
 } from "@/src/components/contacts/canonical-adapter";
 import { ALL_JURISDICTIONS, STANDARD_ROLES, findDuplicateContact, isWithinThreeYears } from "@/src/components/contacts/contact-helpers";
 import type { Contact } from "@/src/components/contacts/types";
-import { CompanyLines } from "./company-lines";
 
 /** Why the identity-document fields and Document / OCR intake are switched off here (shown wherever they would have been used). */
 const IDENTITY_NOT_STORED =
@@ -325,7 +324,7 @@ export default function ContactsPage() {
       <CompanyWorkspaceHeader
         company={{ id: company.id, name: company.name, kind: String(company.kind || ""), status: String(company.status || "") }}
         section="Contacts"
-        description="Personnel register, company relationships and company phone and email lines."
+        description="Personnel register and company relationships."
         actions={contactsActions}
       />
 
@@ -351,12 +350,6 @@ export default function ContactsPage() {
       </p>
 
       <ContactStats contacts={contacts} companyId={companyId} />
-      <CompanyLines
-        channels={view.currentChannels}
-        busy={busy}
-        onAdd={(channel) => void run(async () => (await act({ action: "addChannel", channel })).ok)}
-        onEnd={(channelId) => void run(async () => (await act({ action: "endChannel", channelId })).ok)}
-      />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <ContactDirectory {...{ sortedCompanyContacts, selectedContact, selectedContactId, companyId, searchQuery, setSearchQuery, roleFilter, setRoleFilter, includeArchived, setIncludeArchived, STANDARD_ROLES, handleSelectContact, handleSetPrimary, setIsManualModalOpen: () => openManual() }} />
         <ContactInspector

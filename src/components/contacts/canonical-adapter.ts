@@ -126,7 +126,13 @@ export function eventsOf(view: CanonicalContactView, companyName: string, exclus
   const groups: Part[][] = []
   for (const part of parts) {
     const last = groups[groups.length - 1]
-    if (last && ms(part.at) - ms(last[last.length - 1].at) <= GROUP_WINDOW_MS) last.push(part)
+    // A creation event may only absorb details from that initial creation; never merge a later
+    // update into "Contact Created" just because the operator saved again within 1.5 seconds.
+    const lastIsCreation = last?.some((entry) => entry.kind === "create") ?? false
+    const partIsCreation = part.kind === "create"
+    const isCreationDetail = part.kind === "relation-start" || part.kind === "email" || part.kind === "phone" || part.kind === "role" || part.kind === "primary"
+    const canJoinCreation = !lastIsCreation || (isCreationDetail && !partIsCreation)
+    if (last && canJoinCreation && ms(part.at) - ms(last[last.length - 1].at) <= GROUP_WINDOW_MS) last.push(part)
     else groups.push([part])
   }
   const events: ContactEvent[] = groups.map((group, index) => {

@@ -33,8 +33,8 @@ export function ContactStats({ contacts, companyId }: ContactStatsProps) {
             </p>
           </div>
           <div className="rounded-lg bg-muted/40 p-3 border border-border">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Store Schema</p>
-            <p className="text-xs font-mono font-medium text-muted-foreground mt-1">tes_contacts_v5 (Locked)</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Source</p>
+            <p className="text-xs font-mono font-medium text-muted-foreground mt-1">PostgreSQL records</p>
           </div>
         </div>
       </div>

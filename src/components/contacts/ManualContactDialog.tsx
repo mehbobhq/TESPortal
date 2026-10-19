@@ -31,11 +31,13 @@ interface ManualContactDialogProps {
   setIsManualModalOpen: (value: boolean) => void;
   handleManualSave: () => void;
   companyName: string;
+  /** When set, identity-document fields are disabled and this explains why (they have no home in Contacts). */
+  identityFieldsNote?: string;
 }
 
 export function ManualContactDialog({
   isManualModalOpen, manualForm, setManualForm, manualFormErrors, manualDuplicateWarning, STANDARD_ROLES,
-  ALL_JURISDICTIONS, setIsManualModalOpen, handleManualSave, companyName,
+  ALL_JURISDICTIONS, setIsManualModalOpen, handleManualSave, companyName, identityFieldsNote,
 }: ManualContactDialogProps) {
   return (
     <>
@@ -67,6 +69,7 @@ export function ManualContactDialog({
               </div>
             )}
 
+            {identityFieldsNote && <p className="text-[10px] leading-relaxed text-muted-foreground">{identityFieldsNote}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -85,7 +88,7 @@ export function ManualContactDialog({
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Last Name *
+                  Last Name
                 </label>
                 <input
                   type="text"
@@ -98,7 +101,8 @@ export function ManualContactDialog({
                 )}
               </div>
 
-              <div>
+              <fieldset disabled={!!identityFieldsNote} className="contents">
+              <div className={identityFieldsNote ? "opacity-50" : ""}>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Date of Birth (YYYY-MM-DD)
                 </label>
@@ -111,6 +115,7 @@ export function ManualContactDialog({
                   />
                 </div>
               </div>
+              </fieldset>
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -129,7 +134,8 @@ export function ManualContactDialog({
                 </select>
               </div>
 
-              <div>
+              <fieldset disabled={!!identityFieldsNote} className="contents">
+              <div className={identityFieldsNote ? "opacity-50" : ""}>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Driver Licence Number
                 </label>
@@ -141,8 +147,10 @@ export function ManualContactDialog({
                   className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-mono focus:border-primary focus:outline-hidden mt-1"
                 />
               </div>
+              </fieldset>
 
-              <div>
+              <fieldset disabled={!!identityFieldsNote} className="contents">
+              <div className={identityFieldsNote ? "opacity-50" : ""}>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Licence Jurisdiction
                 </label>
@@ -158,6 +166,7 @@ export function ManualContactDialog({
                   ))}
                 </select>
               </div>
+              </fieldset>
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">

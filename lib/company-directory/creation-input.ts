@@ -149,7 +149,16 @@ export type PlannedRegistration = {
 
 /** The Primary Contact: a person typed as a full name (structure unconfirmed), a person the user chose, or the legacy given/family pair. */
 export type PlannedContact =
-  | { kind: "new"; givenName: string | null; familyName: string | null }
+  | {
+      kind: "new"
+      givenName: string | null
+      familyName: string | null
+      /**
+       * The company's Account Email as the NEW person's own designated email (their person channel, editable if it later proves to be a
+       * shared or departmental mailbox). The company's phone and billing email are never assigned to the person.
+       */
+      accountEmail: string | null
+    }
   | { kind: "existing"; personId: string }
 
 export type CompanyCreationPlan = {
@@ -298,9 +307,9 @@ export function parseCreateCompanyInput(raw: unknown): CompanyCreationPlan {
     if (givenName || familyName) issue("contactPerson", "Give the Primary Contact once: either as a full name or as given and family names.")
     else if (fullName.length > 200) issue("contactPerson", "The Primary Contact name must not exceed 200 characters.")
     // Stored exactly as typed; the name's structure is not guessed (Contacts can correct it).
-    else contact = { kind: "new", givenName: fullName, familyName: null }
+    else contact = { kind: "new", givenName: fullName, familyName: null, accountEmail: text(input.email) || null }
   } else if (givenName || familyName) {
-    contact = { kind: "new", givenName: givenName || null, familyName: familyName || null }
+    contact = { kind: "new", givenName: givenName || null, familyName: familyName || null, accountEmail: text(input.email) || null }
   }
   const channels: PlannedChannel[] = []
   if (text(input.phone)) channels.push({ type: "PHONE", usage: "GENERAL", value: text(input.phone) })

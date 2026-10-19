@@ -3,7 +3,11 @@ import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
 import {
   addOrganizationChannel,
   addPersonChannel,
+  addRelationship,
   addTitle,
+  changeTitle,
+  changePersonChannel,
+  correctPersonChannel,
   archivePerson,
   assignPurpose,
   changePersonName,
@@ -57,6 +61,17 @@ export async function POST(request: NextRequest, context: Context) {
         return NextResponse.json(await endOrganizationChannel({ organizationId: id, channelId: body.channelId }), { status: 200, headers: NO_STORE })
       case "addPersonChannel":
         return NextResponse.json(await addPersonChannel({ organizationId: id, personId: body.personId, channel: body.channel }), { status: 201, headers: NO_STORE })
+      // Editing a person's own channel keeps the earlier value as history (change) or flags it as wrong (correct). The company's own
+      // lines are never touched through a person.
+      case "changePersonChannel":
+        return NextResponse.json(await changePersonChannel({ organizationId: id, personId: body.personId, channelId: body.channelId, value: body.value, preferred: body.preferred }), { status: 200, headers: NO_STORE })
+      case "correctPersonChannel":
+        return NextResponse.json(await correctPersonChannel({ organizationId: id, personId: body.personId, channelId: body.channelId, value: body.value, preferred: body.preferred }), { status: 200, headers: NO_STORE })
+      // A contact who left is re-associated as the SAME person (no second person record is created).
+      case "addRelationship":
+        return NextResponse.json(await addRelationship({ organizationId: id, personId: String(body.personId ?? "") }), { status: 201, headers: NO_STORE })
+      case "changeTitle":
+        return NextResponse.json(await changeTitle({ organizationId: id, titleId: String(body.titleId ?? ""), title: String(body.title ?? "") }), { status: 200, headers: NO_STORE })
       case "endPersonChannel":
         return NextResponse.json(await endPersonChannel({ organizationId: id, personId: body.personId, channelId: body.channelId }), { status: 200, headers: NO_STORE })
       case "endRelationship":

@@ -65,7 +65,7 @@ describe("company creation input contract", () => {
     assert.deepEqual(plan.addresses.map((a) => [a.role, a.address.region, a.address.country]), [["REGISTERED", "ON", "CA"], ["MAILING", "ON", "CA"], ["HOME_YARD", "IL", "US"]])
     assert.deepEqual(plan.channels.map((c) => [c.type, c.usage]), [["PHONE", "GENERAL"], ["EMAIL", "GENERAL"], ["EMAIL", "ACCOUNTING"]])
     // the full name is kept exactly as typed; it is never split by guesswork (Contacts can restructure it)
-    assert.deepEqual(plan.contact, { kind: "new", givenName: "Jane Roe", familyName: null })
+    assert.deepEqual(plan.contact, { kind: "new", givenName: "Jane Roe", familyName: null, accountEmail: "ops@example.test" })
     assert.deepEqual(plan.authorities.map((a) => [a.kind, (a.jurisdiction && "region" in a.jurisdiction ? a.jurisdiction.region : null)]), [["USDOT", null], ["MC", null], ["MVID", "ON"], ["CVOR", "ON"], ["IRP", "IL"]])
     assert.deepEqual(plan.registrations.map((r) => r.program), ["IFTA", "GST_HST", "NY_HUT", "NM_WDT", "KYU", "OR_WMT", "CT_HUF", "SCAC", "CA_CARRIER_CODE"])
   })
@@ -124,10 +124,10 @@ describe("company creation input contract", () => {
   })
 
   it("the Primary Contact is one field: a typed full name, a chosen existing person, or the legacy pair - never a mixture", () => {
-    assert.deepEqual(I.parseCreateCompanyInput({ ...base, contactPerson: "  Jane   Roe " }).contact, { kind: "new", givenName: "Jane   Roe", familyName: null })
+    assert.deepEqual(I.parseCreateCompanyInput({ ...base, contactPerson: "  Jane   Roe " }).contact, { kind: "new", givenName: "Jane   Roe", familyName: null, accountEmail: null })
     const id = "0b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
     assert.deepEqual(I.parseCreateCompanyInput({ ...base, contactPersonId: id.toUpperCase() }).contact, { kind: "existing", personId: id })
-    assert.deepEqual(I.parseCreateCompanyInput({ ...base, contactGivenName: "Jane", contactFamilyName: "Roe" }).contact, { kind: "new", givenName: "Jane", familyName: "Roe" })
+    assert.deepEqual(I.parseCreateCompanyInput({ ...base, contactGivenName: "Jane", contactFamilyName: "Roe" }).contact, { kind: "new", givenName: "Jane", familyName: "Roe", accountEmail: null })
     assert.equal(I.parseCreateCompanyInput({ ...base, contactPerson: "  " }).contact, null)
     assert.deepEqual(issuesOf({ ...base, contactPersonId: "not-a-uuid" }).map((i) => i.field), ["contactPersonId"])
     assert.deepEqual(issuesOf({ ...base, contactPersonId: id, contactGivenName: "Jane" }).map((i) => i.field), ["contactGivenName"])

@@ -28,12 +28,14 @@ interface ContactInspectorProps {
   handleSaveEdit: () => void;
   setPreviewEvidence: (evidence: Evidence) => void;
   companyName: string;
+  /** When set, identity-document fields are disabled and this explains why (they have no home in Contacts). */
+  identityFieldsNote?: string;
 }
 
 export function ContactInspector({
   selectedContact, selectedContactRelationship, companyId, isEditing, editFormData, setEditFormData, editFormErrors,
   editDuplicateWarning, showOlderEvidence, setShowOlderEvidence, STANDARD_ROLES, ALL_JURISDICTIONS, isWithinThreeYears,
-  handleStartEdit, handleToggleArchive, handleSelectContact, handleCancelEdit, handleSaveEdit, setPreviewEvidence, companyName,
+  handleStartEdit, handleToggleArchive, handleSelectContact, handleCancelEdit, handleSaveEdit, setPreviewEvidence, companyName, identityFieldsNote,
 }: ContactInspectorProps) {
   return (
     <>
@@ -116,6 +118,7 @@ export function ContactInspector({
                       </div>
                     )}
 
+                    {identityFieldsNote && <p className="text-[10px] leading-relaxed text-muted-foreground">{identityFieldsNote}</p>}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -136,7 +139,7 @@ export function ContactInspector({
 
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          Last Name *
+                          Last Name
                         </label>
                         <input
                           type="text"
@@ -151,7 +154,8 @@ export function ContactInspector({
                         )}
                       </div>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Date of Birth
                         </label>
@@ -164,8 +168,10 @@ export function ContactInspector({
                           />
                         </div>
                       </div>
+                      </fieldset>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Driver Licence #
                         </label>
@@ -176,8 +182,10 @@ export function ContactInspector({
                           className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-mono mt-1"
                         />
                       </div>
+                      </fieldset>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Licence Jurisdiction
                         </label>
@@ -193,8 +201,10 @@ export function ContactInspector({
                           ))}
                         </select>
                       </div>
+                      </fieldset>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Licence Expiry
                         </label>
@@ -207,8 +217,10 @@ export function ContactInspector({
                           />
                         </div>
                       </div>
+                      </fieldset>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Licence Class
                         </label>
@@ -220,8 +232,10 @@ export function ContactInspector({
                           className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
                         />
                       </div>
+                      </fieldset>
 
-                      <div>
+                      <fieldset disabled={!!identityFieldsNote} className="contents">
+                      <div className={identityFieldsNote ? "opacity-50" : ""}>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Restrictions
                         </label>
@@ -233,6 +247,7 @@ export function ContactInspector({
                           className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
                         />
                       </div>
+                      </fieldset>
 
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">

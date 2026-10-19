@@ -186,7 +186,8 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.deepEqual(profile.assessment, { state: "not_yet_assessed" });
     assert.equal(profile.endDate, null);
     assert.ok(Object.values(profile.sections).every((state) => state === "ok"), JSON.stringify(profile.sections));
-    assert.deepEqual(profile.notRecordedYet, ["gstHst"]);
+    assert.deepEqual(profile.notRecordedYet, []);
+    assert.equal(profile.gstHst, null, "no GST/HST account was entered, so none is shown or invented");
 
     // roster: the customer appears exactly once, linked to the one organization
     const roster = (await K.dir.listCustomerDirectory()).filter((c) => c.organizationId === id);
@@ -577,7 +578,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     const { id } = await createCustomer("J");
     const state = await snapshot(id);
 
-    for (const [field, value] of [["svcType", "Premium"], ["status", "Active"], ["endDate", "2030-01-01"], ["assessmentDate", "2026-01-01"], ["gstHst", "123456789 RT 0001"]] as const) {
+    for (const [field, value] of [["svcType", "Premium"], ["status", "Active"], ["endDate", "2030-01-01"], ["assessmentDate", "2026-01-01"]] as const) {
       const created = await validationOf(K.dir.createCompanyDirectoryRecord(customerPayload("J2", { cargoTypes: FACTS.cargoTypes, [field]: value })));
       const edited = await validationOf(K.dir.editCompany(id, { [field]: value }));
       assert.equal(created[0].field, field);

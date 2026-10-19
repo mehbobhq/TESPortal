@@ -91,8 +91,9 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
 
   it("adds no migration in this pass", () => {
     const migrations = readdirSync(path.join(ROOT, "database/migrations")).filter((name) => name.endsWith(".sql")).sort()
-    // The Phase D/E pass added none; 0033 belongs to the Company/Customer profile-facts recovery.
-    assert.ok(migrations[migrations.length - 1].startsWith("0033_"), migrations[migrations.length - 1])
+    // The Phase D/E pass added none; 0033 and 0034 belong to the Company/Customer work. The sequence stays gapless.
+    assert.ok(Number(migrations[migrations.length - 1].slice(0, 4)) >= 33, migrations[migrations.length - 1])
+    assert.ok(migrations.every((name, index) => Number(name.slice(0, 4)) === index + 1), "migrations are numbered without gaps")
   })
 
   it("makes deferred modules explicit instead of persisting them in the browser", () => {

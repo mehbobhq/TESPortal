@@ -181,7 +181,7 @@ describe("Tax Registrations (real authorization, real transactions, real Master 
         await names(`SELECT table_name AS n FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'registration%' ORDER BY 1`),
         ["registration_programs", "registration_status_periods", "registration_versions", "registrations"],
       );
-      assert.deepEqual(await names(`SELECT code AS n FROM public.registration_programs ORDER BY sort_order`), [...PROGRAMS]);
+      assert.deepEqual(await names(`SELECT code AS n FROM public.registration_programs ORDER BY sort_order`), [...PROGRAMS, "GST_HST"]);
       const indexes = await names(`SELECT indexname AS n FROM pg_indexes WHERE schemaname = 'public' AND tablename LIKE 'registration%'`);
       for (const expected of [
         "registration_versions_current_uq", "registration_versions_current_number_uq", "registration_versions_history_idx",
@@ -1435,7 +1435,7 @@ describe("Tax Registrations (real authorization, real transactions, real Master 
       assert.equal(await rowCount(`SELECT count(*) FROM public.company_profile_rules r JOIN public.registration_programs p ON p.code = r.registration_program_code`), 10, "every linked program exists in the catalogue");
       assert.deepEqual(rules.filter((rule) => rule.registration_program_code === null).map((rule) => rule.code), ["FORM_2290"]);
       const unlinked = (await pools.admin.query<{ code: string }>(`SELECT p.code FROM public.registration_programs p WHERE NOT EXISTS (SELECT 1 FROM public.company_profile_rules r WHERE r.registration_program_code = p.code) ORDER BY p.sort_order`)).rows.map((row) => row.code);
-      assert.deepEqual(unlinked, ["SCAC", "CA_CARRIER_CODE"]);
+      assert.deepEqual(unlinked, ["SCAC", "CA_CARRIER_CODE", "GST_HST"]);
       // the foreign key is real: a rule cannot point at a program that does not exist
       const admin = await pools.admin.connect();
       try {

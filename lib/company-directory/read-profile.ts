@@ -37,7 +37,10 @@ export type CompanyProfileRecord = {
   status: "Active" | "Archived" | "Merged"
   createdAt: string
   dba: string | null
+  /** The Primary Contact's name as recorded in Contacts; the Contacts workspace is authoritative for the person. */
   contact: string | null
+  /** The canonical person record behind the Primary Contact, for permanent navigation to Contacts; null when none or not permitted. */
+  contactPersonId: string | null
   phone: string | null
   email: string | null
   billingEmail: string | null
@@ -65,6 +68,10 @@ export type CompanyProfileRecord = {
   incorpNo: string | null
   businessNo: string | null
   ein: string | null
+  /** The GST/HST program account on record (registration program GST_HST); null when none or not permitted. */
+  gstHst: string | null
+  /** The GST/HST registration id, for editing; null when none. */
+  gstHstRegistrationId: string | null
   regCorpState: string | null
   regCorpCountry: string | null
   usdot: string | null
@@ -117,8 +124,12 @@ type AddressFlat = Pick<CompanyProfileRecord, "reg_street" | "reg_city" | "reg_s
 
 const KIND_LABEL: Record<string, string> = { SAFETY_FITNESS: "NSC" }
 
-function numberWithJurisdiction(kind: string, number: string, region: string | null, showKind: boolean): string {
-  return `${showKind ? `${KIND_LABEL[kind] ?? kind} ` : ""}${number}${region ? ` (${region})` : ""}`
+/** Number kinds whose issuing / base jurisdiction can be recorded as not yet established (migration 0034). */
+const JURISDICTION_DEPENDENT = new Set(["MVID", "SAFETY_FITNESS", "IRP", "IFTA"])
+
+function numberWithJurisdiction(kind: string, number: string, region: string | null, showKind: boolean, showRegion = true): string {
+  const suffix = region ? ` (${region})` : showRegion && JURISDICTION_DEPENDENT.has(kind) ? " (jurisdiction not set)" : ""
+  return `${showKind ? `${KIND_LABEL[kind] ?? kind} ` : ""}${number}${suffix}`
 }
 
 /**
@@ -195,7 +206,7 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
     }
     const registration = (program: string, withBase = false) => {
       const found = (registrations?.registrations ?? []).filter((view) => view.registration.archivedAt === null && view.registration.program === program && view.current.version)
-      return found.length ? found.map((view) => numberWithJurisdiction(program, view.current.version!.numberDisplay, withBase ? view.current.version!.jurisdictionRegion : null, false)).join(" / ") : null
+      return found.length ? found.map((view) => numberWithJurisdiction(program, view.current.version!.numberDisplay, withBase ? view.current.version!.jurisdictionRegion : null, false, withBase)).join(" / ") : null
     }
 
     // The open engagement when there is one; otherwise the MOST RECENT one (engagements are ordered oldest first). A customer who left
@@ -243,6 +254,7 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       createdAt: organization.createdAt,
       dba: trade?.alias ?? null,
       contact: primaryName,
+      contactPersonId: primary?.person.id ?? null,
       phone: channel("PHONE", "GENERAL"),
       email: channel("EMAIL", "GENERAL"),
       billingEmail: channel("EMAIL", "ACCOUNTING"),
@@ -260,6 +272,8 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       incorpNo: activeIdentifier("INCORPORATION"),
       businessNo: activeIdentifier("CRA_BN") ?? null,
       ein: activeIdentifier("IRS_EIN"),
+      gstHst: registration("GST_HST"),
+      gstHstRegistrationId: (registrations?.registrations ?? []).find((view) => view.registration.archivedAt === null && view.registration.program === "GST_HST" && view.current.version)?.registration.id ?? null,
       regCorpState: organization.formationRegion,
       regCorpCountry: organization.formationCountry ? (COUNTRY_NAME[organization.formationCountry] ?? organization.formationCountry) : null,
       usdot: authority(["USDOT"], false),
@@ -282,7 +296,7 @@ export async function readCompanyProfile(organizationId: string): Promise<Compan
       ...(flat("mail", "MAILING") as Pick<CompanyProfileRecord, "mail_street" | "mail_city" | "mail_state" | "mail_zip" | "mail_country">),
       ...(flat("yard", "HOME_YARD") as Pick<CompanyProfileRecord, "yard_street" | "yard_city" | "yard_state" | "yard_zip" | "yard_country">),
       sections,
-      notRecordedYet: ["gstHst"],
+      notRecordedYet: [],
     } as CompanyProfileRecord
   })
 }

@@ -107,7 +107,7 @@ type VersionRow = {
   number_display: string
   number_normalized: string
   normalization_rule_version: string
-  jurisdiction_country: string
+  jurisdiction_country: string | null
   jurisdiction_region: string | null
   issued_on: string | null
   expires_on: string | null
@@ -224,7 +224,7 @@ export async function insertVersion(
     numberDisplay: string
     numberNormalized: string
     normalizationRuleVersion: string
-    jurisdictionCountry: string
+    jurisdictionCountry: string | null
     jurisdictionRegion: string | null
     issuedOn: string | null
     expiresOn: string | null
@@ -386,7 +386,7 @@ export async function findCurrentIdentityHolder(
 export async function findCurrentNumberHolder(
   client: Queryable,
   kind: AuthorityKind,
-  jurisdictionCountry: string,
+  jurisdictionCountry: string | null,
   jurisdictionRegion: string | null,
   numberNormalized: string,
 ): Promise<NumberCollisionMatch | undefined> {
@@ -404,7 +404,7 @@ export async function findCurrentNumberHolder(
        FROM public.operating_authority_versions v
        JOIN public.operating_authorities a ON a.id = v.authority_id
        JOIN public.organizations o ON o.id = v.organization_id
-      WHERE v.kind = $1 AND v.jurisdiction_country = $2 AND v.jurisdiction_region IS NOT DISTINCT FROM $3::text
+      WHERE v.kind = $1 AND v.jurisdiction_country IS NOT DISTINCT FROM $2::text AND v.jurisdiction_region IS NOT DISTINCT FROM $3::text
         AND v.number_normalized = $4 AND v.record_status = 'active' AND v.effective_to IS NULL
       LIMIT 1`,
     [kind, jurisdictionCountry, jurisdictionRegion, numberNormalized],
@@ -426,7 +426,7 @@ export async function findCurrentNumberHolder(
 export async function findNumberReviewMatches(
   client: Queryable,
   kind: AuthorityKind,
-  jurisdictionCountry: string,
+  jurisdictionCountry: string | null,
   jurisdictionRegion: string | null,
   numberNormalized: string,
   excludeAuthorityId: string | null,
@@ -440,7 +440,7 @@ export async function findNumberReviewMatches(
     `SELECT DISTINCT v.organization_id, o.legal_name, v.authority_id, v.record_status
        FROM public.operating_authority_versions v
        JOIN public.organizations o ON o.id = v.organization_id
-      WHERE v.kind = $1 AND v.jurisdiction_country = $2 AND v.jurisdiction_region IS NOT DISTINCT FROM $3::text
+      WHERE v.kind = $1 AND v.jurisdiction_country IS NOT DISTINCT FROM $2::text AND v.jurisdiction_region IS NOT DISTINCT FROM $3::text
         AND v.number_normalized = $4 AND NOT (v.record_status = 'active' AND v.effective_to IS NULL)
         AND ($5::uuid IS NULL OR v.authority_id <> $5::uuid)`,
     [kind, jurisdictionCountry, jurisdictionRegion, numberNormalized, excludeAuthorityId],

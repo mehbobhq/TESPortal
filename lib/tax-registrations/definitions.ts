@@ -41,6 +41,7 @@ export const PROGRAM_CODES = [
   "ON_TOBACCO",
   "SCAC",
   "CA_CARRIER_CODE",
+  "GST_HST",
 ] as const
 export type ProgramCode = (typeof PROGRAM_CODES)[number]
 
@@ -48,7 +49,7 @@ export const REGISTRATION_STATUSES = ["PENDING", "ACTIVE", "SUSPENDED", "INACTIV
 export type RegistrationStatus = (typeof REGISTRATION_STATUSES)[number]
 
 export type JurisdictionScope = "GLOBAL" | "NATIONAL" | "COUNTRY_REGION" | "BASE_JURISDICTION"
-export type ProgramFamily = "FUEL_TAX" | "HIGHWAY_USE_TAX" | "WEIGHT_DISTANCE_TAX" | "EXCISE_TAX" | "CARRIER_CODE"
+export type ProgramFamily = "FUEL_TAX" | "HIGHWAY_USE_TAX" | "WEIGHT_DISTANCE_TAX" | "EXCISE_TAX" | "CARRIER_CODE" | "SALES_TAX"
 
 export function isProgramCode(value: unknown): value is ProgramCode {
   return typeof value === "string" && (PROGRAM_CODES as readonly string[]).includes(value)
@@ -87,6 +88,23 @@ const SCAC_TWO_TO_FOUR_LETTERS: NormalizationRule = {
 }
 
 /**
+ * GST/HST program account (CRA): the nine-digit Business Number, the program identifier RT and a four-digit reference number,
+ * for example "123456789 RT 0001". Spaces, hyphens and case are not significant; the normalized form is "123456789RT0001". The
+ * check is a FORMAT check only: it proves nothing about whether CRA issued the account.
+ */
+const GST_HST_PROGRAM_ACCOUNT: NormalizationRule = {
+  version: "gst_hst.cra_program_account.v1",
+  classification: "AUTHORITATIVE",
+  source: "Canada Revenue Agency GST/HST program account: 9-digit Business Number + RT + 4-digit reference number",
+  apply(raw) {
+    const body = raw.normalize("NFKC").trim().toUpperCase().replace(/[\s\-]+/g, "")
+    return /^\d{9}RT\d{4}$/.test(body)
+      ? { ok: true, normalized: body }
+      : { ok: false, reason: "A GST/HST account is nine digits, RT and four digits (for example 123456789 RT 0001)." }
+  },
+}
+
+/**
  * The issuing format of every other registration program (IFTA licence, state highway-use / weight-distance / excise
  * accounts, the federal fuel charge registration and the CBSA carrier code) is issued with its own jurisdiction-specific
  * format that is not authoritatively locked here. The rule keeps letters and digits only (case, spaces, hyphens, periods
@@ -107,6 +125,7 @@ const IDENTIFIER_PERMISSIVE: NormalizationRule = {
 export const NORMALIZATION_RULES: Readonly<Record<string, NormalizationRule>> = {
   [SCAC_TWO_TO_FOUR_LETTERS.version]: SCAC_TWO_TO_FOUR_LETTERS,
   [IDENTIFIER_PERMISSIVE.version]: IDENTIFIER_PERMISSIVE,
+  [GST_HST_PROGRAM_ACCOUNT.version]: GST_HST_PROGRAM_ACCOUNT,
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -150,6 +169,7 @@ export const PROGRAM_DEFINITIONS: Readonly<Record<ProgramCode, ProgramDefinition
   ON_TOBACCO: define("ON_TOBACCO", "EXCISE_TAX", "COUNTRY_REGION", "CA", true, "ON", 100),
   SCAC: define("SCAC", "CARRIER_CODE", "GLOBAL", null, false, null, 110, SCAC_TWO_TO_FOUR_LETTERS),
   CA_CARRIER_CODE: define("CA_CARRIER_CODE", "CARRIER_CODE", "NATIONAL", "CA", false, null, 120),
+  GST_HST: define("GST_HST", "SALES_TAX", "NATIONAL", "CA", false, null, 130, GST_HST_PROGRAM_ACCOUNT),
 }
 
 /** Whether a number or issuing jurisdiction may change IN PLACE as a real-world change (IFTA base moves re-issue the licence). */
@@ -174,7 +194,7 @@ export function prepareRegistrationNumber(program: ProgramCode, value: unknown, 
 // Jurisdiction
 // ---------------------------------------------------------------------------------------------------------------
 
-export type JurisdictionInput = { country?: string; region?: string }
+export type JurisdictionInput = { country?: string; region?: string; unresolved?: boolean }
 /** `country` is null only for GLOBAL programs (no jurisdiction at all). */
 export type ResolvedJurisdiction = { country: string | null; region: string | null }
 
@@ -192,7 +212,8 @@ function viaJurisdiction<T>(field: string, parse: () => T): T {
  *   GLOBAL            takes no jurisdiction at all (SCAC)
  *   NATIONAL          takes no region; a country, if given, must be the issuing country
  *   COUNTRY_REGION    defaults to the program's fixed region; anything given must match it
- *   BASE_JURISDICTION requires a country (US or CA) and a region of that country
+ *   BASE_JURISDICTION requires a country (US or CA) and a region of that country, or - only when `unresolved: true` is stated
+ *                     explicitly - none at all (migration 0034): the base is not yet established and nothing is invented
  */
 export function resolveJurisdiction(program: ProgramCode, input: unknown, field = "jurisdiction"): ResolvedJurisdiction {
   const definition = PROGRAM_DEFINITIONS[program]
@@ -214,9 +235,19 @@ export function resolveJurisdiction(program: ProgramCode, input: unknown, field 
   }
   const source = input as Record<string, unknown>
   for (const key of Object.keys(source)) {
-    if (key !== "country" && key !== "region") {
+    if (key !== "country" && key !== "region" && key !== "unresolved") {
       throw new RegistrationValidationError(`${field}.${key}`, `${field}.${key} is not accepted.`)
     }
+  }
+  if (source.unresolved !== undefined) {
+    if (source.unresolved !== true) throw new RegistrationValidationError(`${field}.unresolved`, `${field}.unresolved may only be true.`)
+    if (definition.jurisdictionScope !== "BASE_JURISDICTION") {
+      throw new RegistrationValidationError(`${field}.unresolved`, `${program} always has a known jurisdiction; it cannot be left unresolved.`)
+    }
+    if (source.country !== undefined || source.region !== undefined) {
+      throw new RegistrationValidationError(`${field}.unresolved`, "An unresolved jurisdiction cannot also name a country or region.")
+    }
+    return { country: null, region: null }
   }
 
   if (definition.jurisdictionScope === "NATIONAL") {

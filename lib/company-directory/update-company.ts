@@ -20,7 +20,11 @@ import { prepareProviderName, resolveCargoCategory, resolvePaymentMethod } from 
 import { CompanyProfileConflictError } from "@/lib/company-profile/errors"
 import * as profileFacts from "@/lib/company-profile/facts"
 import * as profileOperations from "@/lib/company-profile/operations"
+import * as corporateOperations from "@/lib/corporate-identity/operations"
 import * as customerOperations from "@/lib/customer-relationship/operations"
+import * as taxOperations from "@/lib/tax-registrations/operations"
+import { prepareRegistrationNumber } from "@/lib/tax-registrations/definitions"
+import { RegistrationValidationError } from "@/lib/tax-registrations/errors"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as locationOperations from "@/lib/organization-locations/operations"
 
@@ -31,6 +35,7 @@ const UPDATE_KEYS = new Set([
   "opRegion",
   "addressMode",
   "factMode",
+  "gstHst",
   ...FACT_KEYS,
   ...(["reg", "mail", "yard"] as const).flatMap((prefix) => (["street", "city", "state", "zip", "country"] as const).map((part) => `${prefix}_${part}`)),
 ])
@@ -48,6 +53,8 @@ export type CompanyDetailsUpdate = {
   cargo: profileFacts.FactChangeResult | null
   fleetProviders: Array<{ kind: "ELD" | "GPS" | "FUEL"; result: profileFacts.FactChangeResult }>
   billingPreference: profileFacts.FactChangeResult | null
+  /** The GST/HST program account (tax registration). "replaced" = the earlier account was archived (history kept) and a new one recorded. */
+  gstHst: "created" | "corrected" | "replaced" | "archived" | "unchanged" | null
 }
 
 /** What an edit asks for beyond region and addresses. null = the key was absent (untouched). A clear is explicit. */
@@ -57,6 +64,8 @@ export type FactsPlan = {
   cargo: string[] | null
   providers: Array<{ kind: "ELD" | "GPS" | "FUEL"; name: string | null }>
   payment: { code: string } | { clear: true } | null
+  /** The GST/HST program account: a format-checked number, an explicit clear (the registration record is archived), or untouched. */
+  gstHst: { value: string } | { clear: true } | null
 }
 
 const prefixes = ["reg", "mail", "yard"] as const
@@ -74,7 +83,7 @@ export type DetailsPlan = { mode: "change" | "correct"; scope: string | null; pl
 const present = (value: unknown): boolean => value !== undefined && value !== null
 
 export function factsPresent(facts: FactsPlan): boolean {
-  return facts.website !== null || facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null
+  return facts.website !== null || facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null || facts.gstHst !== null
 }
 
 /** Customer-only facts: cargo, fleet providers and billing preference. */
@@ -110,7 +119,7 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
   // --- profile facts ---------------------------------------------------------------------------------------------------
   const factMode = input.factMode === undefined || input.factMode === "" ? "change" : input.factMode
   if (factMode !== "change" && factMode !== "correct") issues.push({ field: "factMode", message: "factMode must be 'change' or 'correct'." })
-  const facts: FactsPlan = { mode: factMode === "correct" ? "correct" : "change", website: null, cargo: null, providers: [], payment: null }
+  const facts: FactsPlan = { mode: factMode === "correct" ? "correct" : "change", website: null, cargo: null, providers: [], payment: null, gstHst: null }
 
   if (present(input.website)) {
     if (typeof input.website !== "string") issues.push({ field: "website", message: "The website must be text." })
@@ -159,6 +168,19 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
     }
   }
 
+  if (present(input.gstHst)) {
+    if (typeof input.gstHst !== "string") issues.push({ field: "gstHst", message: "The GST/HST account must be text." })
+    else if (input.gstHst.trim() === "") facts.gstHst = { clear: true }
+    else {
+      try {
+        prepareRegistrationNumber("GST_HST", input.gstHst, "gstHst")
+        facts.gstHst = { value: input.gstHst.trim() }
+      } catch (error) {
+        issues.push({ field: "gstHst", message: error instanceof RegistrationValidationError ? error.message : "Enter a valid GST/HST account (for example 123456789 RT 0001)." })
+      }
+    }
+  }
+
   if (issues.length > 0) throw new CompanyCreationValidationError(issues)
   return { mode: mode as "change" | "correct", scope, planned, facts }
 }
@@ -188,6 +210,10 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
     if (facts.website) required.add("CONTACT_MANAGE")
     if (facts.cargo !== null || facts.providers.length > 0) required.add("COMPANY_PROFILE_MANAGE")
     if (facts.payment) required.add("CUSTOMER_RELATIONSHIP_MANAGE")
+    if (facts.gstHst) {
+      required.add("TAX_REGISTRATION_MANAGE")
+      required.add("TAX_REGISTRATION_READ")
+    }
     if (customerFactsPresent(facts)) required.add("CUSTOMER_RELATIONSHIP_READ")
     const missing: TesSystemCapability[] = []
     for (const capability of required) if (!(await hasAdditionalSystemCapability(client, decision, capability))) missing.push(capability)
@@ -202,6 +228,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
       cargo: null,
       fleetProviders: [],
       billingPreference: null,
+      gstHst: null,
     }
     const actor = { id: decision.actor.id, actorType: decision.actor.actorType }
 
@@ -282,6 +309,45 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
         { client, actor, masterRegister: new PostgresMasterRegisterRepository(client) },
         { organizationId, paymentMethod: "clear" in facts.payment ? null : facts.payment.code, mode: facts.mode },
       )
+      await runDeferredChecks(client)
+    }
+
+    // The GST/HST program account: a tax registration (program GST_HST), never a free-text field of the company.
+    if (facts.gstHst) {
+      await enterSystemCapability(client, "ORGANIZATION_REGISTRY_READ")
+      const organization = await corporateOperations.readOrganization(client, organizationId)
+      await enterSystemCapability(client, "TAX_REGISTRATION_MANAGE")
+      const taxContext = domainContext(client, decision, "TAX_REGISTRATION_READ")
+      const view = await taxOperations.readOrganizationRegistrations(client, organizationId)
+      const existing = view.registrations.find((entry) => entry.registration.archivedAt === null && entry.registration.program === "GST_HST" && entry.current.version)
+      if ("clear" in facts.gstHst) {
+        if (!existing) result.gstHst = "unchanged"
+        else {
+          await taxOperations.archiveRegistration(taxContext, { organizationId, registrationId: existing.registration.id })
+          result.gstHst = "archived"
+        }
+      } else {
+        const account = prepareRegistrationNumber("GST_HST", facts.gstHst.value, "gstHst")
+        // The first nine digits of the account ARE the Business Number; a different Business Number on the record is a contradiction.
+        const bn = (organization.identifiers.find((identifier) => identifier.status === "active" && identifier.kind === "CRA_BN")?.value ?? "").replace(/\D/g, "")
+        if (bn.length === 9 && !account.normalized.startsWith(bn)) {
+          throw new CompanyCreationValidationError([{ field: "gstHst", message: "The GST/HST account must begin with this company's Business Number." }])
+        }
+        if (!existing) {
+          await taxOperations.createRegistration(taxContext, { organizationId, program: "GST_HST", number: facts.gstHst.value })
+          result.gstHst = "created"
+        } else if (existing.current.version!.numberNormalized === account.normalized) {
+          result.gstHst = "unchanged"
+        } else if (facts.mode === "correct") {
+          await taxOperations.correctRegistrationVersion(taxContext, { organizationId, registrationId: existing.registration.id, number: facts.gstHst.value })
+          result.gstHst = "corrected"
+        } else {
+          // A different GST/HST account is a different registration (the number identifies it): the earlier one is archived, not rewritten.
+          await taxOperations.archiveRegistration(taxContext, { organizationId, registrationId: existing.registration.id })
+          await taxOperations.createRegistration(taxContext, { organizationId, program: "GST_HST", number: facts.gstHst.value })
+          result.gstHst = "replaced"
+        }
+      }
       await runDeferredChecks(client)
     }
 

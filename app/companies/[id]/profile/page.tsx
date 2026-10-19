@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import {
   ArrowLeft,
   Building2,
@@ -42,6 +43,7 @@ type CompanyProfile = {
   createdAt: string
   dba: string | null
   contact: string | null
+  contactPersonId: string | null
   phone: string | null
   email: string | null
   billingEmail: string | null
@@ -59,6 +61,7 @@ type CompanyProfile = {
   incorpNo: string | null
   businessNo: string | null
   ein: string | null
+  gstHst: string | null
   regCorpState: string | null
   regCorpCountry: string | null
   usdot: string | null
@@ -370,7 +373,20 @@ export default function CompanyProfilePage() {
               <ReadOnlyField label="Website" value={withheld("contacts") ? "Not permitted to view" : company.website} />
               <ReadOnlyField label="Account Email" value={withheld("contacts") ? "Not permitted to view" : company.email} />
               <ReadOnlyField label="Billing Email" value={withheld("contacts") ? "Not permitted to view" : company.billingEmail} />
-              <ReadOnlyField label="Primary Contact" value={withheld("contacts") ? "Not permitted to view" : company.contact} />
+              {company.contact && company.contactPersonId && !withheld("contacts") ? (
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Primary Contact</span>
+                  <Link
+                    href={`/companies/${company.id}/contacts?person=${company.contactPersonId}`}
+                    className="min-h-[1.5rem] break-words text-sm font-semibold text-primary hover:underline"
+                    title="Open this person in Contacts"
+                  >
+                    {company.contact}
+                  </Link>
+                </div>
+              ) : (
+                <ReadOnlyField label="Primary Contact" value={withheld("contacts") ? "Not permitted to view" : company.contact} />
+              )}
             </div>
           </div>
 
@@ -439,6 +455,7 @@ export default function CompanyProfilePage() {
                     label="CRA Business Number (BN)"
                     value={company.businessNo}
                   />
+                  <ReadOnlyField label="GST/HST Account" value={withheld("registrations") ? "Not permitted to view" : company.gstHst} />
                   <ReadOnlyField label="IRS Employer ID (EIN)" value={company.ein} />
                   <ReadOnlyField label="Registered Province/State" value={company.regCorpState} />
                 </div>

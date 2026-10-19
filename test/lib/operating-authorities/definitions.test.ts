@@ -130,6 +130,20 @@ describe("jurisdiction resolution", () => {
     invalid(() => D.resolveJurisdiction("USDOT", { region: "TX" }));
   });
 
+  it("an unresolved jurisdiction must be stated explicitly, and only MVID, NSC and IRP can have one", () => {
+    assert.deepEqual(D.resolveJurisdiction("MVID", { unresolved: true }), { country: "CA", region: null });
+    assert.deepEqual(D.resolveJurisdiction("SAFETY_FITNESS", { unresolved: true }), { country: "CA", region: null });
+    assert.deepEqual(D.resolveJurisdiction("IRP", { unresolved: true }), { country: null, region: null });
+    // nothing is inferred when it is simply left out
+    invalid(() => D.resolveJurisdiction("MVID", undefined));
+    invalid(() => D.resolveJurisdiction("IRP", undefined));
+    invalid(() => D.resolveJurisdiction("IRP", { unresolved: false }));
+    invalid(() => D.resolveJurisdiction("IRP", { unresolved: true, region: "ON" }));
+    // a kind that fixes or implies its own jurisdiction cannot be unresolved
+    for (const kind of ["RIN", "CVOR"] as const) invalid(() => D.resolveJurisdiction(kind, { unresolved: true }));
+    assert.deepEqual(D.resolveJurisdiction("USDOT", undefined), { country: "US", region: null });
+  });
+
   it("CVOR defaults to Ontario and rejects any other region", () => {
     assert.deepEqual(D.resolveJurisdiction("CVOR", undefined), { country: "CA", region: "ON" });
     assert.deepEqual(D.resolveJurisdiction("CVOR", { region: "on" }), { country: "CA", region: "ON" });

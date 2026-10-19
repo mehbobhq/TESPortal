@@ -5,27 +5,15 @@ import { useRouter } from "next/navigation"
 import {
   AlertTriangle,
   ArrowLeft,
-  Building2,
-  CheckCircle2,
   ChevronDown,
-  Fingerprint,
-  Landmark,
-  MapPin,
+  Info,
   Save,
   ShieldAlert,
-  ShieldCheck,
   XCircle,
 } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -794,34 +782,50 @@ function evaluateDuplicates(form: HTMLFormElement) {
     review,
   }
 }
-
 /* =========================================================
-   EXPLICIT CHOICES (no guessing: the canonical system needs
-   the issuing jurisdiction and the number type stated)
+   SMALL FORM PARTS
 ========================================================= */
 const SELECT_CLASS =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
-function RegionSelect({
-  name,
+/** CRA GST/HST program account: nine digits, RT, four digits (spaces and hyphens are not significant). */
+const GST_HST_PATTERN = /^\d{9}[\s-]*RT[\s-]*\d{4}$/i
+
+function Field({
   label,
-  canadaOnly = false,
+  htmlFor,
+  required = false,
+  hint,
+  error,
+  className = "",
+  children,
 }: {
-  name: string
   label: string
-  canadaOnly?: boolean
+  htmlFor?: string
+  required?: boolean
+  /** Only for a genuinely ambiguous field: shown as a tooltip, never as text under the input. */
+  hint?: string
+  error?: string | null
+  className?: string
+  children: React.ReactNode
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={name}>{label}</Label>
-      <select id={name} name={name} defaultValue="" className={SELECT_CLASS}>
-        <option value="">Not specified</option>
-        {REGIONS.filter((item) => !canadaOnly || item.country === "Canada").map((item) => (
-          <option key={`${item.country}-${item.code}`} value={item.code}>
-            {item.name} ({item.code})
-          </option>
-        ))}
-      </select>
+    <div className={`space-y-1.5 ${className}`}>
+      <Label htmlFor={htmlFor} className="gap-1">
+        {label}
+        {required && <span className="text-destructive" aria-hidden="true">*</span>}
+        {hint && (
+          <span tabIndex={0} role="img" title={hint} aria-label={hint} className="inline-flex cursor-help text-muted-foreground">
+            <Info className="size-3.5" />
+          </span>
+        )}
+      </Label>
+      {children}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -836,8 +840,7 @@ function NativeChoice({
   options: Array<[string, string]>
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={name}>{label}</Label>
+    <Field label={label} htmlFor={name}>
       <select id={name} name={name} defaultValue={options[0][0]} className={SELECT_CLASS}>
         {options.map(([value, text]) => (
           <option key={value} value={value}>
@@ -845,39 +848,94 @@ function NativeChoice({
           </option>
         ))}
       </select>
-    </div>
+    </Field>
   )
 }
 
-function UnavailableFieldsBanner() {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-amber-500/50 bg-amber-50/50 p-3 text-xs dark:bg-amber-950/20" role="note">
-      <p className="font-semibold text-foreground">Some fields on this form are read-only or cannot be saved yet</p>
-      <p className="mt-1 text-muted-foreground">
-        Service type, service status, end date and assessment date are shown for reference and are not typed in: service type comes
-        from the signed contract, a new customer always starts in onboarding, a service is ended later from Edit with a reason, and
-        the assessment date is recorded by the assessment itself. The GST/HST account has no canonical storage yet, so it is
-        disabled and marked &quot;Unavailable&quot; so nothing you type is lost silently.
-      </p>
-    </div>
+    <section className="rounded-lg border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold">{title}</h2>
+      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+    </section>
   )
 }
 
-/** Marks a field that is kept on the form (definition intact) but cannot be saved: it has no canonical storage yet. */
-function UnavailableNote() {
-  return (
-    <p className="text-[11px] text-amber-700 dark:text-amber-400" data-unavailable-note>
-      Unavailable: no canonical storage exists for this yet, so it is disabled rather than silently discarded.
-    </p>
-  )
-}
+/* =========================================================
+   PRIMARY CONTACT
 
-/** Marks a field that is shown for reference only: its value is owned by another workflow, so it is never typed here. */
-function DerivedNote({ children }: { children: React.ReactNode }) {
+   One field. A full name is saved exactly as typed (Contacts stays authoritative for the person and can restructure it). When
+   people with the same name already exist they are offered as an explicit CHOICE; nothing is linked or merged automatically.
+========================================================= */
+
+type PersonSuggestion = { personId: string; displayName: string; linkedCompanies: number }
+
+function PrimaryContactField({ error }: { error?: string | null }) {
+  const [name, setName] = useState("")
+  const [suggestions, setSuggestions] = useState<PersonSuggestion[]>([])
+  const [chosen, setChosen] = useState<PersonSuggestion | null>(null)
+
+  useEffect(() => {
+    setSuggestions([])
+    const typed = name.trim()
+    if (chosen || typed.length < 3) return
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/people/matches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: typed }),
+          signal: controller.signal,
+        })
+        if (!response.ok) return
+        const body = await response.json().catch(() => null)
+        if (Array.isArray(body?.matches)) setSuggestions(body.matches as PersonSuggestion[])
+      } catch {
+        // The lookup is a convenience; without it a new person is simply created.
+      }
+    }, 400)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [name, chosen])
+
   return (
-    <p className="text-[11px] text-muted-foreground" data-derived-note>
-      {children}
-    </p>
+    <Field label="Primary Contact" htmlFor="contactPerson" error={error} className="sm:col-span-2">
+      {chosen ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-1.5 text-sm">
+          <span className="min-w-0 truncate">
+            {chosen.displayName} <span className="text-xs text-muted-foreground">(existing person)</span>
+          </span>
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setChosen(null)}>
+            Change
+          </Button>
+          <input type="hidden" name="contactPersonId" value={chosen.personId} />
+        </div>
+      ) : (
+        <Input id="contactPerson" name="contactPerson" value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" autoComplete="off" maxLength={200} />
+      )}
+      {!chosen && suggestions.length > 0 && (
+        <ul className="space-y-1 rounded-md border bg-muted/20 p-2 text-xs" aria-label="People already on record">
+          {suggestions.map((person) => (
+            <li key={person.personId} className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate">
+                {person.displayName}
+                <span className="text-muted-foreground">
+                  {" "}
+                  · on record{person.linkedCompanies > 0 ? `, linked to ${person.linkedCompanies} company record${person.linkedCompanies === 1 ? "" : "s"}` : ""}
+                </span>
+              </span>
+              <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => setChosen(person)}>
+                Use this person
+              </Button>
+            </li>
+          ))}
+          <li className="text-muted-foreground">Not the same person? Keep typing: a new person is created.</li>
+        </ul>
+      )}
+    </Field>
   )
 }
 
@@ -888,132 +946,63 @@ function DerivedNote({ children }: { children: React.ReactNode }) {
 function SmartAddressBlock({
   title,
   prefix,
-  isAdditional = false,
+  errorFor,
 }: {
   title: string
   prefix: string
-  isAdditional?: boolean
+  errorFor: (name: string) => string | null
 }) {
   const [country, setCountry] = useState("")
   const [region, setRegion] = useState("")
 
   const handleRegionChange = (value: string) => {
     setRegion(value)
-
-    const selected = REGIONS.find(
-      (item) => item.code === value
-    )
-
-    setCountry(selected?.country || "")
+    setCountry(REGIONS.find((item) => item.code === value)?.country || "")
   }
 
   return (
-    <div
-      className={`space-y-4 pb-6 last:pb-0 ${
-        isAdditional
-          ? "rounded-xl border bg-muted/20 p-5"
-          : "border-b last:border-0"
-      }`}
-    >
-      <div>
-        <h3
-          className={`text-sm font-semibold ${
-            isAdditional ? "text-primary" : ""
-          }`}
-        >
-          {title}
-        </h3>
-
-        {prefix === "reg" && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            Used for identity comparison and company record verification.
-          </p>
-        )}
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="space-y-2 lg:col-span-2">
-          <Label>Street Address</Label>
-
-          <Input
-            name={`${prefix}_street`}
-            placeholder="123 Main St"
-            className={isAdditional ? "bg-background" : ""}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>City</Label>
-
-          <Input
-            name={`${prefix}_city`}
-            placeholder="City"
-            className={isAdditional ? "bg-background" : ""}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>State / Province</Label>
-
-          <input
-            type="hidden"
-            name={`${prefix}_state`}
-            value={region}
-          />
-
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Street" htmlFor={`${prefix}_street`} className="lg:col-span-2" error={errorFor(`${prefix}_street`)}>
+          <Input id={`${prefix}_street`} name={`${prefix}_street`} />
+        </Field>
+        <Field label="City" htmlFor={`${prefix}_city`} error={errorFor(`${prefix}_city`)}>
+          <Input id={`${prefix}_city`} name={`${prefix}_city`} />
+        </Field>
+        <Field label="Province / State" error={errorFor(`${prefix}_state`)}>
+          <input type="hidden" name={`${prefix}_state`} value={region} />
           <Select
             value={region}
             onValueChange={(value) => {
               if (value) handleRegionChange(value)
             }}
           >
-            <SelectTrigger
-              className={isAdditional ? "bg-background" : ""}
-            >
-              <SelectValue placeholder="Select jurisdiction" />
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select" />
             </SelectTrigger>
-
             <SelectContent>
               {REGIONS.map((item) => (
-                <SelectItem
-                  key={`${item.country}-${item.code}`}
-                  value={item.code}
-                >
+                <SelectItem key={`${item.country}-${item.code}`} value={item.code}>
                   {item.name} ({item.code}) · {item.country}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label>ZIP / Postal Code</Label>
-
-          <Input
-            name={`${prefix}_zip`}
-            placeholder="Postal / ZIP Code"
-            className={isAdditional ? "bg-background" : ""}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>Country</Label>
-
-          <Input
-            name={`${prefix}_country`}
-            value={country}
-            readOnly
-            placeholder="Auto-fills"
-            className="bg-muted/50 font-medium text-muted-foreground"
-          />
-        </div>
+        </Field>
+        <Field label="Postal / ZIP" htmlFor={`${prefix}_zip`}>
+          <Input id={`${prefix}_zip`} name={`${prefix}_zip`} />
+        </Field>
+        <Field label="Country" htmlFor={`${prefix}_country`}>
+          <Input id={`${prefix}_country`} name={`${prefix}_country`} value={country} readOnly placeholder="From province / state" className="bg-muted/50" />
+        </Field>
       </div>
     </div>
   )
 }
 
 /* =========================================================
-   DUPLICATE STATUS PANEL
+   DUPLICATE FINDINGS (shown only when there is something to review)
 ========================================================= */
 
 function DuplicateStatusPanel({
@@ -1027,137 +1016,53 @@ function DuplicateStatusPanel({
   reviewAcknowledged: boolean
   onReviewAcknowledged: (checked: boolean) => void
 }) {
-  if (!blocking.length && !review.length) {
-    return (
-      <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:bg-emerald-950/10">
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-
-        <div>
-          <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-            No duplicate conflict currently detected
-          </p>
-
-          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-            TES continues checking entered identifiers and identity signals
-            as the record is completed.
-          </p>
-        </div>
-      </div>
-    )
-  }
+  if (!blocking.length && !review.length) return null
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {blocking.length > 0 && (
-        <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
-          <div className="flex items-start gap-3">
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-destructive" />
-
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-destructive">
-                Creation blocked — authoritative identifier conflict
-              </p>
-
-              <p className="mt-1 text-xs text-muted-foreground">
-                Resolve these matches before creating another company record.
-              </p>
-
-              <div className="mt-3 space-y-2">
-                {blocking.map((finding) => (
-                  <div
-                    key={finding.id}
-                    className="rounded-lg border border-destructive/15 bg-background p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="border-destructive/30 text-destructive"
-                      >
-                        BLOCK
-                      </Badge>
-
-                      <span className="text-xs font-semibold">
-                        {finding.label}
-                      </span>
-
-                      {finding.matchedRecordId && (
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {finding.matchedRecordId}
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                      {finding.message}
-                    </p>
+        <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-sm font-semibold text-destructive">An identifier already belongs to another company</p>
+              {blocking.map((finding) => (
+                <div key={finding.id} className="rounded-md border border-destructive/15 bg-background p-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="border-destructive/30 text-destructive">
+                      BLOCK
+                    </Badge>
+                    <span className="font-semibold">{finding.label}</span>
                   </div>
-                ))}
-              </div>
+                  <p className="mt-1 text-muted-foreground">{finding.message}</p>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       )}
 
       {review.length > 0 && (
-        <div className="rounded-xl border border-amber-300/60 bg-amber-50/50 p-4 dark:bg-amber-950/10">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
-
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                Potential identity overlap requires review
-              </p>
-
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                These matches do not automatically mean the records are the
-                same. Review the evidence and relationships before proceeding.
-              </p>
-
-              <div className="mt-3 space-y-2">
-                {review.map((finding) => (
-                  <div
-                    key={finding.id}
-                    className="rounded-lg border bg-background p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="border-amber-300 text-amber-700"
-                      >
-                        REVIEW
-                      </Badge>
-
-                      <span className="text-xs font-semibold">
-                        {finding.label}
-                      </span>
-
-                      {finding.matchedRecordId && (
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {finding.matchedRecordId}
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                      {finding.message}
-                    </p>
+        <div className="rounded-lg border border-amber-300/60 bg-amber-50/50 p-3 dark:bg-amber-950/10">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-sm font-semibold">Possible match with an existing record</p>
+              {review.map((finding) => (
+                <div key={finding.id} className="rounded-md border bg-background p-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="border-amber-300 text-amber-700">
+                      REVIEW
+                    </Badge>
+                    <span className="font-semibold">{finding.label}</span>
                   </div>
-                ))}
-              </div>
-
+                  <p className="mt-1 text-muted-foreground">{finding.message}</p>
+                </div>
+              ))}
               {blocking.length === 0 && (
-                <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-lg border bg-background p-3">
-                  <Checkbox
-                    checked={reviewAcknowledged}
-                    onCheckedChange={(checked) =>
-                      onReviewAcknowledged(checked === true)
-                    }
-                  />
-
-                  <span className="text-xs leading-5">
-                    I reviewed the potential matches and confirm this company
-                    should be created as a separate company record.
-                  </span>
+                <label className="flex cursor-pointer items-start gap-2 text-xs">
+                  <Checkbox checked={reviewAcknowledged} onCheckedChange={(checked) => onReviewAcknowledged(checked === true)} />
+                  <span>I reviewed these matches; this is a separate company.</span>
                 </label>
               )}
             </div>
@@ -1177,47 +1082,28 @@ export default function NewCompanyPage() {
 
   const [credentialsContext, setCredentialsContext] = useState(false)
   const [contextReady, setContextReady] = useState(false)
-  const [recordId] = useState("Assigned on save")
   const [selectedType, setSelectedType] = useState("")
   const [companyName, setCompanyName] = useState("")
 
-  /*
-    IMPORTANT CONTRACT:
-    company.region continues to be populated from this exact state.
-  */
+  /* company.region continues to be populated from this exact state. */
   const [opRegion, setOpRegion] = useState("Canada Only")
 
-  /*
-    IMPORTANT CONTRACT:
-    regCorpState / regCorpCountry are preserved exactly.
-  */
+  /* regCorpState / regCorpCountry are preserved exactly. */
   const [businessRegion, setBusinessRegion] = useState("")
   const [businessCountry, setBusinessCountry] = useState("")
 
   const [businessNumber, setBusinessNumber] = useState("")
   const [einNumber, setEinNumber] = useState("")
+  const [gstHst, setGstHst] = useState("")
+  const [gstHstError, setGstHstError] = useState<string | null>(null)
 
   const [selectedCargo, setSelectedCargo] = useState<string[]>([])
   const [submitIssues, setSubmitIssues] = useState<Array<{ field: string; message: string }>>([])
 
-  const [blockingFindings, setBlockingFindings] = useState<
-    DuplicateFinding[]
-  >([])
-
-  const [reviewFindings, setReviewFindings] = useState<
-    DuplicateFinding[]
-  >([])
-
-  const [
-    reviewAcknowledged,
-    setReviewAcknowledged,
-  ] = useState(false)
-
+  const [blockingFindings, setBlockingFindings] = useState<DuplicateFinding[]>([])
+  const [reviewFindings, setReviewFindings] = useState<DuplicateFinding[]>([])
+  const [reviewAcknowledged, setReviewAcknowledged] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-
-  /* ---------------------------------------------------------
-     RECORD ID
-  --------------------------------------------------------- */
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -1232,193 +1118,82 @@ export default function NewCompanyPage() {
     setContextReady(true)
   }, [])
 
-  /* ---------------------------------------------------------
-     REGION LOGIC
-  --------------------------------------------------------- */
-
   const isCustomer = selectedType === "Customer"
-
-  const isCanada =
-    opRegion === "Canada Only" ||
-    opRegion === "Cross-Border"
-
-  const isUS =
-    opRegion === "US Only" ||
-    opRegion === "Cross-Border"
-
+  const isCanada = opRegion === "Canada Only" || opRegion === "Cross-Border"
+  const isUS = opRegion === "US Only" || opRegion === "Cross-Border"
   const showCustoms = opRegion === "Cross-Border"
 
-  /* ---------------------------------------------------------
-     BUSINESS REGISTRATION JURISDICTION
-  --------------------------------------------------------- */
+  const errorFor = (name: string): string | null => submitIssues.find((issue) => issue.field === name)?.message ?? null
 
   const handleBusinessRegionChange = (value: string) => {
     setBusinessRegion(value)
-
-    const selected = REGIONS.find(
-      (item) => item.code === value
-    )
-
-    setBusinessCountry(selected?.country || "")
+    setBusinessCountry(REGIONS.find((item) => item.code === value)?.country || "")
   }
 
-  /* ---------------------------------------------------------
-     BN / EIN FORMATTING
-  --------------------------------------------------------- */
-
-  const handleBusinessNumberChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const digits = event.target.value
-      .replace(/\D/g, "")
-      .slice(0, 9)
-
-    setBusinessNumber(digits)
+  const handleBusinessNumberChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setBusinessNumber(event.target.value.replace(/\D/g, "").slice(0, 9))
   }
 
-  const handleEinChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const digits = event.target.value
-      .replace(/\D/g, "")
-      .slice(0, 9)
-
-    const formatted =
-      digits.length > 2
-        ? `${digits.slice(0, 2)}-${digits.slice(2)}`
-        : digits
-
-    setEinNumber(formatted)
+  const handleEinChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 9)
+    setEinNumber(digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : digits)
   }
 
-  /* ---------------------------------------------------------
-     DUPLICATE CHECK
-  --------------------------------------------------------- */
+  const checkGstHst = (value: string) => {
+    const typed = value.trim()
+    if (!typed) return setGstHstError(null)
+    if (!GST_HST_PATTERN.test(typed)) return setGstHstError("Use nine digits, RT and four digits, e.g. 123456789 RT 0001.")
+    const bn = businessNumber.replace(/\D/g, "")
+    if (bn.length === 9 && !typed.replace(/\D/g, "").startsWith(bn)) return setGstHstError("The account must begin with the Business Number.")
+    setGstHstError(null)
+  }
 
   const runDuplicateCheck = (form: HTMLFormElement) => {
     const result = evaluateDuplicates(form)
-
     setBlockingFindings(result.blocking)
     setReviewFindings(result.review)
-
     return result
   }
 
-  const handleFormChange = (
-    event: React.FormEvent<HTMLFormElement>
-  ) => {
+  const handleFormChange = (event: React.FormEvent<HTMLFormElement>) => {
     const result = runDuplicateCheck(event.currentTarget)
-
-    if (result.review.length > 0) {
-      setReviewAcknowledged(false)
-    }
+    if (result.review.length > 0) setReviewAcknowledged(false)
   }
 
-  /* ---------------------------------------------------------
-     FORM COMPLETENESS
-  --------------------------------------------------------- */
-
   const canSubmit = useMemo(() => {
-    if (!recordId) return false
     if (!selectedType) return false
     if (!companyName.trim()) return false
     if (!opRegion) return false
-
-    if (CARGO_STORAGE_AVAILABLE && isCustomer && selectedCargo.length === 0) {
-      return false
-    }
-
-    if (blockingFindings.length > 0) {
-      return false
-    }
-
-    if (
-      reviewFindings.length > 0 &&
-      !reviewAcknowledged
-    ) {
-      return false
-    }
-
+    if (CARGO_STORAGE_AVAILABLE && isCustomer && selectedCargo.length === 0) return false
+    if (gstHstError) return false
+    if (blockingFindings.length > 0) return false
+    if (reviewFindings.length > 0 && !reviewAcknowledged) return false
     return true
-  }, [
-    recordId,
-    selectedType,
-    companyName,
-    opRegion,
-    isCustomer,
-    selectedCargo,
-    blockingFindings,
-    reviewFindings,
-    reviewAcknowledged,
-  ])
+  }, [selectedType, companyName, opRegion, isCustomer, selectedCargo, gstHstError, blockingFindings, reviewFindings, reviewAcknowledged])
 
-  /* ---------------------------------------------------------
-     CREATE
-  --------------------------------------------------------- */
-
-  const handleCreateCompany = async (
-    event: React.FormEvent<HTMLFormElement>
-  ) => {
+  const handleCreateCompany = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     const form = event.currentTarget
-
     const duplicateResult = runDuplicateCheck(form)
-
-    if (duplicateResult.blocking.length > 0) {
-      return
-    }
-
-    if (
-      duplicateResult.review.length > 0 &&
-      !reviewAcknowledged
-    ) {
-      return
-    }
+    if (duplicateResult.blocking.length > 0) return
+    if (duplicateResult.review.length > 0 && !reviewAcknowledged) return
 
     if (!selectedType) {
-      window.alert(
-        "Please select a Company Record Type before saving."
-      )
+      setSubmitIssues([{ field: "companyType", message: "Select a record type." }])
       return
     }
-
     if (!companyName.trim()) {
-      window.alert("Company Name is required.")
+      setSubmitIssues([{ field: "companyName", message: "Company Name is required." }])
       return
     }
-
-    if (
-      CARGO_STORAGE_AVAILABLE &&
-      isCustomer &&
-      selectedCargo.length === 0
-    ) {
-      window.alert(
-        "Cargo Information is mandatory for a Customer record."
-      )
+    if (CARGO_STORAGE_AVAILABLE && isCustomer && selectedCargo.length === 0) {
+      setSubmitIssues([{ field: "cargoTypes", message: "Cargo Information is mandatory for a Customer record." }])
       return
     }
-
-    if (isCustomer) {
-      const serviceStartDate = String(new FormData(form).get("startDate") || "").trim()
-      if (!serviceStartDate) {
-        window.alert("TES Service Start Date is required for a Customer record.")
-        return
-      }
-    }
-
-    {
-      const entered = new FormData(form)
-      const fullName = String(entered.get("contactPerson") || "").trim()
-      if (fullName && !String(entered.get("contactGivenName") || "").trim() && !String(entered.get("contactFamilyName") || "").trim()) {
-        setSubmitIssues([
-          {
-            field: "contactPerson",
-            message: "Enter the contact's given and/or family name below the full name; a full name is never split automatically.",
-          },
-        ])
-        return
-      }
+    if (isCustomer && !String(new FormData(form).get("startDate") || "").trim()) {
+      setSubmitIssues([{ field: "startDate", message: "Service Start Date is required for a Customer." }])
+      return
     }
 
     setSubmitting(true)
@@ -1426,17 +1201,13 @@ export default function NewCompanyPage() {
 
     try {
       const formData = new FormData(form)
-      // The full name is the original field; what is saved is the confirmed given/family name beneath it.
-      formData.delete("contactPerson")
-      const formEntries = Object.fromEntries(
-        formData.entries()
-      )
+      // An existing person is chosen by id; the typed name is then only a search term.
+      if (String(formData.get("contactPersonId") || "")) formData.delete("contactPerson")
+      const formEntries = Object.fromEntries(formData.entries())
 
       const response = await fetch("/api/companies", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formEntries,
           companyName: companyName.trim(),
@@ -1447,6 +1218,7 @@ export default function NewCompanyPage() {
           // The Canadian Business Number and the US EIN are separate identifiers; neither is ever copied into the other.
           businessNo: isCanada ? businessNumber : "",
           ein: isUS ? einNumber : "",
+          gstHst: isCanada ? gstHst.trim() : "",
         }),
       })
 
@@ -1482,17 +1254,10 @@ export default function NewCompanyPage() {
         return
       }
 
-      router.push(
-        `/companies/${newCompany.id}/profile`
-      )
+      router.push(`/companies/${newCompany.id}/profile`)
     } catch (error) {
       console.error("Unable to create company:", error)
-      setSubmitIssues([
-        {
-          field: "",
-          message: "The company record could not be created and nothing was saved. Check your connection and try again.",
-        },
-      ])
+      setSubmitIssues([{ field: "", message: "The company could not be created and nothing was saved. Check your connection and try again." }])
       setSubmitting(false)
     }
   }
@@ -1501,945 +1266,345 @@ export default function NewCompanyPage() {
     return <div className="min-h-screen bg-background" />
   }
 
-  return (
-    <div className="flex flex-col gap-6 pb-12">
-      {/* =====================================================
-          HEADER
-      ===================================================== */}
+  const knownFields = new Set(["companyName", "companyType", "startDate", "cargoTypes", "website", "gstHst", "contactPerson", "contactPersonId", "email", "billingEmail", "phone"])
+  const otherIssues = submitIssues.filter((issue) => !knownFields.has(issue.field) && !/^(reg|mail|yard)_/.test(issue.field))
 
+  return (
+    <div className="flex flex-col gap-4 pb-10">
       <PageHeader
-        title="Create Entity Record"
-        description="Establish the company identity that will connect records across the TES portal."
+        title="Add Company"
         actions={
-          <Button
-            variant="outline"
-            onClick={() => router.back()}
-          >
+          <Button variant="outline" onClick={() => router.back()}>
             <ArrowLeft className="mr-2 size-4" />
             Cancel
           </Button>
         }
       />
 
-      <form
-        onSubmit={handleCreateCompany}
-        onChange={handleFormChange}
-        className="flex max-w-6xl flex-col gap-7"
-      >
-        <UnavailableFieldsBanner />
+      <form onSubmit={handleCreateCompany} onChange={handleFormChange} className="flex max-w-6xl flex-col gap-4" noValidate>
+        {/* ---------------------------------------------------- COMPANY */}
+        <Section title="Company">
+          <Field label="Record Type" required error={errorFor("companyType")}>
+            <input type="hidden" name="companyType" value={selectedType} />
+            <Select value={selectedType} onValueChange={(value) => setSelectedType(value ?? "")}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select" />
+              </SelectTrigger>
+              <SelectContent>
+                {(credentialsContext ? COMPANY_TYPES.filter((type) => type !== "Customer" && type !== "Prospect") : COMPANY_TYPES).map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-        {/* ===================================================
-            SECTION 1 — MASTER IDENTITY
-        =================================================== */}
+          <Field label="Company Name" htmlFor="companyName" required className="sm:col-span-2" error={errorFor("companyName")}>
+            <Input id="companyName" name="companyName" value={companyName} onChange={(event) => setCompanyName(event.target.value)} required />
+          </Field>
 
-        <Card className="overflow-hidden border-primary/25 shadow-sm">
-          <div className="h-1 bg-primary/70" />
+          <Field label="DBA" htmlFor="dba">
+            <Input id="dba" name="dba" />
+          </Field>
 
-          <CardHeader className="border-b bg-primary/[0.035]">
-            <CardTitle className="flex items-center gap-2">
-              <Fingerprint className="size-5 text-primary" />
-              Entity Identity
-            </CardTitle>
+          <Field label="Operating Region" required hint="Decides which jurisdiction-specific TES modules apply.">
+            <input type="hidden" name="opRegion" value={opRegion} />
+            <Select value={opRegion} onValueChange={(value) => setOpRegion(value ?? "Canada Only")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Canada Only">Canada Only</SelectItem>
+                <SelectItem value="US Only">US Only</SelectItem>
+                <SelectItem value="Cross-Border">Cross-Border</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
 
-            <CardDescription>
-              Establish the permanent TES record identity and relationship type.
-            </CardDescription>
-          </CardHeader>
+          <Field label="Registered Province / State" error={errorFor("regCorpState")}>
+            <input type="hidden" name="regCorpState" value={businessRegion} />
+            <Select
+              value={businessRegion}
+              onValueChange={(value) => {
+                if (value) handleBusinessRegionChange(value)
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select" />
+              </SelectTrigger>
+              <SelectContent>
+                {REGIONS.map((region) => (
+                  <SelectItem key={`${region.country}-${region.code}`} value={region.code}>
+                    {region.name} ({region.code}) · {region.country}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
 
-          <CardContent className="grid gap-6 pt-6 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>System Record ID</Label>
+          <Field label="Registered Country" htmlFor="regCorpCountry">
+            <Input id="regCorpCountry" name="regCorpCountry" value={businessCountry} readOnly placeholder="From province / state" className="bg-muted/50" />
+          </Field>
 
+          <Field label="Incorporation No." htmlFor="incorpNo" error={errorFor("incorpNo")}>
+            <Input id="incorpNo" name="incorpNo" />
+          </Field>
+
+          {isCanada && (
+            <Field label="Business Number (BN)" htmlFor="businessNo" error={errorFor("businessNo")}>
+              <Input id="businessNo" value={businessNumber} onChange={handleBusinessNumberChange} placeholder="9 digits" inputMode="numeric" maxLength={9} />
+              <input type="hidden" name="businessNo" value={businessNumber} />
+            </Field>
+          )}
+
+          {isCanada && (
+            <Field label="GST/HST Account" htmlFor="gstHst" error={gstHstError ?? errorFor("gstHst")}>
               <Input
-                value={recordId}
-                disabled
-                className="bg-muted font-mono"
-              />
-
-              <p className="text-[11px] text-muted-foreground">
-                Permanent internal company identifier.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="font-medium text-primary">
-                Company Record Type *
-              </Label>
-
-              <input
-                type="hidden"
-                name="companyType"
-                value={selectedType}
-              />
-
-              <Select
-              value={selectedType}
-              onValueChange={(value) => setSelectedType(value ?? "")}
-              >
-                <SelectTrigger className="border-primary/30">
-                  <SelectValue placeholder="Select entity type..." />
-                </SelectTrigger>
-
-                <SelectContent>
-                  {(credentialsContext
-                    ? COMPANY_TYPES.filter(
-                        (type) => type !== "Customer" && type !== "Prospect"
-                      )
-                    : COMPANY_TYPES
-                  ).map((type) => (
-                    <SelectItem
-                      key={type}
-                      value={type}
-                    >
-                      {type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ===================================================
-            SECTION 2 — CORE INFORMATION
-        =================================================== */}
-
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Building2 className="size-4 text-primary" />
-              Core Information
-            </CardTitle>
-
-            <CardDescription className="text-xs">
-              Primary identity and communication details.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2 lg:col-span-2">
-              <Label htmlFor="companyName">
-                Company Name *
-              </Label>
-
-              <Input
-                id="companyName"
-                name="companyName"
-                placeholder="e.g. ACME Inc"
-                value={companyName}
-                onChange={(event) =>
-                  setCompanyName(event.target.value)
-                }
-                required
-              />
-
-              <p className="text-[11px] text-muted-foreground">
-                Similar names trigger review but never automatically establish
-                identity.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="dba">DBA</Label>
-
-              <Input
-                id="dba"
-                name="dba"
-                placeholder="Doing Business As"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="contactPerson">
-                Primary Contact
-              </Label>
-
-              <Input
-                id="contactPerson"
-                name="contactPerson"
-                placeholder="Full Name"
-                onBlur={(event) => {
-                  const form = event.currentTarget.form
-                  if (!form) return
-                  const given = form.elements.namedItem("contactGivenName") as HTMLInputElement | null
-                  const family = form.elements.namedItem("contactFamilyName") as HTMLInputElement | null
-                  if (!given || !family || given.value || family.value) return
-                  const parts = event.currentTarget.value.trim().split(/\s+/).filter(Boolean)
-                  if (parts.length === 0) return
-                  // A suggestion for the person to confirm or correct below; it is never saved unseen.
-                  given.value = parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0]
-                  family.value = parts.length > 1 ? parts[parts.length - 1] : ""
+                id="gstHst"
+                name="gstHst"
+                value={gstHst}
+                onChange={(event) => {
+                  setGstHst(event.target.value)
+                  if (gstHstError) checkGstHst(event.target.value)
                 }}
+                onBlur={(event) => checkGstHst(event.target.value)}
+                placeholder="123456789 RT 0001"
+                maxLength={40}
+                autoComplete="off"
               />
-            </div>
+            </Field>
+          )}
 
-            <div className="space-y-2">
-              <Label htmlFor="contactGivenName">Contact given name (confirm)</Label>
-              <Input id="contactGivenName" name="contactGivenName" placeholder="Given name" />
-            </div>
+          {isUS && (
+            <Field label="EIN" htmlFor="ein" error={errorFor("ein")}>
+              <Input id="ein" name="ein" value={einNumber} onChange={handleEinChange} placeholder="12-3456789" inputMode="numeric" maxLength={10} />
+            </Field>
+          )}
+        </Section>
 
-            <div className="space-y-2">
-              <Label htmlFor="contactFamilyName">Contact family name (confirm)</Label>
-              <Input id="contactFamilyName" name="contactFamilyName" placeholder="Family name" />
-              <p className="text-[11px] text-muted-foreground">Filled from the full name as a suggestion; correct it if needed. This is what is saved.</p>
-            </div>
+        {/* ---------------------------------------------------- CONTACT */}
+        <Section title="Contact">
+          <PrimaryContactField error={errorFor("contactPerson") ?? errorFor("contactPersonId")} />
 
-            <div className="space-y-2">
-              <Label htmlFor="phone">
-                Phone
-              </Label>
+          <Field label="Phone" htmlFor="phone" error={errorFor("phone")}>
+            <Input id="phone" name="phone" type="tel" placeholder="+1 555 000 0000" />
+          </Field>
 
-              <Input
-                id="phone"
-                name="phone"
-                type="tel"
-                placeholder="+1 (555) 000-0000"
-              />
-            </div>
+          <Field label="Website" htmlFor="website" error={errorFor("website")}>
+            <Input id="website" name="website" type="url" placeholder="https://" maxLength={254} />
+          </Field>
 
-            <div className="space-y-2">
-              <Label htmlFor="website">
-                Website
-              </Label>
+          <Field label="Account Email" htmlFor="email" error={errorFor("email")}>
+            <Input id="email" name="email" type="email" />
+          </Field>
 
-              <Input
-                id="website"
-                name="website"
-                type="url"
-                placeholder="https://"
-                maxLength={254}
-              />
-            </div>
+          <Field label="Billing Email" htmlFor="billingEmail" error={errorFor("billingEmail")}>
+            <Input id="billingEmail" name="billingEmail" type="email" />
+          </Field>
+        </Section>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">
-                Account Email
-              </Label>
-
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                placeholder="contact@example.com"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="billingEmail">
-                Billing Email
-              </Label>
-
-              <Input
-                id="billingEmail"
-                name="billingEmail"
-                type="email"
-                placeholder="billing@example.com"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="font-medium text-primary">
-                Operating Region *
-              </Label>
-
-              {/*
-                CRITICAL CONTRACT:
-                Do not rename/remove this field casually.
-              */}
-              <input
-                type="hidden"
-                name="opRegion"
-                value={opRegion}
-              />
-
-              <Select
-                value={opRegion}
-                onValueChange={(value) => setOpRegion(value ?? "Canada Only")}
-              >
-                <SelectTrigger className="border-primary/30">
-                  <SelectValue />
-                </SelectTrigger>
-
-                <SelectContent>
-                  <SelectItem value="Canada Only">
-                    Canada Only
-                  </SelectItem>
-
-                  <SelectItem value="US Only">
-                    US Only
-                  </SelectItem>
-
-                  <SelectItem value="Cross-Border">
-                    Cross-Border
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-
-              <p className="text-[11px] text-muted-foreground">
-                Drives jurisdiction-dependent TES modules.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ===================================================
-            SECTION 3 — REGISTRATION IDENTITY
-        =================================================== */}
-
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Landmark className="size-4 text-primary" />
-              Business Registration
-            </CardTitle>
-
-            <CardDescription className="text-xs">
-              Legal registration and jurisdiction identifiers for the entity.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label>
-                Registered Province / State
-              </Label>
-
-              {/*
-                CRITICAL CONTRACT:
-                regCorpState is already consumed by other TES pages.
-              */}
-              <input
-                type="hidden"
-                name="regCorpState"
-                value={businessRegion}
-              />
-
-              <Select
-                value={businessRegion}
-                onValueChange={(value) => {
-                  if (value) handleBusinessRegionChange(value)
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select jurisdiction" />
-                </SelectTrigger>
-
-                <SelectContent>
-                  {REGIONS.map((region) => (
-                    <SelectItem
-                      key={`${region.country}-${region.code}`}
-                      value={region.code}
-                    >
-                      {region.name} ({region.code}) · {region.country}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Registered Country</Label>
-
-              {/*
-                CRITICAL CONTRACT:
-                regCorpCountry is already consumed by other TES pages.
-              */}
-              <Input
-                name="regCorpCountry"
-                value={businessCountry}
-                readOnly
-                placeholder="Auto-fills"
-                className="bg-muted/50 font-medium text-muted-foreground"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>
-                Incorporation / Charter Number
-              </Label>
-
-              <Input
-                name="incorpNo"
-                placeholder={
-                  businessCountry === "Canada"
-                    ? "e.g. 1234567-8"
-                    : businessCountry === "United States"
-                    ? "State file / charter number"
-                    : "Registration number"
-                }
-              />
-            </div>
-
-            {isCanada && (
-              <div className="space-y-2">
-                <Label>
-                  CRA Business Number (BN)
-                </Label>
-
-                <Input
-                  value={businessNumber}
-                  onChange={handleBusinessNumberChange}
-                  placeholder="123456789"
-                  inputMode="numeric"
-                  maxLength={9}
-                />
-
-                {/*
-                  businessNo remains the canonical existing field.
-                */}
-                <input
-                  type="hidden"
-                  name="businessNo"
-                  value={businessNumber}
-                />
-              </div>
-            )}
-
-            {isUS && (
-              <div className="space-y-2">
-                <Label>
-                  IRS Employer Identification Number (EIN)
-                </Label>
-
-                <Input
-                  name="ein"
-                  value={einNumber}
-                  onChange={handleEinChange}
-                  placeholder="12-3456789"
-                  inputMode="numeric"
-                  maxLength={10}
-                />
-
-                {/* The EIN is recorded as an EIN only; it is never copied into the Canadian Business Number. */}
-              </div>
-            )}
-
-            {/* Shown only for the formation jurisdictions it applies to: the GST/HST account for a Canadian legal entity, a state tax
-                registration for a US one. Operating cross-border never creates a second company or a second set of fields. */}
-            {(businessCountry === "Canada" || businessCountry === "United States") && (
-              <div className="space-y-2">
-                <Label>
-                  {businessCountry === "Canada" ? "GST / HST Program Account" : "State Tax Registration #"}
-                </Label>
-
-                <Input
-                  name="gstHst"
-                  disabled
-                  placeholder={
-                    businessCountry === "Canada"
-                      ? "123456789 RT 0001"
-                      : "Tax registration number"
-                  }
-                />
-                <UnavailableNote />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ===================================================
-            CUSTOMER PROFILE
-        =================================================== */}
-
+        {/* ---------------------------------------------------- CUSTOMER */}
         {isCustomer && (
-          <div className="relative flex flex-col gap-6 rounded-xl border-2 border-dashed bg-muted/15 p-6">
-            <div className="absolute -top-3 left-6 flex items-center gap-2 rounded-full border bg-background px-3 py-1 text-sm font-semibold text-primary shadow-sm">
-              <CheckCircle2 className="size-3.5" />
-              Compliance & Services Profile
-            </div>
+          <>
+            <Section title="Service">
+              <Field
+                label="Service Start Date"
+                htmlFor="startDate"
+                required
+                hint="The date TES began providing services to this customer."
+                error={errorFor("startDate")}
+              >
+                <Input id="startDate" name="startDate" type="date" required />
+              </Field>
 
-            {/* CUSTOMER RELATIONSHIP */}
-            <Card className="shadow-none">
-              <CardHeader className="border-b bg-muted/10">
-                <CardTitle className="text-sm">
-                  Customer Information
-                </CardTitle>
-              </CardHeader>
+              <Field label="Payment Method" error={errorFor("payMethod")}>
+                <Select name="payMethod">
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Not specified" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="E-Transfer">E-Transfer</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Cheque">Cheque</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
 
-              <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Service Type</Label>
-
-                  <Input name="svcType" value="Not contracted" readOnly disabled />
-                  <DerivedNote>
-                    Read-only. Service type is the package on the signed contract; until a contract is signed this customer is not
-                    contracted. It is shown on the profile once a contract exists.
-                  </DerivedNote>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Service Status</Label>
-
-                  <Input name="status" value="Onboarding" readOnly disabled />
-                  <DerivedNote>
-                    Read-only. A new customer always starts in onboarding; later stages are recorded through the engagement lifecycle.
-                  </DerivedNote>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>TES Service Start Date *</Label>
-
-                  <Input
-                    name="startDate"
-                    type="date"
-                    required
-                  />
-
-                  <p className="text-[11px] text-muted-foreground">
-                    Date TES began providing services for this customer.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>End Date</Label>
-
-                  <Input
-                    name="endDate"
-                    type="date"
-                    disabled
-                  />
-                  <DerivedNote>
-                    A new customer cannot start already ended. End a customer&apos;s service later from Edit, with a reason.
-                  </DerivedNote>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Payment Method</Label>
-
-                  <Select name="payMethod">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Not specified" />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      <SelectItem value="E-Transfer">
-                        E-Transfer
-                      </SelectItem>
-
-                      <SelectItem value="Credit Card">
-                        Credit Card
-                      </SelectItem>
-
-                      <SelectItem value="Wire Transfer">
-                        Wire Transfer
-                      </SelectItem>
-
-                      <SelectItem value="Cheque">
-                        Cheque
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[11px] text-muted-foreground">
-                    The customer&apos;s preferred way to be billed. A preference only: contract payment terms are agreed separately.
-                  </p>
-                </div>
-
-                <div className="flex flex-col space-y-2">
-                  <Label>
-                    Cargo Information *
-                  </Label>
-
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={`h-auto min-h-10 w-full justify-between px-3 py-2 ${
-                          selectedCargo.length === 0
-                            ? "text-muted-foreground"
-                            : ""
-                        }`}
-                      >
-                        <div className="flex flex-wrap gap-1 text-left">
-                          {selectedCargo.length === 0 &&
-                            "Select cargo types..."}
-
-                          {selectedCargo.map((cargo) => (
-                            <Badge
-                              variant="secondary"
-                              key={cargo}
-                              className="text-[10px] font-normal"
-                            >
-                              {cargo}
-                            </Badge>
-                          ))}
-                        </div>
-
-                        <ChevronDown className="size-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-
-                    <PopoverContent
-                      className="w-[320px] p-2"
-                      align="start"
+              <Field label="Cargo Types" required error={errorFor("cargoTypes")} className="sm:col-span-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={`h-auto min-h-9 w-full justify-between px-3 py-1.5 ${selectedCargo.length === 0 ? "text-muted-foreground" : ""}`}
                     >
-                      <p className="mb-2 px-1 text-xs font-semibold text-muted-foreground">
-                        Select all that apply
-                      </p>
-
-                      <div className="space-y-1">
-                        {CARGO_OPTIONS.map((option) => {
-                          const checked = selectedCargo.includes(option)
-
-                          return (
-                            <label
-                              key={option}
-                              className="flex w-full cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50"
-                            >
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={(nextChecked) =>
-                                  setSelectedCargo((current) =>
-                                    nextChecked === true
-                                      ? current.includes(option)
-                                        ? current
-                                        : [...current, option]
-                                      : current.filter((item) => item !== option)
-                                  )
-                                }
-                              />
-
-                              <span>{option}</span>
-                            </label>
-                          )
-                        })}
+                      <div className="flex flex-wrap gap-1 text-left">
+                        {selectedCargo.length === 0 && "Select"}
+                        {selectedCargo.map((cargo) => (
+                          <Badge variant="secondary" key={cargo} className="text-[10px] font-normal">
+                            {cargo}
+                          </Badge>
+                        ))}
                       </div>
-                    </PopoverContent>
-                  </Popover>
-
-                  <input
-                    type="hidden"
-                    name="cargoTypes"
-                    value={JSON.stringify(selectedCargo)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    The kinds of freight the customer hauls. Descriptive only; it does not decide which regulations apply.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* CARRIER INFORMATION */}
-            <Card className="shadow-none">
-              <CardHeader className="border-b bg-muted/10">
-                <CardTitle className="text-sm">
-                  Carrier Information
-                </CardTitle>
-
-                <CardDescription className="text-xs">
-                  Each number is recorded under the authority it belongs to; say which one it is and who issued it.
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-4">
-                {isCanada && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>MVID / RIN #</Label>
-                      <Input name="mvid" />
+                      <ChevronDown className="size-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[320px] p-2" align="start">
+                    <div className="space-y-1">
+                      {CARGO_OPTIONS.map((option) => (
+                        <label key={option} className="flex w-full cursor-pointer items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted/50">
+                          <Checkbox
+                            checked={selectedCargo.includes(option)}
+                            onCheckedChange={(nextChecked) =>
+                              setSelectedCargo((current) =>
+                                nextChecked === true
+                                  ? current.includes(option)
+                                    ? current
+                                    : [...current, option]
+                                  : current.filter((item) => item !== option)
+                              )
+                            }
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
                     </div>
+                  </PopoverContent>
+                </Popover>
+                <input type="hidden" name="cargoTypes" value={JSON.stringify(selectedCargo)} />
+              </Field>
 
-                    <NativeChoice name="mvidKind" label="Number type" options={[["MVID", "MVID"], ["RIN", "RIN (Ontario)"]]} />
+              <Field label="ELD Provider" htmlFor="eldProvider" error={errorFor("eldProvider")}>
+                <Input id="eldProvider" name="eldProvider" maxLength={120} />
+              </Field>
 
-                    <RegionSelect name="mvidRegion" label="MVID issuing province" canadaOnly />
+              <Field label="GPS Provider" htmlFor="gpsProvider" error={errorFor("gpsProvider")}>
+                <Input id="gpsProvider" name="gpsProvider" maxLength={120} />
+              </Field>
 
-                    <div className="hidden lg:block" />
+              <Field label="Fuel Provider" htmlFor="fuelProvider" error={errorFor("fuelProvider")}>
+                <Input id="fuelProvider" name="fuelProvider" maxLength={120} />
+              </Field>
+            </Section>
 
-                    <div className="space-y-2">
-                      <Label>NSC / CVOR #</Label>
-                      <Input name="nsc" />
-                    </div>
-
-                    <NativeChoice name="nscKind" label="Number type" options={[["NSC", "NSC"], ["CVOR", "CVOR (Ontario)"]]} />
-
-                    <RegionSelect name="nscRegion" label="NSC issuing province" canadaOnly />
-
-                    <div className="hidden lg:block" />
-                  </>
-                )}
-
-                {isUS && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>USDOT #</Label>
-                      <Input name="usdot" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>MC #</Label>
-                      <Input name="mc" />
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* TAX ACCOUNTS */}
-            <Card className="shadow-none">
-              <CardHeader className="border-b bg-muted/10">
-                <CardTitle className="text-sm">
-                  Tax & Compliance Accounts
-                </CardTitle>
-
-                <CardDescription className="text-xs">
-                  Account identifiers are treated as strong duplicate signals. An IRP or IFTA account needs its base jurisdiction.
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="grid gap-5 pt-6 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>IRP Account #</Label>
-                  <Input name="accIrp" />
-                </div>
-
-                <RegionSelect name="irpBase" label="IRP Base Province / State" />
-
-                <div className="hidden lg:block" />
-
-                <div className="space-y-2">
-                  <Label>IFTA Account #</Label>
-                  <Input name="accIfta" />
-                </div>
-
-                <RegionSelect name="iftaBase" label="IFTA Base Province / State" />
-
-                <div className="hidden lg:block" />
-
-                {isUS && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>NY HUT Account #</Label>
-                      <Input name="accNyhut" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>NM WDT Account #</Label>
-                      <Input name="accNm" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Kentucky KYU #</Label>
-                      <Input name="accKyu" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Oregon Account #</Label>
-                      <Input name="accOr" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>CT DRS Account #</Label>
-                      <Input name="accCt" />
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* CUSTOMS + FLEET */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              {showCustoms && (
-                <Card className="shadow-none">
-                  <CardHeader className="border-b bg-muted/10">
-                    <CardTitle className="text-sm">
-                      Customs Information
-                    </CardTitle>
-                  </CardHeader>
-
-                  <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>SCAC</Label>
-                      <Input name="scac" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Carrier Code</Label>
-                      <Input name="carrierCode" />
-                    </div>
-                  </CardContent>
-                </Card>
+            <Section title="Carrier & Tax IDs">
+              {isCanada && (
+                <>
+                  <Field label="MVID / RIN" htmlFor="mvid" error={errorFor("mvid")}>
+                    <Input id="mvid" name="mvid" />
+                  </Field>
+                  <NativeChoice name="mvidKind" label="MVID / RIN Type" options={[["MVID", "MVID"], ["RIN", "RIN (Ontario)"]]} />
+                  <Field label="NSC / CVOR" htmlFor="nsc" error={errorFor("nsc")}>
+                    <Input id="nsc" name="nsc" />
+                  </Field>
+                  <NativeChoice name="nscKind" label="NSC / CVOR Type" options={[["NSC", "NSC"], ["CVOR", "CVOR (Ontario)"]]} />
+                </>
               )}
 
-              <Card
-                className={`shadow-none ${
-                  !showCustoms ? "lg:col-span-2" : ""
-                }`}
-              >
-                <CardHeader className="border-b bg-muted/10">
-                  <CardTitle className="text-sm">
-                    Fleet Information
-                  </CardTitle>
-                </CardHeader>
+              {isUS && (
+                <>
+                  <Field label="USDOT" htmlFor="usdot" error={errorFor("usdot")}>
+                    <Input id="usdot" name="usdot" />
+                  </Field>
+                  <Field label="MC" htmlFor="mc" error={errorFor("mc")}>
+                    <Input id="mc" name="mc" />
+                  </Field>
+                </>
+              )}
 
-                <CardContent className="grid gap-5 pt-6 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>ELD / HOS Provider</Label>
-                    <Input name="eldProvider" maxLength={120} />
-                    <p className="text-[11px] text-muted-foreground">The electronic logging device provider&apos;s name as the customer gives it. No provider record is created.</p>
-                  </div>
+              <Field label="IRP Account" htmlFor="accIrp" error={errorFor("accIrp")}>
+                <Input id="accIrp" name="accIrp" />
+              </Field>
+              <Field label="IFTA Account" htmlFor="accIfta" error={errorFor("accIfta")}>
+                <Input id="accIfta" name="accIfta" />
+              </Field>
 
-                  <div className="space-y-2">
-                    <Label>Truck GPS Provider</Label>
-                    <Input name="gpsProvider" maxLength={120} />
-                    <p className="text-[11px] text-muted-foreground">The GPS / telematics provider&apos;s name. The same vendor may be entered for more than one service.</p>
-                  </div>
+              {isUS && (
+                <>
+                  <Field label="NY HUT" htmlFor="accNyhut">
+                    <Input id="accNyhut" name="accNyhut" />
+                  </Field>
+                  <Field label="NM WDT" htmlFor="accNm">
+                    <Input id="accNm" name="accNm" />
+                  </Field>
+                  <Field label="Kentucky KYU" htmlFor="accKyu">
+                    <Input id="accKyu" name="accKyu" />
+                  </Field>
+                  <Field label="Oregon" htmlFor="accOr">
+                    <Input id="accOr" name="accOr" />
+                  </Field>
+                  <Field label="CT DRS" htmlFor="accCt">
+                    <Input id="accCt" name="accCt" />
+                  </Field>
+                </>
+              )}
 
-                  <div className="space-y-2">
-                    <Label>Fuel Provider</Label>
-                    <Input name="fuelProvider" maxLength={120} />
-                    <p className="text-[11px] text-muted-foreground">The provider&apos;s name as the customer gives it. No provider record is created.</p>
-                  </div>
-
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>Assessment Date</Label>
-                    <Input name="assessmentDate" value="Not yet assessed" readOnly disabled />
-                    <DerivedNote>
-                      Read-only. A company documentation assessment records this date; none has been completed yet, so nothing is shown
-                      as assessed.
-                    </DerivedNote>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
+              {showCustoms && (
+                <>
+                  <Field label="SCAC" htmlFor="scac">
+                    <Input id="scac" name="scac" />
+                  </Field>
+                  <Field label="Carrier Code" htmlFor="carrierCode">
+                    <Input id="carrierCode" name="carrierCode" />
+                  </Field>
+                </>
+              )}
+            </Section>
+          </>
         )}
 
-        {/* ===================================================
-            SECTION 4 — ADDRESSES
-        =================================================== */}
+        {/* ---------------------------------------------------- ADDRESSES */}
+        <section className="space-y-4 rounded-lg border bg-card p-4">
+          <h2 className="text-sm font-semibold">Address</h2>
+          <SmartAddressBlock title="Registered" prefix="reg" errorFor={errorFor} />
+          {isCustomer && (
+            <>
+              <SmartAddressBlock title="Mailing" prefix="mail" errorFor={errorFor} />
+              <SmartAddressBlock title="Yard" prefix="yard" errorFor={errorFor} />
+            </>
+          )}
+        </section>
 
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <MapPin className="size-4 text-primary" />
-              Address Information
-            </CardTitle>
+        <DuplicateStatusPanel
+          blocking={blockingFindings}
+          review={reviewFindings}
+          reviewAcknowledged={reviewAcknowledged}
+          onReviewAcknowledged={setReviewAcknowledged}
+        />
 
-            <CardDescription className="text-xs">
-              Address information participates in duplicate and relationship
-              review but does not independently prove identity.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-6 pt-6">
-            <SmartAddressBlock
-              title="Registered Address"
-              prefix="reg"
-            />
-
-            {isCustomer && (
-              <>
-                <SmartAddressBlock
-                  title="Mailing Address"
-                  prefix="mail"
-                  isAdditional
-                />
-
-                <SmartAddressBlock
-                  title="Yard Address"
-                  prefix="yard"
-                  isAdditional
-                />
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ===================================================
-            DUPLICATE / IDENTITY CONTROL
-        =================================================== */}
-
-        <Card className="border-primary/15">
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <ShieldCheck className="size-4 text-primary" />
-              Identity & Duplicate Control
-            </CardTitle>
-
-            <CardDescription className="text-xs">
-              TES checks strong identifiers separately from weaker identity
-              signals such as names, contacts and addresses.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="pt-5">
-            <DuplicateStatusPanel
-              blocking={blockingFindings}
-              review={reviewFindings}
-              reviewAcknowledged={reviewAcknowledged}
-              onReviewAcknowledged={
-                setReviewAcknowledged
-              }
-            />
-          </CardContent>
-        </Card>
-
-        {submitIssues.length > 0 && (
-          <div
-            role="alert"
-            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"
-          >
-            <p className="font-semibold text-destructive">
-              The record was not created. Nothing was saved.
-            </p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-destructive">
-              {submitIssues.map((issue, index) => (
-                <li key={`${issue.field}-${index}`}>
-                  {issue.field ? <span className="font-mono text-xs">{issue.field}: </span> : null}
-                  {issue.message}
-                </li>
+        {otherIssues.length > 0 && (
+          <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <p className="font-semibold text-destructive">Not saved</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-destructive">
+              {otherIssues.map((issue, index) => (
+                <li key={`${issue.field}-${index}`}>{issue.message}</li>
               ))}
             </ul>
           </div>
         )}
 
-        {/* ===================================================
-            SAVE
-        =================================================== */}
+        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-sm">
+          <div className="min-w-0 text-sm">
+            {blockingFindings.length > 0 ? (
+              <span className="flex items-center gap-2 font-medium text-destructive">
+                <XCircle className="size-4 shrink-0" />
+                Resolve the identifier conflict to save.
+              </span>
+            ) : submitIssues.length > 0 ? (
+              <span className="font-medium text-destructive">Not saved. Fix the marked fields.</span>
+            ) : null}
+          </div>
 
-        <div className="sticky bottom-4 z-10 rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              {blockingFindings.length > 0 ? (
-                <div className="flex items-center gap-2 text-sm font-medium text-destructive">
-                  <XCircle className="size-4 shrink-0" />
-                  Resolve duplicate identifier conflicts before saving.
-                </div>
-              ) : reviewFindings.length > 0 &&
-                !reviewAcknowledged ? (
-                <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
-                  <AlertTriangle className="size-4 shrink-0" />
-                  Review and acknowledge potential duplicate matches.
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-                  Record is ready when required information is complete.
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.back()}
-                disabled={submitting}
-              >
-                Discard
-              </Button>
-
-              <Button
-                type="submit"
-                disabled={!canSubmit || submitting}
-              >
-                <Save className="mr-2 size-4" />
-
-                {submitting
-                  ? "Creating..."
-                  : "Create Record"}
-              </Button>
-            </div>
+          <div className="ml-auto flex gap-2">
+            <Button type="button" variant="outline" onClick={() => router.back()} disabled={submitting}>
+              Discard
+            </Button>
+            <Button type="submit" disabled={!canSubmit || submitting}>
+              <Save className="mr-2 size-4" />
+              {submitting ? "Saving..." : "Save"}
+            </Button>
           </div>
         </div>
       </form>

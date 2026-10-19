@@ -6,54 +6,65 @@ import { describe, it } from "node:test"
 const ROOT = process.cwd()
 const form = readFileSync(path.join(ROOT, "app/companies/new/page.tsx"), "utf8")
 
-/** Every field of the original (main) company creation form. Removing any of them is a regression. */
-const ORIGINAL_FIELDS = [
-  "accCt", "accIfta", "accIrp", "accKyu", "accNm", "accNyhut", "accOr", "assessmentDate", "billingEmail", "businessNo", "cargoTypes",
-  "carrierCode", "companyName", "companyType", "contactPerson", "dba", "ein", "email", "endDate", "fuelProvider", "gpsProvider", "gstHst",
-  "incorpNo", "mc", "mvid", "nsc", "opRegion", "payMethod", "phone", "regCorpCountry", "regCorpState", "scac", "startDate", "status",
-  "svcType", "usdot", "website",
+/** Every field the Add Company form collects. Each has exactly one canonical owner (see FIELD_OWNERS). */
+const FORM_FIELDS = [
+  "accCt", "accIfta", "accIrp", "accKyu", "accNm", "accNyhut", "accOr", "billingEmail", "businessNo", "cargoTypes",
+  "carrierCode", "companyName", "companyType", "contactPerson", "dba", "ein", "email", "eldProvider", "fuelProvider", "gpsProvider", "gstHst",
+  "incorpNo", "mc", "mvid", "nsc", "opRegion", "payMethod", "phone", "regCorpCountry", "regCorpState", "scac", "startDate",
+  "usdot", "website",
 ]
-/** Fields with no canonical storage: kept on the form with their definition, disabled and labelled, never silently dropped. */
-const UNAVAILABLE_FIELDS = ["gstHst"]
-/** Fields whose value is owned by another workflow (contract, engagement lifecycle, assessment): shown read-only, never posted. */
-const DERIVED_READ_ONLY_FIELDS = ["assessmentDate", "endDate", "status", "svcType"]
-/** Fields that now persist to a canonical owner: they must be live (not disabled) and post their value. */
-const PERSISTED_FIELDS = ["cargoTypes", "eldProvider", "fuelProvider", "gpsProvider", "payMethod", "website"]
+/**
+ * Fields whose value is owned by another workflow (contract, engagement lifecycle, assessment). They are shown on the profile, never
+ * typed at creation, so the creation form does not carry them.
+ */
+const DERIVED_FIELDS = ["assessmentDate", "endDate", "status", "svcType"]
+/** The issuing province / base jurisdiction selectors the form no longer asks for: the server records them as unresolved, never guessed. */
+const REMOVED_JURISDICTION_SELECTORS = ["mvidRegion", "nscRegion", "irpBase", "iftaBase"]
 
-describe("company creation form keeps every original field", () => {
-  for (const field of ORIGINAL_FIELDS) {
+describe("Add Company form", () => {
+  for (const field of FORM_FIELDS) {
     it(`keeps ${field}`, () => {
-      assert.ok(form.includes(`name="${field}"`) || form.includes(`"${field}"`) || form.includes(`id="${field}"`), `${field} is no longer on the form`)
+      assert.ok(form.includes(`name="${field}"`) || form.includes(`id="${field}"`), `${field} is no longer on the form`)
     })
   }
 
-  it("disables each unavailable field in place and labels it before submission", () => {
-    for (const field of UNAVAILABLE_FIELDS) {
-      const at = form.indexOf(`name="${field}"`)
-      assert.ok(at >= 0, field)
-      const block = form.slice(at, at + 700)
-      assert.match(block, /disabled/, `${field} must be disabled, not removed`)
-      assert.match(form.slice(at, at + 1800), /UnavailableNote/, `${field} must be labelled`)
-    }
-    assert.match(form, /UnavailableFieldsBanner/, "the form announces unavailable fields up front")
+  it("is titled Add Company, with no introductory warning banner and no per-field instruction text", () => {
+    assert.match(form, /title="Add Company"/)
+    assert.doesNotMatch(form, /Create Entity Record/)
+    assert.doesNotMatch(form, /UnavailableFieldsBanner|UnavailableNote|DerivedNote/)
+    assert.doesNotMatch(form, /text-\[11px\] text-muted-foreground">/, "no explanatory paragraph sits under an input")
+    // explanations survive only as optional tooltips on genuinely ambiguous fields
+    assert.match(form, /hint="/)
+    assert.ok((form.match(/hint="/g) ?? []).length <= 3, "tooltips are the exception")
   })
 
-  it("shows contract-, lifecycle- and assessment-owned fields read-only and never posts them", () => {
-    for (const field of DERIVED_READ_ONLY_FIELDS) {
-      const at = form.indexOf(`name="${field}"`)
-      assert.ok(at >= 0, field)
-      assert.match(form.slice(at, at + 300), /disabled/, `${field} must not be editable`)
-      assert.match(form.slice(at, at + 1200), /DerivedNote/, `${field} must say where its value comes from`)
+  it("uses short, consistent labels", () => {
+    for (const label of ["Primary Contact", "Service Start Date", "ELD Provider", "GPS Provider", "Fuel Provider", "Cargo Types", "GST/HST Account", "Company Name"]) {
+      assert.match(form, new RegExp(`label="${label}"`), label)
     }
+    assert.doesNotMatch(form, /Contact given name|Contact family name|First Name|Last Name/)
   })
 
-  it("makes every persisted field live: not disabled, not marked unavailable", () => {
-    for (const field of PERSISTED_FIELDS) {
+  it("does not carry the contract-, lifecycle- and assessment-owned fields, and never posts them", () => {
+    for (const field of DERIVED_FIELDS) assert.ok(!form.includes(`name="${field}"`), `${field} is shown on the profile, not typed at creation`)
+  })
+
+  it("asks for no issuing province or base jurisdiction", () => {
+    for (const field of REMOVED_JURISDICTION_SELECTORS) assert.ok(!form.includes(`"${field}"`), `${field} must not be asked for`)
+    assert.doesNotMatch(form, /RegionSelect|issuing province|Base Province/i)
+    // the distinctions between the four numbers stay visible
+    for (const label of ["MVID / RIN", "NSC / CVOR", "IRP Account", "IFTA Account"]) assert.match(form, new RegExp(`label="${label}"`), label)
+    assert.match(form, /name="mvidKind"/)
+    assert.match(form, /name="nscKind"/)
+  })
+
+  it("makes every persisted field live: not disabled, posted with its value", () => {
+    for (const field of ["cargoTypes", "eldProvider", "fuelProvider", "gpsProvider", "payMethod", "website", "gstHst"]) {
       const at = form.indexOf(`name="${field}"`)
       assert.ok(at >= 0, field)
       assert.doesNotMatch(form.slice(at, at + 160), /\bdisabled\b/, `${field} must be live`)
-      assert.doesNotMatch(form.slice(at, at + 900), /UnavailableNote/, `${field} must not be marked unavailable`)
     }
+    assert.doesNotMatch(form, /\bdisabled\s*\n?\s*(placeholder|value|\/>)/, "no input is left disabled")
   })
 
   it("enforces the original cargo rule now that cargo has a canonical owner", () => {
@@ -62,26 +73,32 @@ describe("company creation form keeps every original field", () => {
     assert.match(form, /CARGO_OPTIONS/)
   })
 
-  it("never derives a Business Number from an EIN, and sends the confirmed contact names", () => {
+  it("never derives a Business Number from an EIN, and posts the Primary Contact once", () => {
     assert.doesNotMatch(form, /businessNo:\s*\n?\s*opRegion === "US Only"/)
     assert.match(form, /businessNo: isCanada \? businessNumber : ""/)
-    assert.match(form, /contactGivenName/)
+    assert.match(form, /ein: isUS \? einNumber : ""/)
+    assert.doesNotMatch(form, /contactGivenName|contactFamilyName/)
     assert.match(form, /formData\.delete\("contactPerson"\)/)
-  })
-  it("shows the tax registration field only for the jurisdictions it applies to, and never as a second company", () => {
-    const at = form.indexOf('name="gstHst"')
-    const before = form.slice(Math.max(0, at - 700), at)
-    assert.match(before, /businessCountry === "Canada" \|\| businessCountry === "United States"/, "the tax registration field is conditional on the formation country")
-    assert.match(before, /GST \/ HST Program Account/)
-    assert.match(before, /State Tax Registration #/)
-    assert.doesNotMatch(form, /: "Tax Registration #"/, "there is no generic fallback label for an unspecified jurisdiction")
-    // the Canadian Business Number is Canada-only and the EIN is US-only
-    assert.match(form, /\{isCanada && \(\s*<div className="space-y-2">\s*<Label>\s*CRA Business Number/)
-    assert.match(form, /\{isUS && \(\s*<div className="space-y-2">\s*<Label>\s*IRS Employer Identification Number/)
+    assert.match(form, /name="contactPersonId"/)
   })
 
-  it("shows the assessment date truthfully: 'Not yet assessed', never an invented date", () => {
-    const at = form.indexOf('name="assessmentDate"')
-    assert.match(form.slice(at, at + 200), /value="Not yet assessed"/)
+  it("offers the GST/HST account where the company operates in Canada, as its own field, never as the Business Number", () => {
+    assert.match(form, /\{isCanada && \(\s*<Field label="GST\/HST Account"/)
+    assert.match(form, /gstHst: isCanada \? gstHst\.trim\(\) : ""/)
+    assert.match(form, /GST_HST_PATTERN/)
+    assert.doesNotMatch(form, /State Tax Registration/)
+    // the Canadian Business Number is Canada-only and the EIN is US-only
+    assert.match(form, /\{isCanada && \(\s*<Field label="Business Number \(BN\)"/)
+    assert.match(form, /\{isUS && \(\s*<Field label="EIN"/)
+  })
+
+  it("keeps browser storage out of the form", () => {
+    assert.doesNotMatch(form, /localStorage|sessionStorage|indexedDB/i)
+  })
+
+  it("offers a person lookup only as an explicit choice: nothing is linked or merged by name", () => {
+    assert.match(form, /fetch\("\/api\/people\/matches"/)
+    assert.match(form, /Use this person/)
+    assert.doesNotMatch(form, /setChosen\(suggestions\[0\]\)|setChosen\(person\)\s*\n?\s*\}\s*,\s*\[/, "no suggestion is selected automatically")
   })
 })

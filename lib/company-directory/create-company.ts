@@ -145,12 +145,19 @@ export async function createCompanyRecord(raw: unknown): Promise<CompanyCreation
 
     // 5. Contacts.
     if (plan.contact || plan.channels.length > 0) await enterSystemCapability(client, "CONTACT_MANAGE")
-    if (plan.contact) {
+    if (plan.contact?.kind === "new") {
       await contactOperations.createContact(domainContext(client, decision, "PERSON_REGISTRY_READ"), {
         organizationId,
         name: { ...(plan.contact.givenName ? { givenName: plan.contact.givenName } : {}), ...(plan.contact.familyName ? { familyName: plan.contact.familyName } : {}) },
         purposes: [{ purpose: "PRIMARY", primary: true }],
       })
+      recorded.primaryContact = true
+    } else if (plan.contact?.kind === "existing") {
+      // The user chose this person explicitly: the same person is related to the new company (no second person record is created,
+      // nothing is merged). The person stays visible through the registry only for a caller who may read it.
+      const contactContext = domainContext(client, decision, "PERSON_REGISTRY_READ")
+      const linked = await contactOperations.addRelationship(contactContext, { organizationId, personId: plan.contact.personId })
+      await contactOperations.assignPurpose(contactContext, { organizationId, relationshipId: linked.relationship.id, purpose: "PRIMARY", primary: true })
       recorded.primaryContact = true
     }
     for (const channel of plan.channels) {

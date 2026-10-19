@@ -21,6 +21,8 @@ type Details = Record<string, string | string[] | ServiceTypeState | null | unde
   kind?: string
   opRegion?: string | null
   website?: string | null
+  gstHst?: string | null
+  sections?: Record<string, string>
   cargoTypes?: string[]
   eldProvider?: string | null
   gpsProvider?: string | null
@@ -124,6 +126,7 @@ export default function EditCompanyPage() {
     // Profile facts are sent only when they CHANGED from the loaded value, so an untouched field is never rewritten and a
     // cleared field is an explicit, intentional "clear" (an empty string).
     if (field("website").trim() !== asText(details.website)) detailFields.website = field("website").trim()
+    if (details.sections?.registrations !== "not_permitted" && field("gstHst").trim() !== asText(details.gstHst)) detailFields.gstHst = field("gstHst").trim()
     if (details.kind === "Customer") {
       const before = [...(Array.isArray(details.cargoTypes) ? details.cargoTypes : [])].sort().join("|")
       if ([...cargo].sort().join("|") !== before) detailFields.cargoTypes = JSON.stringify(cargo)
@@ -213,6 +216,22 @@ export default function EditCompanyPage() {
             <div className="space-y-2">
               <Label htmlFor="businessNo">Business Number (CRA BN)</Label>
               <Input id="businessNo" name="businessNo" defaultValue={company.businessNo} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="gstHst">GST/HST Account</Label>
+              <Input
+                id="gstHst"
+                name="gstHst"
+                placeholder="123456789 RT 0001"
+                maxLength={40}
+                defaultValue={details.sections?.registrations === "not_permitted" ? "" : asText(details.gstHst)}
+                disabled={details.sections?.registrations === "not_permitted"}
+                aria-describedby={issues.some((issue) => issue.field === "gstHst") ? "gstHst-error" : undefined}
+              />
+              {details.sections?.registrations === "not_permitted" && <p className="text-[11px] text-muted-foreground">Not permitted to view or edit.</p>}
+              {issues.filter((issue) => issue.field === "gstHst").map((issue) => (
+                <p key={issue.message} id="gstHst-error" role="alert" className="text-xs text-destructive">{issue.message}</p>
+              ))}
             </div>
             <div className="space-y-2">
               <Label htmlFor="ein">EIN (IRS)</Label>
@@ -334,7 +353,7 @@ export default function EditCompanyPage() {
 
         <Card>
           <CardHeader className="bg-muted/30 py-3 border-b">
-            <CardTitle className="text-sm">When a website, cargo, provider or payment method is edited</CardTitle>
+            <CardTitle className="text-sm">When a website, GST/HST account, cargo, provider or payment method is edited</CardTitle>
           </CardHeader>
           <CardContent className="pt-4 text-sm space-y-2">
             <label className="flex items-center gap-2">

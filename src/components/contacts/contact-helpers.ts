@@ -63,15 +63,14 @@ export const ALL_JURISDICTIONS = [...CANADIAN_PROVINCES, ...US_STATES];
 // remain an external/custom role written by another module is a product
 // decision, not something to resolve silently in this pass. See the task's
 // final report ("Remaining Issues -> FUTURE ARCHITECTURAL DECISION").
+// Job titles only. "Primary Contact" is a designation (its own checkbox) and Drivers are managed in Drivers, so neither is a title.
 export const STANDARD_ROLES = [
-  "Primary Contact",
   "Director",
   "Safety Manager",
   "Fleet Manager",
   "Compliance Officer",
   "Dispatcher",
   "Billing / Accounting",
-  "Driver",
   "Owner / Operator",
   "General Contact",
 ];

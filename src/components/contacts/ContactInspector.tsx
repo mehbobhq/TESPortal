@@ -28,15 +28,40 @@ interface ContactInspectorProps {
   handleSaveEdit: () => void;
   setPreviewEvidence: (evidence: Evidence) => void;
   companyName: string;
-  /** When set, identity-document fields are disabled and this explains why (they have no home in Contacts). */
+  /** When set, the identity fields (date of birth, driver licence) are disabled and this explains why (the actor may not manage them). */
   identityFieldsNote?: string;
+  /** False when the actor may not read identity details: they are shown as Restricted instead of being fetched or displayed. */
+  identityReadable?: boolean;
+  /** Operational-email inclusion of this contact: separate from their email, relationship and the Primary Contact designation. */
+  operationalEmail?: OperationalEmailControl | null;
+  /** Where the underlying audit detail (Master Register) for this company can be opened. */
+  auditHref?: string;
+  busy?: boolean;
 }
+
+export type OperationalEmailControl = {
+  excluded: boolean;
+  since?: string;
+  source?: string;
+  canManage: boolean;
+  onExclude: (input: { source: string; reference: string }) => void;
+  onResume: () => void;
+};
+
+const EXCLUSION_SOURCES: Array<[string, string]> = [
+  ["COMPANY_WRITTEN_REQUEST", "Written request from the company"],
+  ["COMPANY_VERBAL_CONFIRMED", "Verbal instruction, confirmed"],
+  ["TES_DECISION", "TES decision"],
+];
 
 export function ContactInspector({
   selectedContact, selectedContactRelationship, companyId, isEditing, editFormData, setEditFormData, editFormErrors,
   editDuplicateWarning, showOlderEvidence, setShowOlderEvidence, STANDARD_ROLES, ALL_JURISDICTIONS, isWithinThreeYears,
-  handleStartEdit, handleToggleArchive, handleSelectContact, handleCancelEdit, handleSaveEdit, setPreviewEvidence, companyName, identityFieldsNote,
+  handleStartEdit, handleToggleArchive, handleSelectContact, handleCancelEdit, handleSaveEdit, setPreviewEvidence, companyName, identityFieldsNote, identityReadable = true, operationalEmail, auditHref, busy = false,
 }: ContactInspectorProps) {
+  const [excluding, setExcluding] = React.useState(false);
+  const [exclusionSource, setExclusionSource] = React.useState(EXCLUSION_SOURCES[0][0]);
+  const [exclusionReference, setExclusionReference] = React.useState("");
   return (
     <>
         {/* RIGHT COLUMN: Contact Inspector / Multi-Company Drawer */}
@@ -61,8 +86,8 @@ export function ContactInspector({
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                      {selectedContact.id} • {selectedContact.globalId}
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {selectedContact.role} • Identity unverified
                     </p>
                   </div>
                 </div>
@@ -109,7 +134,6 @@ export function ContactInspector({
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between pb-2 border-b border-border">
                       <span className="text-xs font-bold text-foreground">Edit Personnel Details</span>
-                      <span className="text-[10px] text-muted-foreground font-mono">{selectedContact.id}</span>
                     </div>
 
                     {editDuplicateWarning && (
@@ -234,21 +258,6 @@ export function ContactInspector({
                       </div>
                       </fieldset>
 
-                      <fieldset disabled={!!identityFieldsNote} className="contents">
-                      <div className={identityFieldsNote ? "opacity-50" : ""}>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          Restrictions
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Corrective Lenses"
-                          value={editFormData.dlRestrictions || ""}
-                          onChange={(e) => setEditFormData({ ...editFormData, dlRestrictions: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
-                        />
-                      </div>
-                      </fieldset>
-
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           Phone Number
@@ -285,11 +294,11 @@ export function ContactInspector({
                           Assigned Role at {companyName}
                         </label>
                         <select
-                          value={editFormData.companyRole || "Safety Manager"}
+                          value={editFormData.companyRole || "General Contact"}
                           onChange={(e) => setEditFormData({ ...editFormData, companyRole: e.target.value })}
                           className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs mt-1"
                         >
-                          {STANDARD_ROLES.map((r) => (
+                          {[...(editFormData.companyRole && !STANDARD_ROLES.includes(editFormData.companyRole) ? [editFormData.companyRole] : []), ...STANDARD_ROLES].map((r) => (
                             <option key={r} value={r}>
                               {r}
                             </option>
@@ -322,9 +331,10 @@ export function ContactInspector({
                       <button
                         type="button"
                         onClick={handleSaveEdit}
-                        className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                        disabled={busy}
+                        className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                       >
-                        Save Changes
+                        {busy ? "Saving..." : "Save Changes"}
                       </button>
                     </div>
                   </div>
@@ -350,20 +360,78 @@ export function ContactInspector({
                     <div className="grid grid-cols-2 gap-3">
                       <ReadOnlyField label="First Name" value={selectedContact.firstName} />
                       <ReadOnlyField label="Last Name" value={selectedContact.lastName} />
-                      <ReadOnlyField label="Date of Birth" value={selectedContact.dob} mono />
+                      <ReadOnlyField label="Date of Birth" value={identityReadable ? selectedContact.dob : "Restricted"} mono />
                       <ReadOnlyField
                         label="Driver Licence #"
-                        value={selectedContact.dlNumber}
-                        copyable
+                        value={identityReadable ? selectedContact.dlNumber : "Restricted"}
+                        copyable={identityReadable}
                         mono
                       />
-                      <ReadOnlyField label="Licence Jurisdiction" value={selectedContact.dlState} />
-                      <ReadOnlyField label="Licence Expiry" value={selectedContact.dlExpiry} mono />
-                      <ReadOnlyField label="Licence Class" value={selectedContact.dlClass} />
-                      <ReadOnlyField label="Restrictions" value={selectedContact.dlRestrictions} />
+                      <ReadOnlyField label="Licence Jurisdiction" value={identityReadable ? selectedContact.dlState : "Restricted"} />
+                      <ReadOnlyField label="Licence Expiry" value={identityReadable ? selectedContact.dlExpiry : "Restricted"} mono />
+                      <ReadOnlyField label="Licence Class" value={identityReadable ? selectedContact.dlClass : "Restricted"} />
                       <ReadOnlyField label="Phone Number" value={selectedContact.phone} copyable mono />
                       <ReadOnlyField label="Email Address" value={selectedContact.email} copyable />
                     </div>
+
+                    {/* 2b. Operational email inclusion (separate from the person's email, relationship and Primary Contact designation) */}
+                    {operationalEmail && (selectedContactRelationship?.isPrimary || operationalEmail.excluded) && (
+                      <div className="rounded-lg border border-border bg-muted/10 p-3 flex flex-col gap-2" aria-label="Operational email">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Operational Email</span>
+                          <span className={`text-xs font-semibold ${operationalEmail.excluded ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                            {operationalEmail.excluded ? "Not copied" : "Copied by default"}
+                          </span>
+                        </div>
+                        {operationalEmail.excluded && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Excluded {operationalEmail.since ? `since ${operationalEmail.since.slice(0, 10)}` : ""} on {String(operationalEmail.source ?? "").toLowerCase().replace(/_/g, " ")}. Their email, company relationship and Primary Contact designation are unchanged.
+                          </p>
+                        )}
+                        {operationalEmail.canManage && !excluding && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => (operationalEmail.excluded ? operationalEmail.onResume() : setExcluding(true))}
+                            className="self-start text-[11px] font-semibold text-primary hover:underline disabled:opacity-50"
+                          >
+                            {operationalEmail.excluded ? "Resume copying on operational email" : "Stop copying on operational email"}
+                          </button>
+                        )}
+                        {excluding && (
+                          <div className="flex flex-col gap-2 pt-1">
+                            <select value={exclusionSource} onChange={(e) => setExclusionSource(e.target.value)} aria-label="Source of the instruction" className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs">
+                              {EXCLUSION_SOURCES.map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={exclusionReference}
+                              onChange={(e) => setExclusionReference(e.target.value)}
+                              placeholder="How it was received (for example: email from the company, 2026-10-19)"
+                              aria-label="Reference to the instruction"
+                              className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={busy || exclusionReference.trim().length < 3}
+                                onClick={() => {
+                                  operationalEmail.onExclude({ source: exclusionSource, reference: exclusionReference.trim() });
+                                  setExcluding(false);
+                                  setExclusionReference("");
+                                }}
+                                className="rounded-lg bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground disabled:opacity-50"
+                              >
+                                Record instruction
+                              </button>
+                              <button type="button" onClick={() => setExcluding(false)} className="rounded-lg border border-border px-3 py-1 text-[11px] font-semibold">Cancel</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* 3. Multi-Company Relationships Register */}
                     <div className="flex flex-col gap-2 pt-3 border-t border-border">
@@ -436,16 +504,21 @@ export function ContactInspector({
                       )}
                     </div>
 
-                    {/* 5. Revision Audit Timeline */}
+                    {/* 5. Revision history: one entry per business operation (the Master Register keeps every technical event) */}
                     <div className="flex flex-col gap-2 pt-3 border-t border-border">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Revision Events ({selectedContact.events?.length || 0})
+                      <span className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <span>Revision History ({selectedContact.events?.length || 0})</span>
+                        {auditHref && (
+                          <a href={auditHref} className="text-[10px] font-medium normal-case tracking-normal text-primary hover:underline">
+                            Audit detail
+                          </a>
+                        )}
                       </span>
                       <div className="flex flex-col gap-2 max-h-[160px] overflow-y-auto">
                         {selectedContact.events?.map((ev) => (
                           <div key={ev.id} className="text-xs p-2 rounded bg-muted/20 border border-border/50">
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                              <span className="font-bold text-foreground">{ev.action}</span>
+                              <span className="font-bold text-foreground">{ev.label ?? ev.action}</span>
                               <span>{ev.timestamp ? new Date(ev.timestamp).toLocaleDateString() : ""}</span>
                             </div>
                             <p className="text-[11px] text-muted-foreground mt-0.5">{ev.summary}</p>

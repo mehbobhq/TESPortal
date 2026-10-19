@@ -94,6 +94,27 @@ export type ContactView = {
   } | null
 }
 
+/**
+ * An audited, effective-dated instruction NOT to copy a contact on the company's OPERATIONAL email. It is separate from the person,
+ * their email, their company relationship and the PRIMARY designation: none of those changes when an exclusion is recorded or ended.
+ * Only exclusions exist (inclusion is the default). Instruction text is a reference, never a message body.
+ */
+export type OperationalEmailExclusionRecord = {
+  id: string
+  organizationId: string
+  personId: string
+  relationshipId: string
+  effectiveFrom: string
+  effectiveTo: string | null
+  instructionSource: "COMPANY_WRITTEN_REQUEST" | "COMPANY_VERBAL_CONFIRMED" | "TES_DECISION"
+  instructionReference: string
+  instructedByPersonId: string | null
+  evidenceDocumentId: string | null
+  changeReason: ChangeReason
+  recordStatus: ContactRecordStatus
+  createdAt: string
+}
+
 export type OrganizationContactsView = {
   organizationId: string
   /** Organization channels, all history (corrected / voided flagged). */
@@ -101,6 +122,8 @@ export type OrganizationContactsView = {
   currentChannels: ChannelRecord[]
   asOfChannels: ChannelRecord[] | null
   contacts: ContactView[]
+  /** Operational-email exclusions of this company's contacts, all history (corrected / voided flagged). */
+  operationalEmailExclusions: OperationalEmailExclusionRecord[]
 }
 
 export type PersonMatchReason = "NAME" | "EMAIL" | "PHONE"

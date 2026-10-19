@@ -27,30 +27,50 @@ describe("Contacts page: one interface on canonical PostgreSQL records", () => {
     assert.doesNotMatch(page, /generateContactId|generateGlobalUserId|simulateOCRExtraction|persistContacts/)
   })
 
-  it("disables, with an explanation, what Contacts cannot store: identity documents and Document / OCR intake", () => {
+  it("disables Document / OCR with an explanation, and gates identity fields on the actor's permissions (never on browser state)", () => {
     assert.match(page, /OCR_UNAVAILABLE/)
     assert.match(page, /<button\s+type="button"\s+disabled\s+title=\{OCR_UNAVAILABLE\}/)
-    assert.match(page, /identityFieldsNote=\{IDENTITY_NOT_STORED\}/)
+    assert.match(page, /identityFieldsNote=\{identityAccess\?\.licenceManage \? undefined : IDENTITY_NO_PERMISSION\}/)
+    assert.match(page, /\/identity/)
     const inspector = read("src/components/contacts/ContactInspector.tsx")
     const dialog = read("src/components/contacts/ManualContactDialog.tsx")
     assert.match(inspector, /<fieldset disabled=\{!!identityFieldsNote\}/)
     assert.match(dialog, /<fieldset disabled=\{!!identityFieldsNote\}/)
   })
 
+  it("keeps identity verification separate from data entry, and has no Restrictions field", () => {
+    assert.match(page, /does not verify identity/)
+    for (const file of ["app/companies/[id]/contacts/page.tsx", "src/components/contacts/ContactInspector.tsx", "src/components/contacts/ManualContactDialog.tsx"]) {
+      assert.doesNotMatch(read(file), /Restrictions|dlRestrictions/, file)
+    }
+    assert.doesNotMatch(adapter, /"verified"|identityStatus: "documented"/)
+  })
+
   it("never merges people by name and never recreates a person: duplicates are advisory, a restored contact is the same person", () => {
     assert.match(page, /nothing was merged/)
-    assert.match(page, /action: "addRelationship", personId/)
+    assert.match(page, /action: "restoreContact", personId/)
     assert.doesNotMatch(page, /existingPerson|applyPrimaryRule/)
   })
 
-  it("routes every write through the existing contacts API actions", () => {
-    for (const action of ["createContact", "changeName", "correctName", "addPersonChannel", "changePersonChannel", "endPersonChannel", "addTitle", "changeTitle", "makePrimary", "endPurpose", "endRelationship", "addRelationship"]) {
-      assert.match(page, new RegExp(`"${action}"`), action)
-    }
+  it("saves a contact as ONE request (atomic on the server) and never repeats a save already in flight", () => {
+    assert.match(page, /action: "saveContact"/)
+    assert.match(page, /action: "createContactFull"/)
+    assert.match(page, /if \(busy\) return false/)
+    // the page no longer chains per-field requests for a save
+    assert.doesNotMatch(page, /"changeName"|"correctName"|"addPersonChannel"|"endPersonChannel"|"changePersonChannel"|"addTitle"|"changeTitle"/)
     const route = read("app/api/companies/[id]/contacts/route.ts")
-    for (const action of ["changePersonChannel", "correctPersonChannel", "addRelationship", "changeTitle"]) assert.match(route, new RegExp(`case "${action}"`), action)
+    for (const action of ["saveContact", "createContactFull", "restoreContact", "excludeFromOperationalEmail", "resumeOperationalEmail", "changePersonChannel", "correctPersonChannel", "addRelationship", "changeTitle"]) assert.match(route, new RegExp(`case "${action}"`), action)
     assert.match(route, /organizationId: id/)
     assert.doesNotMatch(route, /body\.organizationId/)
+  })
+
+  it("keeps Primary Contact a separate designation: not a title, not a dropdown option, and one badge/list/stat source", () => {
+    const helpers = read("src/components/contacts/contact-helpers.ts")
+    const roles = helpers.slice(helpers.indexOf("export const STANDARD_ROLES"), helpers.indexOf("];", helpers.indexOf("export const STANDARD_ROLES")))
+    assert.doesNotMatch(roles, /Primary Contact"|"Driver"/)
+    assert.match(read("src/components/contacts/ContactInspector.tsx"), /id="edit-is-primary"/)
+    assert.match(read("src/components/contacts/ManualContactDialog.tsx"), /id="manual-primary"/)
+    assert.doesNotMatch(read("src/components/contacts/ContactStats.tsx"), /Source|PostgreSQL records/)
   })
 
   it("the company profile links to the retained Contacts page", () => {
@@ -75,7 +95,7 @@ describe("canonical adapter", () => {
 
   it("maps a person with only a name; identity is Unverified and nothing is invented", () => {
     const [c] = A.toUiContacts({ currentChannels: [], contacts: [contact()] }, { id: "o", name: "Acme" })
-    assert.deepEqual([c.firstName, c.lastName, c.email, c.phone, c.identityStatus, c.isPrimary, c.role], ["Jane Roe", "", "", "", "unverified", true, "Primary Contact"])
+    assert.deepEqual([c.firstName, c.lastName, c.email, c.phone, c.identityStatus, c.isPrimary, c.role], ["Jane Roe", "", "", "", "unverified", true, "General Contact"])
     assert.deepEqual([c.dob, c.dlNumber, c.notes, c.evidence.length], ["", "", "", 0])
   })
 
@@ -98,17 +118,17 @@ describe("canonical adapter", () => {
   })
 })
 
-describe("operational email inclusion is a separate concept with no canonical store yet", () => {
-  const routing = readFileSync(path.join(process.cwd(), "lib/contacts/communication-routing.ts"), "utf8")
-  it("documents that the exclusion preference is unsupported and names the minimal schema, keeping the default", () => {
-    assert.match(routing, /OPERATIONAL_INCLUSION_OVERRIDE = \{ supported: false/)
-    assert.match(routing, /effective-dated, audited table/)
-    assert.match(routing, /CANNOT BE RECORDED TODAY/)
-    assert.match(routing, /never require removing the person's email, changing the primary contact or ending the relationship|must never require removing the person's email, changing the primary contact or ending the relationship/)
+describe("operational email inclusion is its own audited record", () => {
+  const routing = read("lib/contacts/communication-routing.ts")
+  it("documents the exclusion record and that it never ends an email, the relationship or the Primary Contact designation", () => {
+    assert.match(routing, /organization_person_operational_email_exclusions/)
+    assert.match(routing, /WITHOUT touching the person, their email, their relationship or the PRIMARY designation/)
+    assert.doesNotMatch(routing, /CANNOT BE RECORDED TODAY|OPERATIONAL_INCLUSION_OVERRIDE/)
   })
-  it("does not offer end-email or end-primary as a way to stop copying the primary contact", () => {
-    const page = readFileSync(path.join(process.cwd(), "app/companies/[id]/contacts/page.tsx"), "utf8")
-    assert.doesNotMatch(page, /stop (copying|including)|exclude from (operational )?email/i)
+  it("the page offers it as a distinct control, never as ending the email, the relationship or the designation", () => {
+    assert.match(page, /action: "excludeFromOperationalEmail"/)
+    assert.match(page, /action: "resumeOperationalEmail"/)
+    assert.match(read("src/components/contacts/ContactInspector.tsx"), /Stop copying on operational email/)
   })
 })
 
@@ -118,8 +138,8 @@ describe("company phone and email are managed on the Company Profile, not on Con
     assert.doesNotMatch(page, /CompanyLines|company-lines|Company phone|Add line/i)
     assert.doesNotMatch(page, /action: "(addChannel|endChannel)"/)
   })
-  it("keeps the person-level email editing", () => {
-    assert.match(page, /addPersonChannel/)
-    assert.match(page, /changePersonChannel/)
+  it("keeps the person-level email editing (the save sends the person's own email; the server decides add, change or end)", () => {
+    assert.match(page, /email: \(editFormData\.email \?\? ""\)\.trim\(\)/)
+    assert.match(read("lib/contacts/contact-save.ts"), /addPersonChannel|changePersonChannel|endPersonChannel/)
   })
 })

@@ -105,3 +105,15 @@ export async function hasAdditionalSystemCapability(
     throw error
   }
 }
+
+/**
+ * Like hasAdditionalSystemCapability, but a denial THROWS the standard authorization-denied error (mapped to HTTP 403). For a write that
+ * needs a second capability on the same transaction: the caller never grants anything, and the throw rolls the whole transaction back.
+ */
+export async function requireAdditionalSystemCapability(
+  client: PoolClient,
+  decision: SystemAuthorizationDecision,
+  capability: TesSystemCapability,
+): Promise<void> {
+  if (!(await hasAdditionalSystemCapability(client, decision, capability))) throw new TesAuthorizationDeniedError()
+}

@@ -13,6 +13,9 @@ export type CanonicalChannel = {
   effectiveFrom: string
   effectiveTo?: string | null
   isPreferred?: boolean
+  changeReason?: string
+  createdAt?: string
+  recordStatus?: string
 }
 type CanonicalPeriod = { id: string; effectiveFrom: string; effectiveTo: string | null; recordStatus?: string; changeReason?: string; createdAt?: string }
 export type CanonicalContactView = {
@@ -29,15 +32,33 @@ export type CanonicalContactView = {
     purposes: Array<{ id: string; purpose: string; isPrimary: boolean }>
   }
 }
-export type CanonicalContactsView = { currentChannels: CanonicalChannel[]; channels?: CanonicalChannel[]; contacts: CanonicalContactView[] }
+export type CanonicalExclusion = {
+  id: string
+  relationshipId: string
+  effectiveFrom: string
+  effectiveTo: string | null
+  instructionSource: string
+  recordStatus: string
+}
+export type CanonicalContactsView = {
+  currentChannels: CanonicalChannel[]
+  channels?: CanonicalChannel[]
+  contacts: CanonicalContactView[]
+  operationalEmailExclusions?: CanonicalExclusion[]
+}
 
 const day = (instant: string | null | undefined) => (instant ? String(instant).slice(0, 10) : "")
 
-/** The title the page shows as the person's role at this company: their current title, else what the purposes say, else General Contact. */
+/**
+ * "Primary Contact" is a DESIGNATION (its own checkbox), never a job title: a title that was saved with that word before this was
+ * enforced is shown as a General Contact so it can never contradict the designation badge.
+ */
+const isDesignationWord = (title: string) => title.trim().toLowerCase() === "primary contact"
+
+/** The job title the page shows as the person's role at this company: their current title, else General Contact. Never the designation. */
 export function roleOf(view: CanonicalContactView): string {
-  const title = view.current.titles[0]?.titleDisplay
-  if (title) return title
-  return view.current.purposes.some((p) => p.purpose === "PRIMARY" && p.isPrimary) ? "Primary Contact" : "General Contact"
+  const title = view.current.titles.map((t) => t.titleDisplay).find((t) => !isDesignationWord(t))
+  return title ?? "General Contact"
 }
 
 export const isPrimaryContact = (view: CanonicalContactView): boolean => view.current.purposes.some((p) => p.purpose === "PRIMARY" && p.isPrimary)
@@ -49,24 +70,83 @@ export function personEmail(view: CanonicalContactView): CanonicalChannel | null
 }
 export const personPhone = (view: CanonicalContactView): CanonicalChannel | null => view.current.channels.find((c) => c.channelType === "PHONE") ?? null
 
-/** Revision events derived from the canonical history rows (the Master Register holds the actor and authority of each change). */
-export function eventsOf(view: CanonicalContactView, companyName: string): ContactEvent[] {
-  const events: ContactEvent[] = []
-  const add = (id: string, at: string | undefined | null, action: ContactEvent["action"], summary: string) => events.push({ id, timestamp: at || "", action, summary, actor: "Recorded in the Master Register" })
-  for (const name of view.names ?? []) {
-    const label = [name.givenName, name.familyName].filter(Boolean).join(" ")
-    const corrected = name.recordStatus && name.recordStatus !== "active"
-    add(`name-${name.id}`, name.effectiveFrom, name.changeReason === "INITIAL" ? "CREATED" : "CONTACT_UPDATED", `${name.changeReason === "INITIAL" ? "Recorded" : name.changeReason === "CORRECTION" ? "Corrected" : "Changed"} name: ${label}${corrected ? " (superseded)" : ""}.`)
+const GROUP_WINDOW_MS = 1500
+const ms = (instant: string) => new Date(instant).getTime()
+const person = (n: { givenName: string | null; familyName: string | null } | null | undefined) => [n?.givenName, n?.familyName].filter(Boolean).join(" ")
+
+/**
+ * Business operations derived from the canonical history rows. The Master Register keeps every technical event (one per row written);
+ * what a person reads here is the OPERATION: creating a contact writes a person, a name, a relationship, an email, a title and a
+ * Primary Contact designation, and shows as ONE "Contact Created" entry. Rows written in the same transaction share their creation
+ * time; a change and the end of the row it replaces are one operation; separate saves stay separate entries. A save that touched several
+ * things shows as one "Contact Updated" entry that lists them. The actor and authority of each change are in the Master Register.
+ */
+export function eventsOf(view: CanonicalContactView, companyName: string, exclusions: CanonicalExclusion[] = []): ContactEvent[] {
+  type Part = { at: string; text: string; kind: "create" | "name" | "email" | "phone" | "role" | "primary" | "relation-start" | "relation-end" | "operational-email" }
+  const parts: Part[] = []
+  const add = (at: string | null | undefined, kind: Part["kind"], text: string) => at && parts.push({ at, kind, text })
+  const names = (view.names ?? []).filter((n) => !n.recordStatus || n.recordStatus === "active")
+
+  for (const n of names) {
+    if (n.changeReason === "INITIAL") add(n.createdAt ?? n.effectiveFrom, "create", `Contact created: ${person(n)}`)
+    else {
+      const previous = names.find((o) => o.effectiveTo && o.effectiveTo === n.effectiveFrom)
+      add(n.createdAt ?? n.effectiveFrom, "name", n.changeReason === "CORRECTION" ? `Name corrected to ${person(n)}` : `Name changed${previous ? ` from ${person(previous)}` : ""} to ${person(n)}`)
+    }
   }
-  for (const p of view.purposes ?? []) {
-    if (p.purpose !== "PRIMARY" || !p.isPrimary) continue
-    add(`primary-${p.id}-from`, p.effectiveFrom, "PRIMARY_CHANGED", `Designated Primary Contact for ${companyName} (effective ${day(p.effectiveFrom)}).`)
-    if (p.effectiveTo) add(`primary-${p.id}-to`, p.effectiveTo, "PRIMARY_CHANGED", `Primary Contact designation for ${companyName} ended (${day(p.effectiveTo)}).`)
+  const channels = (view.channels ?? []).filter((c) => !c.recordStatus || c.recordStatus === "active")
+  for (const c of channels) {
+    const kind = c.channelType === "PHONE" ? "phone" : "email"
+    const noun = kind === "phone" ? "phone" : "email"
+    const successor = channels.find((o) => o.channelType === c.channelType && c.effectiveTo && o.effectiveFrom === c.effectiveTo)
+    const predecessor = channels.find((o) => o.channelType === c.channelType && o.effectiveTo && o.effectiveTo === c.effectiveFrom)
+    add(c.createdAt ?? c.effectiveFrom, kind, c.changeReason === "CORRECTION" ? `${noun[0].toUpperCase()}${noun.slice(1)} corrected` : predecessor ? `${noun[0].toUpperCase()}${noun.slice(1)} changed` : `${noun[0].toUpperCase()}${noun.slice(1)} recorded`)
+    if (c.effectiveTo && !successor) add(c.effectiveTo, kind, `${noun[0].toUpperCase()}${noun.slice(1)} removed (kept in history)`)
   }
-  for (const t of view.titles ?? []) add(`title-${t.id}`, t.effectiveFrom, "ROLE_UPDATED", `Role recorded: ${t.titleDisplay}${t.effectiveTo ? ` (until ${day(t.effectiveTo)})` : ""}.`)
-  for (const c of view.channels ?? []) add(`channel-${c.id}`, c.effectiveFrom, "CONTACT_UPDATED", `${c.channelType === "PHONE" ? "Phone" : "Email"} recorded: ${c.valueDisplay}${c.effectiveTo ? ` (ended ${day(c.effectiveTo)})` : ""}.`)
-  add(`rel-${view.relationship.id}`, view.relationship.effectiveFrom, "RELATIONSHIP_ADDED", `Associated with ${companyName} (since ${day(view.relationship.effectiveFrom)}).`)
-  if (view.relationship.effectiveTo) add(`rel-${view.relationship.id}-end`, view.relationship.effectiveTo, "ARCHIVED", `Association with ${companyName} ended (${day(view.relationship.effectiveTo)}); kept in history.`)
+  const titles = (view.titles ?? []).filter((t) => !t.recordStatus || t.recordStatus === "active")
+  for (const t of titles) {
+    if (isDesignationWord(t.titleDisplay)) continue
+    const predecessor = titles.find((o) => o.effectiveTo && o.effectiveTo === t.effectiveFrom)
+    add(t.createdAt ?? t.effectiveFrom, "role", `Role ${predecessor ? "changed" : "set"} to ${t.titleDisplay}`)
+    if (t.effectiveTo && !titles.some((o) => o.effectiveFrom === t.effectiveTo)) add(t.effectiveTo, "role", "Role cleared")
+  }
+  for (const p of (view.purposes ?? []).filter((x) => x.purpose === "PRIMARY" && x.isPrimary && (!x.recordStatus || x.recordStatus === "active"))) {
+    add(p.createdAt ?? p.effectiveFrom, "primary", `Designated Primary Contact for ${companyName}`)
+    if (p.effectiveTo) add(p.effectiveTo, "primary", `Primary Contact designation ended`)
+  }
+  add(view.relationship.createdAt ?? view.relationship.effectiveFrom, "relation-start", `Associated with ${companyName}`)
+  if (view.relationship.effectiveTo) add(view.relationship.effectiveTo, "relation-end", `Association with ${companyName} ended (kept in history)`)
+  for (const x of exclusions.filter((e) => e.relationshipId === view.relationship.id && e.recordStatus === "active")) {
+    add(x.effectiveFrom, "operational-email", `Stopped copying on operational email (${x.instructionSource.toLowerCase().replace(/_/g, " ")})`)
+    if (x.effectiveTo) add(x.effectiveTo, "operational-email", "Copying on operational email resumed")
+  }
+
+  // Cluster rows written together (same transaction or the same save) into one operation.
+  parts.sort((a, b) => ms(a.at) - ms(b.at))
+  const groups: Part[][] = []
+  for (const part of parts) {
+    const last = groups[groups.length - 1]
+    if (last && ms(part.at) - ms(last[last.length - 1].at) <= GROUP_WINDOW_MS) last.push(part)
+    else groups.push([part])
+  }
+  const events: ContactEvent[] = groups.map((group, index) => {
+    const kinds = new Set(group.map((p) => p.kind))
+    const only = (...allowed: Part["kind"][]) => [...kinds].every((k) => allowed.includes(k))
+    let label = "Contact Updated"
+    let action: ContactEvent["action"] = "CONTACT_UPDATED"
+    let summary = group.map((p) => p.text).join("; ") + "."
+    if (kinds.has("create")) {
+      label = "Contact Created"
+      action = "CREATED"
+      const extras = group.filter((p) => p.kind !== "create" && p.kind !== "relation-start").map((p) => p.text.replace(/ recorded$/, "").replace(/^Role set to /, "role ").replace(/^Designated Primary Contact.*/, "Primary Contact").toLowerCase())
+      summary = `${group.find((p) => p.kind === "create")!.text.replace("Contact created: ", "")} was added${extras.length ? ` with ${extras.join(", ")}` : ""}.`
+    } else if (only("primary")) { label = "Primary Contact Changed"; action = "PRIMARY_CHANGED" }
+    else if (only("relation-end")) { label = "Contact Archived"; action = "ARCHIVED" }
+    else if (only("relation-start")) { label = "Contact Restored"; action = "RESTORED" }
+    else if (only("operational-email")) { label = "Operational Email Preference Changed"; action = "CONTACT_UPDATED" }
+    else if (only("role")) { label = "Role Updated"; action = "ROLE_UPDATED" }
+    return { id: `op-${group[0].at}-${index}`, timestamp: group[group.length - 1].at, action, label, summary, actor: "Recorded in the Master Register" }
+  })
   return events.sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
 }
 
@@ -115,7 +195,7 @@ export function toUiContacts(view: CanonicalContactsView, company: { id: string;
       identityStatus: "unverified",
       relationships: [relationship],
       evidence: [],
-      events: eventsOf(cv, company.name),
+      events: eventsOf(cv, company.name, view.operationalEmailExclusions),
       createdAt: cv.person.createdAt ?? cv.relationship.createdAt ?? cv.relationship.effectiveFrom,
       updatedAt: cv.relationship.effectiveTo ?? cv.relationship.effectiveFrom,
     } satisfies Contact

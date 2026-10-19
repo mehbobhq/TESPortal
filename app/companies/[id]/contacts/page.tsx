@@ -9,34 +9,35 @@ import { LoadingState } from "@/src/components/shared/StateDisplays";
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
 import { ContactStats } from "@/src/components/contacts/ContactStats";
 import { ContactDirectory } from "@/src/components/contacts/ContactDirectory";
-import { ContactInspector } from "@/src/components/contacts/ContactInspector";
+import { ContactInspector, type OperationalEmailControl } from "@/src/components/contacts/ContactInspector";
 import { ManualContactDialog } from "@/src/components/contacts/ManualContactDialog";
 import {
-  isPrimaryContact,
-  personEmail,
-  personPhone,
   toUiContacts,
   type CanonicalContactsView,
   type CanonicalContactView,
 } from "@/src/components/contacts/canonical-adapter";
-import { ALL_JURISDICTIONS, STANDARD_ROLES, findDuplicateContact, isWithinThreeYears } from "@/src/components/contacts/contact-helpers";
+import { ALL_JURISDICTIONS, CANADIAN_PROVINCES, STANDARD_ROLES, findDuplicateContact, isWithinThreeYears } from "@/src/components/contacts/contact-helpers";
 import type { Contact } from "@/src/components/contacts/types";
 
-/** Why the identity-document fields and Document / OCR intake are switched off here (shown wherever they would have been used). */
-const IDENTITY_NOT_STORED =
-  "Date of birth, driver licence details and identity documents are not stored in Contacts: they belong to the Drivers and evidence workflows. Nothing is kept in this browser.";
+const IDENTITY_NOTE =
+  "Identity stays Unverified until it is supported by verification evidence. Entering a date of birth or driver licence number records data; it does not verify identity.";
+const IDENTITY_NO_PERMISSION =
+  "Date of birth and driver licence details are restricted. Recording them needs both the Person Identity and Driver permissions.";
 const OCR_UNAVAILABLE =
   "Document / OCR intake is not available here yet: its scans and drafts could only be kept in this browser, and Contacts does not store identity documents.";
+
+type IdentityAccess = { read: boolean; manage: boolean; licenceRead: boolean; licenceManage: boolean };
+type IdentityDetails = { personId: string; access: IdentityAccess; dateOfBirth: string | null; licence: { id: string; number: string; country: string; region: string; licenceClass: string | null; expiryDate: string | null } | null };
 
 type Company = { id: string; name: string; kind?: string; status?: string };
 type LoadState = "loading" | "ready" | "denied" | "error" | "missing";
 
 const EMPTY_FORM = {
-  firstName: "", lastName: "", dob: "", dlNumber: "", dlState: "ON", dlExpiry: "", dlIssueDate: "", dlClass: "", dlRestrictions: "",
-  email: "", phone: "", role: "Safety Manager", isPrimary: false, notes: "",
+  firstName: "", lastName: "", dob: "", dlNumber: "", dlState: "ON", dlExpiry: "", dlIssueDate: "", dlClass: "",
+  email: "", phone: "", role: "General Contact", isPrimary: false, notes: "",
 };
 
-const sameWords = (a: string, b: string) => a.toLowerCase().split(/\s+/).filter(Boolean).join(" ") === b.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+const countryOf = (region: string) => (CANADIAN_PROVINCES.includes(region) ? "CA" : "US");
 
 // =========================================================================
 // CONTACTS PAGE: the company's people and the company's own phone / email lines, from the canonical PostgreSQL contacts domain.
@@ -53,6 +54,9 @@ export default function ContactsPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [identityAccess, setIdentityAccess] = useState<IdentityAccess | null>(null);
+  const [identity, setIdentity] = useState<IdentityDetails | null>(null);
+  const [identityNonce, setIdentityNonce] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -89,6 +93,15 @@ export default function ContactsPage() {
     void load();
   }, [load]);
 
+  const identityUrl = `${base}/identity`;
+  // What THIS actor may do with identity details (the server enforces it again on every write).
+  useEffect(() => {
+    fetch(identityUrl, { cache: "no-store" })
+      .then(async (response) => (response.ok ? ((await response.json()) as IdentityDetails) : null))
+      .then((body) => setIdentityAccess(body?.access ?? null))
+      .catch(() => setIdentityAccess(null));
+  }, [identityUrl]);
+
   // Deep link (?contact=<person id>) from the company profile and other workspaces.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -116,11 +129,14 @@ export default function ContactsPage() {
     return { ok: true, body };
   };
   const run = async (work: () => Promise<boolean>): Promise<boolean> => {
+    // A save already in flight is never repeated (a double click used to send the same change twice and report the second as a failure).
+    if (busy) return false;
     setBusy(true);
     setActionError(null);
     try {
       const ok = await work();
       await load();
+      setIdentityNonce((n) => n + 1);
       return ok;
     } catch {
       setActionError("The change could not be saved.");
@@ -157,13 +173,38 @@ export default function ContactsPage() {
     () => [...companyContacts].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`)),
     [companyContacts],
   );
-  const selectedContact = useMemo(() => contacts.find((c) => c.id === selectedContactId) ?? null, [contacts, selectedContactId]);
+  const baseSelected = useMemo(() => contacts.find((c) => c.id === selectedContactId) ?? null, [contacts, selectedContactId]);
+  useEffect(() => {
+    setIdentity(null);
+    if (!selectedContactId) return;
+    let cancelled = false;
+    fetch(`${identityUrl}?personId=${encodeURIComponent(selectedContactId)}`, { cache: "no-store" })
+      .then(async (response) => (response.ok ? ((await response.json()) as IdentityDetails) : null))
+      .then((body) => !cancelled && setIdentity(body))
+      .catch(() => !cancelled && setIdentity(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedContactId, identityUrl, identityNonce]);
+  // The canonical identity record (date of birth, licence) is laid over the listed contact; nothing is guessed when it is restricted or empty.
+  const selectedContact = useMemo<Contact | null>(() => {
+    if (!baseSelected) return null;
+    if (!identity || !identity.access.read) return baseSelected;
+    return {
+      ...baseSelected,
+      dob: identity.dateOfBirth ?? "",
+      dlNumber: identity.licence?.number ?? "",
+      dlState: identity.licence?.region ?? "",
+      dlExpiry: identity.licence?.expiryDate ?? "",
+      dlClass: identity.licence?.licenceClass ?? "",
+    };
+  }, [baseSelected, identity]);
   const selectedContactRelationship = selectedContact?.relationships[0] ?? null;
 
   // --- Edit -------------------------------------------------------------------------------------------------------------
   const handleStartEdit = (contact: Contact) => {
     setEditFormData({
-      firstName: contact.firstName, lastName: contact.lastName, dob: "", dlNumber: "", dlState: "ON", dlExpiry: "", dlIssueDate: "", dlClass: "", dlRestrictions: "",
+      firstName: contact.firstName, lastName: contact.lastName, dob: contact.dob, dlNumber: contact.dlNumber, dlState: contact.dlState || "ON", dlExpiry: contact.dlExpiry, dlIssueDate: "", dlClass: contact.dlClass,
       email: contact.email, phone: contact.phone, notes: "", companyRole: contact.role, isPrimary: contact.isPrimary,
     });
     setEditFormErrors({});
@@ -175,47 +216,42 @@ export default function ContactsPage() {
     setEditFormErrors({});
   };
 
+  /** What the identity fields of a form ask for, compared with the stored record: only a difference is sent, so an untouched field is never rewritten. */
+  const identityChange = (form: { dob?: string; dlNumber?: string; dlState?: string; dlExpiry?: string; dlClass?: string }, stored: Contact | null) => {
+    if (!identityAccess?.licenceManage) return undefined;
+    const out: { dateOfBirth?: string | null; licence?: unknown } = {};
+    const dob = (form.dob ?? "").trim();
+    if (dob !== (stored?.dob ?? "")) out.dateOfBirth = dob || null;
+    const number = (form.dlNumber ?? "").trim();
+    const region = form.dlState || "ON";
+    const expiry = (form.dlExpiry ?? "").trim();
+    const klass = (form.dlClass ?? "").trim();
+    const changed = number !== (stored?.dlNumber ?? "") || (number && (region !== (stored?.dlState || "ON") || expiry !== (stored?.dlExpiry ?? "") || klass !== (stored?.dlClass ?? "")));
+    if (changed) out.licence = number ? { number, country: countryOf(region), region, licenceClass: klass || null, expiryDate: expiry || null } : null;
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+
   const handleSaveEdit = async () => {
     if (!selectedContact) return;
-    const cv = canonicalOf(selectedContact.id);
-    if (!cv) return;
     const first = (editFormData.firstName ?? "").trim();
     const last = (editFormData.lastName ?? "").trim();
     if (!first && !last) return setEditFormErrors({ firstName: "A name is required" });
-    const email = (editFormData.email ?? "").trim();
-    const phone = (editFormData.phone ?? "").trim();
     const role = (editFormData.companyRole ?? "").trim();
-    const wantsPrimary = !!editFormData.isPrimary;
-    const orgPerson = { personId: cv.person.id };
-
+    // ONE request, ONE transaction: the server compares with the stored record and applies only what differs. It commits entirely or not at
+    // all, so a failure here means nothing was changed (and a repeated save finds nothing left to do).
     const done = await run(async () => {
-      // Name: a restructure of the same words is a correction; a different name is a change. Both keep the earlier name as history.
-      const current = cv.current.name;
-      if (first !== (current?.givenName ?? "") || last !== (current?.familyName ?? "")) {
-        const before = [current?.givenName, current?.familyName].filter(Boolean).join(" ");
-        const result = await act({ action: sameWords(before, `${first} ${last}`) ? "correctName" : "changeName", ...orgPerson, givenName: first || null, familyName: last || null });
-        if (!result.ok) return false;
-      }
-      // Email and phone are THIS PERSON's own channels (the company's lines are separate): editing one never touches the company.
-      for (const [type, value, existing, preferred] of [["EMAIL", email, personEmail(cv), true], ["PHONE", phone, personPhone(cv), false]] as const) {
-        if (existing && !value) {
-          if (!(await act({ action: "endPersonChannel", ...orgPerson, channelId: existing.id })).ok) return false;
-        } else if (!existing && value) {
-          if (!(await act({ action: "addPersonChannel", ...orgPerson, channel: { type, value, preferred } })).ok) return false;
-        } else if (existing && value && value.toLowerCase() !== existing.valueDisplay.toLowerCase()) {
-          if (!(await act({ action: "changePersonChannel", ...orgPerson, channelId: existing.id, value })).ok) return false;
-        }
-      }
-      if (role && role !== selectedContact.role) {
-        const title = cv.current.titles[0];
-        const result = title ? await act({ action: "changeTitle", titleId: title.id, title: role }) : await act({ action: "addTitle", relationshipId: cv.relationship.id, title: role });
-        if (!result.ok) return false;
-      }
-      if (wantsPrimary !== isPrimaryContact(cv)) {
-        const assignment = cv.current.purposes.find((p) => p.purpose === "PRIMARY" && p.isPrimary);
-        const result = wantsPrimary ? await act({ action: "makePrimary", relationshipId: cv.relationship.id, purpose: "PRIMARY" }) : assignment ? await act({ action: "endPurpose", assignmentId: assignment.id }) : { ok: true as const, body: null };
-        if (!result.ok) return false;
-      }
+      const saved = await act({
+        action: "saveContact",
+        personId: selectedContact.id,
+        name: { givenName: first || null, familyName: last || null },
+        email: (editFormData.email ?? "").trim(),
+        phone: (editFormData.phone ?? "").trim(),
+        ...(role && role !== selectedContact.role ? { title: role } : {}),
+        primary: !!editFormData.isPrimary,
+        identity: identityChange(editFormData, selectedContact),
+      });
+      if (!saved.ok) return false;
+      setNotice(null);
       return true;
     });
     if (done) setIsEditing(false);
@@ -240,21 +276,18 @@ export default function ContactsPage() {
     setManualDuplicateWarning(null);
 
     const ok = await run(async () => {
-      const email = manualForm.email.trim();
-      const phone = manualForm.phone.trim();
       const created = await act({
-        action: "createContact",
+        action: "createContactFull",
         name: { ...(first ? { givenName: first } : {}), ...(last ? { familyName: last } : {}) },
-        titles: manualForm.role ? [manualForm.role] : [],
-        channels: [...(email ? [{ type: "EMAIL", value: email, preferred: true }] : []), ...(phone ? [{ type: "PHONE", value: phone }] : [])],
+        email: manualForm.email.trim(),
+        phone: manualForm.phone.trim(),
+        ...(manualForm.role && manualForm.role !== "General Contact" ? { title: manualForm.role } : {}),
+        primary: manualForm.isPrimary,
+        identity: identityChange(manualForm, null),
       });
       if (!created.ok) return false;
       const personId: string | undefined = created.body?.contact?.person?.id;
       if (personId) setSelectedContactId(personId);
-      if (manualForm.isPrimary) {
-        const primary = await act({ action: "makePrimary", relationshipId: created.body.contact.relationship.id, purpose: "PRIMARY" });
-        if (!primary.ok) return false;
-      }
       const matches: Array<{ displayName: string }> = Array.isArray(created.body?.matches) ? created.body.matches : [];
       setNotice(matches.length > 0 ? `Possible existing people (review only; nothing was merged): ${matches.map((m) => m.displayName).join(", ")}.` : null);
       return true;
@@ -278,11 +311,25 @@ export default function ContactsPage() {
     if (!cv) return;
     void run(async () => {
       if (!contact.isArchived) return (await act({ action: "endRelationship", relationshipId: cv.relationship.id })).ok;
-      // Restore: the SAME person is associated again (a person record is never recreated or duplicated).
-      if (cv.person.recordStatus === "archived" && !(await act({ action: "restorePerson", personId: cv.person.id })).ok) return false;
-      return (await act({ action: "addRelationship", personId: cv.person.id })).ok;
+      // Restore: the SAME person is associated again (a person record is never recreated or duplicated), in one transaction.
+      return (await act({ action: "restoreContact", personId: cv.person.id })).ok;
     });
   };
+
+  const operationalEmail: OperationalEmailControl | null = (() => {
+    if (!selectedContact || selectedContact.isArchived) return null;
+    const relationshipId = canonicalOf(selectedContact.id)?.relationship.id;
+    if (!relationshipId) return null;
+    const exclusion = (view?.operationalEmailExclusions ?? []).find((row) => row.relationshipId === relationshipId && row.recordStatus === "active" && row.effectiveTo === null);
+    return {
+      excluded: !!exclusion,
+      since: exclusion?.effectiveFrom,
+      source: exclusion?.instructionSource,
+      canManage: true,
+      onExclude: ({ source, reference }) => void run(async () => (await act({ action: "excludeFromOperationalEmail", relationshipId, source, reference })).ok),
+      onResume: () => void run(async () => (await act({ action: "resumeOperationalEmail", exclusionId: exclusion?.id })).ok),
+    };
+  })();
 
   // --- Rendering --------------------------------------------------------------------------------------------------------------
   if (state === "loading") {
@@ -346,7 +393,7 @@ export default function ContactsPage() {
       )}
       <p className="flex items-start gap-2 text-[11px] text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        <span>Identity stays Unverified until it is supported by verification evidence. {IDENTITY_NOT_STORED}</span>
+        <span>{IDENTITY_NOTE}</span>
       </p>
 
       <ContactStats contacts={contacts} companyId={companyId} />
@@ -356,13 +403,17 @@ export default function ContactsPage() {
           {...{ selectedContact, selectedContactRelationship, companyId, isEditing, editFormData, setEditFormData, editFormErrors, editDuplicateWarning: null, showOlderEvidence, setShowOlderEvidence, STANDARD_ROLES, ALL_JURISDICTIONS, isWithinThreeYears, handleStartEdit, handleToggleArchive, handleSelectContact, handleCancelEdit, handleSaveEdit: () => void handleSaveEdit() }}
           setPreviewEvidence={() => undefined}
           companyName={company.name}
-          identityFieldsNote={IDENTITY_NOT_STORED}
+          identityFieldsNote={identityAccess?.licenceManage ? undefined : IDENTITY_NO_PERMISSION}
+          identityReadable={identityAccess?.read !== false}
+          operationalEmail={operationalEmail}
+          auditHref={`/companies/${encodeURIComponent(companyId)}/record-of-events`}
+          busy={busy}
         />
       </div>
       <ManualContactDialog
         {...{ isManualModalOpen, manualForm, setManualForm, manualFormErrors, manualDuplicateWarning, STANDARD_ROLES, ALL_JURISDICTIONS, setIsManualModalOpen, handleManualSave: () => void handleManualSave() }}
         companyName={company.name}
-        identityFieldsNote={IDENTITY_NOT_STORED}
+        identityFieldsNote={identityAccess?.licenceManage ? undefined : IDENTITY_NO_PERMISSION}
       />
     </div>
   );

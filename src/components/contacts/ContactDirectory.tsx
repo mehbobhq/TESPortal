@@ -140,7 +140,7 @@ export function ContactDirectory({
                                   )}
                                 </div>
                                 <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                                  {contact.id} • {contact.globalId}
+                                  {contact.id}{contact.globalId && contact.globalId !== contact.id ? ` • ${contact.globalId}` : ""}
                                 </p>
                               </div>
                             </div>

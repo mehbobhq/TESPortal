@@ -5,9 +5,14 @@ import { useRouter } from "next/navigation"
 import {
   AlertTriangle,
   ArrowLeft,
+  Building2,
   ChevronDown,
+  FileBadge,
   Info,
+  MapPin,
   Save,
+  Truck,
+  UserRound,
   ShieldAlert,
   XCircle,
 } from "lucide-react"
@@ -785,8 +790,6 @@ function evaluateDuplicates(form: HTMLFormElement) {
 /* =========================================================
    SMALL FORM PARTS
 ========================================================= */
-const SELECT_CLASS =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 /** CRA GST/HST program account: nine digits, RT, four digits (spaces and hyphens are not significant). */
 const GST_HST_PATTERN = /^\d{9}[\s-]*RT[\s-]*\d{4}$/i
@@ -811,7 +814,7 @@ function Field({
 }) {
   return (
     <div className={`space-y-1.5 ${className}`}>
-      <Label htmlFor={htmlFor} className="gap-1">
+      <Label htmlFor={htmlFor} className="gap-1 text-xs font-medium text-muted-foreground">
         {label}
         {required && <span className="text-destructive" aria-hidden="true">*</span>}
         {hint && (
@@ -830,33 +833,29 @@ function Field({
   )
 }
 
-function NativeChoice({
-  name,
-  label,
-  options,
+function Section({
+  title,
+  icon: Icon,
+  accent = false,
+  grid = true,
+  children,
 }: {
-  name: string
-  label: string
-  options: Array<[string, string]>
+  title: string
+  icon: React.ComponentType<{ className?: string }>
+  accent?: boolean
+  grid?: boolean
+  children: React.ReactNode
 }) {
   return (
-    <Field label={label} htmlFor={name}>
-      <select id={name} name={name} defaultValue={options[0][0]} className={SELECT_CLASS}>
-        {options.map(([value, text]) => (
-          <option key={value} value={value}>
-            {text}
-          </option>
-        ))}
-      </select>
-    </Field>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border bg-card p-4">
-      <h2 className="mb-3 text-sm font-semibold">{title}</h2>
-      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+      {accent && <div className="h-0.5 bg-gradient-to-r from-primary via-primary/60 to-transparent" aria-hidden="true" />}
+      <header className="flex items-center gap-2.5 border-b border-border bg-muted/40 px-4 py-2.5">
+        <span className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary" aria-hidden="true">
+          <Icon className="size-3.5" />
+        </span>
+        <h2 className="text-[13px] font-semibold tracking-tight text-foreground">{title}</h2>
+      </header>
+      <div className={grid ? "grid gap-x-4 gap-y-4 p-4 sm:grid-cols-2 lg:grid-cols-4" : "space-y-5 p-4"}>{children}</div>
     </section>
   )
 }
@@ -961,9 +960,12 @@ function SmartAddressBlock({
   }
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
-      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="space-y-3 border-t border-border/70 pt-4 first:border-t-0 first:pt-0">
+      <h3 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary/80">
+        <span className="size-1.5 rounded-full bg-primary/60" aria-hidden="true" />
+        {title}
+      </h3>
+      <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Street" htmlFor={`${prefix}_street`} className="lg:col-span-2" error={errorFor(`${prefix}_street`)}>
           <Input id={`${prefix}_street`} name={`${prefix}_street`} />
         </Field>
@@ -1281,9 +1283,9 @@ export default function NewCompanyPage() {
         }
       />
 
-      <form onSubmit={handleCreateCompany} onChange={handleFormChange} className="flex max-w-6xl flex-col gap-4" noValidate>
+      <form onSubmit={handleCreateCompany} onChange={handleFormChange} className="flex max-w-6xl flex-col gap-5" noValidate>
         {/* ---------------------------------------------------- COMPANY */}
-        <Section title="Company">
+        <Section title="Company" icon={Building2} accent>
           <Field label="Record Type" required error={errorFor("companyType")}>
             <input type="hidden" name="companyType" value={selectedType} />
             <Select value={selectedType} onValueChange={(value) => setSelectedType(value ?? "")}>
@@ -1384,7 +1386,7 @@ export default function NewCompanyPage() {
         </Section>
 
         {/* ---------------------------------------------------- CONTACT */}
-        <Section title="Contact">
+        <Section title="Contact" icon={UserRound}>
           <PrimaryContactField error={errorFor("contactPerson") ?? errorFor("contactPersonId")} />
 
           <Field label="Phone" htmlFor="phone" error={errorFor("phone")}>
@@ -1407,7 +1409,7 @@ export default function NewCompanyPage() {
         {/* ---------------------------------------------------- CUSTOMER */}
         {isCustomer && (
           <>
-            <Section title="Service">
+            <Section title="Service" icon={Truck}>
               <Field
                 label="Service Start Date"
                 htmlFor="startDate"
@@ -1489,17 +1491,15 @@ export default function NewCompanyPage() {
               </Field>
             </Section>
 
-            <Section title="Carrier & Tax IDs">
+            <Section title="Carrier & Tax IDs" icon={FileBadge}>
               {isCanada && (
                 <>
                   <Field label="MVID / RIN" htmlFor="mvid" error={errorFor("mvid")}>
                     <Input id="mvid" name="mvid" />
                   </Field>
-                  <NativeChoice name="mvidKind" label="MVID / RIN Type" options={[["MVID", "MVID"], ["RIN", "RIN (Ontario)"]]} />
                   <Field label="NSC / CVOR" htmlFor="nsc" error={errorFor("nsc")}>
                     <Input id="nsc" name="nsc" />
                   </Field>
-                  <NativeChoice name="nscKind" label="NSC / CVOR Type" options={[["NSC", "NSC"], ["CVOR", "CVOR (Ontario)"]]} />
                 </>
               )}
 
@@ -1556,8 +1556,7 @@ export default function NewCompanyPage() {
         )}
 
         {/* ---------------------------------------------------- ADDRESSES */}
-        <section className="space-y-4 rounded-lg border bg-card p-4">
-          <h2 className="text-sm font-semibold">Address</h2>
+        <Section title="Address" icon={MapPin} grid={false}>
           <SmartAddressBlock title="Registered" prefix="reg" errorFor={errorFor} />
           {isCustomer && (
             <>
@@ -1565,7 +1564,7 @@ export default function NewCompanyPage() {
               <SmartAddressBlock title="Yard" prefix="yard" errorFor={errorFor} />
             </>
           )}
-        </section>
+        </Section>
 
         <DuplicateStatusPanel
           blocking={blockingFindings}
@@ -1585,7 +1584,7 @@ export default function NewCompanyPage() {
           </div>
         )}
 
-        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-sm">
+        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/95 p-3 shadow-md backdrop-blur supports-[backdrop-filter]:bg-card/80">
           <div className="min-w-0 text-sm">
             {blockingFindings.length > 0 ? (
               <span className="flex items-center gap-2 font-medium text-destructive">

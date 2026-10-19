@@ -54,8 +54,8 @@ describe("Add Company form", () => {
     assert.doesNotMatch(form, /RegionSelect|issuing province|Base Province/i)
     // the distinctions between the four numbers stay visible
     for (const label of ["MVID / RIN", "NSC / CVOR", "IRP Account", "IFTA Account"]) assert.match(form, new RegExp(`label="${label}"`), label)
-    assert.match(form, /name="mvidKind"/)
-    assert.match(form, /name="nscKind"/)
+    // the MVID / RIN and NSC / CVOR number-type dropdowns are gone: the numbers are recorded as MVID and NSC, nothing is assumed
+    assert.doesNotMatch(form, /mvidKind|nscKind|MVID \/ RIN Type|NSC \/ CVOR Type|NativeChoice|<select/)
   })
 
   it("makes every persisted field live: not disabled, posted with its value", () => {

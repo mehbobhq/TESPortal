@@ -91,7 +91,7 @@ jobs:
           PGPASSWORD: ci-migrator
         run: |
           bash scripts/database/migrate.sh
-          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "32"
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "34"
           TES_VERIFY_PHASE=post bash scripts/database/verify-production-contracts-foundation.sh
       - name: Contracts DB tests (real authorization, RLS as the runtime role, real Master Register)
         env:

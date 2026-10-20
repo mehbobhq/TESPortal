@@ -48,6 +48,7 @@ import {
   ContactValidationError,
 } from "@/lib/contacts/errors"
 import * as repo from "@/lib/contacts/repository"
+import { migration0035Message, migration0035State } from "@/lib/contacts/schema-state"
 import type {
   ChannelRecord,
   ContactView,
@@ -374,10 +375,12 @@ export async function readOrganizationContacts(
   const id = parseUuid(organizationId, "organizationId")
   if ((await repo.organizationExists(client, id)) === false) throw new ContactNotFoundError("Organization")
   const asOf = options.asOf === undefined ? null : parseInstant(options.asOf, "asOf")
+  const schema = await migration0035State(client)
+  const exclusionsSupported = schema === "COMPLETE"
   const [channels, relationships, operationalEmailExclusions] = await Promise.all([
     repo.listOrganizationChannels(client, id),
     repo.listRelationships(client, id),
-    repo.listExclusions(client, id),
+    exclusionsSupported ? repo.listExclusions(client, id) : Promise.resolve([]),
   ])
   return {
     organizationId: id,
@@ -386,6 +389,7 @@ export async function readOrganizationContacts(
     asOfChannels: asOf === null ? null : channels.filter((row) => inForce(row, normalizeAt(asOf))),
     contacts: await loadContacts(client, relationships, asOf),
     operationalEmailExclusions,
+    features: { operationalEmailExclusions: exclusionsSupported, migration0035: schema },
   }
 }
 
@@ -1097,10 +1101,16 @@ export async function restorePerson(ctx: OperationContext, rawInput: unknown): P
 // resolver reads: it is not an email system and enforces nothing by itself.
 // ---------------------------------------------------------------------------------------------------------------
 
+async function requireExclusions(client: PoolClient): Promise<void> {
+  const state = await migration0035State(client)
+  if (state !== "COMPLETE") throw new ContactStateError(migration0035Message(state, "Operational-email exclusions"))
+}
+
 const EXCLUSION_SOURCES = ["COMPANY_WRITTEN_REQUEST", "COMPANY_VERBAL_CONFIRMED", "TES_DECISION"] as const
 
 /** Records that a current contact is not to be copied on operational email from now (or an explicit past instant). */
 export async function excludeFromOperationalEmail(ctx: OperationContext, rawInput: unknown): Promise<OrganizationContactsView> {
+  await requireExclusions(ctx.client)
   const input = requireObject(rawInput, "input", ["organizationId", "relationshipId", "source", "reference", "instructedByPersonId", "evidenceDocumentId", "effectiveFrom"])
   const organizationId = parseUuid(input.organizationId, "organizationId")
   const relationshipId = parseUuid(input.relationshipId, "relationshipId")
@@ -1139,6 +1149,7 @@ export async function excludeFromOperationalEmail(ctx: OperationContext, rawInpu
 
 /** Ends an exclusion: the contact is copied on operational email again from now. The exclusion stays in history. */
 export async function resumeOperationalEmail(ctx: OperationContext, rawInput: unknown): Promise<OrganizationContactsView> {
+  await requireExclusions(ctx.client)
   const input = requireObject(rawInput, "input", ["organizationId", "exclusionId", "effectiveTo"])
   const organizationId = parseUuid(input.organizationId, "organizationId")
   const exclusionId = parseUuid(input.exclusionId, "exclusionId")

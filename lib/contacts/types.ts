@@ -124,6 +124,11 @@ export type OrganizationContactsView = {
   contacts: ContactView[]
   /** Operational-email exclusions of this company's contacts, all history (corrected / voided flagged). */
   operationalEmailExclusions: OperationalEmailExclusionRecord[]
+  /**
+   * What this database supports. `operationalEmailExclusions` is true only when migration 0035 is COMPLETE (false while it is absent or partly applied; see schema-state.ts): the list above is then
+   * empty because no exclusion CAN exist, and recording one is refused with an explanation (never silently skipped).
+   */
+  features: { operationalEmailExclusions: boolean; migration0035: "ABSENT" | "COMPLETE" | "INCONSISTENT" }
 }
 
 export type PersonMatchReason = "NAME" | "EMAIL" | "PHONE"

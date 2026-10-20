@@ -11,7 +11,18 @@ Forward-only, additive; 0001-0034 untouched. Requires the Production ledger to b
 | unique index `evidence_documents(id, organization_id)` | lets exclusion evidence be tied to the same company by foreign key (additive; the pair is already unique because `id` is) |
 
 RLS: +2 tables, +2 policies (CI catalogue counts 82 / 163, ledger 35). The runtime role gets no DELETE / TRUNCATE and may not rewrite content.
-Rollback: nothing existing is altered, so dropping the two tables, the unique index, the four functions and the two capability rows reverses it (only when empty).
+Rollback of the migration: nothing existing is altered, so dropping the two tables, the unique index, the four functions and the two capability rows reverses it (only when empty).
+
+### Application rollback compatibility (corrected after the 0034 incident)
+The PR #29 build (and anything built from it before the compatibility fix) reads `organization_person_operational_email_exclusions` unconditionally, so **it is NOT a safe rollback target on a database at 0034**: it reproduces the Company Profile / Contacts outage. Choose the rollback by the actual schema (check the ledger first):
+
+| Database state | Safe application builds | Unsafe |
+|---|---|---|
+| Ledger at 0034 | the build before PR #29 (`c109c0a`, PR #28), or any build containing the schema-compatibility fix | the PR #29 build |
+| Ledger at 0035 | the build before PR #29 (it never touches the 0035 objects) or any build containing the compatibility fix or PR #29 | none known |
+| Partly applied 0035 | a build containing the compatibility fix (it fails closed and keeps ordinary reads); repair 0035 before using its features | the PR #29 build |
+
+Do not drop the 0035 objects to make an older build work: they are not needed by builds before PR #29, and dropping populated tables would lose recorded data.
 After applying: grant `PERSON_IDENTITY_READ` / `PERSON_IDENTITY_MANAGE` to the staff who may handle identity details (nobody has them by default except the Master Account).
 
 ## Behaviour

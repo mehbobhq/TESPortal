@@ -317,7 +317,8 @@ export default function ContactsPage() {
   };
 
   const operationalEmail: OperationalEmailControl | null = (() => {
-    if (!selectedContact || selectedContact.isArchived) return null;
+    // Exclusions need migration 0035 COMPLETE: otherwise the control is not offered (the server would refuse with an explanation).
+    if (!selectedContact || selectedContact.isArchived || view?.features?.operationalEmailExclusions === false) return null;
     const relationshipId = canonicalOf(selectedContact.id)?.relationship.id;
     if (!relationshipId) return null;
     const exclusion = (view?.operationalEmailExclusions ?? []).find((row) => row.relationshipId === relationshipId && row.recordStatus === "active" && row.effectiveTo === null);

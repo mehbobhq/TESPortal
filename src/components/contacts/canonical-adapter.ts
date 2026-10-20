@@ -45,6 +45,7 @@ export type CanonicalContactsView = {
   channels?: CanonicalChannel[]
   contacts: CanonicalContactView[]
   operationalEmailExclusions?: CanonicalExclusion[]
+  features?: { operationalEmailExclusions: boolean; migration0035?: string }
 }
 
 const day = (instant: string | null | undefined) => (instant ? String(instant).slice(0, 10) : "")

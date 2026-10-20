@@ -1,10 +1,11 @@
 import "server-only"
 
 import type { PoolClient } from "pg"
+import { migration0035Message, migration0035State } from "@/lib/contacts/schema-state"
 import { hasAdditionalSystemCapability, requireAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
 import { createContactChanges, saveContactChanges, type CreateContactAtomicInput, type SaveContactInput } from "@/lib/contacts/contact-save"
-import { ContactNotFoundError, ContactValidationError } from "@/lib/contacts/errors"
+import { ContactNotFoundError, ContactStateError, ContactValidationError } from "@/lib/contacts/errors"
 import type { OperationContext } from "@/lib/contacts/operations"
 import { personRelatedToOrganization } from "@/lib/contacts/repository"
 import type { ContactView, CreateContactResult } from "@/lib/contacts/types"
@@ -43,6 +44,8 @@ export type ContactIdentityView = {
   licence: identity.LicenceDetails | null
   /** Always the same words: entering these details never establishes a verified identity. */
   verification: "NOT_VERIFIED"
+  /** False only while migration 0035 has not been applied to this database. */
+  available?: boolean
 }
 
 /**
@@ -52,6 +55,8 @@ export type ContactIdentityView = {
 async function applyIdentity(client: PoolClient, decision: SystemAuthorizationDecision, ctx: OperationContext, organizationId: string, personId: string, input: identity.IdentityInput): Promise<string[]> {
   const changed: string[] = []
   if (input.dateOfBirth === undefined && input.licence === undefined) return changed
+  const schema = await migration0035State(client)
+  if (schema !== "COMPLETE") throw new ContactStateError(migration0035Message(schema, "Identity details"))
   await requireAdditionalSystemCapability(client, decision, "PERSON_IDENTITY_MANAGE")
   const identityCtx: identity.IdentityContext = { client, actor: ctx.actor, masterRegister: ctx.masterRegister }
   if (input.dateOfBirth !== undefined) {
@@ -102,6 +107,10 @@ export async function getContactIdentity(organizationId: string, personId: strin
   if (personId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(personId)) throw new ContactValidationError("personId", "personId must be a UUID.")
   return withAuthorizedSystem("PERSON_REGISTRY_READ", async (client, decision) => {
     if (personId !== null && !(await personRelatedToOrganization(client, organizationId, personId))) throw new ContactNotFoundError("Person")
+    if ((await migration0035State(client)) !== "COMPLETE") {
+      // Migration 0035 is absent or partly applied: nothing identity-related can be read or written, and NO access is granted. Reported explicitly.
+      return { personId: personId ?? "", access: { read: false, manage: false, licenceRead: false, licenceManage: false }, dateOfBirth: null, licence: null, verification: "NOT_VERIFIED", available: false }
+    }
     const [read, manage, driverRead, driverManage] = await Promise.all([
       hasAdditionalSystemCapability(client, decision, "PERSON_IDENTITY_READ"),
       hasAdditionalSystemCapability(client, decision, "PERSON_IDENTITY_MANAGE"),

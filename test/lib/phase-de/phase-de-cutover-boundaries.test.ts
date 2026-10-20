@@ -96,6 +96,15 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
     assert.ok(migrations.every((name, index) => Number(name.slice(0, 4)) === index + 1), "migrations are numbered without gaps")
   })
 
+  it("Company Edit has no static 'managed elsewhere / not yet available' list and no history-mode questions: what it cannot change is shown as real values with the reason and a link", () => {
+    const edit = source("app/companies/[id]/edit/page.tsx")
+    assert.doesNotMatch(edit, /DEFERRED_SECTIONS|Managed elsewhere, read-only, or not yet available|keep the earlier value as history|The recorded value was wrong/i)
+    assert.doesNotMatch(edit, /factMode|addressMode/)
+    // read-only values come from the canonical profile, each with its reason (and a workspace link where one exists), never as free text
+    assert.match(edit, /ReadOnlyRow/)
+    assert.match(edit, /COMPANY_FIELD_INVENTORY/)
+  })
+
   it("makes deferred modules explicit instead of persisting them in the browser", () => {
     const deferred: Record<string, RegExp> = {
       "app/companies/[id]/business/page.tsx": /intentionally deferred/,
@@ -103,14 +112,15 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
       "app/companies/[id]/vehicles/page.tsx": /deferred/i,
       "app/companies/[id]/insurance/page.tsx": /deferred/i,
       "app/companies/[id]/credentials/page.tsx": /deferred/i,
-      "app/companies/[id]/edit/page.tsx": /not yet available/i,
     }
     for (const [file, pattern] of Object.entries(deferred)) assert.match(source(file), pattern, file)
   })
 
   it("edits only canonical corporate-identity fields through existing corporate-identity operations", () => {
     const code = source("lib/company-directory/service.ts")
-    assert.match(code, /updateLegalIdentity/)
+    // The registered legal name is NOT edited here any more: it changes only through the gated legal-name procedure (lib/company-changes).
+    assert.doesNotMatch(code, /updateLegalIdentity/)
+    assert.match(source("lib/company-changes/service.ts"), /updateLegalIdentity/)
     assert.match(code, /correctIdentifier/)
     assert.match(code, /deactivateAlias/)
     assert.doesNotMatch(code, /UPDATE public\.organizations/)

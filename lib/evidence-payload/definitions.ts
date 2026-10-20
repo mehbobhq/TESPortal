@@ -76,4 +76,11 @@ export const KNOWN_DOCUMENT_TYPES: readonly string[] = [
   "CONTRACT_READY_CONFIRMATION",
   "HISTORY_RECORDS",
   "OTHER_EVIDENCE",
+  // Registered legal-name change evidence (migration 0036): the government document that establishes the new name, the company's
+  // written request, and the document that evidences a Director's authority.
+  "GOVERNMENT_NAME_DOCUMENT",
+  "COMPANY_WRITTEN_REQUEST",
+  "DIRECTOR_VERIFICATION_DOCUMENT",
+  // Evidence that a sensitive company phone / email / website change was confirmed through an established channel (migration 0036).
+  "CHANNEL_CHANGE_CONFIRMATION",
 ]

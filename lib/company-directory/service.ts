@@ -5,9 +5,12 @@ import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/au
 import { domainContext, enterSystemCapability, runDeferredChecks } from "@/lib/company-directory/capability-context"
 import * as corporateOperations from "@/lib/corporate-identity/operations"
 import { createCompanyRecord, type CompanyCreationResult } from "@/lib/company-directory/create-company"
-import { applyCompanyDetails, factsPresent, hasDetailsToUpdate, planCompanyDetails, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
+import { applyCompanyDetails, factsPresent, hasDetailsToUpdate, planCompanyDetails, writeLedger, type CompanyDetailsUpdate } from "@/lib/company-directory/update-company"
+import type { PlannedChange } from "@/lib/company-changes/ledger"
 import { readCompanyProfile, type CompanyProfileRecord } from "@/lib/company-directory/read-profile"
 import { getOrganization } from "@/lib/corporate-identity/service"
+import { CorporateIdentifierCollisionError, CorporateIdentityValidationError } from "@/lib/corporate-identity/errors"
+import { CompanyCreationValidationError } from "@/lib/company-directory/creation-input"
 import type { CorporateIdentifierInput } from "@/lib/corporate-identity/identifier-definitions"
 import type { OrganizationRecord } from "@/lib/corporate-identity/types"
 
@@ -55,6 +58,10 @@ export type { CompanyProfileRecord }
 export type UpdateCompanyDirectoryInput = {
   companyName?: unknown
   dba?: unknown
+  /** How a trade-name change was confirmed: BUSINESS_CONFIRMATION or REGISTRATION_EVIDENCE, with a reference (and optionally the evidence document). */
+  dbaBasis?: unknown
+  dbaBasisReference?: unknown
+  dbaEvidenceDocumentId?: unknown
   incorpNo?: unknown
   businessNo?: unknown
   ein?: unknown
@@ -271,6 +278,7 @@ async function applyIdentityEdit(
   decision: SystemAuthorizationDecision,
   organizationId: string,
   input: UpdateCompanyDirectoryInput,
+  changes: PlannedChange[] = [],
 ): Promise<OrganizationRecord> {
   const ctx = domainContext(client, decision, "ORGANIZATION_REGISTRY_READ")
   // The same two capabilities the separate operations needed: the registry read to see the record, the update to change it.
@@ -291,9 +299,13 @@ async function applyIdentityEdit(
   if (has(input.companyName)) {
     const legalName = text(input.companyName)
     if (!legalName) throw new CompanyDirectoryValidationError("Company Name is required.")
+    // THE REGISTERED LEGAL NAME IS NOT EDITABLE HERE. A different name is refused on the server, whatever the caller or UI: it changes only
+    // through the legal-name procedure (lib/company-changes): a government document, a written request from a customer-authority holder or an
+    // evidenced Director, and an authorized TES user. An unchanged name is accepted as a no-op.
     if (legalName !== organization.legalName) {
-      const keepDisplay = organization.displayName === organization.legalName
-      organization = (await write(() => corporateOperations.updateLegalIdentity(ctx, organizationId, keepDisplay ? { legalName, displayName: legalName } : { legalName }))).organization
+      throw new CompanyDirectoryValidationError(
+        "The registered legal name can only be changed through the legal-name change procedure: it needs a government-issued document, a written request from a company representative with recorded authority (a Service Decision Authority / Contract Signatory, or a Director with a verified document), and execution by an authorized Onboarding Team member or the founder-level account. Nothing was saved.",
+      )
     }
   }
 
@@ -301,8 +313,21 @@ async function applyIdentityEdit(
     const dba = text(input.dba)
     if (dba !== current.dba) {
       const existing = organization.aliases.find((alias) => alias.status === "active" && alias.aliasType?.toUpperCase() === "TRADE_NAME")
+      // A trade-name change may carry its business basis: a confirmation reference, or the registration evidence (a document of this company).
+      const basisKind = typeof input.dbaBasis === "string" && input.dbaBasis !== "" ? input.dbaBasis : null
+      if (basisKind !== null && basisKind !== "BUSINESS_CONFIRMATION" && basisKind !== "REGISTRATION_EVIDENCE") throw new CompanyDirectoryValidationError("The basis of a trade-name change must be BUSINESS_CONFIRMATION or REGISTRATION_EVIDENCE.")
+      const basisReference = typeof input.dbaBasisReference === "string" ? input.dbaBasisReference.trim() : ""
+      if (basisKind !== null && basisReference.length < 3) throw new CompanyDirectoryValidationError("Say how the trade-name change was confirmed (a reference of at least 3 characters).")
+      const evidenceId = typeof input.dbaEvidenceDocumentId === "string" && input.dbaEvidenceDocumentId !== "" ? input.dbaEvidenceDocumentId : null
       if (existing) organization = (await write(() => corporateOperations.deactivateAlias(ctx, organizationId, existing.id))).organization
       if (dba) organization = (await write(() => corporateOperations.addAlias(ctx, organizationId, { alias: dba, aliasType: "TRADE_NAME" }))).organization
+      changes.push({
+        operation: !dba ? "DBA_REMOVED" : existing ? "DBA_UPDATED" : "DBA_ADDED",
+        summary: !dba ? "Trade name (DBA) removed (kept in history)" : existing ? "Trade name (DBA) updated (previous name kept in history)" : "Trade name (DBA) added",
+        previous: current.dba || null, next: dba || null,
+        ...(basisKind ? { basis: { kind: basisKind as "BUSINESS_CONFIRMATION" | "REGISTRATION_EVIDENCE", reference: basisReference } } : {}),
+        ...(evidenceId ? { evidence: [{ documentId: evidenceId, role: "REGISTRATION" as const }] } : {}),
+      })
     }
   }
 
@@ -322,9 +347,23 @@ async function applyIdentityEdit(
         replacement = { kind, value }
       }
     }
-    if (existing && replacement) organization = (await write(() => corporateOperations.correctIdentifier(ctx, organizationId, existing.id, replacement))).organization
-    else if (existing) organization = (await write(() => corporateOperations.supersedeIdentifier(ctx, organizationId, existing.id))).organization
-    else if (replacement) organization = (await write(() => corporateOperations.addIdentifier(ctx, organizationId, replacement))).organization
+    // A rejected identifier is reported against ITS form field (nothing is saved: the whole edit is one transaction), not as an anonymous failure.
+    const formField = kind === "INCORPORATION" ? "incorpNo" : kind === "CRA_BN" ? "businessNo" : "ein"
+    const label = kind === "INCORPORATION" ? "incorporation number" : kind === "CRA_BN" ? "Business Number" : "EIN"
+    try {
+      if (existing && replacement) organization = (await write(() => corporateOperations.correctIdentifier(ctx, organizationId, existing.id, replacement))).organization
+      else if (existing) organization = (await write(() => corporateOperations.supersedeIdentifier(ctx, organizationId, existing.id))).organization
+      else if (replacement) organization = (await write(() => corporateOperations.addIdentifier(ctx, organizationId, replacement))).organization
+    } catch (error) {
+      if (error instanceof CorporateIdentityValidationError) throw new CompanyCreationValidationError([{ field: formField, message: error.message }])
+      if (error instanceof CorporateIdentifierCollisionError) throw new CompanyCreationValidationError([{ field: formField, message: `This ${label} is already registered to another company record, so it was not saved.` }])
+      throw error
+    }
+    changes.push({
+      operation: "BUSINESS_DETAILS_UPDATED",
+      summary: `${kind === "INCORPORATION" ? "Incorporation number" : kind === "CRA_BN" ? "Business Number" : "EIN"} ${existing && replacement ? "updated (previous value kept in history)" : existing ? "removed (kept in history)" : "recorded"}`,
+      previous: previous || null, next: value || null,
+    })
   }
 
   await applyIdentifier("INCORPORATION", input.incorpNo, current.incorpNo)
@@ -339,10 +378,15 @@ export async function updateCompanyDirectoryRecord(
   organizationId: string,
   input: UpdateCompanyDirectoryInput,
 ): Promise<CompanyEditRecord> {
-  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => toEditRecord(await applyIdentityEdit(client, decision, organizationId, input)))
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
+    const changes: PlannedChange[] = []
+    const record = toEditRecord(await applyIdentityEdit(client, decision, organizationId, input, changes))
+    await writeLedger(client, decision, organizationId, changes)
+    return record
+  })
 }
 
-const IDENTITY_KEYS = ["companyName", "dba", "incorpNo", "businessNo", "ein"] as const
+const IDENTITY_KEYS = ["companyName", "dba", "dbaBasis", "dbaBasisReference", "dbaEvidenceDocumentId", "incorpNo", "businessNo", "ein"] as const
 
 export type CompanyEditResult = { company: CompanyEditRecord; details: CompanyDetailsUpdate | null }
 
@@ -360,8 +404,11 @@ export async function editCompany(organizationId: string, raw: unknown): Promise
   const identity: UpdateCompanyDirectoryInput = {}
   for (const key of IDENTITY_KEYS) if (key in body) identity[key] = body[key]
   return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
-    const company = toEditRecord(await applyIdentityEdit(client, decision, organizationId, identity))
-    const details = wantsDetails ? await applyCompanyDetails(client, decision, organizationId, detailsPlan) : null
+    const changes: PlannedChange[] = []
+    const company = toEditRecord(await applyIdentityEdit(client, decision, organizationId, identity, changes))
+    const details = wantsDetails ? await applyCompanyDetails(client, decision, organizationId, detailsPlan, changes) : null
+    // Every actual change is recorded automatically (actor, time, previous and new value) on the same transaction; nobody chooses whether to keep history.
+    await writeLedger(client, decision, organizationId, changes)
     return { company, details }
   })
 }

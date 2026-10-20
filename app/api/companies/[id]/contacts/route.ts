@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { canonicalFailure, readJsonBody } from "@/lib/api/canonical-response"
 import {
-  addOrganizationChannel,
   addPersonChannel,
   addRelationship,
   addTitle,
@@ -15,7 +14,6 @@ import {
   createContact,
   excludeFromOperationalEmail,
   resumeOperationalEmail,
-  endOrganizationChannel,
   endPersonChannel,
   endPurpose,
   endRelationship,
@@ -25,6 +23,7 @@ import {
   makePrimary,
   restoreContact,
   restorePerson,
+  refuseDirectCompanyChannelChange,
 } from "@/lib/contacts/service"
 import { createContactWithDetails, saveContact } from "@/lib/contact-identity/service"
 
@@ -59,10 +58,11 @@ export async function POST(request: NextRequest, context: Context) {
           await createContact({ organizationId: id, name: body.name, titles: body.titles, purposes: body.purposes, channels: body.channels } as Parameters<typeof createContact>[0]),
           { status: 201, headers: NO_STORE },
         )
+      // The company's own phone, email and website are SENSITIVE: they change only through Company Edit, where a replacement or removal waits for
+      // confirmation with verified evidence through an established channel. A direct add / end here would bypass that gate, so it is refused.
       case "addChannel":
-        return NextResponse.json(await addOrganizationChannel({ organizationId: id, channel: body.channel }), { status: 201, headers: NO_STORE })
       case "endChannel":
-        return NextResponse.json(await endOrganizationChannel({ organizationId: id, channelId: body.channelId }), { status: 200, headers: NO_STORE })
+        return await refuseDirectCompanyChannelChange()
       case "addPersonChannel":
         return NextResponse.json(await addPersonChannel({ organizationId: id, personId: body.personId, channel: body.channel }), { status: 201, headers: NO_STORE })
       // Editing a person's own channel keeps the earlier value as history (change) or flags it as wrong (correct). The company's own

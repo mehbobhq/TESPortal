@@ -418,9 +418,9 @@ describe("Company and Customer persistence closure (fleet categories, cargo rule
     assert.deepEqual((await K.dir.getCompanyProfile(id))?.serviceType, { state: "not_contracted" });
 
     // edit -> reload on the rejoined customer still works and does not touch the stays
-    await K.dir.editCompany(id, { website: "https://rejoin.example.com", gpsProvider: "Motive" });
+    await K.dir.editCompany(id, { gpsProvider: "Motive" });
     profile = await K.dir.getCompanyProfile(id);
-    assert.deepEqual([profile?.website, profile?.gpsProvider, profile?.startDate], ["https://rejoin.example.com", "Motive", "2024-09-01"]);
+    assert.deepEqual([profile?.gpsProvider, profile?.startDate], ["Motive", "2024-09-01"]);
     assert.equal(profile?.engagements.length, 2);
 
     // the start date itself stays non-editable (no verified-correction ledger exists)
@@ -442,10 +442,10 @@ describe("Company and Customer persistence closure (fleet categories, cargo rule
     });
     const baseline = await snapshot();
 
-    // 1. the actor may change the identity but not the billing preference: the whole edit is refused and the name is NOT changed
+    // 1. the actor may change the identity but not the billing preference: the whole edit is refused and the trade name is NOT changed
     await signInWith(...without("CUSTOMER_RELATIONSHIP_MANAGE"));
     await assert.rejects(
-      K.dir.editCompany(id, { companyName: `${original.companyName} Renamed`, dba: "Changed Trade", payMethod: "Cheque" }),
+      K.dir.editCompany(id, { dba: "Changed Trade", payMethod: "Cheque" }),
       (error: unknown) => error instanceof K.create.CompanyCreationCapabilityError && error.missing.includes("CUSTOMER_RELATIONSHIP_MANAGE"),
     );
     assert.deepEqual(await snapshot(), baseline, "no partial identity change, no billing row, no Master Register event");
@@ -455,13 +455,14 @@ describe("Company and Customer persistence closure (fleet categories, cargo rule
     const taken = luhnBusinessNumber();
     const other = await createCustomer("T2", { businessNo: taken });
     assert.ok(other);
-    await assert.rejects(K.dir.editCompany(id, { companyName: `${original.companyName} Collides`, businessNo: taken, gpsProvider: "Motive" }));
+    await assert.rejects(K.dir.editCompany(id, { dba: "Collides Trade", businessNo: taken, gpsProvider: "Motive" }));
     assert.deepEqual(await snapshot(), baseline, "the name, provider and events are exactly as before the failed edit");
     assert.equal(await count(`SELECT count(*) AS n FROM public.company_fleet_provider_periods WHERE organization_id = $1`, [id]), 0);
 
     // 3. the same edit without the collision commits as one unit
-    const done = await K.dir.editCompany(id, { companyName: `${original.companyName} Renamed`, dba: "Changed Trade", gpsProvider: "Motive", payMethod: "Cheque" });
-    assert.equal(done.company.companyName, `${original.companyName} Renamed`);
+    const done = await K.dir.editCompany(id, { dba: "Changed Trade", gpsProvider: "Motive", payMethod: "Cheque" });
+    assert.equal(done.company.dba, "Changed Trade");
+    assert.equal(done.company.companyName, original.companyName, "the registered legal name is untouched by an ordinary edit");
     assert.equal(done.details?.billingPreference?.created, 1);
     const profile = await K.dir.getCompanyProfile(id);
     assert.deepEqual([profile?.dba, profile?.gpsProvider, profile?.payMethod], ["Changed Trade", "Motive", "Cheque"]);

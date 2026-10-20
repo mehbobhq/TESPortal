@@ -26,6 +26,8 @@ async function loadKit() {
     crDefs: await import("@/lib/customer-relationship/definitions"),
     onboarding: await import("@/lib/onboarding-foundation/service"),
     contacts: await import("@/lib/contacts/service"),
+    changes: await import("@/lib/company-changes/service"),
+    evidenceFixtures: await import("@/test/helpers/evidence-payload-fixtures"),
     profileDefs: await import("@/lib/company-profile/definitions"),
   };
 }
@@ -121,6 +123,17 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     scope: await count(`SELECT count(*) AS n FROM public.company_operating_scope_periods WHERE organization_id = $1`, [organizationId]),
     events: await count(`SELECT count(*) AS n FROM public.master_register_events e WHERE e::text LIKE '%' || $1 || '%'`, [organizationId]),
   });
+  // Replacing or removing an ESTABLISHED website is gated (company-changes): the edit records a request, and it takes effect only once it is confirmed
+  // by a DIFFERENT TES user, through an established channel (here the company's current website), with a verified CHANNEL_CHANGE_CONFIRMATION
+  // evidence document created after the request, exactly as in production.
+  const META = { channelChangeSource: "COMPANY_WRITTEN_REQUEST", channelChangeReference: "test: written request on file" };
+  const confirmPending = async (organizationId: string) => {
+    const pending = (await K.changes.getCompanyActivity(organizationId)).pending.channels[0];
+    const previous = (await K.contacts.getOrganizationContacts(organizationId)).currentChannels.find((c) => c.channelType === pending.channelType && c.usage === pending.usage)!;
+    const confirmer = await signInWith(...ALL);
+    const evidence = await K.evidenceFixtures.seedPayloadBackedDocument(pools.admin, { organizationId, actorId: confirmer, documentType: "CHANNEL_CHANGE_CONFIRMATION", status: "verified", stage: "stored" });
+    return K.changes.confirmChannelChange({ organizationId, requestId: pending.id, confirmationChannelKind: "COMPANY_CHANNEL", confirmationChannelId: previous.id, confirmationMethod: "CALL_BACK", confirmationEvidenceDocumentId: evidence });
+  };
   const orgCount = () => count(`SELECT count(*) AS n FROM public.organizations WHERE legal_name LIKE $1`, [`Persist ${run}%`]);
   const validationOf = async (promise: Promise<unknown>) => {
     try {
@@ -232,7 +245,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     const cargoIds = new Map((await rows<{ id: string; code: string }>(`SELECT id, cargo_category_code AS code FROM public.company_cargo_category_periods WHERE organization_id = $1`, [id])).map((r) => [r.code, r.id]));
 
     const result = await K.dir.editCompany(id, {
-      companyName: `Persist ${run} B renamed Transport Ltd`,
+      ...META,
       opRegion: "Cross-Border",
       website: "https://new-site.example.org/home/",
       cargoTypes: JSON.stringify(["General Freight", "Temperature-Controlled & Food", "Bulk & Other"]),
@@ -241,7 +254,9 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
       payMethod: "Credit Card",
       reg_street: "200 Bay St", reg_city: "Toronto", reg_state: "ON", reg_zip: "M5J 2J2", reg_country: "Canada",
     });
-    assert.equal(result.details?.website, "changed");
+    assert.equal(result.details?.website, "pending_confirmation");
+    assert.equal((await K.dir.getCompanyProfile(id))?.website, "Example-Transport.com", "the established website stays in use until the replacement is confirmed");
+    await confirmPending(id);
     assert.deepEqual([result.details?.cargo?.created, result.details?.cargo?.ended], [1, 1]);
     assert.deepEqual(result.details?.fleetProviders.map((p) => [p.kind, p.result.changed, p.result.created, p.result.ended]), [["GPS", true, 1, 1], ["FUEL", true, 0, 1]]);
     assert.equal(result.details?.billingPreference?.changed, true);
@@ -249,7 +264,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     // refresh: a brand-new read shows every change
     const after = await K.dir.getCompanyProfile(id);
     assert.ok(after);
-    assert.equal(after.name, `Persist ${run} B renamed Transport Ltd`);
+    assert.equal(after.name, first.name, "the registered legal name is not part of an ordinary edit");
     assert.equal(after.opRegion, "Cross-Border");
     assert.equal(after.website, "https://new-site.example.org/home/");
     assert.deepEqual(after.cargoTypes, ["General Freight", "Temperature-Controlled & Food", "Bulk & Other"]);
@@ -309,19 +324,15 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
 
     await K.dir.editCompany(id, {
       factMode: "correct",
-      website: "corrected-site.example.net",
       cargoTypes: JSON.stringify(["General Freight", "Temperature-Controlled & Food"]),
       gpsProvider: "Samsara Networks",
       payMethod: "Wire Transfer",
     });
     const profile = await K.dir.getCompanyProfile(id);
-    assert.equal(profile?.website, "corrected-site.example.net");
     assert.deepEqual(profile?.cargoTypes, ["General Freight", "Temperature-Controlled & Food"]);
     assert.equal(profile?.gpsProvider, "Samsara Networks");
     assert.equal(profile?.payMethod, "Wire Transfer");
 
-    const channel = await rows<{ record_status: string; open: boolean }>(`SELECT record_status, (effective_to IS NULL) AS open FROM public.organization_channels WHERE organization_id = $1 AND channel_type = 'WEBSITE' ORDER BY created_at`, [id]);
-    assert.deepEqual(channel.map((c) => [c.record_status, c.open]), [["corrected", true], ["active", true]], "the wrong value is kept, flagged, and never ended as if it were history");
     assert.equal((await one<{ record_status: string; corrected_at: string | null }>(`SELECT record_status, corrected_at FROM public.company_cargo_category_periods WHERE organization_id = $1 AND cargo_category_code = 'HAZARDOUS_MATERIALS'`, [id])).record_status, "voided", "a category recorded in error is voided");
     const gps = await rows<{ record_status: string; superseded: boolean; same_start: boolean }>(
       `SELECT old.record_status, (old.superseded_by_period_id = new.id) AS superseded, (old.effective_from = new.effective_from) AS same_start
@@ -332,8 +343,13 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     assert.equal((await rows(`SELECT 1 FROM public.customer_billing_preference_periods WHERE organization_id = $1 AND record_status = 'corrected'`, [id])).length, 1);
 
     // clearing in correct mode voids the wrong entry (no replacement); in change mode it ends it
-    await K.dir.editCompany(id, { factMode: "correct", fuelProvider: "", website: "" });
+    await K.dir.editCompany(id, { factMode: "correct", fuelProvider: "" });
     assert.equal((await K.dir.getCompanyProfile(id))?.fuelProvider, null);
+    // a company website is a sensitive channel: clearing it is a REMOVAL request that changes nothing until it is confirmed (no direct void shortcut)
+    const removal = await K.dir.editCompany(id, { factMode: "correct", website: "", ...META });
+    assert.equal(removal.details?.website, "pending_confirmation");
+    assert.ok((await K.dir.getCompanyProfile(id))?.website, "the website is still in use while the removal waits");
+    await confirmPending(id);
     assert.equal((await K.dir.getCompanyProfile(id))?.website, null);
     assert.equal((await one<{ record_status: string }>(`SELECT record_status FROM public.company_fleet_provider_periods WHERE organization_id = $1 AND service_category_code = 'FUEL_SERVICES'`, [id])).record_status, "voided");
     await K.dir.editCompany(id, { payMethod: "" });
@@ -416,7 +432,9 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
       const issues = await validationOf(K.dir.editCompany(id, { cargoTypes: JSON.stringify(["General Freight"]), gpsProvider: "X", payMethod: "Cheque" }));
       assert.deepEqual(issues.map((i) => i.field).sort(), ["cargoTypes", "gpsProvider", "payMethod"], `${companyType}: customer-only facts refused`);
       // Website is editable for every type
-      await K.dir.editCompany(id, { website: "https://changed.example.com/about" });
+      await K.dir.editCompany(id, { website: "https://changed.example.com/about", ...META });
+      assert.equal((await K.dir.getCompanyProfile(id))?.website, "https://kind.example.com", `${companyType}: replacing the established website waits for confirmation`);
+      await confirmPending(id);
       assert.equal((await K.dir.getCompanyProfile(id))?.website, "https://changed.example.com/about");
       assert.equal(await count(`SELECT count(*) AS n FROM public.company_cargo_category_periods WHERE organization_id = $1`, [id]), 0);
       assert.equal(await count(`SELECT count(*) AS n FROM public.company_fleet_provider_periods WHERE organization_id = $1`, [id]), 0);
@@ -490,8 +508,11 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
 
     const profileB = await K.dir.getCompanyProfile(b.id);
     assert.deepEqual([profileB?.website, profileB?.gpsProvider, profileB?.payMethod, profileB?.cargoTypes], ["https://tenant-b.example.com", "ProviderB", "Cheque", ["Bulk & Other"]]);
-    await K.dir.editCompany(b.id, { website: "https://tenant-b-new.example.com", gpsProvider: "ProviderB2", payMethod: "Wire Transfer", cargoTypes: JSON.stringify(["Specialized Equipment"]) });
+    await K.dir.editCompany(b.id, { website: "https://tenant-b-new.example.com", ...META, gpsProvider: "ProviderB2", payMethod: "Wire Transfer", cargoTypes: JSON.stringify(["Specialized Equipment"]) });
+    await confirmPending(b.id);
+    assert.equal((await K.dir.getCompanyProfile(b.id))?.website, "https://tenant-b-new.example.com");
     assert.deepEqual(await snapshot(a.id), stateA, "editing B did not touch A");
+    assert.equal((await K.changes.getCompanyActivity(a.id)).pending.channels.length, 0, "no request leaked into A");
     const profileA = await K.dir.getCompanyProfile(a.id);
     assert.deepEqual([profileA?.website, profileA?.gpsProvider, profileA?.payMethod, profileA?.cargoTypes], ["https://tenant-a.example.com", "ProviderA", "E-Transfer", ["Household Goods"]]);
 
@@ -623,7 +644,7 @@ describe("Company and Customer profile fact persistence (migration 0033; real au
     let profile = await K.dir.getCompanyProfile(id);
     assert.deepEqual([profile?.startDate, profile?.opRegion], ["2023-11-30", "US Only"]);
 
-    await K.dir.editCompany(id, { opRegion: "Cross-Border", website: "https://k.example.com" });
+    await K.dir.editCompany(id, { opRegion: "Cross-Border" });
     profile = await K.dir.getCompanyProfile(id);
     assert.deepEqual([profile?.startDate, profile?.opRegion], ["2023-11-30", "Cross-Border"]);
     assert.equal(await count(`SELECT count(*) AS n FROM public.company_operating_scope_periods WHERE organization_id = $1`, [id]), 2, "the region change kept the earlier region as history");

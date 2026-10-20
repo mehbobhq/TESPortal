@@ -57,7 +57,7 @@ describe("Phase D/E canonical-backed services (real authorization, real transact
     return id;
   }
 
-  it("edits legal name, trade name and identifiers through corporate-identity operations", async () => {
+  it("edits trade name and identifiers through corporate-identity operations; the registered legal name is gated", async () => {
     await signInWith("ORGANIZATION_REGISTRY_READ", "ORGANIZATION_UPDATE");
     try {
       const id = await organization("Edit");
@@ -65,9 +65,12 @@ describe("Phase D/E canonical-backed services (real authorization, real transact
       assert.equal(before.dba, "");
       assert.equal(before.businessNo, "");
 
+      // the registered legal name is NOT changed by an ordinary edit (it needs the evidence + authority gate): refused, nothing saved
       const renamed = `Renamed ${run} ${id.slice(0, 6)} Ltd`;
-      const first = await K.dir.updateCompanyDirectoryRecord(id, { companyName: renamed, dba: "Trade One", businessNo: "123456782", ein: "12-3456789" });
-      assert.equal(first.companyName, renamed);
+      await assert.rejects(K.dir.updateCompanyDirectoryRecord(id, { companyName: renamed, dba: "Trade One" }), /legal-name change procedure/);
+      assert.equal((await K.dir.getCompanyEditRecord(id)).dba, "", "the refused edit saved nothing");
+      const first = await K.dir.updateCompanyDirectoryRecord(id, { companyName: before.companyName, dba: "Trade One", businessNo: "123456782", ein: "12-3456789" });
+      assert.equal(first.companyName, before.companyName);
       assert.equal(first.dba, "Trade One");
       assert.equal(first.businessNo, "123456782");
       assert.equal(first.ein, "12-3456789");

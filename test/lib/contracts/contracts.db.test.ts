@@ -24,6 +24,7 @@ async function loadKit() {
     ev: await import("@/lib/evidence-payload/service"),
     fx: await import("@/test/helpers/evidence-payload-fixtures"),
     dir: await import("@/lib/company-directory/service"),
+    life: await import("@/lib/company-directory/service-lifecycle"),
   };
 }
 type Kit = Awaited<ReturnType<typeof loadKit>>;
@@ -518,6 +519,58 @@ describe("Contracts foundation (migration 0031, real authorization, real Master 
       await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
       await K.ct.advanceContractStatus({ contractId, toStatus: "superseded", evidenceDocumentId: confirmation });
       assert.deepEqual(await serviceType(), { state: "not_contracted" }, "a superseded contract no longer defines the service");
+    });
+
+    it("a service governed by a SIGNED contract cannot be ended from the company page (fails closed without contract access); the profile derives authorities and contract standing", async () => {
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      const w = await world();
+      const { contractId } = await readyDraft(w);
+      const confirmation = await evidence(w.organizationId, "CONTRACT_READY_CONFIRMATION");
+      const details = async () => (await K.dir.getCompanyProfile(w.organizationId))?.customerDetails;
+      const endNow = () => K.life.endCompanyService(w.organizationId, { endedAt: "2021-01-01T00:00:00Z", endReason: K.cr.ENGAGEMENT_END_REASONS[0] });
+
+      // derived authorities: exactly one Service Decision Authority and one Contract Signatory (the same person here), named for a viewer who may read people
+      const draft = await details();
+      assert.equal(draft?.authorities.state, "ok");
+      if (draft?.authorities.state === "ok") {
+        assert.equal(draft.authorities.samePerson, true);
+        assert.match(draft.authorities.serviceDecisionAuthority?.name ?? "", /^Alex Holder/);
+        assert.equal(draft.authorities.contractSignatory?.personId, draft.authorities.serviceDecisionAuthority?.personId);
+      }
+      assert.deepEqual(draft?.contracts, { state: "ok", byStatus: { draft: 1 }, signedInForce: false, signedReference: null });
+
+      await K.ct.advanceContractStatus({ contractId, toStatus: "ready_for_signature", evidenceDocumentId: confirmation });
+      const signedDoc = await evidence(w.organizationId, "SIGNED_CONTRACT_DOCUMENT");
+      await K.ct.linkContractEvidence({ contractId, ruleCode: "SIGNED_CONTRACT_DOCUMENT", evidenceDocumentId: signedDoc });
+      await K.ct.advanceContractStatus({ contractId, toStatus: "signed", evidenceDocumentId: signedDoc });
+      const signed = await details();
+      assert.equal(signed?.contracts.state === "ok" && signed.contracts.signedInForce, true);
+      assert.deepEqual(signed?.contracts.state === "ok" ? signed.contracts.byStatus : null, { signed: 1 });
+
+      // the service is NOT ended, nothing is written, and the engagement stays open
+      const open = async () => Number((await pools.admin.query(`SELECT count(*) AS n FROM public.customer_engagements WHERE id = $1 AND ended_at IS NULL`, [w.engagementId])).rows[0].n);
+      await assert.rejects(endNow(), (error: unknown) => error instanceof Error && error.name === "CompanyServiceStateError" && /governed by a signed contract/.test(error.message));
+      assert.equal(await open(), 1);
+
+      // without permission to read contracts the rule cannot be checked, so the end is refused too (fail closed)
+      await signInWith("CUSTOMER_RELATIONSHIP_READ", "CUSTOMER_RELATIONSHIP_MANAGE", "ORGANIZATION_REGISTRY_READ");
+      await assert.rejects(endNow(), (error: unknown) => error instanceof Error && error.name === "CompanyServiceStateError" && /permission to read the company's contracts/.test(error.message));
+      assert.equal(await open(), 1);
+
+      // a viewer without contract access sees the derived section as restricted, not guessed
+      const restricted = (await K.dir.getCompanyProfile(w.organizationId))?.customerDetails;
+      assert.deepEqual([restricted?.authorities.state, restricted?.contracts.state], ["restricted", "restricted"]);
+
+      // once the signed contract is superseded the service is no longer contract-governed and can be ended with a reason
+      await signInWith(...STAFF_CAPABILITIES, "ORGANIZATION_REGISTRY_READ", "TAX_REGISTRATION_READ");
+      await K.ct.advanceContractStatus({ contractId, toStatus: "superseded", evidenceDocumentId: confirmation });
+      await endNow();
+      assert.equal(await open(), 0);
+      assert.equal((await K.dir.getCompanyProfile(w.organizationId))?.serviceStage, "ENDED");
+      // another company's engagement can never be addressed through this company
+      const other = await world({ settings: false });
+      await assert.rejects(K.life.endCompanyService(w.organizationId, { endedAt: "2021-02-01T00:00:00Z", endReason: K.cr.ENGAGEMENT_END_REASONS[0] }), /Open engagement/);
+      assert.equal(Number((await pools.admin.query(`SELECT count(*) AS n FROM public.customer_engagements WHERE id = $1 AND ended_at IS NULL`, [other.engagementId])).rows[0].n), 1);
     });
 
     it("Service Type follows the CURRENT engagement only: sign -> end -> rejoin -> new contract; earlier contracts stay as history", async () => {

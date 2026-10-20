@@ -26,21 +26,38 @@ import * as taxOperations from "@/lib/tax-registrations/operations"
 import { prepareRegistrationNumber } from "@/lib/tax-registrations/definitions"
 import { RegistrationValidationError } from "@/lib/tax-registrations/errors"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
+import { appendChange, type PlannedChange } from "@/lib/company-changes/ledger"
+import { channelOperation, type ChannelKind } from "@/lib/company-changes/definitions"
+import { recordChannelChangeRequest } from "@/lib/company-changes/service"
+import { migration0036Message, migration0036State } from "@/lib/company-changes/schema-state"
+import { CompanyChangeStateError } from "@/lib/company-changes/errors"
 import * as locationOperations from "@/lib/organization-locations/operations"
 
 /** Profile facts whose key may be present with an EMPTY value, which means "clear it" (an absent key means "leave it alone"). */
 const FACT_KEYS = ["website", "cargoTypes", "eldProvider", "gpsProvider", "fuelProvider", "payMethod"] as const
 
-const UPDATE_KEYS = new Set([
+/** Company-level channels edited here besides the website: each maps to ONE company channel (never a person's). */
+const CHANNEL_FIELDS = [
+  { key: "phone", kind: "PHONE", usage: "GENERAL" },
+  { key: "email", kind: "EMAIL", usage: "GENERAL" },
+  { key: "billingEmail", kind: "EMAIL", usage: "ACCOUNTING" },
+] as const
+
+/** How a replacement of an established channel was requested (recorded on the request; required only when a replacement actually happens). */
+const CHANNEL_META_KEYS = ["channelChangeSource", "channelChangeReference", "channelChangeSender"] as const
+
+const UPDATE_KEYS = new Set<string>([
   "opRegion",
   "addressMode",
   "factMode",
   "gstHst",
   ...FACT_KEYS,
+  ...CHANNEL_FIELDS.map((field) => field.key),
+  ...CHANNEL_META_KEYS,
   ...(["reg", "mail", "yard"] as const).flatMap((prefix) => (["street", "city", "state", "zip", "country"] as const).map((part) => `${prefix}_${part}`)),
 ])
 
-const IDENTITY_EDIT_KEYS = new Set(["companyName", "dba", "incorpNo", "businessNo", "ein"])
+const IDENTITY_EDIT_KEYS = new Set(["companyName", "dba", "dbaBasis", "dbaBasisReference", "dbaEvidenceDocumentId", "incorpNo", "businessNo", "ein"])
 
 export type CompanyDetailsUpdate = {
   /** "change": the address really moved (the old one stays as history). "correct": the old one was recorded wrongly. */
@@ -49,7 +66,9 @@ export type CompanyDetailsUpdate = {
   factMode: "change" | "correct"
   operatingScope: { changed: boolean; value: string | null }
   addresses: Array<{ role: PlannedAddress["role"]; action: "created" | "changed" | "corrected" | "unchanged" }>
-  website: "created" | "changed" | "corrected" | "cleared" | "unchanged" | null
+  website: "created" | "changed" | "corrected" | "cleared" | "unchanged" | "pending_confirmation" | null
+  /** Company phone / account email / billing email. "pending_confirmation": a DIFFERENT value was asked for; the established one stays in use until it is confirmed. */
+  channels: Array<{ field: string; kind: ChannelKind; usage: string; action: "created" | "changed" | "cleared" | "unchanged" | "pending_confirmation" }>
   cargo: profileFacts.FactChangeResult | null
   fleetProviders: Array<{ kind: "ELD" | "GPS" | "FUEL"; result: profileFacts.FactChangeResult }>
   billingPreference: profileFacts.FactChangeResult | null
@@ -66,6 +85,10 @@ export type FactsPlan = {
   payment: { code: string } | { clear: true } | null
   /** The GST/HST program account: a format-checked number, an explicit clear (the registration record is archived), or untouched. */
   gstHst: { value: string } | { clear: true } | null
+  /** Company phone / account email / billing email: a prepared value, an explicit clear (null), or untouched (absent). */
+  channels: Array<{ field: string; kind: "PHONE" | "EMAIL"; usage: "GENERAL" | "ACCOUNTING"; value: string | null }>
+  /** How a replacement was requested; checked only if a replacement actually happens. */
+  channelRequest: { source: string; reference: string; sender: string | null }
 }
 
 const prefixes = ["reg", "mail", "yard"] as const
@@ -83,7 +106,7 @@ export type DetailsPlan = { mode: "change" | "correct"; scope: string | null; pl
 const present = (value: unknown): boolean => value !== undefined && value !== null
 
 export function factsPresent(facts: FactsPlan): boolean {
-  return facts.website !== null || facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null || facts.gstHst !== null
+  return facts.website !== null || facts.cargo !== null || facts.providers.length > 0 || facts.payment !== null || facts.gstHst !== null || facts.channels.length > 0
 }
 
 /** Customer-only facts: cargo, fleet providers and billing preference. */
@@ -119,7 +142,25 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
   // --- profile facts ---------------------------------------------------------------------------------------------------
   const factMode = input.factMode === undefined || input.factMode === "" ? "change" : input.factMode
   if (factMode !== "change" && factMode !== "correct") issues.push({ field: "factMode", message: "factMode must be 'change' or 'correct'." })
-  const facts: FactsPlan = { mode: factMode === "correct" ? "correct" : "change", website: null, cargo: null, providers: [], payment: null, gstHst: null }
+  const facts: FactsPlan = {
+    mode: factMode === "correct" ? "correct" : "change",
+    website: null, cargo: null, providers: [], payment: null, gstHst: null, channels: [],
+    channelRequest: { source: String(input.channelChangeSource ?? "").trim(), reference: String(input.channelChangeReference ?? "").trim(), sender: String(input.channelChangeSender ?? "").trim() || null },
+  }
+  for (const field of CHANNEL_FIELDS) {
+    if (!present(input[field.key])) continue
+    const raw = input[field.key]
+    if (typeof raw !== "string") issues.push({ field: field.key, message: "This value must be text." })
+    else if (raw.trim() === "") facts.channels.push({ field: field.key, kind: field.kind, usage: field.usage, value: null })
+    else {
+      try {
+        prepareChannel(field.kind, raw, undefined, field.key)
+        facts.channels.push({ field: field.key, kind: field.kind, usage: field.usage, value: raw.trim() })
+      } catch (error) {
+        issues.push({ field: field.key, message: error instanceof Error ? error.message : "Enter a valid value." })
+      }
+    }
+  }
 
   if (present(input.website)) {
     if (typeof input.website !== "string") issues.push({ field: "website", message: "The website must be text." })
@@ -187,27 +228,58 @@ export function planCompanyDetails(raw: unknown): DetailsPlan {
 
 export function hasDetailsToUpdate(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false
-  return Object.entries(raw as Record<string, unknown>).some(([key, value]) => UPDATE_KEYS.has(key) && key !== "addressMode" && typeof value === "string" && value.trim() !== "")
+  return Object.entries(raw as Record<string, unknown>).some(
+    ([key, value]) => UPDATE_KEYS.has(key) && key !== "addressMode" && !(CHANNEL_META_KEYS as readonly string[]).includes(key) && typeof value === "string" && value.trim() !== "",
+  )
 }
 
 export type CompanyDetailsPlan = ReturnType<typeof planCompanyDetails>
 
 export async function updateCompanyDetails(organizationId: string, raw: unknown): Promise<CompanyDetailsUpdate> {
   const plan = planCompanyDetails(raw)
-  return withAuthorizedSystem("ORGANIZATION_UPDATE", (client, decision) => applyCompanyDetails(client, decision, organizationId, plan))
+  return withAuthorizedSystem("ORGANIZATION_UPDATE", async (client, decision) => {
+    const changes: PlannedChange[] = []
+    const result = await applyCompanyDetails(client, decision, organizationId, plan, changes)
+    await writeLedger(client, decision, organizationId, changes)
+    return result
+  })
 }
+
+/** Writes the business-operation ledger for what an edit actually changed (one row per change, previous value kept), on the same transaction. */
+export async function writeLedger(client: PoolClient, decision: SystemAuthorizationDecision, organizationId: string, changes: PlannedChange[]): Promise<void> {
+  if (changes.length === 0) return
+  // Migration 0036 not applied yet: the edit still works and every change is still recorded in the Master Register by its own domain; only the
+  // business-level ledger is unavailable. A PARTLY applied 0036 fails closed: the whole edit rolls back (nothing is saved unrecorded).
+  const tracking = await migration0036State(client)
+  if (tracking === "ABSENT") return
+  if (tracking === "INCONSISTENT") throw new CompanyChangeStateError(migration0036Message(tracking, "Recording company changes"))
+  await enterSystemCapability(client, "ORGANIZATION_UPDATE")
+  for (const change of changes) await appendChange(client, { source: "STAFF_ENTRY", ...change, organizationId, actorId: decision.actor.id })
+}
+
+/** True when this company has ever had a (non-voided) value for this channel: a later value is then a replacement, not a first value. */
+async function hadEstablishedChannel(client: PoolClient, organizationId: string, kind: ChannelKind, usage: string): Promise<boolean> {
+  const result = await client.query<{ established: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM public.organization_channels WHERE organization_id = $1 AND channel_type = $2 AND channel_usage = $3 AND record_status <> 'voided') AS established`,
+    [organizationId, kind, usage],
+  )
+  return result.rows[0]?.established === true
+}
+
+const oneLine = (a: { addressLine1: string; addressLine2?: string | null; unit?: string | null; locality: string; region: string; postalCode?: string | null; country: string } | null | undefined): string =>
+  a ? [[a.addressLine1, a.addressLine2, a.unit].filter(Boolean).join(", "), a.locality, a.region, a.postalCode, a.country].filter(Boolean).join(", ") : ""
 
 /**
  * The details writes on a transaction the caller already opened (ORGANIZATION_UPDATE), so a whole edit - identity and details -
  * can commit or roll back as one unit (see editCompany). Every capability is still proven per fact before anything is written.
  */
-export async function applyCompanyDetails(client: PoolClient, decision: SystemAuthorizationDecision, organizationId: string, plan: CompanyDetailsPlan): Promise<CompanyDetailsUpdate> {
+export async function applyCompanyDetails(client: PoolClient, decision: SystemAuthorizationDecision, organizationId: string, plan: CompanyDetailsPlan, changes: PlannedChange[] = []): Promise<CompanyDetailsUpdate> {
   const { mode, scope, planned, facts } = plan
   {
     const required = new Set<TesSystemCapability>()
     if (scope) required.add("COMPANY_PROFILE_MANAGE")
     if (planned.some((p) => p.role !== "REGISTERED")) required.add("CUSTOMER_RELATIONSHIP_READ")
-    if (facts.website) required.add("CONTACT_MANAGE")
+    if (facts.website || facts.channels.length > 0) required.add("CONTACT_MANAGE")
     if (facts.cargo !== null || facts.providers.length > 0) required.add("COMPANY_PROFILE_MANAGE")
     if (facts.payment) required.add("CUSTOMER_RELATIONSHIP_MANAGE")
     if (facts.gstHst) {
@@ -225,6 +297,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
       operatingScope: { changed: false, value: scope },
       addresses: [],
       website: null,
+      channels: [],
       cargo: null,
       fleetProviders: [],
       billingPreference: null,
@@ -250,36 +323,82 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
       try {
         await profileOperations.setOperatingScope({ client, actor, masterRegister: new PostgresMasterRegisterRepository(client) }, { organizationId, operatingScope: scope })
         result.operatingScope.changed = true
+        changes.push({ operation: "OPERATING_REGION_UPDATED", summary: "Operating region updated", next: scope })
       } catch (error) {
-        if (!(error instanceof CompanyProfileConflictError)) throw error
+        // The ONLY tolerated outcome: the company already has exactly this scope (nothing to change, so nothing is recorded). Anything else fails the edit.
+        if (!(error instanceof CompanyProfileConflictError) || !/already has that operating scope/i.test(error.message)) throw error
       }
       await runDeferredChecks(client)
     }
 
-    // Website: an Organization channel (any company type).
-    if (facts.website) {
+    // Website and the other company channels: Organization channels (any company type). Setting a channel that has no established value is
+    // recorded directly. REPLACING an established value with a DIFFERENT one never takes effect here: it becomes a request that must be
+    // confirmed through an established channel (see lib/company-changes), so an unfamiliar value is never trusted on the strength of the edit
+    // alone. Removing an established value is a request too (it ends the value only after the same confirmation). A website change never touches an email, and no company channel is ever a person's.
+    if (facts.website || facts.channels.length > 0) {
       await enterSystemCapability(client, "CONTACT_MANAGE")
       const contactContext = domainContext(client, decision, "PERSON_REGISTRY_READ")
       const contacts = await contactOperations.readOrganizationContacts(client, organizationId)
-      const current = contacts.currentChannels.find((channel) => channel.channelType === "WEBSITE" && channel.usage === "GENERAL" && channel.recordStatus === "active")
-      if ("clear" in facts.website) {
-        if (!current) result.website = "unchanged"
-        else {
-          if (facts.mode === "correct") await contactOperations.voidOrganizationChannel(contactContext, { organizationId, channelId: current.id })
-          else await contactOperations.endOrganizationChannel(contactContext, { organizationId, channelId: current.id })
-          result.website = "cleared"
+      type Wanted = { field: string; kind: ChannelKind; usage: string; value: string | null }
+      const wanted: Wanted[] = [
+        ...(facts.website ? [{ field: "website", kind: "WEBSITE" as ChannelKind, usage: "GENERAL", value: "clear" in facts.website ? null : facts.website.value }] : []),
+        ...facts.channels,
+      ]
+      for (const item of wanted) {
+        const current = contacts.currentChannels.find((channel) => channel.channelType === item.kind && channel.usage === item.usage && channel.recordStatus === "active")
+        const report = (action: CompanyDetailsUpdate["channels"][number]["action"]) => {
+          if (item.field === "website") result.website = action
+          else result.channels.push({ field: item.field, kind: item.kind, usage: item.usage, action })
         }
-      } else if (!current) {
-        await contactOperations.addOrganizationChannel(contactContext, { organizationId, channel: { type: "WEBSITE", value: facts.website.value, usage: "GENERAL" } })
-        result.website = "created"
-      } else {
-        const next = prepareChannel("WEBSITE", facts.website.value, undefined, "website")
-        if (next.normalized === current.valueNormalized && next.display === current.valueDisplay) result.website = "unchanged"
-        else {
-          const args = { organizationId, channelId: current.id, value: facts.website.value }
-          if (facts.mode === "correct") await contactOperations.correctOrganizationChannel(contactContext, args)
-          else await contactOperations.changeOrganizationChannel(contactContext, args)
-          result.website = facts.mode === "correct" ? "corrected" : "changed"
+        if (item.value === null) {
+          if (!current) report("unchanged")
+          else {
+            // REMOVING an established value is a sensitive change too: it never takes effect here. It becomes a request that is applied only after
+            // confirmation with verified evidence through an established channel by a different TES user (lib/company-changes). There is no
+            // "correction" shortcut that voids an established channel directly.
+            const tracking = await migration0036State(client)
+            if (tracking !== "COMPLETE") {
+              throw new CompanyCreationValidationError([{ field: item.field, message: `${migration0036Message(tracking, "Removing an established company phone, email or website")} The current value stays in use.` }])
+            }
+            const meta = facts.channelRequest
+            if (!meta.source || !meta.reference) {
+              throw new CompanyCreationValidationError([{ field: item.field, message: "Removing an established company phone, email or website needs how the change was requested (source and reference); it then waits for confirmation." }])
+            }
+            await enterSystemCapability(client, "ORGANIZATION_UPDATE")
+            await recordChannelChangeRequest(client, decision, {
+              organizationId, kind: item.kind, usage: item.usage, changeKind: "REMOVE", previousChannelId: current.id, previousValue: current.valueDisplay, requestedValue: null,
+              source: meta.source, reference: meta.reference, senderAddress: meta.sender,
+            })
+            await enterSystemCapability(client, "CONTACT_MANAGE")
+            report("pending_confirmation")
+          }
+        } else if (!current && !(await hadEstablishedChannel(client, organizationId, item.kind, item.usage))) {
+          // The first value this company has ever had for this channel: recorded directly.
+          await contactOperations.addOrganizationChannel(contactContext, { organizationId, channel: { type: item.kind, value: item.value, usage: item.usage } })
+          report("created")
+          changes.push({ operation: channelOperation(item.kind, "added"), summary: `Company ${item.kind.toLowerCase()} recorded`, next: item.value })
+        } else {
+          // REPLACING an established value, or setting a new one after the established value was removed (otherwise "remove, then add" would
+          // bypass the confirmation): never takes effect here, it becomes a request confirmed through a channel that was already established.
+          const next = prepareChannel(item.kind, item.value, undefined, item.field)
+          if (current && next.normalized === current.valueNormalized && next.display === current.valueDisplay) report("unchanged")
+          else {
+            const tracking = await migration0036State(client)
+            if (tracking !== "COMPLETE") {
+              throw new CompanyCreationValidationError([{ field: item.field, message: `${migration0036Message(tracking, "Replacing an established company phone, email or website")} The current value stays in use.` }])
+            }
+            const meta = facts.channelRequest
+            if (!meta.source || !meta.reference) {
+              throw new CompanyCreationValidationError([{ field: item.field, message: "Replacing an established company phone, email or website needs how the change was requested (source and reference); it then waits for confirmation." }])
+            }
+            await enterSystemCapability(client, "ORGANIZATION_UPDATE")
+            await recordChannelChangeRequest(client, decision, {
+              organizationId, kind: item.kind, usage: item.usage, previousChannelId: current?.id ?? null, previousValue: current?.valueDisplay ?? null, requestedValue: item.value,
+              source: meta.source, reference: meta.reference, senderAddress: meta.sender,
+            })
+            await enterSystemCapability(client, "CONTACT_MANAGE")
+            report("pending_confirmation")
+          }
         }
       }
       await runDeferredChecks(client)
@@ -295,9 +414,12 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
           if (existing.cargo.length > 0) throw new CompanyCreationValidationError([{ field: "cargoTypes", message: "Cargo Information is required for a Customer; choose at least one category." }])
         }
         result.cargo = await profileFacts.setCargoCategories(factsContext, { organizationId, categories: facts.cargo, mode: facts.mode })
+        if (result.cargo.changed) changes.push({ operation: "BUSINESS_DETAILS_UPDATED", summary: "Cargo information updated (previous categories kept in history)" })
       }
       for (const provider of facts.providers) {
-        result.fleetProviders.push({ kind: provider.kind, result: await profileFacts.setFleetProvider(factsContext, { organizationId, kind: provider.kind, providerName: provider.name, mode: facts.mode }) })
+        const outcome = await profileFacts.setFleetProvider(factsContext, { organizationId, kind: provider.kind, providerName: provider.name, mode: facts.mode })
+        result.fleetProviders.push({ kind: provider.kind, result: outcome })
+        if (outcome.changed) changes.push({ operation: "BUSINESS_DETAILS_UPDATED", summary: `${provider.kind} provider ${provider.name ? "updated" : "cleared"}`, next: provider.name })
       }
       await runDeferredChecks(client)
     }
@@ -309,6 +431,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
         { client, actor, masterRegister: new PostgresMasterRegisterRepository(client) },
         { organizationId, paymentMethod: "clear" in facts.payment ? null : facts.payment.code, mode: facts.mode },
       )
+      if (result.billingPreference.changed) changes.push({ operation: "PAYMENT_METHOD_UPDATED", summary: "Preferred payment method updated (previous method kept in history)", next: "clear" in facts.payment ? null : facts.payment.code })
       await runDeferredChecks(client)
     }
 
@@ -348,6 +471,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
           result.gstHst = "replaced"
         }
       }
+      if (result.gstHst && result.gstHst !== "unchanged") changes.push({ operation: "BUSINESS_DETAILS_UPDATED", summary: `GST/HST account ${result.gstHst}`, next: "clear" in facts.gstHst ? null : facts.gstHst.value })
       await runDeferredChecks(client)
     }
 
@@ -360,6 +484,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
         if (!existing) {
           await locationOperations.createLocation(ctx, { kind: "PHYSICAL", address: next.address, assignment: { organizationId, role: next.role } })
           result.addresses.push({ role: next.role, action: "created" })
+          changes.push({ operation: "ADDRESS_UPDATED", summary: `${next.role.toLowerCase()} address recorded`, next: oneLine(next.address) })
           continue
         }
         const now = existing.address
@@ -378,6 +503,7 @@ export async function applyCompanyDetails(client: PoolClient, decision: SystemAu
         if (mode === "correct") await locationOperations.correctLocationAddress(ctx, args)
         else await locationOperations.changeLocationAddress(ctx, args)
         result.addresses.push({ role: next.role, action: mode === "correct" ? "corrected" : "changed" })
+        changes.push({ operation: "ADDRESS_UPDATED", summary: `${next.role.toLowerCase()} address ${mode === "correct" ? "corrected" : "changed"} (previous address kept in history)`, previous: oneLine(now), next: oneLine(next.address) })
       }
       await runDeferredChecks(client)
     }

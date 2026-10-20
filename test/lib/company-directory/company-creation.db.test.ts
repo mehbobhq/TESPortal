@@ -268,11 +268,10 @@ describe("Company creation, reopening and editing (real authorization, real Mast
     await signInWith(...ALL);
     const created = await K.dir.createCompanyDirectoryRecord(fullPayload("J"));
     const id = created.company.id;
-    const renamed = `Recovery ${run} J${digits(4)} Renamed Ltd`;
-    const edited = await K.dir.updateCompanyDirectoryRecord(id, { companyName: renamed, dba: "New Trade Name", ein: "" });
-    assert.equal(edited.companyName, renamed);
+    const edited = await K.dir.updateCompanyDirectoryRecord(id, { dba: "New Trade Name", ein: "" });
+    assert.equal(edited.companyName, created.company.name, "the registered legal name changes only through the gated procedure");
     const profile = await K.dir.getCompanyProfile(id);
-    assert.equal(profile?.name, renamed);
+    assert.equal(profile?.name, created.company.name);
     assert.equal(profile?.dba, "New Trade Name");
     assert.equal(profile?.ein, null);
     assert.equal(profile?.reg_city, "Toronto", "an identity edit leaves addresses, contacts and registrations untouched");

@@ -2,7 +2,7 @@ import "server-only"
 
 import type { PoolClient } from "pg"
 import { hasAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
-import { ContactNotFoundError } from "@/lib/contacts/errors"
+import { ContactNotFoundError, ContactStateError } from "@/lib/contacts/errors"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import * as operations from "@/lib/contacts/operations"
 import { resolveCommunicationRouting, type CommunicationRouting } from "@/lib/contacts/communication-routing"
@@ -125,6 +125,18 @@ export async function endPersonChannel(input: unknown): Promise<ContactView> {
 }
 export async function voidPersonChannel(input: unknown): Promise<ContactView> {
   return manage((ctx) => operations.voidPersonChannel(ctx, input))
+}
+
+/**
+ * The contacts API does not change a company's own phone / email / website: those are sensitive and change only through Company Edit (a
+ * replacement or removal is confirmed with verified evidence). The caller is AUTHORIZED first (CONTACT_MANAGE; a denial is a denial), then refused.
+ */
+export async function refuseDirectCompanyChannelChange(): Promise<never> {
+  return manage(async () => {
+    throw new ContactStateError(
+      "The company's phone, email and website are changed through Company Edit, where a replacement or removal is confirmed with verified evidence. Nothing was changed.",
+    )
+  })
 }
 
 export async function addOrganizationChannel(input: unknown): Promise<OrganizationContactsView> {

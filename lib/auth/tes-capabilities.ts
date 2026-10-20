@@ -70,6 +70,8 @@ export const TES_CAPABILITY_SCOPES = {
   // Restricted person identity details shown in Contacts: date of birth and the person's driving licence record (migration 0035).
   PERSON_IDENTITY_READ: "SYSTEM",
   PERSON_IDENTITY_MANAGE: "SYSTEM",
+  // Executing a registered legal-name change (migration 0036). Granted to the Onboarding Team; the Master Account always satisfies it.
+  COMPANY_LEGAL_NAME_CHANGE: "SYSTEM",
 } as const satisfies Record<string, TesCapabilityScope>
 
 export type TesCapability = keyof typeof TES_CAPABILITY_SCOPES

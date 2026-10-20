@@ -23,6 +23,8 @@ import {
   getLinksForFinding,
   deriveMaintenanceItemProvenance,
   type VehicleStore,
+  type InspectionFinding,
+  type InspectionFindingStatus,
   type VehicleInspectionRecord,
   type VehicleMaintenanceRecord,
 } from "@/lib/vehicle-data"
@@ -66,6 +68,42 @@ import {
 } from "./VehicleInspectionsWorkspace"
 
 type AnyComponent = ComponentType<any>
+
+// The original referenced these two without declaring them, which only failed once a finding or a maintenance item was added.
+const inputClass = "h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+
+function FindingRow({ companyId, store, finding, onStoreChange, setNotice, setError }: {
+  companyId: string
+  store: VehicleStore
+  finding: InspectionFinding
+  onStoreChange: (store: VehicleStore) => void
+  setNotice: (value: string | null) => void
+  setError: (value: string | null) => void
+}) {
+  const links = getLinksForFinding(store, finding.id)
+  const changeStatus = (status: InspectionFindingStatus) => {
+    try {
+      updateInspectionFindingStatus(companyId, finding.id, status)
+      onStoreChange(loadVehicleStore(companyId))
+      setNotice("Finding status updated.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The finding could not be updated.")
+    }
+  }
+  return (
+    <div className="rounded-lg border border-border p-2">
+      <p className="text-xs font-semibold">{finding.componentSystem ? `${finding.componentSystem} — ` : ""}{finding.rawDescription}</p>
+      <div className="mt-1 flex items-center gap-2">
+        <select className={inputClass} value={finding.status} onChange={(e) => changeStatus(e.target.value as InspectionFindingStatus)}>
+          <option value="OPEN">OPEN</option>
+          <option value="IN_PROGRESS">IN_PROGRESS</option>
+          <option value="RESOLVED">RESOLVED</option>
+        </select>
+        <span className="text-[10px] text-muted-foreground">{links.length} linked maintenance item(s)</span>
+      </div>
+    </div>
+  )
+}
 
 export interface MaintenanceTabProps {
   companyId: string

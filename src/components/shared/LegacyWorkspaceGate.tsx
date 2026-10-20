@@ -29,6 +29,14 @@ export function DeferredWorkspace({ companyId, title, description }: { companyId
   )
 }
 
+/**
+ * Keeps an existing workspace's intrinsic width from widening the application shell (a flex item without `min-w-0`): the workspace is laid out
+ * at the width the page offers and scrolls horizontally inside itself when a wide table needs more. The workspace's own markup is untouched.
+ */
+function WorkspaceViewport({ children }: { children: React.ReactNode }) {
+  return <div className="w-full min-w-0 max-w-full overflow-x-auto [contain:inline-size]">{children}</div>
+}
+
 type CanonicalCompany = { id: string; name: string; kind?: string; region?: string; status?: string }
 
 /**
@@ -91,7 +99,7 @@ function BrowserLocalWorkspace({ company, title, boundary, children }: { company
   }, [company])
   return (
     <div className="flex flex-col">
-      <div role="note" className="mx-6 mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
+      <div role="note" className="mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <div>
           <p className="font-semibold text-foreground">{title}: browser-local workspace (not the TES database)</p>
@@ -108,7 +116,8 @@ function BrowserLocalWorkspace({ company, title, boundary, children }: { company
  *
  * - The existing workspace is NEVER removed or replaced. For a canonical company it opens unchanged, under a banner that says its
  *   records live only in this browser and are not canonical production data.
- * - When a canonical (PostgreSQL) workspace exists it is the default tab, and the existing workspace stays one click away.
+ * - During the restoration/testing phase the existing workspace is the first tab and opens first; the canonical (PostgreSQL) workspace,
+ *   when one exists, is the second tab. Neither tab ever writes to the other's store.
  * - An id that is not a canonical organization renders the existing component directly (legacy prototype data stays readable;
  *   nothing is migrated, merged or deleted).
  * - A failed lookup is reported as a failure, never as "not found".
@@ -130,7 +139,8 @@ export function LegacyWorkspaceGate({
 }) {
   const [state, setState] = useState<Resolution>("loading")
   const [company, setCompany] = useState<CanonicalCompany | null>(null)
-  const [tab, setTab] = useState<"canonical" | "local">("canonical")
+  // The original (browser-local) workspace opens first during this restoration/testing phase; the canonical records are one click away.
+  const [tab, setTab] = useState<"canonical" | "local">("local")
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
@@ -167,25 +177,43 @@ export function LegacyWorkspaceGate({
       </div>
     )
   }
-  if (state === "legacy" || !company) return <>{children}</>
+  if (state === "legacy" || !company) return <WorkspaceViewport>{children}</WorkspaceViewport>
 
   const local = (
     <BrowserLocalWorkspace company={company} title={title} boundary={description}>
       {children}
     </BrowserLocalWorkspace>
   )
-  if (!canonical) return local
+  if (!canonical) return <WorkspaceViewport>{local}</WorkspaceViewport>
   return (
     <div>
-      <div role="tablist" className="mx-6 mt-4 flex gap-2 text-sm">
-        <button role="tab" aria-selected={tab === "canonical"} onClick={() => setTab("canonical")} className={`rounded-md border px-3 py-1.5 ${tab === "canonical" ? "bg-primary text-primary-foreground" : ""}`}>
+      <div role="tablist" aria-label={`${title} workspaces`} className="mt-4 flex flex-wrap gap-2 text-sm">
+        <button
+          type="button"
+          role="tab"
+          id={`${title}-tab-local`}
+          aria-selected={tab === "local"}
+          aria-controls={`${title}-panel`}
+          onClick={() => setTab("local")}
+          className={`rounded-md border px-3 py-1.5 ${tab === "local" ? "bg-primary text-primary-foreground" : ""}`}
+        >
+          {title} (original workspace · browser-local)
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id={`${title}-tab-canonical`}
+          aria-selected={tab === "canonical"}
+          aria-controls={`${title}-panel`}
+          onClick={() => setTab("canonical")}
+          className={`rounded-md border px-3 py-1.5 ${tab === "canonical" ? "bg-primary text-primary-foreground" : ""}`}
+        >
           {title} (TES records)
         </button>
-        <button role="tab" aria-selected={tab === "local"} onClick={() => setTab("local")} className={`rounded-md border px-3 py-1.5 ${tab === "local" ? "bg-primary text-primary-foreground" : ""}`}>
-          {title} (browser-local workspace)
-        </button>
       </div>
-      {tab === "canonical" ? canonical : local}
+      <div role="tabpanel" id={`${title}-panel`} aria-labelledby={`${title}-tab-${tab}`} className="min-w-0">
+        <WorkspaceViewport>{tab === "canonical" ? canonical : local}</WorkspaceViewport>
+      </div>
     </div>
   )
 }

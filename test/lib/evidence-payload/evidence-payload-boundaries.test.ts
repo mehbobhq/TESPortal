@@ -147,7 +147,10 @@ describe("payloads live in GCS, never in PostgreSQL", () => {
       }
     };
     for (const dir of ["app", "src", "lib", "components"]) walk(dir);
+    // legacy-vehicles.tsx is the RESTORED original Vehicles workspace (the file that imported this store before the canonical cutover,
+    // commit 0e8e8c3). It is browser-local prototype data, never canonical; the owner directed its restoration. It is the only addition.
     assert.deepEqual(importers.sort(), [
+      "app/companies/[id]/vehicles/legacy-vehicles.tsx",
       "src/components/business/AuditCasesSection.tsx",
       "src/components/business/CorporateDocumentsSection.tsx",
       "src/components/drivers/DriverWorkspace.tsx",

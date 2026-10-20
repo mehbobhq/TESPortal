@@ -9,10 +9,16 @@ const page = read("app/companies/[id]/contacts/page.tsx")
 const adapter = read("src/components/contacts/canonical-adapter.ts")
 
 describe("Contacts page: one interface on canonical PostgreSQL records", () => {
-  it("is a single page titled Contacts: no workspace tabs, no gate, no second interface", () => {
+  it("offers the original browser-local workspace first and this canonical page second, as two clearly labelled workspaces", () => {
     assert.match(page, /section="Contacts"/)
-    assert.doesNotMatch(page, /LegacyWorkspaceGate|LegacyContactsPage|CanonicalContacts\b|role="tablist"|browser-local|TES records/i)
-    assert.equal(existsSync(path.join(ROOT, "app/companies/[id]/contacts/canonical-contacts.tsx")), false, "the second interface is gone")
+    assert.match(page, /<LegacyWorkspaceGate/)
+    assert.match(page, /canonical=\{<CanonicalContactsPage \/>\}/)
+    assert.match(page, /<LegacyContactsPage \/>/)
+    assert.match(page, /testing\/prototype data, not canonical Production records/)
+    // the canonical page itself is a separate function; the old second canonical interface stays gone
+    assert.match(page, /function CanonicalContactsPage\(\)/)
+    assert.equal(existsSync(path.join(ROOT, "app/companies/[id]/contacts/canonical-contacts.tsx")), false, "the second canonical interface is gone")
+    assert.equal(existsSync(path.join(ROOT, "app/companies/[id]/contacts/legacy-contacts.tsx")), true, "the original workspace is restored")
   })
 
   it("keeps the established design: stats, directory with search and filters, inspector, manual add dialog", () => {

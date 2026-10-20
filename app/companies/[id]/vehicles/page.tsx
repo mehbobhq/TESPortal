@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import LegacyVehiclesPage from "./legacy-vehicles"
 
 const VEHICLE_TYPES = ["TRUCK_TRACTOR", "STRAIGHT_TRUCK", "TRAILER", "OTHER"]
 const RELATIONSHIPS = ["OPERATES", "OWNS", "LEASES"]
@@ -27,7 +29,7 @@ type VehicleRow = {
 }
 type Company = { id: string; name: string; kind: string; status: string }
 
-export default function VehiclesPage() {
+function CanonicalVehicles() {
   const params = useParams()
   const companyId = params.id as string
   const base = `/api/companies/${encodeURIComponent(companyId)}`
@@ -179,5 +181,20 @@ export default function VehiclesPage() {
         canonical PostgreSQL storage yet.
       </p>
     </div>
+  )
+}
+
+export default function VehiclesPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Vehicles"
+      description="The original Vehicles workspace (vehicle register and detail, profile and specifications, ownership, registration, permits, inspections, maintenance and repair bills, documents and evidence, activity and settings) saves only in this browser. It is testing/prototype data, not canonical Production records, and it is separate from the vehicles listed under TES records. Nothing here was changed or deleted."
+      canonical={<CanonicalVehicles />}
+    >
+      <LegacyVehiclesPage />
+    </LegacyWorkspaceGate>
   )
 }

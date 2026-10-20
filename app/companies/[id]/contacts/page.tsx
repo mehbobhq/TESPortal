@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { Info, Upload, UserPlus, X } from "lucide-react";
 
 import { CompanyMissing } from "@/components/company-missing";
+import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate";
+import LegacyContactsPage from "./legacy-contacts";
 import { LoadingState } from "@/src/components/shared/StateDisplays";
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
 import { ContactStats } from "@/src/components/contacts/ContactStats";
@@ -43,7 +45,7 @@ const countryOf = (region: string) => (CANADIAN_PROVINCES.includes(region) ? "CA
 // CONTACTS PAGE: the company's people and the company's own phone / email lines, from the canonical PostgreSQL contacts domain.
 // Authorization, tenant isolation and Master Register events are the server's; this page holds no data of its own.
 // =========================================================================
-export default function ContactsPage() {
+function CanonicalContactsPage() {
   const params = useParams<{ id: string }>();
   const companyId = params?.id as string;
   const base = `/api/companies/${encodeURIComponent(companyId)}/contacts`;
@@ -418,4 +420,19 @@ export default function ContactsPage() {
       />
     </div>
   );
+}
+
+export default function ContactsPage() {
+  const params = useParams()
+  const companyId = params.id as string
+  return (
+    <LegacyWorkspaceGate
+      companyId={companyId}
+      title="Contacts"
+      description="The original Contacts workspace (directory, manual entry, document and OCR review, inspector and history) saves only in this browser. It is testing/prototype data, not canonical Production records, and it is separate from the canonical contacts under TES records. Changing the company's sensitive contact lines (its website, phone or email), designating a Primary Contact and every other canonical contact action stay in the TES records tab, where authorization, evidence confirmation, the change ledger and the Master Register apply. Nothing here was changed or deleted."
+      canonical={<CanonicalContactsPage />}
+    >
+      <LegacyContactsPage />
+    </LegacyWorkspaceGate>
+  )
 }

@@ -18,7 +18,7 @@ const SECTIONS: Array<[string, string, string]> = [
 ]
 
 // Sections that show ONE workspace (the original) with the compact browser-data indicator; their canonical workspace lives in canonical-<route>.tsx.
-const SINGLE = new Set(["drivers", "tax-filing", "authorities", "insurance", "business", "vehicles"])
+const SINGLE = new Set(["drivers", "tax-filing", "authorities", "insurance", "business", "vehicles", "contacts"])
 
 describe("original company workspaces are restored as the first workspace", () => {
   it("the shared gate opens the original (browser-local) workspace first and lists it first; TES records are the second tab", () => {
@@ -106,7 +106,7 @@ describe("Contacts: the original workspace uses its original components; the can
   })
 
   it("the canonical page does not import the original components", () => {
-    const page = read("app/companies/[id]/contacts/page.tsx")
+    const page = read("app/companies/[id]/contacts/canonical-contacts.tsx")
     assert.doesNotMatch(page, /components\/contacts\/legacy\//)
   })
 })
@@ -118,6 +118,7 @@ describe("Drivers, Authorities, Insurance, Tax Filing, Business: one workspace, 
     ["insurance", "CanonicalInsurance", "deferred"],
     ["tax-filing", "CanonicalTaxFiling", "CanonicalRegistryPanel"],
     ["business", "CanonicalBusiness", "deferred|intentionally"],
+    ["contacts", "CanonicalContactsPage", "/api/companies"],
   ]
   for (const [route, name, marker] of CANON) {
     it(`${route}: the canonical workspace is kept, exported, not a route and not mounted`, () => {
@@ -130,14 +131,16 @@ describe("Drivers, Authorities, Insurance, Tax Filing, Business: one workspace, 
   }
 
   it("each original workspace carries the shared compact browser-data indicator in its header", () => {
-    const files = ["app/companies/[id]/drivers/legacy-drivers.tsx", "app/companies/[id]/authorities/legacy-authorities.tsx", "app/companies/[id]/insurance/legacy-insurance.tsx", "app/companies/[id]/tax-filing/legacy-tax-filing.tsx", "src/components/business/BusinessHeader.tsx", "app/companies/[id]/drivers/[driverId]/page.tsx"]
+    const files = ["app/companies/[id]/drivers/legacy-drivers.tsx", "app/companies/[id]/authorities/legacy-authorities.tsx", "app/companies/[id]/insurance/legacy-insurance.tsx", "app/companies/[id]/tax-filing/legacy-tax-filing.tsx", "src/components/business/BusinessHeader.tsx", "app/companies/[id]/drivers/[driverId]/page.tsx", "app/companies/[id]/contacts/legacy-contacts.tsx"]
     for (const file of files) assert.match(read(file), /<PrototypeBrowserDataIndicator \/>/, file)
     const indicator = read("src/components/shared/PrototypeBrowserDataIndicator.tsx")
     assert.match(indicator, /Prototype workspace · Browser data/)
     assert.match(indicator, /Records in this workspace are stored in this browser and are not synchronized with the TES production database\./)
   })
 
-  it("the shared gate and header are unchanged by this cycle's section work (single is opt-in; Contacts keeps tabs)", () => {
-    assert.match(read("app/companies/[id]/contacts/page.tsx"), /canonical=\{<CanonicalContactsPage \/>\}/)
+  it("the shared gate keeps `single` opt-in: sections that pass no `single` would still get tabs and the banner", () => {
+    const gate = read("src/components/shared/LegacyWorkspaceGate.tsx")
+    assert.match(gate, /single = false/)
+    assert.match(gate, /role="tablist"/)
   })
 })

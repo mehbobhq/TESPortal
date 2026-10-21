@@ -5,19 +5,19 @@ import { before, describe, it } from "node:test"
 
 const ROOT = process.cwd()
 const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8")
-const page = read("app/companies/[id]/contacts/page.tsx")
+// The canonical (PostgreSQL) Contacts page lives in canonical-contacts.tsx (not rendered by the route); the route page shows the original workspace.
+const routePage = read("app/companies/[id]/contacts/page.tsx")
+const page = read("app/companies/[id]/contacts/canonical-contacts.tsx")
 const adapter = read("src/components/contacts/canonical-adapter.ts")
 
 describe("Contacts page: one interface on canonical PostgreSQL records", () => {
-  it("offers the original browser-local workspace first and this canonical page second, as two clearly labelled workspaces", () => {
+  it("the Contacts route shows ONE interface (the original workspace); the canonical page is kept in its own non-routed file", () => {
+    assert.match(routePage, /<LegacyWorkspaceGate\s+single\b/)
+    assert.match(routePage, /<LegacyContactsPage \/>/)
+    assert.doesNotMatch(routePage, /canonical=|CanonicalContactsPage|role="tablist"|import[^\n]*canonical-contacts/)
     assert.match(page, /section="Contacts"/)
-    assert.match(page, /<LegacyWorkspaceGate/)
-    assert.match(page, /canonical=\{<CanonicalContactsPage \/>\}/)
-    assert.match(page, /<LegacyContactsPage \/>/)
-    assert.match(page, /testing\/prototype data, not canonical Production records/)
-    // the canonical page itself is a separate function; the old second canonical interface stays gone
-    assert.match(page, /function CanonicalContactsPage\(\)/)
-    assert.equal(existsSync(path.join(ROOT, "app/companies/[id]/contacts/canonical-contacts.tsx")), false, "the second canonical interface is gone")
+    assert.match(page, /export function CanonicalContactsPage\(\)/)
+    assert.doesNotMatch(page, /export default|LegacyWorkspaceGate|LegacyContactsPage/)
     assert.equal(existsSync(path.join(ROOT, "app/companies/[id]/contacts/legacy-contacts.tsx")), true, "the original workspace is restored")
   })
 
@@ -46,7 +46,7 @@ describe("Contacts page: one interface on canonical PostgreSQL records", () => {
 
   it("keeps identity verification separate from data entry, and has no Restrictions field", () => {
     assert.match(page, /does not verify identity/)
-    for (const file of ["app/companies/[id]/contacts/page.tsx", "src/components/contacts/ContactInspector.tsx", "src/components/contacts/ManualContactDialog.tsx"]) {
+    for (const file of ["app/companies/[id]/contacts/canonical-contacts.tsx", "src/components/contacts/ContactInspector.tsx", "src/components/contacts/ManualContactDialog.tsx"]) {
       assert.doesNotMatch(read(file), /Restrictions|dlRestrictions/, file)
     }
     assert.doesNotMatch(adapter, /"verified"|identityStatus: "documented"/)

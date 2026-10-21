@@ -41,6 +41,7 @@ import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePick
 import { CameraCapture } from "@/src/components/CameraCapture";
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer";
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator";
 import { ContactStats } from "@/src/components/contacts/legacy/ContactStats";
 import { ContactDirectory } from "@/src/components/contacts/legacy/ContactDirectory";
 import { ContactInspector } from "@/src/components/contacts/legacy/ContactInspector";
@@ -907,7 +908,7 @@ export default function LegacyContactsPage() {
       <CompanyWorkspaceHeader
         company={{ id: company.id, name: company.name, kind: String(company.kind || ""), status: String(company.status || "") }}
         section="Contacts"
-        description="Canonical personnel register, identity credentials, multi-company relationships, and compliance evidence."
+        description={<>Personnel directory, identity credentials, company relationships, and supporting records.<PrototypeBrowserDataIndicator /></>}
         actions={contactsActions}
       />
 

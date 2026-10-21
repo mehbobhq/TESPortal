@@ -54,7 +54,7 @@ describe("company directory PostgreSQL cutover boundaries", () => {
   })
 
   it("keeps the canonical Contacts and Settings workspaces off browser persistence and behind company-scoped routes", () => {
-    for (const file of ["app/companies/[id]/contacts/page.tsx", "app/companies/[id]/settings/canonical-settings.tsx"]) {
+    for (const file of ["app/companies/[id]/contacts/canonical-contacts.tsx", "app/companies/[id]/settings/canonical-settings.tsx"]) {
       const code = source(file)
       assert.doesNotMatch(code, /localStorage|sessionStorage|indexedDB/i, file)
       assert.match(code, /\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}\/(contacts|settings)/, file)

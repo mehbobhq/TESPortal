@@ -17,6 +17,9 @@ const SECTIONS: Array<[string, string, string]> = [
   ["vehicles", "Vehicles", "legacy-vehicles"],
 ]
 
+// Sections that show ONE workspace (the original) with the compact browser-data indicator; their canonical workspace lives in canonical-<route>.tsx.
+const SINGLE = new Set(["drivers", "tax-filing", "authorities", "insurance", "business", "vehicles"])
+
 describe("original company workspaces are restored as the first workspace", () => {
   it("the shared gate opens the original (browser-local) workspace first and lists it first; TES records are the second tab", () => {
     assert.match(gate, /useState<"canonical" \| "local">\("local"\)/)
@@ -37,13 +40,16 @@ describe("original company workspaces are restored as the first workspace", () =
   })
 
   for (const [route, title, legacy] of SECTIONS) {
-    it(`${title}: the route mounts the original workspace${route === "vehicles" ? " as the only visible interface" : " and keeps the canonical records as the second workspace"}`, () => {
+    it(`${title}: the route mounts the original workspace${SINGLE.has(route) ? " as the only visible interface" : " and keeps the canonical records as the second workspace"}`, () => {
       const page = read(`app/companies/[id]/${route}/page.tsx`)
       assert.match(page, /<LegacyWorkspaceGate/)
       assert.match(page, new RegExp(`from "\\./${legacy}"`))
       assert.match(page, new RegExp(`title="${title}"`))
-      if (route === "vehicles") assert.match(page, /\bsingle\b/)
-      else assert.match(page, /canonical=\{/)
+      if (SINGLE.has(route)) {
+        assert.match(page, /<LegacyWorkspaceGate\s+single\b/)
+        assert.doesNotMatch(page, /canonical=|role="tablist"/)
+        assert.doesNotMatch(page, /import[^\n]*canonical-/)
+      } else assert.match(page, /canonical=\{/)
       const original = read(`app/companies/[id]/${route}/${legacy}.tsx`)
       assert.doesNotMatch(original, /\bfetch\(/, "the original workspace never calls a canonical API")
       assert.match(original, /localStorage|loadVehicleStore|loadCompanyDriverStore|loadCompanyStore|from "@\/lib\//, "the original workspace keeps its browser-local store")
@@ -102,5 +108,36 @@ describe("Contacts: the original workspace uses its original components; the can
   it("the canonical page does not import the original components", () => {
     const page = read("app/companies/[id]/contacts/page.tsx")
     assert.doesNotMatch(page, /components\/contacts\/legacy\//)
+  })
+})
+
+describe("Drivers, Authorities, Insurance, Tax Filing, Business: one workspace, canonical code preserved", () => {
+  const CANON: Array<[string, string, string]> = [
+    ["drivers", "CanonicalDrivers", "deferred"],
+    ["authorities", "CanonicalAuthorities", "CanonicalRegistryPanel"],
+    ["insurance", "CanonicalInsurance", "deferred"],
+    ["tax-filing", "CanonicalTaxFiling", "CanonicalRegistryPanel"],
+    ["business", "CanonicalBusiness", "deferred|intentionally"],
+  ]
+  for (const [route, name, marker] of CANON) {
+    it(`${route}: the canonical workspace is kept, exported, not a route and not mounted`, () => {
+      const canonical = read(`app/companies/[id]/${route}/canonical-${route}.tsx`)
+      assert.match(canonical, new RegExp(`export function ${name}\\(`))
+      assert.match(canonical, new RegExp(marker, "i"))
+      assert.doesNotMatch(canonical, /export default/)
+      assert.doesNotMatch(read(`app/companies/[id]/${route}/page.tsx`), new RegExp(name))
+    })
+  }
+
+  it("each original workspace carries the shared compact browser-data indicator in its header", () => {
+    const files = ["app/companies/[id]/drivers/legacy-drivers.tsx", "app/companies/[id]/authorities/legacy-authorities.tsx", "app/companies/[id]/insurance/legacy-insurance.tsx", "app/companies/[id]/tax-filing/legacy-tax-filing.tsx", "src/components/business/BusinessHeader.tsx", "app/companies/[id]/drivers/[driverId]/page.tsx"]
+    for (const file of files) assert.match(read(file), /<PrototypeBrowserDataIndicator \/>/, file)
+    const indicator = read("src/components/shared/PrototypeBrowserDataIndicator.tsx")
+    assert.match(indicator, /Prototype workspace · Browser data/)
+    assert.match(indicator, /Records in this workspace are stored in this browser and are not synchronized with the TES production database\./)
+  })
+
+  it("the shared gate and header are unchanged by this cycle's section work (single is opt-in; Contacts keeps tabs)", () => {
+    assert.match(read("app/companies/[id]/contacts/page.tsx"), /canonical=\{<CanonicalContactsPage \/>\}/)
   })
 })

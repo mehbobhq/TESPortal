@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 
 import { DriverWorkspace } from "@/src/components/drivers/DriverWorkspace"
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
 import {
   getCompany,
   loadCompanyDriverStore,
@@ -238,10 +239,12 @@ export default function DriverPage(props: DriverPageProps) {
   const { id: companyId } = use(props.params)
   return (
     <LegacyWorkspaceGate
+      single
       companyId={companyId}
       title="Driver compliance record"
-      description="The detailed driver compliance record (qualifications, training, roadside events, documents) is saved only in this browser. Canonical drivers appear in the Drivers list; their detailed record is not in the TES database yet. Nothing here was changed or deleted."
+      description="The detailed driver compliance record is saved only in this browser; it is not synchronized with the TES production database."
     >
+      <div className="flex justify-end text-xs"><PrototypeBrowserDataIndicator /></div>
       <LegacyDriverPage {...props} />
     </LegacyWorkspaceGate>
   )

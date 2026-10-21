@@ -13,11 +13,11 @@ const CUT_OVER_PAGES = [
   "app/companies/[id]/credentials/page.tsx",
   // the Vehicles ROUTE now renders the original browser-local workspace only; the retained canonical register is checked here
   "app/companies/[id]/vehicles/canonical-vehicles.tsx",
-  "app/companies/[id]/drivers/page.tsx",
-  "app/companies/[id]/insurance/page.tsx",
-  "app/companies/[id]/tax-filing/page.tsx",
-  "app/companies/[id]/authorities/page.tsx",
-  "app/companies/[id]/business/page.tsx",
+  "app/companies/[id]/drivers/canonical-drivers.tsx",
+  "app/companies/[id]/insurance/canonical-insurance.tsx",
+  "app/companies/[id]/tax-filing/canonical-tax-filing.tsx",
+  "app/companies/[id]/authorities/canonical-authorities.tsx",
+  "app/companies/[id]/business/canonical-business.tsx",
   "src/components/canonical/CanonicalRegistryPanel.tsx",
 ]
 
@@ -108,10 +108,10 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
 
   it("makes deferred modules explicit instead of persisting them in the browser", () => {
     const deferred: Record<string, RegExp> = {
-      "app/companies/[id]/business/page.tsx": /intentionally deferred/,
-      "app/companies/[id]/drivers/page.tsx": /deferred/i,
+      "app/companies/[id]/business/canonical-business.tsx": /intentionally deferred/,
+      "app/companies/[id]/drivers/canonical-drivers.tsx": /deferred/i,
       "app/companies/[id]/vehicles/canonical-vehicles.tsx": /deferred/i,
-      "app/companies/[id]/insurance/page.tsx": /deferred/i,
+      "app/companies/[id]/insurance/canonical-insurance.tsx": /deferred/i,
       "app/companies/[id]/credentials/page.tsx": /deferred/i,
     }
     for (const [file, pattern] of Object.entries(deferred)) assert.match(source(file), pattern, file)

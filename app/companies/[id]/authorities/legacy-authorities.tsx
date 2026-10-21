@@ -7,6 +7,8 @@ import { getDeadlineStatus, DEFAULT_DEADLINE_RULES } from "@/lib/deadline-engine
 import { normalizeUSDOT, normalizeMC, normalizeTaxId } from "@/lib/identifier-normalization"
 import { recordAuditEvent } from "@/lib/audit-logger"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
+
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
 import { CameraCapture } from "@/src/components/CameraCapture"
@@ -967,6 +969,7 @@ export default function LegacyAuthoritiesPage() {
           <CompanyWorkspaceHeader
             company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
             section="Authorities"
+            description={<PrototypeBrowserDataIndicator />}
           />
 
           <div className="mt-5 rounded-xl border border-border bg-muted/20 p-4">

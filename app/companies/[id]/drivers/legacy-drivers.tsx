@@ -4,6 +4,8 @@ import { use, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { CheckCircle2, Plus, Search, Upload, UserPlus, Users, X } from "lucide-react"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
+
 import { StatCard } from "@/components/stat-card"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -56,7 +58,7 @@ export default function LegacyDriversPage({params}:{params:Promise<{id:string}>}
         status: company.status ?? "Active",
       }}
       section="Drivers"
-      description="Driver compliance records"
+      description={<>Driver compliance records<PrototypeBrowserDataIndicator /></>}
       actions={
         <div className="flex gap-2">
           <Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button>

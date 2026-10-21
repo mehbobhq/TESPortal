@@ -1,7 +1,9 @@
 "use client";
 
 import { Building2, CheckCircle2 } from "lucide-react";
-import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
+
 
 type Props = {
   company: any;
@@ -14,7 +16,7 @@ export function BusinessHeader({ company, totalActiveOwnership }: Props) {
         <CompanyWorkspaceHeader
           company={company}
           section="Business & Corporate Records"
-          description="Corporate formation, ownership, and statutory filing records."
+          description={<>Corporate formation, ownership, and statutory filing records.<PrototypeBrowserDataIndicator /></>}
         />
 
         {/* Regulatory Origin & Operating Status Bar */}

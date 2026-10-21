@@ -27,7 +27,9 @@ import {
 } from "lucide-react";
 
 // --- Shared Foundation Components ---
-import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader";
+import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
+
 import { ReadOnlyField, RegulatoryIdentifierField } from "@/src/components/shared/ReadOnlyField";
 import { LoadingState, EmptyState, ErrorAlert } from "@/src/components/shared/StateDisplays";
 import { UnsavedChangesPrompt } from "@/src/components/shared/UnsavedChangesPrompt";
@@ -1575,7 +1577,7 @@ export default function LegacyInsurancePage() {
         <CompanyWorkspaceHeader
           company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
           section="Insurance"
-          description="Fleet liability, cargo coverage, Workers Compensation (WCB), and surety bonds."
+          description={<>Fleet liability, cargo coverage, Workers Compensation (WCB), and surety bonds.<PrototypeBrowserDataIndicator /></>}
           actions={
             <>
               <button

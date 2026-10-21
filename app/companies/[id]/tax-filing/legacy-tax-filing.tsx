@@ -19,6 +19,8 @@ import {
 
 import { recordAuditEvent } from "@/lib/audit-logger"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
+
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField"
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer"
 import { DocumentSourcePicker } from "@/src/components/shared/DocumentSourcePicker"
@@ -1002,6 +1004,7 @@ export default function LegacyTaxFilingPage() {
           <CompanyWorkspaceHeader
             company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
             section="Tax Filing"
+            description={<PrototypeBrowserDataIndicator />}
           />
 
           <div className="mt-5">

@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -541,7 +542,7 @@ export default function LegacyCredentialsPage() {
           status: company?.status || "Active",
         }}
         section="Credentials"
-        description="Company login accounts linked to TES-managed external portals and systems."
+        description={<>Company login accounts linked to TES-managed external portals and systems.<PrototypeBrowserDataIndicator /></>}
       />
 
       <div className="space-y-5">

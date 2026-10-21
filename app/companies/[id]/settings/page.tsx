@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
-import { CanonicalSettings } from "./canonical-settings"
 import {
   ArrowLeft,
   Check,
@@ -21,6 +20,7 @@ import {
 } from "lucide-react"
 
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -758,6 +758,7 @@ function LegacySettingsPage() {
           <CompanyWorkspaceHeader
             company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
             section="Compliance Profile"
+            description={<PrototypeBrowserDataIndicator />}
             actions={
               !isDirty && savedAt ? (
                 <span className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
@@ -1132,7 +1133,12 @@ export default function SettingsPage() {
   const params = useParams()
   const companyId = params.id as string
   return (
-    <LegacyWorkspaceGate companyId={companyId} title="Settings" description="Compliance settings saved here stay only in this browser (a prototype store); they are not the company operating profile in the TES database. Nothing here was changed or deleted." canonical={<CanonicalSettings companyId={companyId} />}>
+    <LegacyWorkspaceGate
+      single
+      companyId={companyId}
+      title="Settings"
+      description="Compliance settings saved here stay only in this browser; they are not synchronized with the TES production database and are not the company operating profile."
+    >
       <LegacySettingsPage />
     </LegacyWorkspaceGate>
   )

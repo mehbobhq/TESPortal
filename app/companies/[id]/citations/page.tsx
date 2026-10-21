@@ -48,6 +48,7 @@ import {
 } from "lucide-react"
 
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
+import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -924,7 +925,7 @@ function LegacyCitationsPage() {
           <CompanyWorkspaceHeader
             company={{ id: company.id, name: company.name, kind: company.kind || "", status: company.status || "" }}
             section="Citations"
-            description="Tickets, citations and penalty notices. New Roadside Inspections are recorded in Driver > Performance."
+            description={<>Tickets, citations and penalty notices. New Roadside Inspections are recorded in Driver &gt; Performance.<PrototypeBrowserDataIndicator /></>}
           />
         )}
 
@@ -1271,9 +1272,10 @@ export default function CitationsPage() {
   const companyId = params.id as string
   return (
     <LegacyWorkspaceGate
+      single
       companyId={companyId}
       title="Citations"
-      description="Citations, tickets and their evidence are saved only in this browser (a prototype store); they are not in the TES database and no other user or device can see them. They will move to PostgreSQL once their canonical domain exists. Nothing here was changed or deleted."
+      description="Citations, tickets and their evidence are saved only in this browser; they are not synchronized with the TES production database."
     >
       <LegacyCitationsPage />
     </LegacyWorkspaceGate>

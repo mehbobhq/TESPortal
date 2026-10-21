@@ -144,3 +144,37 @@ describe("Drivers, Authorities, Insurance, Tax Filing, Business: one workspace, 
     assert.match(gate, /role="tablist"/)
   })
 })
+
+describe("Credentials, Settings, Citations: one workspace; Record of Events, Customs, Programs: unchanged honest placeholders", () => {
+  const SIX_SINGLE: Array<[string, string]> = [["credentials", "Credentials"], ["settings", "Settings"], ["citations", "Citations"]]
+  for (const [route, title] of SIX_SINGLE) {
+    it(`${title}: the route shows only the original workspace (single gate, no canonical tab) with the compact indicator`, () => {
+      const page = read(`app/companies/[id]/${route}/page.tsx`)
+      assert.match(page, /<LegacyWorkspaceGate\s[^>]*\bsingle\b/)
+      assert.doesNotMatch(page, /canonical=|role="tablist"|import[^\n]*canonical-/)
+      const files = route === "credentials" ? [read(`app/companies/[id]/credentials/legacy-credentials.tsx`)] : [page]
+      for (const code of files) assert.match(code, /<PrototypeBrowserDataIndicator \/>/)
+      assert.doesNotMatch(page, /canonical PostgreSQL|saved to PostgreSQL|TES records/i, "no visible text claims these records are canonical")
+    })
+  }
+
+  it("the canonical Credentials and Settings implementations are preserved, exported and not mounted", () => {
+    const credentials = read("app/companies/[id]/credentials/canonical-credentials.tsx")
+    assert.match(credentials, /export function CanonicalCredentials\(/)
+    assert.match(credentials, /\/api\/credential-systems/)
+    assert.doesNotMatch(credentials, /export default|type="password"/)
+    const settings = read("app/companies/[id]/settings/canonical-settings.tsx")
+    assert.match(settings, /export function CanonicalSettings\(/)
+    assert.doesNotMatch(settings, /export default/)
+    assert.doesNotMatch(read("app/companies/[id]/settings/page.tsx"), /CanonicalSettings/)
+  })
+
+  for (const [route, title] of [["record-of-events", "Record of Events"], ["customs", "Customs"], ["programs", "Programs"]]) {
+    it(`${title}: remains the truthful deferred placeholder: no browser storage, no indicator, no gate`, () => {
+      const page = read(`app/companies/[id]/${route}/page.tsx`)
+      assert.match(page, /<DeferredWorkspace/)
+      assert.match(page, /no canonical \(PostgreSQL\) implementation yet/)
+      assert.doesNotMatch(page, /localStorage|PrototypeBrowserDataIndicator|<LegacyWorkspaceGate/)
+    })
+  }
+})

@@ -10,7 +10,7 @@ const CUT_OVER_PAGES = [
   "app/profile/page.tsx",
   "app/companies/[id]/profile/page.tsx",
   "app/companies/[id]/edit/page.tsx",
-  "app/companies/[id]/credentials/page.tsx",
+  "app/companies/[id]/credentials/canonical-credentials.tsx",
   // the Vehicles ROUTE now renders the original browser-local workspace only; the retained canonical register is checked here
   "app/companies/[id]/vehicles/canonical-vehicles.tsx",
   "app/companies/[id]/drivers/canonical-drivers.tsx",
@@ -77,7 +77,7 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
   })
 
   it("never accepts or returns a secret value through the credentials surface", () => {
-    for (const file of ["app/companies/[id]/credentials/page.tsx", "app/api/companies/[id]/credentials/route.ts", "app/api/companies/[id]/credentials/[credentialId]/route.ts"]) {
+    for (const file of ["app/companies/[id]/credentials/page.tsx", "app/companies/[id]/credentials/canonical-credentials.tsx", "app/api/companies/[id]/credentials/route.ts", "app/api/companies/[id]/credentials/[credentialId]/route.ts"]) {
       assert.doesNotMatch(source(file), /type="password"|password\s*[:=]|secretValue|attachSecretReference/i, file)
     }
   })
@@ -112,7 +112,7 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
       "app/companies/[id]/drivers/canonical-drivers.tsx": /deferred/i,
       "app/companies/[id]/vehicles/canonical-vehicles.tsx": /deferred/i,
       "app/companies/[id]/insurance/canonical-insurance.tsx": /deferred/i,
-      "app/companies/[id]/credentials/page.tsx": /deferred/i,
+      "app/companies/[id]/credentials/canonical-credentials.tsx": /deferred/i,
     }
     for (const [file, pattern] of Object.entries(deferred)) assert.match(source(file), pattern, file)
   })

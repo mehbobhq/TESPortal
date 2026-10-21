@@ -82,7 +82,7 @@ function removeCanonicalProjection(companyId: string): void {
 }
 
 /** The existing workspace, unchanged, opened for a canonical company, with its integration boundary stated above it. */
-function BrowserLocalWorkspace({ company, title, boundary, children }: { company: CanonicalCompany; title: string; boundary: string; children: React.ReactNode }) {
+function BrowserLocalWorkspace({ company, title, boundary, bare = false, children }: { company: CanonicalCompany; title: string; boundary: string; bare?: boolean; children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   useEffect(() => {
     const added = projectCanonicalCompany(company)
@@ -99,13 +99,13 @@ function BrowserLocalWorkspace({ company, title, boundary, children }: { company
   }, [company])
   return (
     <div className="flex flex-col">
-      <div role="note" className="mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
+      {bare ? null : <div role="note" className="mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-50/60 p-3 text-xs dark:bg-amber-950/20">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <div>
           <p className="font-semibold text-foreground">{title}: browser-local workspace (not the TES database)</p>
           <p className="mt-1 text-muted-foreground">{boundary}</p>
         </div>
-      </div>
+      </div>}
       {ready ? children : <div className="p-10"><LoadingState message={`Loading ${title}...`} /></div>}
     </div>
   )
@@ -127,6 +127,7 @@ export function LegacyWorkspaceGate({
   title,
   description,
   canonical,
+  single = false,
   children,
 }: {
   companyId: string
@@ -135,6 +136,11 @@ export function LegacyWorkspaceGate({
   description: string
   /** The canonical (PostgreSQL-backed) workspace, when one exists. */
   canonical?: React.ReactNode
+  /**
+   * Show only the existing workspace: no workspace tabs and no boundary banner (the workspace states its own data source). The canonical
+   * workspace is then not rendered here. Default false: every other section keeps its tabs and banner.
+   */
+  single?: boolean
   children: React.ReactNode
 }) {
   const [state, setState] = useState<Resolution>("loading")
@@ -180,11 +186,11 @@ export function LegacyWorkspaceGate({
   if (state === "legacy" || !company) return <WorkspaceViewport>{children}</WorkspaceViewport>
 
   const local = (
-    <BrowserLocalWorkspace company={company} title={title} boundary={description}>
+    <BrowserLocalWorkspace company={company} title={title} boundary={description} bare={single}>
       {children}
     </BrowserLocalWorkspace>
   )
-  if (!canonical) return <WorkspaceViewport>{local}</WorkspaceViewport>
+  if (!canonical || single) return <WorkspaceViewport>{local}</WorkspaceViewport>
   return (
     <div>
       <div role="tablist" aria-label={`${title} workspaces`} className="mt-4 flex flex-wrap gap-2 text-sm">

@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/status-badge"
 export interface CompanyWorkspaceHeaderProps {
   company: { id: string; name: string; kind: string; status: string }
   section: string
-  description?: string
+  description?: ReactNode
   actions?: ReactNode
 }
 

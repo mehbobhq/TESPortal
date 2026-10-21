@@ -11,7 +11,8 @@ const CUT_OVER_PAGES = [
   "app/companies/[id]/profile/page.tsx",
   "app/companies/[id]/edit/page.tsx",
   "app/companies/[id]/credentials/page.tsx",
-  "app/companies/[id]/vehicles/page.tsx",
+  // the Vehicles ROUTE now renders the original browser-local workspace only; the retained canonical register is checked here
+  "app/companies/[id]/vehicles/canonical-vehicles.tsx",
   "app/companies/[id]/drivers/page.tsx",
   "app/companies/[id]/insurance/page.tsx",
   "app/companies/[id]/tax-filing/page.tsx",
@@ -109,7 +110,7 @@ describe("Block 01 Phase D/E cutover boundaries", () => {
     const deferred: Record<string, RegExp> = {
       "app/companies/[id]/business/page.tsx": /intentionally deferred/,
       "app/companies/[id]/drivers/page.tsx": /deferred/i,
-      "app/companies/[id]/vehicles/page.tsx": /deferred/i,
+      "app/companies/[id]/vehicles/canonical-vehicles.tsx": /deferred/i,
       "app/companies/[id]/insurance/page.tsx": /deferred/i,
       "app/companies/[id]/credentials/page.tsx": /deferred/i,
     }

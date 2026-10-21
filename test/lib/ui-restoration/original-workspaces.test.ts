@@ -37,12 +37,13 @@ describe("original company workspaces are restored as the first workspace", () =
   })
 
   for (const [route, title, legacy] of SECTIONS) {
-    it(`${title}: the route mounts the original workspace and keeps the canonical records as the second workspace`, () => {
+    it(`${title}: the route mounts the original workspace${route === "vehicles" ? " as the only visible interface" : " and keeps the canonical records as the second workspace"}`, () => {
       const page = read(`app/companies/[id]/${route}/page.tsx`)
       assert.match(page, /<LegacyWorkspaceGate/)
       assert.match(page, new RegExp(`from "\\./${legacy}"`))
       assert.match(page, new RegExp(`title="${title}"`))
-      assert.match(page, /canonical=\{/)
+      if (route === "vehicles") assert.match(page, /\bsingle\b/)
+      else assert.match(page, /canonical=\{/)
       const original = read(`app/companies/[id]/${route}/${legacy}.tsx`)
       assert.doesNotMatch(original, /\bfetch\(/, "the original workspace never calls a canonical API")
       assert.match(original, /localStorage|loadVehicleStore|loadCompanyDriverStore|loadCompanyStore|from "@\/lib\//, "the original workspace keeps its browser-local store")
@@ -62,11 +63,26 @@ describe("Vehicles: the original module is recovered, not replaced", () => {
     assert.ok(original.split("\n").length > 1000, "the full original page, not a simplified one")
   })
 
-  it("keeps the PostgreSQL vehicle register, unchanged, as the TES records workspace", () => {
-    assert.match(page, /function CanonicalVehicles\(\)/)
-    assert.match(page, /\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}/)
-    assert.match(page, /deferred/i)
-    assert.match(page, /canonical=\{<CanonicalVehicles \/>\}/)
+  it("shows ONE interface: no workspace tabs and no boundary banner, only the compact browser-data indicator", () => {
+    assert.match(page, /<LegacyWorkspaceGate\s+single\b/)
+    assert.doesNotMatch(page, /canonical=|CanonicalVehicles|role="tablist"/)
+    assert.match(gate, /single = false/, "other sections keep their tabs and banner by default")
+    assert.match(original, /Prototype workspace · Browser data/)
+    assert.match(original, /Records in this workspace are stored in this browser and are not synchronized with the TES production database\./)
+    assert.doesNotMatch(original, /saved to PostgreSQL|saved to the TES database/i)
+  })
+
+  it("keeps the PostgreSQL vehicle register, unchanged, in its own file that no route renders", () => {
+    const canonical = read("app/companies/[id]/vehicles/canonical-vehicles.tsx")
+    assert.match(canonical, /export function CanonicalVehicles\(\)/)
+    assert.match(canonical, /const base = `\/api\/companies\/\$\{encodeURIComponent\(companyId\)\}`/)
+    assert.match(canonical, /deferred/i)
+    assert.doesNotMatch(canonical, /export default/, "not a route")
+    assert.doesNotMatch(page, /import[^\n]*canonical-vehicles/)
+  })
+
+  it("keeps the vehicle deep-link parameters and storage persistence untouched", () => {
+    for (const code of [/getQueryParam\("vehicle"\)/, /getQueryParam\("vehicleTab"\)/, /pushHistoryQueryParams\(\{ vehicle: vehicle\.id, vehicleTab: null \}\)/, /loadVehicleStore\(companyId\)/, /saveVehicleStore\(companyId, next\)/]) assert.match(original, code)
   })
 
   it("the Maintenance tab declares the two names the original used without declaring (which threw once a finding or an item was added)", () => {

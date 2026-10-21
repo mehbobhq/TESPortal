@@ -100,6 +100,23 @@ const VEHICLE_STATUSES: VehicleStatus[] = [
 // INSPECTION_TYPES is imported from @/src/types — the single authoritative
 // controlled vocabulary — rather than duplicated here.
 
+const BROWSER_DATA_NOTE = "Records in this workspace are stored in this browser and are not synchronized with the TES production database."
+
+/** Compact, truthful data-source indicator: this workspace's records live in this browser only. */
+function PrototypeIndicator() {
+  return (
+    <span
+      role="note"
+      tabIndex={0}
+      title={BROWSER_DATA_NOTE}
+      aria-label={`Prototype workspace · Browser data. ${BROWSER_DATA_NOTE}`}
+      className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 align-middle text-[10px] font-medium text-muted-foreground"
+    >
+      Prototype workspace · Browser data
+    </span>
+  )
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -357,6 +374,8 @@ export default function VehiclesPage() {
 
   if (selectedVehicle) {
     return (
+      <>
+      <div className="flex justify-end text-xs"><PrototypeIndicator /></div>
       <VehicleWorkspace
         companyId={companyId}
         store={store}
@@ -371,6 +390,7 @@ export default function VehiclesPage() {
         notice={notice}
         setNotice={setNotice}
       />
+      </>
     )
   }
 
@@ -391,7 +411,7 @@ export default function VehiclesPage() {
         <CompanyWorkspaceHeader
           company={company}
           section="Vehicles"
-          description="Company-scoped vehicle master records and historical compliance records."
+          description={<>Company-scoped vehicle master records and historical compliance records.<PrototypeIndicator /></>}
           actions={vehicleListActions}
         />
       ) : (
@@ -402,7 +422,7 @@ export default function VehiclesPage() {
               <h1 className="text-2xl font-semibold tracking-tight">Vehicles</h1>
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{filteredVehicles.length}</span>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">Company-scoped vehicle master records and historical compliance records.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Company-scoped vehicle master records and historical compliance records.<PrototypeIndicator /></p>
           </div>
           <div className="flex flex-wrap gap-2">{vehicleListActions}</div>
         </div>

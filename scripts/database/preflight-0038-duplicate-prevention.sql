@@ -52,7 +52,7 @@ SELECT tes_security.canonical_country_code(jurisdiction_country) AS country, tes
 -- INFORMATIONAL (these do NOT make the migration refuse; they are explicit unresolved records kept for review)
 -- ---------------------------------------------------------------------------------------------------------------------------------------------
 
-\echo '7. Active company identifiers whose jurisdiction does not satisfy the new scope rule (kept as they are; NOT VALID check; review and correct by supersede)'
+\echo '[INFO] 7. Active company identifiers whose jurisdiction does not satisfy the new scope rule (kept as they are; NOT VALID check; review and correct by supersede)'
 SELECT id AS identifier_id, organization_id, identifier_type, namespace, jurisdiction_country, jurisdiction_region
   FROM public.organization_identifiers
  WHERE status = 'active' AND NOT COALESCE(
@@ -66,7 +66,7 @@ SELECT id AS identifier_id, organization_id, identifier_type, namespace, jurisdi
      ELSE true
    END, false);
 
-\echo '8. Current registrations and authorities with an explicitly UNRESOLVED (NULL) jurisdiction (legitimate pending state, migration 0034) that share a number with another current record: review for a duplicate'
+\echo '[INFO] 8. Current registrations and authorities with an explicitly UNRESOLVED (NULL) jurisdiction (legitimate pending state, migration 0034) that share a number with another current record: review for a duplicate'
 SELECT 'REGISTRATION' AS domain, u.program_code AS kind, u.number_normalized, u.registration_id AS unresolved_id, r.registration_id AS other_id
   FROM public.registration_versions u JOIN public.registration_versions r
     ON r.program_code = u.program_code AND r.number_normalized = u.number_normalized AND r.id <> u.id AND r.record_status = 'active' AND r.effective_to IS NULL

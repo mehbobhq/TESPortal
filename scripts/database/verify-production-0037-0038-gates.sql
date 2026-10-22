@@ -42,8 +42,8 @@ SELECT table_name, privilege_type FROM information_schema.role_table_grants
 SELECT c.relname, c.relrowsecurity, (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS policies FROM pg_class c WHERE c.relname = 'driver_identity_verifications';
 
 \echo 'G8 conflicts: run scripts/database/preflight-0037-driver-identity.sql (before 0037) and scripts/database/preflight-0038-duplicate-prevention.sql (before 0038). Expect zero rows in every section.'
-\echo 'G9 unresolved identities: persons named by unresolved PERSON resolution cases that already hold an open driver assignment (they would be blocked from transfer/verification). Expect zero or a reviewed list.'
-SELECT DISTINCT c.candidate_person_id AS person_id
+\echo 'G9 unresolved identities: COUNT of persons named by unresolved PERSON resolution cases that already hold an open driver assignment (they would be blocked from transfer/verification). Expect 0 or a reviewed number.'
+SELECT count(DISTINCT c.candidate_person_id) AS persons_pending_review_with_open_assignment
   FROM public.entity_resolution_candidates c JOIN public.entity_resolution_cases k ON k.id = c.resolution_case_id
   JOIN public.organization_driver_relationships r ON r.person_id = c.candidate_person_id AND r.record_status = 'active' AND r.effective_to IS NULL
  WHERE k.entity_type = 'PERSON' AND k.resolution_state IN ('PENDING', 'REVIEW_REQUIRED');

@@ -241,7 +241,7 @@ SELECT a.person_id, a.id AS relationship_a, b.id AS relationship_b
     ON a.id < b.id AND a.person_id = b.person_id AND a.record_status = 'active' AND b.record_status = 'active'
    AND daterange(a.effective_from, a.effective_to, '[)') && daterange(b.effective_from, b.effective_to, '[)');
 
-\echo '5. Informational: current licences whose country or region will not canonicalize to a code (they stay readable; new writes of that spelling are refused)'
+\echo '[INFO] 5. Informational: current licences whose country or region will not canonicalize to a code (they stay readable; new writes of that spelling are refused)'
 WITH k AS (SELECT l.id, l.person_id, l.jurisdiction_country, l.jurisdiction_region, (CASE
       WHEN replace(replace(upper(btrim(regexp_replace(translate(normalize(coalesce(l.jurisdiction_country, ''), NFC), 'ÁÀÂÄÉÈÊËÍÌÎÏÓÒÔÖÚÙÛÜÑÇáàâäéèêëíìîïóòôöúùûüñç', 'AAAAEEEEIIIIOOOOUUUUNCaaaaeeeeiiiioooouuuunc'), '[\s_-]+', ' ', 'g'))), '.', ''), ',', '') IN ('CA', 'CAN', 'CANADA') THEN 'CA'
       WHEN replace(replace(upper(btrim(regexp_replace(translate(normalize(coalesce(l.jurisdiction_country, ''), NFC), 'ÁÀÂÄÉÈÊËÍÌÎÏÓÒÔÖÚÙÛÜÑÇáàâäéèêëíìîïóòôöúùûüñç', 'AAAAEEEEIIIIOOOOUUUUNCaaaaeeeeiiiioooouuuunc'), '[\s_-]+', ' ', 'g'))), '.', ''), ',', '') IN ('US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA') THEN 'US'

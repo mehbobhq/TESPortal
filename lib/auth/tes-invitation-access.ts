@@ -4,7 +4,7 @@ import { withPostgresTransaction } from "@/lib/database/postgres-transaction"
 
 /**
  * The ONLY unauthenticated database entry point. An applicant has no TES identity; possession of the secret invitation token is the credential.
- * It can run exactly two statements, each a narrow SECURITY DEFINER function (migration 0037) that acts on one invitation and nothing else.
+ * It can run exactly two statements, each a narrow SECURITY DEFINER function (migration 0039) that acts on one invitation and nothing else.
  * It never sets tenant or system context and never reads a table directly.
  */
 const STATEMENTS = {

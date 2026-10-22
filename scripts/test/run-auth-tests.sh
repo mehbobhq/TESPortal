@@ -88,7 +88,7 @@ psql_admin() {
 psql_admin -U postgres -d postgres <<SQL
 CREATE ROLE "$MIGRATOR_ROLE" LOGIN;
 CREATE ROLE "$RUNTIME_ROLE" LOGIN;
-CREATE DATABASE $DATABASE OWNER "$MIGRATOR_ROLE";
+CREATE DATABASE $DATABASE OWNER "$MIGRATOR_ROLE" ENCODING 'UTF8' TEMPLATE template0;
 SQL
 
 # Apply the repository's real migrations with the repository's real runner.

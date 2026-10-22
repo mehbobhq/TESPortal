@@ -1,5 +1,5 @@
 /**
- * Which part of migration 0037 (driver prospects and application invitations) this database has. The application is deployed independently of the
+ * Which part of migration 0039 (driver prospects and application invitations) this database has. The application is deployed independently of the
  * migrations: every prospect operation reports "not available yet" until the WHOLE migration is present, and a partly applied one fails closed.
  * Not cached; a genuine query error propagates.
  */

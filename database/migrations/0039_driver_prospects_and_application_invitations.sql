@@ -1,5 +1,5 @@
 -- TES Drivers: driver prospects and secure application invitations
--- Migration: 0037 (forward-only, additive; migrations 0001-0036 are not edited)
+-- Migration: 0039 (forward-only, additive; migrations 0001-0038 are not edited; requires 0037 and 0038 of PR #30 to be applied first)
 --
 -- WHY. A carrier can give TES only a prospective driver's name, phone and email. Until now the only place to save that was a browser-only
 -- prototype, and the only way to invite the person was an unauthenticated endpoint that took the company identity from the request body.

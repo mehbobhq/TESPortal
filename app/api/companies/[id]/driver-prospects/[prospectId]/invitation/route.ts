@@ -13,7 +13,21 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { id, prospectId } = await context.params
     if (!process.env.RESEND_API_KEY) return NextResponse.json({ error: "Email delivery is not configured. Nothing was sent." }, { status: 503 })
-    const baseUrl = process.env.TES_PUBLIC_BASE_URL?.trim() || request.nextUrl.origin
+    // The link host is configuration, never the request's Host header (a forged Host could point the applicant at another site). Production requires it.
+    const configured = process.env.TES_PUBLIC_BASE_URL?.trim()
+    let baseUrl: string | null = null
+    if (configured) {
+      try {
+        const url = new URL(configured)
+        const local = url.hostname === "localhost" || url.hostname === "127.0.0.1"
+        if (url.protocol === "https:" || (local && url.protocol === "http:")) baseUrl = url.origin
+      } catch {
+        baseUrl = null
+      }
+    } else if (process.env.NODE_ENV !== "production") {
+      baseUrl = request.nextUrl.origin
+    }
+    if (!baseUrl) return NextResponse.json({ error: "The public application address is not configured. Nothing was sent." }, { status: 503 })
     const result = await sendInvitation({ organizationId: id, prospectId, baseUrl }, resendInvitationDelivery)
     if (!result.sent) return NextResponse.json({ error: "The invitation email could not be delivered. The prospect was kept; you can try again.", ...result }, { status: 502 })
     return NextResponse.json(result, { status: 200 })

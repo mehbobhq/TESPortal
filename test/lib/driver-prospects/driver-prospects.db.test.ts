@@ -1,6 +1,6 @@
 // Run with `npm run test:auth` (scripts/test/run-auth-tests.sh) or against a disposable database via the TES_TEST_* URLs.
 //
-// Migration 0037 (driver prospects and application invitations), driven through the REAL authorization wrappers and the real
+// Migration 0039 (driver prospects and application invitations), driven through the REAL authorization wrappers and the real
 // Master Register. Fixtures and owner-level checks use the admin pool; the services run as the RUNTIME role under row-level security.
 
 import assert from "node:assert/strict";
@@ -29,7 +29,7 @@ if (!enabled && process.env.TES_REQUIRE_DB_TESTS === "1") {
   });
 }
 
-describe("Driver prospects and application invitations (migration 0037)", { skip: !enabled }, () => {
+describe("Driver prospects and application invitations (migration 0039)", { skip: !enabled }, () => {
   let pools: Pools;
   let fx: AuthFixtures;
   let organizations: string[] = [];
@@ -49,6 +49,9 @@ describe("Driver prospects and application invitations (migration 0037)", { skip
   /** Removes what a scenario created. The owner lifts the no-delete triggers of exactly these tables, inside one transaction, only here. */
   async function purge() {
     if (organizations.length === 0) return;
+    // Test-only safety: trigger disabling below must never reach anything but a disposable loopback database.
+    const adminUrl = process.env.TES_TEST_ADMIN_DATABASE_URL ?? "";
+    assert.ok(/@(127\.0\.0\.1|localhost|\[::1\])[:/]|[?&]host=\//.test(adminUrl) || !/@/.test(adminUrl), "cleanup refuses to run against a non-loopback database");
     const tables = [
       "driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospects",
       "organization_driver_relationships", "driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates", "persons",
@@ -306,5 +309,64 @@ describe("Driver prospects and application invitations (migration 0037)", { skip
     for (const t of ["driver_prospects", "driver_application_invitations", "driver_application_submissions", "driver_prospect_events"]) {
       assert.equal((await pools.runtime.query(`SELECT 1 FROM public.${t}`)).rowCount, 0, `${t}: row-level security hides every row without an authorized system context`);
     }
+  });
+
+  scenario("11. the whole lifecycle is accounted for in the Master Register, with the same person throughout", async () => {
+    const o = await org();
+    const actor = await only(...FULL);
+    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, async () => {
+      throw new Error("down");
+    });
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
+    await K.app.submitApplication(opened!.invitationId, "r-life", { draft: {} });
+    await K.svc.reviewProspect({ organizationId: o, prospectId, to: "UNDER_REVIEW" });
+    await K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" });
+    await K.svc.convertProspectToCompanyDriver({
+      organizationId: o, prospectId, relationshipType: "EMPLOYEE", relationshipStartDate: "2026-02-01", dateOfBirth: "1990-05-05",
+      licence: { country: "CA", region: "ON", number: `L${run}${n()}`, effectiveFrom: "2020-01-01" },
+    } as never);
+    const ops = (await q<{ op: string }>(`SELECT action->>'operation' AS op FROM public.master_register_events WHERE actor_id = $1`, [actor.actorId])).map((r) => r.op);
+    for (const wanted of ["DRIVER_PROSPECT_CREATE", "DRIVER_APPLICATION_INVITATION_CREATE", "DRIVER_APPLICATION_INVITATION_FAILED", "DRIVER_APPLICATION_INVITATION_SEND", "DRIVER_PROSPECT_STATUS_CHANGE", "DRIVER_PROSPECT_CONVERT"]) {
+      assert.ok(ops.includes(wanted), `Master Register records ${wanted}`);
+    }
+    assert.ok(ops.filter((x) => x === "DRIVER_PROSPECT_STATUS_CHANGE").length >= 2);
+    const rows = await q<{ person_id: string }>(`SELECT person_id FROM public.organization_driver_relationships WHERE organization_id = $1`, [o]);
+    assert.deepEqual(rows.map((r) => r.person_id), [personId]);
+  });
+
+  scenario("12. cross-company review, conversion and email changes are refused; an expired invitation opens nothing; a resend revokes the old link", async () => {
+    const a = await org("A");
+    const b = await org("B");
+    await only(...FULL);
+    const { prospectId } = await K.svc.createProspect({ organizationId: a, fullName: name(), phone: "416-555-0199" });
+    await rejects(() => K.svc.reviewProspect({ organizationId: b, prospectId, to: "UNDER_REVIEW" }), "NotFoundError");
+    await rejects(() => K.svc.addProspectEmail({ organizationId: b, prospectId, email: email() }), "NotFoundError");
+    await rejects(
+      () => K.svc.convertProspectToCompanyDriver({ organizationId: b, prospectId, relationshipType: "EMPLOYEE", relationshipStartDate: "2026-02-01", dateOfBirth: "1990-05-05", licence: { country: "CA", region: "ON", number: "X1", effectiveFrom: "2020-01-01" } } as never),
+      "NotFoundError",
+    );
+    await K.svc.addProspectEmail({ organizationId: a, prospectId, email: email() });
+    const first: string[] = [];
+    await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(first));
+    const second: string[] = [];
+    await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(second));
+    assert.equal(await K.app.openInvitation(new URL(first[0]).searchParams.get("invitation")!), null, "the earlier link is revoked");
+    assert.ok(await K.app.openInvitation(new URL(second[0]).searchParams.get("invitation")!));
+
+    // An expired invitation (inserted by the owner with a past expiry) opens nothing and accepts no submission.
+    const { createHash } = await import("node:crypto");
+    const secret = `expired-${randomUUID()}-${randomUUID()}`;
+    const { prospectId: p2 } = await K.svc.createProspect({ organizationId: a, fullName: name(), email: email() });
+    const invitationId = randomUUID();
+    await pools.admin.query(
+      `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id, status)
+       VALUES ($1, $2, $3, $4, 'x@example.com', now() - interval '1 minute', (SELECT created_by_actor_id FROM public.driver_prospects WHERE id = $2), 'SENT')`,
+      [invitationId, p2, a, createHash("sha256").update(secret).digest("hex")],
+    );
+    assert.equal(await K.app.openInvitation(secret), null);
+    assert.equal((await K.app.submitApplication(invitationId, "late", {})).kind, "CLOSED");
   });
 });

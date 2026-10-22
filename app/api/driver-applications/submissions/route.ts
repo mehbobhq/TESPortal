@@ -5,7 +5,6 @@ import { submitApplication } from "@/lib/driver-prospects/applicant"
 import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import {
   getApplicantSubmissions,
-  saveApplicantSubmission,
   type ServerApplicantSubmission,
 } from "@/lib/server/driver-application-submission-repository"
 
@@ -48,8 +47,8 @@ export async function POST(request: NextRequest) {
     if (durable.kind === "SAVED") return NextResponse.json({ submission: { ...body, submittedAt: durable.submittedAt } }, { status: 200 })
     if (durable.kind === "CLOSED") return NextResponse.json({ error: "This application is no longer open for submission." }, { status: 409 })
 
-    const saved = await saveApplicantSubmission(body)
-    return NextResponse.json({ submission: saved }, { status: 200 })
+    // No file-store fallback: only invitations issued from a saved prospect are accepted (the old unauthenticated issuing path is closed).
+    return NextResponse.json({ error: "This application link is no longer accepted. Ask the company to send a new application." }, { status: 410 })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save application submission."
     return NextResponse.json({ error: message }, { status: 409 })

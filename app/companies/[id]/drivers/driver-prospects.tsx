@@ -25,6 +25,9 @@ export function DriverProspects({ companyId }: { companyId: string }) {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [panel, setPanel] = useState<{ prospectId: string; kind: "application" | "onboard"; submission: { receiptId: string; submittedAt: string; payload: any } | null } | null>(null)
+  const [onboard, setOnboard] = useState({ relationshipType: "EMPLOYEE", relationshipStartDate: "", dateOfBirth: "", licenceCountry: "CA", licenceRegion: "", licenceNumber: "", licenceEffectiveFrom: "", driverNumber: "" })
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +82,48 @@ export function DriverProspects({ companyId }: { companyId: string }) {
     }
   }
 
+  async function act(prospect: ProspectView, path: string, body: unknown, okText: string) {
+    setBusyId(prospect.prospectId)
+    setMessage(null)
+    try {
+      const response = await fetch(`${base}/${encodeURIComponent(prospect.prospectId)}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(result?.error ?? "The action could not be completed.")
+      setMessage({ tone: "ok", text: okText })
+      setPanel(null)
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "The action could not be completed." })
+    } finally {
+      setBusyId(null)
+      await load()
+    }
+  }
+
+  async function openApplication(prospect: ProspectView, kind: "application" | "onboard") {
+    setMessage(null)
+    try {
+      const response = await fetch(`${base}/${encodeURIComponent(prospect.prospectId)}/submission`, { cache: "no-store" })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(result?.error ?? "Unable to load the application.")
+      if (kind === "onboard") {
+        const draft = result.payload?.draft ?? {}
+        const lic = draft.drivingLicence ?? {}
+        const region = typeof lic.jurisdiction === "string" && lic.jurisdiction.trim().length === 2 ? lic.jurisdiction.trim().toUpperCase() : ""
+        setOnboard((o) => ({
+          ...o,
+          dateOfBirth: draft.aboutYou?.dateOfBirth ?? "",
+          licenceNumber: lic.licenceNumber ?? "",
+          licenceRegion: region,
+          licenceCountry: lic.country === "United States" ? "US" : "CA",
+          licenceEffectiveFrom: lic.issueDate ?? "",
+        }))
+      }
+      setPanel({ prospectId: prospect.prospectId, kind, submission: result })
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "Unable to load the application." })
+    }
+  }
+
   const needsContact = !form.email.trim() && !form.phone.trim()
 
   return (
@@ -114,7 +159,7 @@ export function DriverProspects({ companyId }: { companyId: string }) {
             </p>
             <div className="flex gap-2 sm:col-span-3">
               <Button type="submit" size="sm" disabled={saving || !form.fullName.trim() || needsContact}>{saving ? "Saving…" : "Save prospect"}</Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { setOpen(false); setForm({ fullName: "", email: "", phone: "" }) }}>Cancel</Button>
             </div>
           </form>
         ) : null}
@@ -134,6 +179,23 @@ export function DriverProspects({ companyId }: { companyId: string }) {
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="secondary">{p.statusLabel}</Badge>
+                {p.status === "APPLICATION_SUBMITTED" ? (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => openApplication(p, "application")}>View application</Button>
+                    <Button size="sm" disabled={busyId === p.prospectId} onClick={() => act(p, "review", { to: "UNDER_REVIEW" }, "Review started.")}>Start review</Button>
+                  </>
+                ) : null}
+                {p.status === "UNDER_REVIEW" ? (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => openApplication(p, "application")}>View application</Button>
+                    <Button size="sm" disabled={busyId === p.prospectId} onClick={() => act(p, "review", { to: "APPROVED" }, "Prospect approved. Onboard them as a company driver to continue.")}>Approve</Button>
+                    <Button size="sm" variant="outline" disabled={busyId === p.prospectId} onClick={() => act(p, "review", { to: "REJECTED" }, "Prospect rejected.")}>Reject</Button>
+                  </>
+                ) : null}
+                {p.status === "APPROVED" && !p.convertedRelationshipId ? (
+                  <Button size="sm" onClick={() => openApplication(p, "onboard")}>Onboard as company driver</Button>
+                ) : null}
+                {p.status === "APPROVED" && p.convertedRelationshipId ? <span className="text-[11px] text-muted-foreground">Onboarding started — not active yet</span> : null}
                 {p.status === "PROSPECT" || p.status === "INVITED" ? (
                   <Button size="sm" variant="outline" disabled={!p.canInvite || sendingId === p.prospectId} title={p.inviteBlockedReason ?? undefined} onClick={() => send(p)}>
                     <Send className="mr-2 size-4" />
@@ -144,6 +206,36 @@ export function DriverProspects({ companyId }: { companyId: string }) {
             </div>
           ))}
         </div>
+        {panel && panel.kind === "application" ? (
+          <div className="rounded-lg border p-4 text-xs" data-testid="application-view">
+            <p className="font-semibold">Submitted application</p>
+            <p className="text-muted-foreground">Receipt {panel.submission?.receiptId} · {panel.submission?.submittedAt?.slice(0, 10)}</p>
+            <p className="mt-2">Steps completed: {(panel.submission?.payload?.completedSteps ?? []).join(", ") || "none recorded"}</p>
+            <Button size="sm" variant="ghost" className="mt-2" onClick={() => setPanel(null)}>Close</Button>
+          </div>
+        ) : null}
+        {panel && panel.kind === "onboard" ? (
+          <form
+            className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2"
+            data-testid="onboard-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const target = prospects.find((x) => x.prospectId === panel.prospectId)
+              if (target) void act(target, "convert", { relationshipType: onboard.relationshipType, relationshipStartDate: onboard.relationshipStartDate, dateOfBirth: onboard.dateOfBirth, driverNumber: onboard.driverNumber, licence: { country: onboard.licenceCountry, region: onboard.licenceRegion, number: onboard.licenceNumber, effectiveFrom: onboard.licenceEffectiveFrom } }, "Onboarding started. The driver is not active until onboarding is completed.")
+            }}
+          >
+            <p className="text-sm font-semibold sm:col-span-2">Onboard as company driver — full requirements apply</p>
+            <div className="space-y-1"><Label htmlFor="ob-type">Relationship</Label><select id="ob-type" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={onboard.relationshipType} onChange={(e) => setOnboard({ ...onboard, relationshipType: e.target.value })}><option value="EMPLOYEE">Employee</option><option value="CONTRACTOR">Contractor</option><option value="OWNER_OPERATOR">Owner-operator</option></select></div>
+            <div className="space-y-1"><Label htmlFor="ob-start">Relationship start date *</Label><Input id="ob-start" type="date" required value={onboard.relationshipStartDate} onChange={(e) => setOnboard({ ...onboard, relationshipStartDate: e.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor="ob-dob">Date of birth *</Label><Input id="ob-dob" type="date" required value={onboard.dateOfBirth} onChange={(e) => setOnboard({ ...onboard, dateOfBirth: e.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor="ob-num">Driver number</Label><Input id="ob-num" value={onboard.driverNumber} onChange={(e) => setOnboard({ ...onboard, driverNumber: e.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor="ob-lic">Licence number *</Label><Input id="ob-lic" required value={onboard.licenceNumber} onChange={(e) => setOnboard({ ...onboard, licenceNumber: e.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor="ob-lic-from">Licence effective from *</Label><Input id="ob-lic-from" type="date" required value={onboard.licenceEffectiveFrom} onChange={(e) => setOnboard({ ...onboard, licenceEffectiveFrom: e.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor="ob-country">Licence country *</Label><select id="ob-country" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={onboard.licenceCountry} onChange={(e) => setOnboard({ ...onboard, licenceCountry: e.target.value })}><option value="CA">Canada</option><option value="US">United States</option></select></div>
+            <div className="space-y-1"><Label htmlFor="ob-region">Licence province / state code *</Label><Input id="ob-region" required maxLength={3} value={onboard.licenceRegion} onChange={(e) => setOnboard({ ...onboard, licenceRegion: e.target.value.toUpperCase() })} placeholder="ON" /></div>
+            <div className="flex gap-2 sm:col-span-2"><Button type="submit" size="sm" disabled={busyId === panel.prospectId}>Start onboarding</Button><Button type="button" size="sm" variant="ghost" onClick={() => setPanel(null)}>Cancel</Button></div>
+          </form>
+        ) : null}
       </CardContent>
     </Card>
   )

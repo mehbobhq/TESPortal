@@ -61,7 +61,7 @@ export default function LegacyDriversPage({params}:{params:Promise<{id:string}>}
       description={<>Driver compliance records<PrototypeBrowserDataIndicator /></>}
       actions={
         <div className="flex gap-2">
-          <Button variant="outline" onClick={()=>alert("Secure applicant invitation is intentionally not activated until the authenticated external application workflow is connected.")}><UserPlus className="mr-2 size-4"/>Invite Applicant</Button>
+          
           <Button onClick={()=>{setCheck(null);setResolution(null);setOpen(true)}}><Plus className="mr-2 size-4"/>Add Company Driver</Button>
         </div>
       }

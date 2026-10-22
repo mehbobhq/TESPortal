@@ -29,6 +29,7 @@ import { ContactConflictError, ContactNotFoundError, ContactStateError, ContactV
 import { recordEvent } from "@/lib/master-register/record-event"
 import type { MasterRegisterRepository } from "@/lib/master-register/repository"
 import type { ActorType } from "@/lib/master-register/types"
+import { canonicalCountryCode, canonicalLicenceKey, canonicalRegionCode, isValidJurisdiction, sameCanonicalLicence } from "@/lib/operational-identity/jurisdiction"
 import { normalizeDriverLicenceNumber } from "@/lib/operational-identity/normalization"
 
 export type IdentityContext = { client: PoolClient; actor: { id: string; actorType: ActorType }; masterRegister: MasterRegisterRepository }
@@ -89,9 +90,10 @@ export function prepareLicence(value: LicenceInput): PreparedLicence {
   const number = typeof value.number === "string" ? value.number.trim() : ""
   const normalized = normalizeDriverLicenceNumber(number)
   if (!normalized || number.length > 40) throw new ContactValidationError("licence.number", "Enter the driver licence number (up to 40 characters).")
-  const country = typeof value.country === "string" ? value.country.trim().toUpperCase() : ""
-  const region = typeof value.region === "string" ? value.region.trim().toUpperCase() : ""
-  if (!country || !region || country.length > 8 || region.length > 8) throw new ContactValidationError("licence.region", "Enter the issuing jurisdiction (country and province / state).")
+  // The canonical form (the same rule the database applies on insert): "Canada" = "CA", "Ontario" = "ON".
+  const country = typeof value.country === "string" ? canonicalCountryCode(value.country) : ""
+  const region = typeof value.region === "string" ? canonicalRegionCode(value.region) : ""
+  if (!country || !region || !isValidJurisdiction(country, region)) throw new ContactValidationError("licence.region", "Enter the issuing jurisdiction: a province, state or territory of Canada, the United States or Mexico.")
   const licenceClass = typeof value.licenceClass === "string" && value.licenceClass.trim() !== "" ? value.licenceClass.trim() : null
   if (licenceClass !== null && licenceClass.length > 20) throw new ContactValidationError("licence.class", "The licence class is too long.")
   const empty = (v: unknown) => v === undefined || v === null || (typeof v === "string" && v.trim() === "")
@@ -163,21 +165,29 @@ export async function setDateOfBirth(ctx: IdentityContext, organizationId: strin
   return existing ? "corrected" : "created"
 }
 
-async function holderOf(client: Pick<PoolClient, "query">, p: PreparedLicence): Promise<string | null> {
-  const result = await client.query<{ person_id: string }>(
-    `SELECT person_id FROM public.driver_licences
-      WHERE jurisdiction_country = $1 AND jurisdiction_region = $2 AND licence_number_normalized = $3 AND record_status = 'active' AND effective_to IS NULL LIMIT 1`,
-    [p.country, p.region, p.normalized],
+/** Another person's current licence that is the same licence under an equivalent spelling of the jurisdiction (older rows may be stored non-canonically). */
+async function holderOf(client: Pick<PoolClient, "query">, p: PreparedLicence, personId: string): Promise<string | null> {
+  const result = await client.query<{ person_id: string; country: string; region: string; normalized: string }>(
+    `SELECT person_id, jurisdiction_country AS country, jurisdiction_region AS region, licence_number_normalized AS normalized
+       FROM public.driver_licences WHERE licence_number_normalized = $1 AND record_status = 'active' AND effective_to IS NULL`,
+    [p.normalized],
   )
-  return result.rows[0]?.person_id ?? null
+  const key = canonicalLicenceKey(p.country, p.region, p.normalized)
+  return result.rows.find((r) => r.person_id !== personId && sameCanonicalLicence(canonicalLicenceKey(r.country, r.region, r.normalized), key))?.person_id ?? null
 }
 
 async function insertLicence(ctx: IdentityContext, personId: string, p: PreparedLicence, effectiveFrom: string, id: string) {
+  // A concurrent writer that won the race for the same licence is reported as the same safe conflict (the transaction is abandoned by the throw).
+  const conflict = (error: unknown) => {
+    const code = (error as { code?: string }).code
+    if (code === "23505" || code === "23P01") throw new ContactConflictError("This licence number is already recorded for another person. Nothing was saved.")
+    throw error
+  }
   await ctx.client.query(
     `INSERT INTO public.driver_licences (id, person_id, jurisdiction_country, jurisdiction_region, licence_number_display, licence_number_normalized, licence_class, issue_date, expiry_date, effective_from)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10::date)`,
     [id, personId, p.country, p.region, p.number, p.normalized, p.licenceClass, p.issueDate, p.expiryDate, effectiveFrom],
-  )
+  ).catch(conflict)
 }
 
 /** Records, renews, corrects or voids the person's driving licence in the canonical driver_licences table. */
@@ -197,10 +207,11 @@ export async function setLicence(ctx: IdentityContext, organizationId: string, p
     return "voided"
   }
   const p = prepareLicence(input)
-  const holder = await holderOf(ctx.client, p)
-  if (holder !== null && holder !== personId) throw new ContactConflictError("This licence number is already recorded for another person. Nothing was saved.")
+  const holder = await holderOf(ctx.client, p, personId)
+  if (holder !== null) throw new ContactConflictError("This licence number is already recorded for another person. Nothing was saved.")
 
-  if (current && current.country === p.country && current.region === p.region && current.normalized === p.normalized &&
+  const currentKey = current ? canonicalLicenceKey(current.country, current.region, current.normalized) : null
+  if (current && currentKey!.country === p.country && currentKey!.region === p.region && currentKey!.number === p.normalized &&
       (current.licenceClass ?? null) === p.licenceClass && (current.issueDate ?? null) === p.issueDate && (current.expiryDate ?? null) === p.expiryDate) return "unchanged"
 
   const person = await ctx.client.query<{ record_status: string }>(`SELECT record_status FROM public.persons WHERE id = $1`, [personId])
@@ -219,7 +230,7 @@ export async function setLicence(ctx: IdentityContext, organizationId: string, p
     await event(ctx, "RECORD_CREATED", "recordDriverLicence", "driver_licence", id, organizationId, personId, [{ field: "licence", after: reference("driver_licences", id) }])
     return "created"
   }
-  const sameIdentity = current.country === p.country && current.region === p.region && current.normalized === p.normalized
+  const sameIdentity = currentKey!.country === p.country && currentKey!.region === p.region && currentKey!.number === p.normalized
   if (sameIdentity && current.effectiveFrom < current.today) {
     // RENEWAL: class or dates moved on. The old record is ended today and the new one starts today.
     await ctx.client.query(`UPDATE public.driver_licences SET effective_to = $2::date, updated_at = clock_timestamp() WHERE id = $1 AND record_status = 'active' AND effective_to IS NULL`, [current.id, current.today])

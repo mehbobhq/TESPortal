@@ -274,6 +274,19 @@ export async function findActiveIdentifierCollision(
 }
 
 /** Superseded rows with the same key: review evidence, never a blocker. */
+/** Other organizations (any status) whose normalized legal name equals this one. A name coincidence is advisory, never an identity. */
+export async function findSameLegalNameOrganizations(
+  client: Queryable,
+  normalizedLegalName: string,
+  excludeOrganizationId: string,
+): Promise<Array<{ organizationId: string; legalName: string }>> {
+  const result = await client.query<{ id: string; legal_name: string }>(
+    `SELECT id, legal_name FROM public.organizations WHERE normalized_legal_name = $1 AND id <> $2 AND status <> 'merged' ORDER BY id`,
+    [normalizedLegalName, excludeOrganizationId],
+  )
+  return result.rows.map((row) => ({ organizationId: row.id, legalName: row.legal_name }))
+}
+
 export async function findSupersededIdentifierMatches(
   client: Queryable,
   prepared: PreparedCorporateIdentifier,

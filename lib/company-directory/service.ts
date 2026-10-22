@@ -84,6 +84,8 @@ export type CreateCompanyDirectoryResult = {
   company: CompanyDirectoryRecord
   /** What was actually written to each canonical domain, for the confirmation shown to the user. */
   recorded: CompanyCreationResult["recorded"]
+  /** Advisory duplicate candidates (never a decision); present only for callers who may read the registry. */
+  possibleDuplicates: CompanyCreationResult["possibleDuplicates"]
 }
 
 function text(value: unknown): string {
@@ -202,6 +204,7 @@ export async function createCompanyDirectoryRecord(input: unknown): Promise<Crea
       tone: statusTone(result.status),
     },
     recorded: result.recorded,
+    possibleDuplicates: result.possibleDuplicates,
   }
 }
 

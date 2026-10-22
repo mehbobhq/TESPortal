@@ -39,6 +39,8 @@ export type CompanyCreationResult = {
   formationCountry: string | null
   formationRegion: string | null
   recorded: CompanyCreationRecorded
+  /** Advisory duplicate candidates (same legal name, or a formerly held identifier). Present only for callers who may read the registry; never a decision. */
+  possibleDuplicates: Array<{ organizationId: string; legalName: string; reason: "SAME_LEGAL_NAME" | "SUPERSEDED_IDENTIFIER" }>
 }
 
 /** Capabilities the plan needs in addition to ORGANIZATION_CREATE (which the transaction wrapper has already proven). */
@@ -206,6 +208,7 @@ export async function createCompanyRecord(raw: unknown): Promise<CompanyCreation
       formationCountry: organization.formationCountry,
       formationRegion: organization.formationRegion,
       recorded,
+      possibleDuplicates: created.reviewMatches.map((match) => ({ organizationId: match.organizationId, legalName: match.legalName, reason: match.kind })),
     }
   })
 }

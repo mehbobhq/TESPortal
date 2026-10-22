@@ -83,4 +83,6 @@ export const KNOWN_DOCUMENT_TYPES: readonly string[] = [
   "DIRECTOR_VERIFICATION_DOCUMENT",
   // Evidence that a sensitive company phone / email / website change was confirmed through an established channel (migration 0036).
   "CHANNEL_CHANGE_CONFIRMATION",
+  // Evidence that verifies a driver identity (migration 0037): a reviewed licence or government-ID document.
+  "DRIVER_IDENTITY_DOCUMENT",
 ]

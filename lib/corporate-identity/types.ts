@@ -88,8 +88,12 @@ export type OrganizationRecord = {
 }
 
 /** Weaker evidence that is shown for review and never blocks creation. Only produced for callers who may see it. */
+/**
+ * Advisory only: a match is a reason for a person to look, never a decision. SAME_LEGAL_NAME is a name coincidence (a name is not an
+ * identity); SUPERSEDED_IDENTIFIER is an identifier an organization used to hold.
+ */
 export type ReviewMatch = {
-  kind: "SUPERSEDED_IDENTIFIER"
+  kind: "SUPERSEDED_IDENTIFIER" | "SAME_LEGAL_NAME"
   organizationId: string
   legalName: string
   identifierKind: CorporateIdentifierKind | null

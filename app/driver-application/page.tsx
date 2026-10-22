@@ -1,4 +1,6 @@
 import Link from "next/link"
+import { redirect } from "next/navigation"
+import { openInvitation, signedApplicantToken } from "@/lib/driver-prospects/applicant"
 import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import DriverApplicationWorkspace from "./DriverApplicationWorkspace"
 import { DriverApplicationBrandHeader } from "./DriverApplicationBrandHeader"
@@ -127,9 +129,15 @@ function ArrowIcon() {
 export default async function DriverApplicationEntry({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string; step?: string }>
+  searchParams: Promise<{ token?: string; step?: string; invitation?: string }>
 }) {
-  const { token, step } = await searchParams
+  const { token, step, invitation: invitationSecret } = await searchParams
+
+  // Invitations sent from a saved prospect carry an opaque secret; the company, applicant and email come from the database record only.
+  if (!token && invitationSecret) {
+    const opened = await openInvitation(invitationSecret).catch(() => null)
+    if (opened) redirect(`/driver-application?token=${encodeURIComponent(signedApplicantToken(opened))}`)
+  }
 
   const invitation = token
     ? verifyDriverInvitationToken(token)

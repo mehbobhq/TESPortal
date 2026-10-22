@@ -60,8 +60,15 @@ export async function addDriverLicence(ctx:IdentityContext,input:DriverLicenceIn
  return {kind:"CREATED" as const,licenceId:id}
 }
 
+export class DriverProspectPendingStateError extends Error{}
+
 export async function establishOrganizationDriver(ctx:IdentityContext,input:OrganizationDriverRelationshipInput){
  await activeOrg(ctx,input.organizationId);await activePerson(ctx,input.personId)
+ // A prospect is not a company driver: while this company's prospect is still in progress, assignment must go through approval and conversion.
+ if((await ctx.client.query(`SELECT to_regclass('public.driver_prospects') IS NOT NULL AS present`)).rows[0]?.present){
+  const live=await ctx.client.query(`SELECT 1 FROM public.driver_prospects WHERE organization_id=$1 AND person_id=$2 AND status IN ('PROSPECT','INVITED','APPLICATION_SUBMITTED','UNDER_REVIEW') LIMIT 1`,[input.organizationId,input.personId])
+  if((live.rowCount??0)>0)throw new DriverProspectPendingStateError("This person is a driver prospect whose application is still in progress. Approve the prospect and onboard them as a company driver instead. Nothing was changed.")
+ }
  const id=randomUUID(),n=input.driverNumber?.trim()||null
  await repo.insertOrganizationDriverRelationship(ctx.client,{id,organizationId:input.organizationId,personId:input.personId,
   relationshipType:input.relationshipType,driverDisplay:n,driverNormalized:n?normalizeUnitNumber(n):null,status:input.status,effectiveFrom:input.effectiveFrom})

@@ -1,5 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
+import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
+import { submitApplication } from "@/lib/driver-prospects/applicant"
 import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
 import {
   getApplicantSubmissions,
@@ -41,6 +43,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "The invitation does not authorize this application." }, { status: 403 })
     }
 
+    // Applications from a saved prospect are stored durably against the invitation (no person or driver is created here).
+    const durable = await submitApplication(body.applicationId, body.receiptId, body)
+    if (durable.kind === "SAVED") return NextResponse.json({ submission: { ...body, submittedAt: durable.submittedAt } }, { status: 200 })
+    if (durable.kind === "CLOSED") return NextResponse.json({ error: "This application is no longer open for submission." }, { status: 409 })
+
     const saved = await saveApplicantSubmission(body)
     return NextResponse.json({ submission: saved }, { status: 200 })
   } catch (error) {
@@ -54,6 +61,12 @@ export async function GET(request: NextRequest) {
 
   if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 })
+  }
+  // Legacy file-stored submissions are readable only by TES staff authorized for driver records (not any signed-in user).
+  try {
+    await withAuthorizedSystem("DRIVER_READ", async () => undefined)
+  } catch {
+    return NextResponse.json({ error: "Not authorized." }, { status: 403 })
   }
 
   const applicationIds = (request.nextUrl.searchParams.get("applicationIds") ?? "")

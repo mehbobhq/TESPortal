@@ -1,3 +1,4 @@
+import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
 import { NextRequest, NextResponse } from "next/server"
 import { createDriverInvitationToken } from "@/lib/driver-invitation-token"
 
@@ -9,13 +10,14 @@ const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (c) => (
 
 export async function POST(request: NextRequest) {
   try {
+    // Legacy browser-workspace path: never reachable anonymously. Prospects use /api/companies/{id}/driver-prospects/{prospectId}/invitation.
     const apiKey = process.env.RESEND_API_KEY
     if (!apiKey) return NextResponse.json({ error: "RESEND_API_KEY is not configured on the server." }, { status: 500 })
 
     const body = await request.json()
     const {
       companyId,
-      companyName,
+      companyName: _requestedCompanyName,
       companyAddress,
       companyPhone,
       companyEmail,
@@ -26,10 +28,25 @@ export async function POST(request: NextRequest) {
       applicationType,
       operatingRegion,
     } = body ?? {}
-    if (![companyId, companyName, driverMasterId, applicationId, recipientEmail, driverName].every((v) => typeof v === "string" && v.trim())) {
+    if (![companyId, _requestedCompanyName, driverMasterId, applicationId, recipientEmail, driverName].every((v) => typeof v === "string" && v.trim())) {
       return NextResponse.json({ error: "The invitation request is incomplete." }, { status: 400 })
     }
     if (!EMAIL.test(recipientEmail)) return NextResponse.json({ error: "The Driver email address is invalid." }, { status: 400 })
+
+    // Authorization, not just authentication: the caller must hold DRIVER_MANAGE and the named company must be a real, active TES company.
+    // The company NAME in the email and token comes from the database, never from the request body.
+    let verifiedName: string | null
+    try {
+      verifiedName = await withAuthorizedSystem("DRIVER_MANAGE", async (client) => {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(companyId)) return null
+        const r = await client.query<{ legal_name: string }>(`SELECT legal_name FROM public.organizations WHERE id = $1 AND status = 'active'`, [companyId])
+        return r.rows[0]?.legal_name ?? null
+      })
+    } catch {
+      return NextResponse.json({ error: "Not authorized." }, { status: 403 })
+    }
+    if (!verifiedName) return NextResponse.json({ error: "Not authorized for this company." }, { status: 403 })
+    const companyName = verifiedName
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     const token = createDriverInvitationToken({

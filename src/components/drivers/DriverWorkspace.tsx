@@ -1069,19 +1069,13 @@ export function DriverWorkspace({
         <div className="fixed inset-0 z-[155] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-border pb-3">
-              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Creates and records a TES application invitation without inventing applicant claims.</p></div>
+              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Moved to Driver prospects.</p></div>
               <button type="button" onClick={() => setIsAddApplicationOpen(false)} className="text-muted-foreground">✕</button>
             </div>
-            <div className="space-y-3 text-xs">
-              <label className="block"><span className="font-bold text-muted-foreground">Application Type</span><select value={applicationType} onChange={(e) => setApplicationType(e.target.value as DriverApplicationRecord["applicationType"])} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3">
-                <option>Full Driver Employment</option><option>Owner-Operator Lease</option><option>Temporary / Seasonal</option>
-              </select></label>
-              <label className="block"><span className="font-bold text-muted-foreground">Operating Region</span><select value={applicationRegion} onChange={(e) => setApplicationRegion(e.target.value as DriverApplicationRecord["operatingRegion"])} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3">
-                <option>Canada</option><option>United States</option><option>Cross-Border</option>
-              </select></label>
-              <label className="block"><span className="font-bold text-muted-foreground">Driver Email *</span><input type="email" value={applicationRecipientEmail} onChange={(e) => setApplicationRecipientEmail(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" placeholder="driver@example.com" autoComplete="email" /><span className="mt-1 block text-[11px] text-muted-foreground">Confirm this address before sending. It becomes the Driver Master email when the invitation is sent.</span></label>
+            <div className="space-y-3 text-xs" data-testid="legacy-application-retired">
+              <p>Applications are no longer sent from this browser workspace. Add the person under <strong>Driver prospects</strong> at the top of the Drivers page (name plus an email or phone), then use <strong>Send application</strong> there. That sends a secure, expiring link and keeps the record in the TES database.</p>
             </div>
-            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" disabled={isSendingApplication} onClick={handleCreateApplication} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60">{isSendingApplication ? "Sending…" : "Send Application"}</button></div>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Close</button></div>
           </div>
         </div>
       )}

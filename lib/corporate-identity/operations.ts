@@ -441,6 +441,13 @@ export async function createOrganization(ctx: OperationContext, rawInput: unknow
   )
 
   const reviewMatches = await reviewMatchesFor(ctx, identifiers, organizationId)
+  // A same legal name is a candidate for human review, NOT a collision: two different companies can share a name, so the record is created and
+  // the coincidence is reported (only to callers who may read the registry, like every other review match).
+  if (await ctx.canViewRegistry()) {
+    for (const found of await repo.findSameLegalNameOrganizations(ctx.client, normalizedLegalName, organizationId)) {
+      reviewMatches.push({ kind: "SAME_LEGAL_NAME", organizationId: found.organizationId, legalName: found.legalName, identifierKind: null })
+    }
+  }
   return loadResult(ctx, organizationId, reviewMatches)
 }
 

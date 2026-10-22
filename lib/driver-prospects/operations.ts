@@ -341,6 +341,7 @@ export async function convertProspectToCompanyDriver(ctx: ProspectContext, decis
   const established = await identity.establishOrganizationDriver(
     identityContext,
     { organizationId, personId: prospect.person_id, relationshipType: input.relationshipType, driverNumber: input.driverNumber, status: "ONBOARDING", effectiveFrom: input.relationshipStartDate },
+    decision,
   )
   await ctx.client.query(`UPDATE public.driver_prospects SET converted_relationship_id = $2 WHERE id = $1`, [prospect.id, established.relationshipId])
   await event(ctx, prospect.id, organizationId, "CONVERTED_TO_DRIVER", "APPROVED", "APPROVED", null)

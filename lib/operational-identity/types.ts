@@ -51,6 +51,41 @@ export interface OrganizationDriverRelationshipInput {
   personId: string
   relationshipType: "EMPLOYEE" | "CONTRACTOR" | "OWNER_OPERATOR"
   driverNumber?: string
-  status: "ONBOARDING" | "ACTIVE" | "SUSPENDED"
+  status: "ONBOARDING" | "ACTIVE" | "SUSPENDED" | "ON_LEAVE"
   effectiveFrom: string
+}
+
+export type DriverEndReason = "ENDED" | "TRANSFERRED"
+export type DriverIdentityMethod = "LICENCE_DOCUMENT_REVIEW" | "GOVERNMENT_ID_REVIEW" | "REGISTRY_CONFIRMATION"
+export type DriverIdentityStatus = "UNVERIFIED" | "VERIFIED" | "REVOKED"
+
+export interface EndOrganizationDriverInput {
+  organizationId: string
+  personId: string
+  /** YYYY-MM-DD, not after today (UTC). Defaults to today. */
+  effectiveTo?: string
+}
+
+export interface TransferOrganizationDriverInput {
+  fromOrganizationId: string
+  toOrganizationId: string
+  personId: string
+  relationshipType: "EMPLOYEE" | "CONTRACTOR" | "OWNER_OPERATOR"
+  driverNumber?: string
+  status?: "ONBOARDING" | "ACTIVE"
+  /** YYYY-MM-DD, not after today (UTC). Defaults to today. The previous assignment ends and the new one starts on this date. */
+  effectiveDate?: string
+}
+
+export interface DriverIdentityVerificationInput {
+  personId: string
+  organizationId: string
+  evidenceDocumentId: string
+  method: DriverIdentityMethod
+  licenceId?: string
+}
+
+export interface DriverIdentityRevocationInput {
+  personId: string
+  reason: string
 }

@@ -19,7 +19,7 @@ export function normalizeUnitNumber(value: string): string {
 }
 
 export function normalizeDriverLicenceNumber(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
+  return value.trim().replace(/[^A-Za-z0-9]/g, "").toUpperCase()
 }
 
 export function normalizeSourceKey(value: string): string {

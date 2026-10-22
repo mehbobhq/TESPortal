@@ -55,6 +55,8 @@ export const TES_CAPABILITY_SCOPES = {
   VEHICLE_MANAGE: "SYSTEM",
   DRIVER_READ: "SYSTEM",
   DRIVER_MANAGE: "SYSTEM",
+  // Driver identity verification against evidence (migration 0037).
+  DRIVER_IDENTITY_VERIFY: "SYSTEM",
   IDENTITY_RESOLUTION_READ: "SYSTEM",
   IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
   // Master Register enumeration is explicit; ordinary authorized operations may append without gaining read access.

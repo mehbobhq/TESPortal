@@ -72,7 +72,7 @@ export default function LegacyDriversPage({params}:{params:Promise<{id:string}>}
       description={<>Driver compliance records<PrototypeBrowserDataIndicator /></>}
       actions={
         <div className="flex gap-2">
-          
+          <Button variant="outline" onClick={()=>window.location.assign(`/companies/${company.id}/drivers/hiring-settings`)}>Hiring settings</Button>
           <Button onClick={()=>setChooser(true)}><Plus className="mr-2 size-4"/>Add Driver</Button>
         </div>
       }

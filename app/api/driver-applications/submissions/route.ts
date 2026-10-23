@@ -1,83 +1,8 @@
-import { auth } from "@clerk/nextjs/server"
-import { NextRequest, NextResponse } from "next/server"
-import { withAuthorizedSystem } from "@/lib/auth/tes-system-context"
-import { submitApplication } from "@/lib/driver-prospects/applicant"
-import { verifyDriverInvitationToken } from "@/lib/driver-invitation-token"
-import {
-  getApplicantSubmissions,
-  type ServerApplicantSubmission,
-} from "@/lib/server/driver-application-submission-repository"
+import { NextResponse } from "next/server"
 
-export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
 
-function isSubmission(value: unknown): value is ServerApplicantSubmission {
-  if (!value || typeof value !== "object") return false
-  const candidate = value as Partial<ServerApplicantSubmission>
-  return Boolean(
-    candidate.applicationId &&
-    candidate.submittedAt &&
-    candidate.receiptId &&
-    Array.isArray(candidate.completedSteps) &&
-    candidate.draft &&
-    typeof candidate.draft === "object"
-  )
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const authorization = request.headers.get("authorization")
-    const match = authorization?.match(/^Bearer\s+(.+)$/i)
-    const invitation = match ? verifyDriverInvitationToken(match[1].trim()) : null
-
-    if (!invitation) {
-      return NextResponse.json({ error: "A valid driver application invitation is required." }, { status: 401 })
-    }
-
-    const body = await request.json()
-    if (!isSubmission(body)) {
-      return NextResponse.json({ error: "Invalid application submission payload." }, { status: 400 })
-    }
-
-    if (body.applicationId !== invitation.applicationId) {
-      return NextResponse.json({ error: "The invitation does not authorize this application." }, { status: 403 })
-    }
-
-    // Applications from a saved prospect are stored durably against the invitation (no person or driver is created here).
-    const durable = await submitApplication(body.applicationId, body.receiptId, body)
-    if (durable.kind === "SAVED") return NextResponse.json({ submission: { ...body, submittedAt: durable.submittedAt } }, { status: 200 })
-    if (durable.kind === "CLOSED") return NextResponse.json({ error: "This application is no longer open for submission." }, { status: 409 })
-
-    // No file-store fallback: only invitations issued from a saved prospect are accepted (the old unauthenticated issuing path is closed).
-    return NextResponse.json({ error: "This application link is no longer accepted. Ask the company to send a new application." }, { status: 410 })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save application submission."
-    return NextResponse.json({ error: message }, { status: 409 })
-  }
-}
-
-export async function GET(request: NextRequest) {
-  const { userId } = await auth()
-
-  if (!userId) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 })
-  }
-  // Legacy file-stored submissions are readable only by TES staff authorized for driver records (not any signed-in user).
-  try {
-    await withAuthorizedSystem("DRIVER_READ", async () => undefined)
-  } catch {
-    return NextResponse.json({ error: "Not authorized." }, { status: 403 })
-  }
-
-  const applicationIds = (request.nextUrl.searchParams.get("applicationIds") ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .slice(0, 50)
-
-  if (applicationIds.length === 0) {
-    return NextResponse.json({ submissions: [] }, { status: 200 })
-  }
-
-  const submissions = await getApplicantSubmissions(applicationIds)
-  return NextResponse.json({ submissions }, { status: 200 })
-}
+/** Retired. Submissions are stored in PostgreSQL through the applicant session API (POST /api/driver-applications/submit); staff review them from the driver record. */
+const gone = () => NextResponse.json({ error: "This endpoint is retired." }, { status: 410, headers: { "Cache-Control": "no-store" } })
+export const GET = gone
+export const POST = gone

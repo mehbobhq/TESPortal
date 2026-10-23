@@ -12,6 +12,7 @@ import { readCompanyLookup } from "@/lib/company-lookup"
 import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHeader"
 import type { ProspectView } from "@/lib/driver-prospects/types"
 import { OnboardingChronology } from "./onboarding-chronology"
+import { ApplicationReview } from "./application-review"
 import * as api from "./prospect-api"
 import { OperatingScopeFields, previewScope, scopeFormFrom, toScopeInput, type ScopeFormState } from "./operating-scope-fields"
 import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
@@ -33,7 +34,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [application, setApplication] = useState<{ receiptId: string; submittedAt: string; payload: any } | null>(null)
+  const [application, setApplication] = useState<boolean | null>(null)
   const [onboarding, setOnboarding] = useState<typeof blankOnboard | null>(null)
   const [email, setEmail] = useState("")
   const [scopeForm, setScopeForm] = useState<ScopeFormState | null>(null)
@@ -82,12 +83,14 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
   async function openApplication(kind: "view" | "onboard") {
     setMessage(null)
     try {
-      const s = await api.getSubmission(companyId, prospectId)
-      if (kind === "view") return setApplication(s)
-      const draft = s.payload?.draft ?? {}
-      const lic = draft.drivingLicence ?? {}
-      const region = typeof lic.jurisdiction === "string" && lic.jurisdiction.trim().length === 2 ? lic.jurisdiction.trim().toUpperCase() : ""
-      setOnboarding({ ...blankOnboard, dateOfBirth: draft.aboutYou?.dateOfBirth ?? "", licenceNumber: lic.licenceNumber ?? "", licenceRegion: region, licenceCountry: lic.country === "United States" ? "US" : "CA", licenceEffectiveFrom: lic.issueDate ?? "" })
+      if (kind === "view") return setApplication(true)
+      // Prefill the hiring package from what the applicant DECLARED. These are suggestions for the reviewer to confirm, not verified facts.
+      const review = await api.getApplicationReview(companyId, prospectId)
+      const first = review.applications.find((a) => a.status === "SUBMITTED" && a.stage === "PRE_OFFER")
+      const value = (id: string) => first?.snapshot?.fields.find((f) => f.id === id)?.value
+      const str = (id: string) => (typeof value(id) === "string" ? (value(id) as string) : "")
+      const region = str("licence.jurisdiction").trim().toUpperCase()
+      setOnboarding({ ...blankOnboard, dateOfBirth: str("identity.date_of_birth"), licenceNumber: str("licence.number"), licenceRegion: region.length === 2 ? region : "", licenceCountry: str("licence.country") === "US" ? "US" : "CA", licenceEffectiveFrom: str("licence.issue_date") })
     } catch (e) {
       setMessage({ tone: "error", text: e instanceof Error ? e.message : "Unable to load the application." })
     }
@@ -225,11 +228,9 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
             {prospect.invitation?.deliveryFailed ? <p className="text-xs text-red-600">The last email could not be delivered. You can send it again.</p> : null}
 
             {application ? (
-              <div className="rounded-lg border p-4 text-xs" data-testid="application-view">
-                <p className="font-semibold">Submitted application</p>
-                <p className="text-muted-foreground">Receipt {application.receiptId} · {application.submittedAt.slice(0, 10)}</p>
-                <p className="mt-2">Steps completed: {(application.payload?.completedSteps ?? []).join(", ") || "none recorded"}</p>
-                <Button size="sm" variant="ghost" className="mt-2" onClick={() => setApplication(null)}>Close</Button>
+              <div className="space-y-2" data-testid="application-view">
+                <ApplicationReview companyId={companyId} prospectId={prospectId} status={s} onChanged={() => void load()} />
+                <Button size="sm" variant="ghost" onClick={() => setApplication(null)}>Close</Button>
               </div>
             ) : null}
 

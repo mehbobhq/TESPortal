@@ -8,7 +8,10 @@ export const dynamic = "force-dynamic"
 
 type Context = { params: Promise<{ id: string; prospectId: string }> }
 
-/** The company and prospect come from the path only; the body is never read, so no caller can name another company. */
+/**
+ * The company and prospect come from the path only. The optional body can only ask for a LATER-STAGE SUPPLEMENT of an application this company already received
+ * ({ stage, supplementsApplicationId }); the application is re-checked against the path's company and prospect on the server, so no caller can name another company.
+ */
 export async function POST(request: NextRequest, context: Context) {
   try {
     const { id, prospectId } = await context.params
@@ -28,7 +31,24 @@ export async function POST(request: NextRequest, context: Context) {
       baseUrl = request.nextUrl.origin
     }
     if (!baseUrl) return NextResponse.json({ error: "The public application address is not configured. Nothing was sent." }, { status: 503 })
-    const result = await sendInvitation({ organizationId: id, prospectId, baseUrl }, resendInvitationDelivery)
+    let stage: "CONDITIONAL_OFFER" | "POST_OFFER" | undefined
+    let supplementsApplicationId: string | undefined
+    const raw = await request.text()
+    if (raw.trim()) {
+      let body: Record<string, unknown>
+      try {
+        body = JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        return NextResponse.json({ error: "The request could not be read." }, { status: 400 })
+      }
+      if (body.stage !== undefined) {
+        if (body.stage !== "CONDITIONAL_OFFER" && body.stage !== "POST_OFFER") return NextResponse.json({ error: "Choose a valid application stage." }, { status: 400 })
+        stage = body.stage
+        if (typeof body.supplementsApplicationId !== "string") return NextResponse.json({ error: "Name the application this supplements." }, { status: 400 })
+        supplementsApplicationId = body.supplementsApplicationId
+      }
+    }
+    const result = await sendInvitation({ organizationId: id, prospectId, baseUrl, stage, supplementsApplicationId }, resendInvitationDelivery)
     if (!result.sent) return NextResponse.json({ error: "The invitation email could not be delivered. The prospect was kept; you can try again.", ...result }, { status: 502 })
     return NextResponse.json(result, { status: 200 })
   } catch (error) {

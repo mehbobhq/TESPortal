@@ -18,6 +18,10 @@ import {
 } from "./errors"
 import { evaluateScope, scopeFromRow, validateScopeInput, SCOPE_RULES_VERSION, type NormalizedScope, type ScopeInput } from "./operating-scope"
 import { prospectSchemaMessage, prospectSchemaState, scopeSchemaAvailable, scopeSchemaMessage } from "./schema-state"
+import { planSha256, resolvePlan, type HrSelections } from "@/lib/driver-application/plan"
+import { assertQualifiedForApproval } from "@/lib/driver-application/approval-gate"
+import { approvedSensitiveFields, vaultReady } from "@/lib/driver-application/sensitive"
+import type { Stage } from "@/lib/driver-application/catalogue/types"
 import type { PresentationContext, PresentationCountry } from "@/lib/jurisdiction-context"
 import { hasAdditionalSystemCapability } from "@/lib/auth/tes-system-context"
 import {
@@ -38,7 +42,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const LIVE_STATUSES = ["PROSPECT", "INVITED", "APPLICATION_SUBMITTED", "UNDER_REVIEW"]
 export const hashInvitationToken = (token: string) => createHash("sha256").update(token, "utf8").digest("hex")
 
-const uuid = (value: unknown, field: string) => {
+export const uuid = (value: unknown, field: string) => {
   if (typeof value !== "string" || !UUID.test(value.trim())) throw new DriverProspectValidationError(field, `${field} must be a UUID.`)
   return value.trim()
 }
@@ -48,7 +52,7 @@ async function requireSchema(ctx: ProspectContext, what: string) {
   if (state !== "COMPLETE") throw new DriverProspectStateError(prospectSchemaMessage(state, what))
 }
 
-async function mr(ctx: ProspectContext, eventType: string, operation: string, resourceType: string, resourceId: string, organizationId: string, subjects: string[], after?: { field: string; value: string }) {
+export async function mr(ctx: ProspectContext, eventType: string, operation: string, resourceType: string, resourceId: string, organizationId: string, subjects: string[], after?: { field: string; value: string }) {
   await recordEvent(ctx.masterRegister, {
     eventType,
     actor: { actorType: ctx.actor.actorType, actorId: ctx.actor.id },
@@ -64,7 +68,7 @@ async function mr(ctx: ProspectContext, eventType: string, operation: string, re
   } as never)
 }
 
-async function event(ctx: ProspectContext, prospectId: string, organizationId: string, type: string, from: string | null, to: string | null, invitationId: string | null) {
+export async function event(ctx: ProspectContext, prospectId: string, organizationId: string, type: string, from: string | null, to: string | null, invitationId: string | null) {
   await ctx.client.query(
     `INSERT INTO public.driver_prospect_events (prospect_id, organization_id, event_type, from_status, to_status, invitation_id, actor_id, source) VALUES ($1, $2, $3, $4, $5, $6, $7, 'STAFF')`,
     [prospectId, organizationId, type, from, to, invitationId, ctx.actor.id],
@@ -304,12 +308,14 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
 }
 
 /** Phase 1 of sending: revokes any live invitation, stores the HASH of a fresh secret and returns the secret ONCE (it is never stored). */
-export async function prepareInvitation(ctx: ProspectContext, input: { organizationId: string; prospectId: string }) {
+export async function prepareInvitation(ctx: ProspectContext, decision: SystemAuthorizationDecision, input: { organizationId: string; prospectId: string; stage?: Stage; supplementsApplicationId?: string }) {
   await requireSchema(ctx, "Sending an application")
   const organizationId = uuid(input.organizationId, "organizationId")
   const company = await activeOrganization(ctx, organizationId)
   const prospect = await lockProspect(ctx, organizationId, uuid(input.prospectId, "prospectId"))
-  if (prospect.status !== "PROSPECT" && prospect.status !== "INVITED") {
+  const laterStage = (input.stage ?? "PRE_OFFER") !== "PRE_OFFER"
+  const sendable = laterStage ? ["APPLICATION_SUBMITTED", "UNDER_REVIEW"] : ["PROSPECT", "INVITED"]
+  if (!sendable.includes(prospect.status)) {
     throw new DriverProspectStateError(`An application cannot be sent for a prospect whose status is ${PROSPECT_STATUS_LABEL[prospect.status]}. Nothing was sent.`)
   }
   const recipient = await ctx.client.query<{ value_normalized: string; given_name: string | null; family_name: string | null }>(
@@ -324,6 +330,26 @@ export async function prepareInvitation(ctx: ProspectContext, input: { organizat
   const scopeRow = await currentScopeRow(ctx, prospect.id, organizationId)
   const evaluation = evaluateScope(scopeRow ? scopeFromRow(scopeRow) : null)
   if (!evaluation.issuable || !scopeRow) throw new DriverProspectStateError(`${evaluation.reason ?? "The operating scope is not established."} Nothing was sent.`)
+  // The complete application plan is resolved HERE, on the server, from the scope, the carrier's HR configuration and the collection stage, and frozen with the invitation.
+  const normalizedScope = scopeFromRow(scopeRow)!
+  const hrRow = await ctx.client.query<{ selections: HrSelections }>(`SELECT selections FROM public.organization_hr_screening_profiles WHERE organization_id = $1 AND superseded_at IS NULL`, [organizationId])
+  const presentation = await getPresentationContext(ctx, decision, organizationId)
+  const stage: Stage = input.stage ?? "PRE_OFFER"
+  const plan = resolvePlan({
+    scope: normalizedScope,
+    profile: evaluation.profile,
+    carrierCountry: presentation.country,
+    hrSelections: hrRow.rows[0]?.selections ?? {},
+    collectionStage: stage,
+    gates: { vaultReady: vaultReady(), approvedSensitiveFields: approvedSensitiveFields() },
+  })
+  if (stage !== "PRE_OFFER") {
+    const original = input.supplementsApplicationId
+      ? await ctx.client.query(`SELECT 1 FROM public.driver_applications WHERE id = $1 AND organization_id = $2 AND prospect_id = $3 AND status = 'SUBMITTED'`, [input.supplementsApplicationId, organizationId, prospect.id])
+      : { rowCount: 0 }
+    if (!original.rowCount) throw new DriverProspectStateError("A later-stage request supplements a submitted application of this prospect. Nothing was sent.")
+  }
+  const frozen = { ...evaluation.profile, plan, planSha256: planSha256(plan), ...(input.supplementsApplicationId ? { supplementsApplicationId: input.supplementsApplicationId } : {}) }
   const revoked = await ctx.client.query<{ id: string }>(
     `UPDATE public.driver_application_invitations SET status = 'REVOKED' WHERE prospect_id = $1 AND status IN ('PENDING', 'SENT', 'OPENED') RETURNING id`,
     [prospect.id],
@@ -335,7 +361,7 @@ export async function prepareInvitation(ctx: ProspectContext, input: { organizat
   const expiresAt = new Date(Date.now() + INVITATION_LIFETIME_MS)
   await ctx.client.query(
     `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id, operating_scope_id, requirements_profile, requirements_rules_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
-    [invitationId, prospect.id, organizationId, hashInvitationToken(token), recipient.rows[0].value_normalized, expiresAt, ctx.actor.id, scopeRow.id, JSON.stringify(evaluation.profile), evaluation.profile.version],
+    [invitationId, prospect.id, organizationId, hashInvitationToken(token), recipient.rows[0].value_normalized, expiresAt, ctx.actor.id, scopeRow.id, JSON.stringify(frozen), plan.rulesVersion],
   )
   await event(ctx, prospect.id, organizationId, "INVITATION_CREATED", prospect.status, prospect.status, invitationId)
   await mr(ctx, "RECORD_CREATED", "DRIVER_APPLICATION_INVITATION_CREATE", "driver_application_invitations", invitationId, organizationId, [`person:${prospect.person_id}`])
@@ -385,6 +411,8 @@ export async function reviewProspect(ctx: ProspectContext, input: { organization
   if (!REVIEW_TARGETS.includes(input.to)) throw new DriverProspectValidationError("to", "to must be UNDER_REVIEW, APPROVED, REJECTED or WITHDRAWN.")
   const organizationId = uuid(input.organizationId, "organizationId")
   const prospect = await lockProspect(ctx, organizationId, uuid(input.prospectId, "prospectId"))
+  // A submission never qualifies anyone: approval of a prospect with a submitted application needs a recorded Qualified decision.
+  if (input.to === "APPROVED") await assertQualifiedForApproval(ctx, organizationId, prospect.id)
   await savepoint(ctx, () => ctx.client.query(`UPDATE public.driver_prospects SET status = $2 WHERE id = $1`, [prospect.id, input.to]), () => new DriverProspectConflictError("The prospect changed. Nothing was saved."))
   await event(ctx, prospect.id, organizationId, "STATUS_CHANGED", prospect.status, input.to, null)
   await mr(ctx, "RECORD_UPDATED", "DRIVER_PROSPECT_STATUS_CHANGE", "driver_prospects", prospect.id, organizationId, [`person:${prospect.person_id}`], { field: "status", value: input.to })

@@ -1,6 +1,6 @@
 // Run with `npm run test:auth` (scripts/test/run-auth-tests.sh) or against a disposable database via the TES_TEST_* URLs.
 //
-// Migrations 0039 and 0040 (driver prospects, application invitations, operating scope), driven through the REAL authorization wrappers and the real
+// Migrations 0039-0041 (driver prospects, application invitations, operating scope, universal application sessions), driven through the REAL authorization wrappers and the real
 // Master Register. Fixtures and owner-level checks use the admin pool; the services run as the RUNTIME role under row-level security.
 
 import assert from "node:assert/strict";
@@ -14,7 +14,10 @@ async function loadKit() {
   return {
     db: await import("@/test/helpers/auth-db"),
     svc: await import("@/lib/driver-prospects/service"),
-    app: await import("@/lib/driver-prospects/applicant"),
+    as: await import("@/lib/driver-application/applicant-service"),
+    rv: await import("@/lib/driver-application/review-service"),
+    fill: await import("../../helpers/driver-application-fill"),
+    storage: await import("../../helpers/fake-evidence-storage"),
     errors: await import("@/lib/driver-prospects/errors"),
     oi: await import("@/lib/operational-identity/service"),
   };
@@ -67,7 +70,15 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
         )
       ).rows;
       for (const r of triggers) await client.query(`ALTER TABLE public.${r.t} DISABLE TRIGGER ${r.n}`);
+      // Migration 0041 tables and the evidence rows the applicant uploads created: every user trigger is lifted for exactly these, inside this transaction.
+      const appTables = [
+        "driver_application_corrections", "driver_application_decisions", "driver_application_verifications", "driver_sensitive_access_events", "driver_sensitive_values", "driver_application_uploads",
+        "driver_application_consent_revocations", "driver_application_consents", "driver_application_consent_presentations", "driver_application_snapshots", "driver_application_drafts",
+        "driver_application_sessions", "driver_applications", "organization_hr_screening_profiles", "evidence_payloads", "evidence_documents",
+      ];
+      for (const t of appTables) await client.query(`ALTER TABLE public.${t} DISABLE TRIGGER USER`);
       const people = (await client.query<{ person_id: string }>(`SELECT DISTINCT person_id FROM public.driver_prospects WHERE organization_id = ANY($1::uuid[])`, [organizations])).rows.map((r) => r.person_id);
+      for (const t of appTables) await client.query(`DELETE FROM public.${t} WHERE organization_id = ANY($1::uuid[])`, [organizations]);
       for (const t of ["driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers", "organization_driver_relationships"]) {
         await client.query(`DELETE FROM public.${t} WHERE organization_id = ANY($1::uuid[])`, [organizations]);
       }
@@ -76,6 +87,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
       await client.query(`DELETE FROM public.organizations WHERE id = ANY($1::uuid[])`, [organizations]);
       await client.query("SET CONSTRAINTS ALL IMMEDIATE");
       for (const r of triggers) await client.query(`ALTER TABLE public.${r.t} ENABLE TRIGGER ${r.n}`);
+      for (const t of appTables) await client.query(`ALTER TABLE public.${t} ENABLE TRIGGER USER`);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -134,6 +146,48 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     calls.push(m.link);
     return { messageId: `msg_${n()}` };
   };
+
+  const secretOf = (link: string) => decodeURIComponent(new URL(link).hash.replace(/^#k=/, ""));
+  const startSession = (secret: string) => K.as.startApplicantSession({ secret, ip: "127.0.0.1", userAgent: "node-test" });
+  const opens = async (secret: string) => (await startSession(secret)).ok;
+
+  /** Fills EVERY applicable question, uploads every required document, signs every authorization and submits, all through the real applicant service. */
+  async function completeApplication(secret: string, overrides: Record<string, unknown> = {}) {
+    const started = await startSession(secret);
+    assert.ok(started.ok, "the invitation opens a session");
+    if (!started.ok) throw new Error("unreachable");
+    const { sessionToken, csrfToken } = started;
+    const port = new K.storage.FakeEvidenceStorage() as never;
+    let view = await K.as.loadApplicantApplication(sessionToken);
+    const answers = K.fill.validAnswers(view.plan, overrides);
+    await K.as.saveApplicantDraft(sessionToken, csrfToken, { version: view.answersVersion, patch: answers });
+    view = await K.as.loadApplicantApplication(sessionToken);
+    for (const { field, required } of (await import("@/lib/driver-application/validate")).applicableFields(view.plan, view.answers)) {
+      if (field.type !== "upload" || !required) continue;
+      const pdf = field.evidence?.accept.includes("application/pdf");
+      await K.as.uploadApplicantDocument(sessionToken, csrfToken, { fieldId: field.id, bytes: pdf ? K.fill.PDF_BYTES : K.fill.PNG_BYTES, mimeType: pdf ? "application/pdf" : "image/png", filename: pdf ? "doc.pdf" : "doc.png" }, port);
+    }
+    view = await K.as.loadApplicantApplication(sessionToken);
+    const legalName = `${answers["identity.legal_first_name"]} ${answers["identity.legal_last_name"]}`;
+    for (const c of view.plan.consents) {
+      if (c.external) continue;
+      await K.as.presentApplicantConsent(sessionToken, csrfToken, c.key);
+      await K.as.acceptApplicantConsent(sessionToken, csrfToken, { key: c.key, signatureName: legalName, affirmed: true });
+    }
+    const result = await K.as.submitApplicantApplication(sessionToken, csrfToken);
+    return { result, sessionToken, csrfToken, view };
+  }
+
+  /** Records the carrier's review of every submitted application: verified where nothing relies on an unapproved authorization, a documented exception where something does, then the Qualified decision. */
+  async function qualify(o: string, prospectId: string) {
+    const { applications } = await K.rv.getApplicationReview({ organizationId: o, prospectId });
+    for (const app of applications) {
+      for (const r of app.requirements.filter((x) => x.requiredForQualification)) {
+        await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: r.consentKey ? "EXCEPTION" : "VERIFIED", note: "Checked by the carrier (test)." });
+      }
+      await K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["Reviewed"], acknowledgeExceptions: true, acknowledgeReviewRequirements: true });
+    }
+  }
 
   scenario("1. a prospect can be saved with a full name and an email only", async () => {
     const o = await org();
@@ -197,12 +251,12 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const sent = await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test/" }, okDelivery(calls));
     assert.equal(sent.sent, true);
     assert.equal(calls.length, 1);
-    const secret = new URL(calls[0]).searchParams.get("invitation")!;
+    const secret = secretOf(calls[0]);
     assert.ok(secret.length >= 40);
     const [inv] = await q<{ status: string; token_hash: string; provider_message_id: string }>(`SELECT status, token_hash, provider_message_id FROM public.driver_application_invitations WHERE prospect_id = $1`, [prospectId]);
     assert.equal(inv.status, "SENT");
     assert.notEqual(inv.token_hash, secret);
-    assert.equal(inv.token_hash, K.app && (await import("@/lib/driver-prospects/operations")).hashInvitationToken(secret));
+    assert.equal(inv.token_hash, (await import("@/lib/driver-prospects/operations")).hashInvitationToken(secret));
     assert.equal((await K.svc.listProspects(o))[0].status, "INVITED");
 
     const { prospectId: p2 } = await mk({ organizationId: o, fullName: name(), email: email() });
@@ -243,25 +297,23 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const { prospectId, personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const secret = new URL(calls[0]).searchParams.get("invitation")!;
+    const secret = secretOf(calls[0]);
     const before = Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.persons`))[0].c);
 
-    assert.equal(await K.app.openInvitation("x".repeat(43)), null, "an unknown secret opens nothing");
-    const opened = await K.app.openInvitation(secret);
-    assert.ok(opened);
-    assert.equal(opened!.organizationId, o, "the company comes from the database record");
-    assert.equal(opened!.prospectId, prospectId);
-
-    assert.deepEqual(await K.app.submitApplication(randomUUID(), "r0", {}), { kind: "NOT_A_DATABASE_APPLICATION" });
-    const saved = await K.app.submitApplication(opened!.invitationId, `rcpt_${n()}`, { draft: { note: "x" } });
-    assert.equal(saved.kind, "SAVED");
+    assert.equal((await startSession("x".repeat(43))).ok, false, "an unknown secret opens nothing");
+    const { result, sessionToken, csrfToken } = await completeApplication(secret);
+    assert.ok(result.ok, "the complete application is accepted");
+    if (!result.ok) return;
+    assert.ok(result.receiptId);
     assert.equal(Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.persons`))[0].c), before, "no person created");
     assert.equal((await q(`SELECT 1 FROM public.driver_application_submissions WHERE prospect_id = $1`, [prospectId])).length, 1);
     const [row] = await K.svc.listProspects(o);
     assert.equal(row.status, "APPLICATION_SUBMITTED");
     assert.equal(row.personId, personId, "identity continuity");
-    assert.equal((await K.app.submitApplication(opened!.invitationId, "again", {})).kind, "CLOSED");
-    assert.equal(await K.app.openInvitation(secret), null, "a used link no longer opens");
+    const again = await K.as.submitApplicantApplication(sessionToken, csrfToken);
+    assert.ok(again.ok && again.alreadySubmitted && again.receiptId === result.receiptId, "a repeat submit returns the original receipt");
+    assert.equal((await q(`SELECT 1 FROM public.driver_application_submissions WHERE prospect_id = $1`, [prospectId])).length, 1, "no second submission");
+    await assert.rejects(() => K.as.saveApplicantDraft(sessionToken, csrfToken, { version: 1, patch: { "identity.phone": "000" } }), "a submitted application cannot be edited");
     assert.ok((await K.svc.getProspectSubmission({ organizationId: o, prospectId })).receiptId);
     const other = await org("other");
     await rejects(() => K.svc.getProspectSubmission({ organizationId: other, prospectId }), "NotFoundError");
@@ -279,10 +331,12 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     await rejects(() => convert(), "StateError"); // not approved
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
-    await K.app.submitApplication(opened!.invitationId, "r1", { draft: {} });
+    assert.ok((await startSession(secretOf(calls[0]))).ok);
+    assert.ok((await completeApplication(secretOf(calls[0]))).result.ok);
     await rejects(() => K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" }), "StateError"); // order enforced
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "UNDER_REVIEW" });
+    await rejects(() => K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" }), "StateError"); // a submission never qualifies anyone
+    await qualify(o, prospectId);
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" });
     assert.equal((await q(`SELECT 1 FROM public.organization_driver_relationships WHERE person_id = $1`, [personId])).length, 0, "approval alone assigns nothing");
     await rejects(() => convert({ dateOfBirth: "" }), "ValidationError");
@@ -323,9 +377,10 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     });
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
-    await K.app.submitApplication(opened!.invitationId, "r-life", { draft: {} });
+    assert.ok((await startSession(secretOf(calls[0]))).ok);
+    assert.ok((await completeApplication(secretOf(calls[0]))).result.ok);
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "UNDER_REVIEW" });
+    await qualify(o, prospectId);
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" });
     await K.svc.convertProspectToCompanyDriver({
       organizationId: o, prospectId, relationshipType: "EMPLOYEE", relationshipStartDate: "2026-02-01", dateOfBirth: "1990-05-05",
@@ -356,8 +411,8 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(first));
     const second: string[] = [];
     await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(second));
-    assert.equal(await K.app.openInvitation(new URL(first[0]).searchParams.get("invitation")!), null, "the earlier link is revoked");
-    assert.ok(await K.app.openInvitation(new URL(second[0]).searchParams.get("invitation")!));
+    assert.equal(await opens(secretOf(first[0])), false, "the earlier link is revoked");
+    assert.ok(await opens(secretOf(second[0])));
 
     // An expired invitation (inserted by the owner with a past expiry) opens nothing and accepts no submission.
     const { createHash } = await import("node:crypto");
@@ -370,8 +425,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
                (SELECT id FROM public.driver_prospect_operating_scopes WHERE prospect_id = $2 AND superseded_at IS NULL), '{}'::jsonb, 'test')`,
       [invitationId, p2, a, createHash("sha256").update(secret).digest("hex")],
     );
-    assert.equal(await K.app.openInvitation(secret), null);
-    assert.equal((await K.app.submitApplication(invitationId, "late", {})).kind, "CLOSED");
+    assert.equal(await opens(secret), false, "an expired invitation opens nothing");
   });
 
   scenario("13. the register's onboarding stage follows the recorded events, and an activated driver leaves onboarding", async () => {
@@ -387,12 +441,13 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
     assert.equal((await stage(prospectId)).currentLabel, "Application Sent");
-    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
+    assert.ok((await startSession(secretOf(calls[0]))).ok);
     assert.equal((await stage(prospectId)).currentLabel, "Application Opened");
-    await K.app.submitApplication(opened!.invitationId, "r-stage", { draft: {} });
+    assert.ok((await completeApplication(secretOf(calls[0]))).result.ok);
     assert.equal((await stage(prospectId)).currentLabel, "Application Submitted");
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "UNDER_REVIEW" });
     assert.equal((await stage(prospectId)).currentLabel, "Pre-Employment Verification");
+    await qualify(o, prospectId);
     await K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" });
     const hiring = await stage(prospectId);
     assert.equal(hiring.currentLabel, "Hiring Package");
@@ -418,14 +473,13 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: scope as never });
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const secret = new URL(calls[0]).searchParams.get("invitation")!;
-    const opened = await K.app.openInvitation(secret);
-    assert.ok(opened, "the invitation opens");
-    process.env.TES_INVITATION_SECRET ??= "test-invitation-secret-0123456789abcdef";
-    const { verifyDriverInvitationToken } = await import("@/lib/driver-invitation-token");
-    const claims = verifyDriverInvitationToken(K.app.signedApplicantToken(opened!));
-    assert.ok(claims, "the signed applicant session verifies");
-    return { created, secret, opened: opened!, claims: claims!, calls };
+    const secret = secretOf(calls[0]);
+    assert.ok(await opens(secret), "the invitation opens a session");
+    const [inv] = await q<{ id: string; requirements_profile: { applicationRegion: string; scopeKind: string; sections: Record<string, boolean>; employmentHistoryYears: number; plan: { context: Record<string, unknown> } } }>(
+      `SELECT id, requirements_profile FROM public.driver_application_invitations WHERE token_hash = $1`, [(await import("@/lib/driver-prospects/operations")).hashInvitationToken(secret)]);
+    const opened = { invitationId: inv.id };
+    const claims = { operatingRegion: inv.requirements_profile.applicationRegion, requirements: inv.requirements_profile };
+    return { created, secret, opened, claims, calls };
   }
 
   scenario("14. U.S. company: an intrastate hire and an interstate hire each get U.S. requirements; neither is cross-border", async () => {
@@ -512,15 +566,15 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const change = await K.svc.establishOperatingScope({ organizationId: o, prospectId: first.created.prospectId, scope: { kind: "CROSS_BORDER", usJurisdictions: ["NY"], caJurisdictions: ["ON"], characteristics: CDL } as never });
     assert.equal(change.changed, true);
     assert.equal(change.revokedInvitations, 1);
-    assert.equal(await K.app.openInvitation(first.secret), null, "the outdated link no longer opens");
-    assert.equal((await K.app.submitApplication(first.opened.invitationId, "stale", {})).kind, "CLOSED", "nor can its application be submitted");
+    assert.equal(await opens(first.secret), false, "the outdated link no longer opens");
     const [prospect] = await K.svc.listProspects(o);
     assert.equal(prospect.onboarding.currentLabel, "Not sent", "the chronology no longer claims it was sent");
     assert.equal(prospect.operatingScope?.kind, "CROSS_BORDER");
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId: first.created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const reopened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
-    assert.equal(reopened?.requirements.scopeKind, "CROSS_BORDER");
+    assert.ok(await opens(secretOf(calls[0])));
+    const [fresh] = await q<{ requirements_profile: { scopeKind: string } }>(`SELECT requirements_profile FROM public.driver_application_invitations WHERE status <> 'REVOKED' AND prospect_id = $1`, [first.created.prospectId]);
+    assert.equal(fresh.requirements_profile.scopeKind, "CROSS_BORDER");
     assert.equal(Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.persons`))[0].c), personsBefore, "no duplicate person");
     const versions = await q<{ superseded_at: string | null }>(`SELECT superseded_at FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1 ORDER BY established_at`, [first.created.prospectId]);
     assert.equal(versions.length, 2, "history is kept");
@@ -564,8 +618,8 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     await only(...FULL);
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
-    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
-    await K.app.submitApplication(opened!.invitationId, "r-scope", { draft: {} });
+    assert.ok((await startSession(secretOf(calls[0]))).ok);
+    assert.ok((await completeApplication(secretOf(calls[0]))).result.ok);
     await rejects(() => K.svc.establishOperatingScope({ organizationId: a, prospectId, scope: { kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["AB"] } as never }), "StateError");
     // Versions and the invitation's frozen requirements cannot be rewritten, even by the table owner's ordinary UPDATE.
     await assert.rejects(() => pools.admin.query(`UPDATE public.driver_prospect_operating_scopes SET scope_kind = 'US_INTRASTATE' WHERE prospect_id = $1`, [prospectId]));

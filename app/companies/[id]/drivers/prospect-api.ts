@@ -27,3 +27,33 @@ const ctxBase = (companyId: string) => `/api/companies/${encodeURIComponent(comp
 export const getOnboardingContext = async (companyId: string) => (await call<{ presentation: PresentationContext }>(ctxBase(companyId))).presentation
 export const setPresentationCountry = async (companyId: string, country: "US" | "CA") => (await post(ctxBase(companyId), { country })).presentation as PresentationContext
 export const setOperatingScope = (companyId: string, prospectId: string, scope: ScopeInput) => post(`${base(companyId)}/${encodeURIComponent(prospectId)}/scope`, { scope })
+
+export interface ReviewRequirement {
+  key: string; title: string; type: string; requiredForQualification: boolean; external: boolean; consentKey: string | null
+  consent: { signed: boolean; legalStatus: string | null; relianceAllowed: boolean; reason: string | null } | null
+  current: { status: string; note: string | null; recordedAt: string } | null
+  history: Array<{ status: string; note: string | null; recordedAt: string }>
+}
+export interface ReviewApplication {
+  id: string; status: string; stage: string; receiptId: string | null; submittedAt: string | null; snapshotSha256: string | null; planSha256: string; supplementsApplicationId: string | null
+  pdf: { documentId: string; sha256: string | null } | null
+  snapshot: { fields: Array<{ id: string; section: string; label: string; value: unknown; type: string }>; retainedNotApplicable: string[]; sensitive: Array<{ fieldId: string; collected: boolean }>; sensitiveNotCollected: Array<{ fieldId: string; reason: string }> } | null
+  snapshotIntact?: boolean
+  requirements: ReviewRequirement[]
+  consents: Array<{ id: string; key: string; version: string; legalStatus: string; acceptedAt: string; signatureName: string; jurisdiction: string | null; purpose: string; revoked: boolean }>
+  uploads: Array<{ fieldId: string; documentId: string; documentClass: string; sensitivity: string; current: boolean; state: string | null; filename: string | null }>
+  decisions: Array<{ id: string; decision: string; reasons: unknown; decidedAt: string }>
+  corrections: Array<{ id: string; fieldId: string; previousValue: unknown; correctedValue: unknown; reason: string; recordedAt: string }>
+  sensitive: Array<{ fieldId: string; collected: true; masked?: string }>
+  reviewRequirements: Array<{ id: string; text: string }>
+  canQualify: boolean
+  blockers: string[]
+}
+const appBase = (companyId: string, prospectId: string) => `${base(companyId)}/${encodeURIComponent(prospectId)}/application`
+export const getApplicationReview = (companyId: string, prospectId: string) => call<{ applications: ReviewApplication[]; canSeeSensitive: boolean }>(appBase(companyId, prospectId))
+export const recordVerification = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/verification`, body)
+export const recordDecision = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/decision`, body)
+export const recordCorrection = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/correction`, body)
+export const revealSensitiveValue = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/sensitive`, body) as Promise<{ value: string }>
+export const requestSupplement = (companyId: string, prospectId: string, supplementsApplicationId: string) => post(`${base(companyId)}/${encodeURIComponent(prospectId)}/invitation`, { stage: "CONDITIONAL_OFFER", supplementsApplicationId })
+export const documentUrl = (companyId: string, prospectId: string, applicationId: string, documentId: string) => `${appBase(companyId, prospectId)}/documents/${encodeURIComponent(documentId)}?applicationId=${encodeURIComponent(applicationId)}`

@@ -2,7 +2,7 @@ import "server-only"
 
 import { randomUUID } from "node:crypto"
 import type { PoolClient } from "pg"
-import { withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
+import { requireAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
 import { PostgresMasterRegisterRepository } from "@/lib/master-register/postgres-repository"
 import { classifyPayloadConsistency, type ConsistencyFinding, type ListedObject } from "@/lib/evidence-payload/consistency"
 import { EvidenceStateError, EvidenceValidationError } from "@/lib/evidence-payload/errors"
@@ -171,8 +171,12 @@ export async function openEvidenceForView(input: { organizationId: string; docum
   const organizationId = operations.requireOrganizationId(input.organizationId)
   const documentId = operations.requireDocumentId(input.documentId)
 
-  const { ticket, bundle } = await read(async (ctx) => {
+  const { ticket, bundle } = await withAuthorizedSystem("EVIDENCE_READ", async (client, decision) => {
+    const ctx = context(client, decision)
     const found = await operations.loadBundle(ctx.client, organizationId, documentId)
+    // RESTRICTED documents (driver identity and work-authorization documents) need the dedicated sensitive-read capability on top of evidence read.
+    const sensitivity = await client.query<{ sensitivity: string }>(`SELECT sensitivity FROM public.evidence_documents WHERE id = $1 AND organization_id = $2`, [documentId, organizationId])
+    if (sensitivity.rows[0]?.sensitivity === "restricted") await requireAdditionalSystemCapability(client, decision, "DRIVER_SENSITIVE_READ")
     return { ticket: await operations.recordView(ctx, found), bundle: found }
   })
 

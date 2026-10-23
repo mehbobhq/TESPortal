@@ -47,6 +47,7 @@ describe("TES capability references", () => {
         DRIVER_READ: "SYSTEM",
         DRIVER_MANAGE: "SYSTEM",
         DRIVER_IDENTITY_VERIFY: "SYSTEM",
+        DRIVER_SENSITIVE_READ: "SYSTEM",
         IDENTITY_RESOLUTION_READ: "SYSTEM",
         IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
         MASTER_REGISTER_READ: "SYSTEM",
@@ -61,7 +62,7 @@ describe("TES capability references", () => {
         COMPANY_LEGAL_NAME_CHANGE: "SYSTEM",
       },
     );
-    assert.equal(TES_CAPABILITY_CODES.length, 35);
+    assert.equal(TES_CAPABILITY_CODES.length, 36);
   });
 
   it("has no delete capability and no CUSTOMER_CREATE", () => {

@@ -1,5 +1,5 @@
 /**
- * Which part of migration 0039 (driver prospects and application invitations) this database has. The application is deployed independently of the
+ * Which part of migrations 0039 and 0041 (driver prospects, application invitations, applicant sessions) this database has. The application is deployed independently of the
  * migrations: every prospect operation reports "not available yet" until the WHOLE migration is present, and a partly applied one fails closed.
  * Not cached; a genuine query error propagates.
  */
@@ -19,7 +19,7 @@ export async function prospectSchemaState(client: Pick<PoolClient, "query">): Pr
        (to_regclass('public.driver_application_invitations') IS NOT NULL),
        (to_regclass('public.driver_application_submissions') IS NOT NULL),
        (to_regclass('public.driver_prospect_events') IS NOT NULL),
-       (to_regprocedure('tes_security.open_driver_application_invitation(text)') IS NOT NULL),
+       (to_regprocedure('tes_security.open_applicant_session(text,text,text,integer,text)') IS NOT NULL),
        (to_regprocedure('tes_security.submit_driver_application(uuid,text,jsonb)') IS NOT NULL),
        (EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.driver_prospects') AND c.relrowsecurity))
      )

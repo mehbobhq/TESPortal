@@ -26,9 +26,9 @@ export const convertProspectToCompanyDriver = (input: ConvertProspectInput) =>
  * Two transactions so mail is never sent for an uncommitted token and a delivery failure is still recorded:
  * (1) authorize + store the token HASH, (2) deliver, (3) record the outcome. The company comes from the path, never a body.
  */
-export async function sendInvitation(input: { organizationId: string; prospectId: string; baseUrl: string }, deliver: InvitationDeliveryPort) {
+export async function sendInvitation(input: { organizationId: string; prospectId: string; baseUrl: string; stage?: import("@/lib/driver-application/catalogue/types").Stage; supplementsApplicationId?: string }, deliver: InvitationDeliveryPort) {
   const prepared = await withAuthorizedSystem("DRIVER_MANAGE", (c, d) =>
-    operations.prepareInvitation(context(c, d), { organizationId: input.organizationId, prospectId: input.prospectId }),
+    operations.prepareInvitation(context(c, d), d, { organizationId: input.organizationId, prospectId: input.prospectId, stage: input.stage, supplementsApplicationId: input.supplementsApplicationId }),
   )
   let outcome: { sent: true; messageId: string } | { sent: false }
   try {
@@ -36,7 +36,7 @@ export async function sendInvitation(input: { organizationId: string; prospectId
       to: prepared.to,
       applicantName: prepared.applicantName,
       companyName: prepared.companyName,
-      link: `${input.baseUrl.replace(/\/+$/, "")}/driver-application?invitation=${encodeURIComponent(prepared.token)}`,
+      link: `${input.baseUrl.replace(/\/+$/, "")}/driver-application#k=${encodeURIComponent(prepared.token)}`,
       invitationId: prepared.invitationId,
       expiresAt: prepared.expiresAt,
     })

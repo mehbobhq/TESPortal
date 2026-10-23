@@ -13,6 +13,9 @@ import CompanyWorkspaceHeader from "@/src/components/shared/CompanyWorkspaceHead
 import type { ProspectView } from "@/lib/driver-prospects/types"
 import { OnboardingChronology } from "./onboarding-chronology"
 import * as api from "./prospect-api"
+import { OperatingScopeFields, previewScope, scopeFormFrom, toScopeInput, type ScopeFormState } from "./operating-scope-fields"
+import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
+import type { PresentationContext } from "@/lib/jurisdiction-context"
 
 type Company = { id: string; name: string; kind: string; status: string }
 const blankOnboard = { relationshipType: "EMPLOYEE", relationshipStartDate: "", dateOfBirth: "", licenceCountry: "CA", licenceRegion: "", licenceNumber: "", licenceEffectiveFrom: "", driverNumber: "" }
@@ -33,6 +36,8 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
   const [application, setApplication] = useState<{ receiptId: string; submittedAt: string; payload: any } | null>(null)
   const [onboarding, setOnboarding] = useState<typeof blankOnboard | null>(null)
   const [email, setEmail] = useState("")
+  const [scopeForm, setScopeForm] = useState<ScopeFormState | null>(null)
+  const [presentation, setPresentation] = useState<PresentationContext | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +53,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
 
   useEffect(() => {
     void load()
+    api.getOnboardingContext(companyId).then(setPresentation).catch(() => setPresentation(null))
     fetch(`/api/companies/${encodeURIComponent(companyId)}/profile`, { cache: "no-store" })
       .then((r) => readCompanyLookup<Company>(r))
       .then((l) => {
@@ -64,6 +70,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
       await work()
       setMessage({ tone: "ok", text: ok })
       setOnboarding(null)
+      setScopeForm(null)
     } catch (e) {
       setMessage({ tone: "error", text: e instanceof Error ? e.message : "The action could not be completed." })
     } finally {
@@ -144,6 +151,41 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
             ) : null}
           </div>
         </div>
+
+        <Card data-testid="operating-scope-card">
+          <CardHeader className="border-b bg-muted/30 py-3"><CardTitle className="text-sm">Operating scope</CardTitle></CardHeader>
+          <CardContent className="space-y-3 pt-4 text-sm">
+            {scopeForm ? (
+              <>
+                <OperatingScopeFields value={scopeForm} onChange={setScopeForm} presentation={presentation?.country ?? null} idPrefix="detail-scope" />
+                {s === "INVITED" ? <p className="text-xs text-amber-700">Changing the scope cancels the application already sent. Send a new application afterwards.</p> : null}
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busy || previewScope(scopeForm).errors.length > 0} onClick={() => run(() => api.setOperatingScope(companyId, prospectId, toScopeInput(scopeForm)), "Operating scope saved.")}>Save operating scope</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setScopeForm(null)}>Cancel</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                {prospect.operatingScope ? (
+                  <div data-testid="scope-summary">
+                    <p className="font-medium">{SCOPE_LABEL[prospect.operatingScope.kind]}</p>
+                    <p className="text-xs text-muted-foreground">{[...prospect.operatingScope.usJurisdictions, ...prospect.operatingScope.caJurisdictions].join(", ") || "No jurisdictions listed"}</p>
+                  </div>
+                ) : (
+                  <p data-testid="scope-summary" className="text-muted-foreground">Not yet determined. An application cannot be sent until the driver&apos;s operating scope is established.</p>
+                )}
+                {prospect.scopeEvaluation.issuable ? (
+                  <p className="text-xs text-muted-foreground">Application: {prospect.scopeEvaluation.profile.applicationRegion} · {prospect.scopeEvaluation.profile.employmentHistoryYears}-year history{prospect.scopeEvaluation.profile.sections.clearinghouse ? " · Clearinghouse consent" : ""}{prospect.scopeEvaluation.profile.sections.psp ? " · PSP authorization" : ""}</p>
+                ) : null}
+                {prospect.scopeEvaluation.issuable && prospect.scopeEvaluation.profile.manualVerification.length ? (
+                  <p className="text-xs text-muted-foreground">Verify outside the application: {prospect.scopeEvaluation.profile.manualVerification.join(" ")}</p>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground">Selecting a scope does not establish that the driver is qualified or eligible.</p>
+                {(s === "PROSPECT" || s === "INVITED") && prospect.scopeAvailable ? <Button size="sm" variant="outline" onClick={() => setScopeForm(scopeFormFrom(prospect.operatingScope))}>{prospect.operatingScope ? "Change operating scope" : "Set operating scope"}</Button> : null}
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="border-b bg-muted/30 py-3"><CardTitle className="text-sm">Application</CardTitle></CardHeader>

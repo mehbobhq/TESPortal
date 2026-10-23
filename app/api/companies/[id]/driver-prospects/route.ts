@@ -25,6 +25,7 @@ export async function POST(request: NextRequest, context: Context) {
       fullName: typeof body.fullName === "string" ? body.fullName : "",
       email: typeof body.email === "string" ? body.email : undefined,
       phone: typeof body.phone === "string" ? body.phone : undefined,
+      scope: body.scope && typeof body.scope === "object" ? (body.scope as Record<string, unknown> as never) : undefined,
     })
     return NextResponse.json(created, { status: 201 })
   } catch (error) {

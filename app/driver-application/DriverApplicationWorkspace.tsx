@@ -357,6 +357,7 @@ export default function DriverApplicationWorkspace({
   applicantName,
   invitationEmail,
   operatingRegion,
+  requirements,
   activeStep,
 }: {
   token: string
@@ -366,9 +367,20 @@ export default function DriverApplicationWorkspace({
   applicantName: string
   invitationEmail: string
   operatingRegion: "Canada" | "United States" | "Cross-Border"
+  /**
+   * Requirements issued for THIS driver's operating scope (sections, consents, history length). Absent only for applications issued before
+   * scope-driven requirements existed: those keep the original behaviour unchanged.
+   */
+  requirements?: {
+    version: string
+    scopeKind: string
+    employmentHistoryYears: 3 | 10
+    sections: { clearinghouse: boolean; psp: boolean; dotDrugAlcoholHistory: boolean }
+  }
   activeStep: DriverApplicationStepId
 }) {
   const router = useRouter()
+  const showDot = requirements ? requirements.sections.dotDrugAlcoholHistory : true
   const [record, setRecord] = React.useState<ApplicantDraftEnvelope>(() => createEmptyApplicantDraft(applicationId))
   const [hydrated, setHydrated] = React.useState(false)
   const [saveState, setSaveState] = React.useState<ApplicantSaveState>("idle")
@@ -521,14 +533,14 @@ export default function DriverApplicationWorkspace({
     licence.everDeniedSuspendedRevoked &&
     licence.safetyAffectingMedicalCondition &&
     licence.unpardonedCriminalConviction &&
-    licence.drugAlcoholPositiveRefusalAlterSubstitute &&
+    (!showDot || licence.drugAlcoholPositiveRefusalAlterSubstitute) &&
     licence.otherCompanyWhileEmployed &&
     (licence.recentlyTransferredOrOtherLicenceLast3Years !== "yes" || ((licence.previousLicences ?? []).length > 0 && (licence.previousLicences ?? []).every((x) => (x.nameOnLicence ?? "").trim() && (x.jurisdiction ?? "").trim() && (x.licenceNumber ?? "").trim() && (x.licenceClass ?? "").trim() && x.suspendedOrRevoked))) &&
     (licence.otherJurisdictionOrName !== "yes" || (licence.otherJurisdictionOrNameDetails ?? "").trim()) &&
     (licence.everDeniedSuspendedRevoked !== "yes" || (licence.deniedSuspendedRevokedDetails ?? "").trim()) &&
     licence.safetyAffectingMedicalCondition &&
     (licence.unpardonedCriminalConviction !== "yes" || (licence.unpardonedCriminalConvictionDetails ?? "").trim()) &&
-    (licence.drugAlcoholPositiveRefusalAlterSubstitute !== "yes" || ((licence.drugAlcoholPositiveRefusalDetails ?? "").trim() && licence.failedRehabilitationOrReturnToDuty && (licence.failedRehabilitationOrReturnToDuty !== "yes" || (licence.rehabilitationDetails ?? "").trim()))) &&
+    (!showDot || licence.drugAlcoholPositiveRefusalAlterSubstitute !== "yes" || ((licence.drugAlcoholPositiveRefusalDetails ?? "").trim() && licence.failedRehabilitationOrReturnToDuty && (licence.failedRehabilitationOrReturnToDuty !== "yes" || (licence.rehabilitationDetails ?? "").trim()))) &&
     (licence.otherCompanyWhileEmployed !== "yes" || (licence.otherCompanyDetails ?? "").trim()) &&
     (licence.willingCanada || licence.willingUnitedStates)
   )
@@ -583,7 +595,7 @@ export default function DriverApplicationWorkspace({
    *   applicability for a Canadian foreign motor carrier where appropriate.
    */
   const requiredEmploymentHistoryYears =
-    operatingRegion === "United States" || operatingRegion === "Cross-Border" ? 10 : 3
+    requirements?.employmentHistoryYears ?? (operatingRegion === "United States" || operatingRegion === "Cross-Border" ? 10 : 3)
 
   const employmentHistoryCoverage = React.useMemo(() => {
     const today = new Date()
@@ -665,6 +677,9 @@ export default function DriverApplicationWorkspace({
   )
 
   const authorizations = record.draft.authorizations
+  // With scope-driven requirements the answer is already known from the driver's operating scope: no question is asked, and an inapplicable section is not shown.
+  const clearinghouseApplicable = requirements ? (requirements.sections.clearinghouse ? "yes" : "no") : authorizations.clearinghouseLimitedQueryApplicable
+  const pspApplicable = requirements ? (requirements.sections.psp ? "yes" : "no") : authorizations.pspApplicable
   const expectedSignature = `${about.legalFirstName} ${about.legalLastName}`.trim().toLowerCase().replace(/\s+/g, " ")
   const enteredSignature = (authorizations.signatureName ?? "").trim().toLowerCase().replace(/\s+/g, " ")
   const authorizationsReady = Boolean(
@@ -676,16 +691,16 @@ export default function DriverApplicationWorkspace({
     authorizations.driverCertificationsAccepted &&
     authorizations.hosResetCertification &&
     authorizations.hosPrevious14DaysCertification &&
-    authorizations.clearinghouseLimitedQueryApplicable &&
-    (authorizations.clearinghouseLimitedQueryApplicable !== "yes" || (
+    clearinghouseApplicable &&
+    (clearinghouseApplicable !== "yes" || (
       authorizations.clearinghouseRegistered &&
       authorizations.clearinghouseConsentScope &&
       authorizations.clearinghouseConsentStartDate &&
       (authorizations.clearinghouseConsentScope !== "multiple" || authorizations.clearinghouseConsentEndDate) &&
       authorizations.clearinghouseLimitedQueryConsent
     )) &&
-    authorizations.pspApplicable &&
-    (authorizations.pspApplicable !== "yes" || (
+    pspApplicable &&
+    (pspApplicable !== "yes" || (
       authorizations.pspOfficialFormPresented &&
       authorizations.pspDisclosureReviewed &&
       authorizations.pspAuthorization
@@ -693,6 +708,13 @@ export default function DriverApplicationWorkspace({
     expectedSignature &&
     enteredSignature === expectedSignature
   )
+
+  React.useEffect(() => {
+    if (!requirements || !hydrated) return
+    if (authorizations.clearinghouseLimitedQueryApplicable !== clearinghouseApplicable || authorizations.pspApplicable !== pspApplicable) {
+      updateDraft((d) => ({ ...d, authorizations: { ...d.authorizations, clearinghouseLimitedQueryApplicable: clearinghouseApplicable as "" | "yes" | "no", pspApplicable: pspApplicable as "" | "yes" | "no" } }))
+    }
+  }, [requirements, hydrated, clearinghouseApplicable, pspApplicable, authorizations.clearinghouseLimitedQueryApplicable, authorizations.pspApplicable])
 
   const documents = record.draft.documents
   const documentsReady = documents.documentsReviewed
@@ -1006,9 +1028,9 @@ export default function DriverApplicationWorkspace({
               <Field label="Unpardoned criminal conviction?" required>
                 <select className={inputClass} value={licence.unpardonedCriminalConviction ?? ""} onChange={(e) => updateDraft((d) => ({ ...d, drivingLicence: { ...d.drivingLicence, unpardonedCriminalConviction: e.target.value as ""|"yes"|"no" } }))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select>
               </Field>
-              <Field label="Positive / refused / altered / substituted drug or alcohol test?" required>
+              {showDot && <Field label="Positive / refused / altered / substituted drug or alcohol test?" required>
                 <select className={inputClass} value={licence.drugAlcoholPositiveRefusalAlterSubstitute ?? ""} onChange={(e) => updateDraft((d) => ({ ...d, drivingLicence: { ...d.drivingLicence, drugAlcoholPositiveRefusalAlterSubstitute: e.target.value as ""|"yes"|"no" } }))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select>
-              </Field>
+              </Field>}
               <Field label="Will you work with another company while employed here?" required>
                 <select className={inputClass} value={licence.otherCompanyWhileEmployed ?? ""} onChange={(e) => updateDraft((d) => ({ ...d, drivingLicence: { ...d.drivingLicence, otherCompanyWhileEmployed: e.target.value as ""|"yes"|"no" } }))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select>
               </Field>
@@ -1018,8 +1040,8 @@ export default function DriverApplicationWorkspace({
                 {licence.otherJurisdictionOrName === "yes" && <Field label="Other licence / name details"><textarea className={inputClass} value={licence.otherJurisdictionOrNameDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,otherJurisdictionOrNameDetails:e.target.value}}))}/></Field>}
                 {licence.everDeniedSuspendedRevoked === "yes" && <Field label="Suspension / revocation details"><textarea className={inputClass} value={licence.deniedSuspendedRevokedDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,deniedSuspendedRevokedDetails:e.target.value}}))}/></Field>}
                 {licence.unpardonedCriminalConviction === "yes" && <Field label="Conviction details"><textarea className={inputClass} value={licence.unpardonedCriminalConvictionDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,unpardonedCriminalConvictionDetails:e.target.value}}))}/></Field>}
-                {licence.drugAlcoholPositiveRefusalAlterSubstitute === "yes" && <Field label="Drug / alcohol test details"><textarea className={inputClass} value={licence.drugAlcoholPositiveRefusalDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,drugAlcoholPositiveRefusalDetails:e.target.value}}))}/></Field>}
-                {licence.drugAlcoholPositiveRefusalAlterSubstitute === "yes" && <Field label="Failed to complete a required rehabilitation / return-to-duty process?"><select className={inputClass} value={licence.failedRehabilitationOrReturnToDuty ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,failedRehabilitationOrReturnToDuty:e.target.value as ""|"yes"|"no"|"not-applicable"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option><option value="not-applicable">Not applicable</option></select></Field>}
+                {showDot && licence.drugAlcoholPositiveRefusalAlterSubstitute === "yes" && <Field label="Drug / alcohol test details"><textarea className={inputClass} value={licence.drugAlcoholPositiveRefusalDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,drugAlcoholPositiveRefusalDetails:e.target.value}}))}/></Field>}
+                {showDot && licence.drugAlcoholPositiveRefusalAlterSubstitute === "yes" && <Field label="Failed to complete a required rehabilitation / return-to-duty process?"><select className={inputClass} value={licence.failedRehabilitationOrReturnToDuty ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,failedRehabilitationOrReturnToDuty:e.target.value as ""|"yes"|"no"|"not-applicable"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option><option value="not-applicable">Not applicable</option></select></Field>}
                 {licence.failedRehabilitationOrReturnToDuty === "yes" && <Field label="Rehabilitation / return-to-duty details"><textarea className={inputClass} value={licence.rehabilitationDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,rehabilitationDetails:e.target.value}}))}/></Field>}
                 {licence.otherCompanyWhileEmployed === "yes" && <Field label="Other-company details"><textarea className={inputClass} value={licence.otherCompanyDetails ?? ""} onChange={(e)=>updateDraft((d)=>({...d,drivingLicence:{...d.drivingLicence,otherCompanyDetails:e.target.value}}))}/></Field>}
               </div>
@@ -1359,21 +1381,24 @@ export default function DriverApplicationWorkspace({
             <label className="mt-3 flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={authorizations.hosPrevious14DaysCertification ?? false} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,hosPrevious14DaysCertification:e.target.checked}}))}/><span>I will provide prior duty-status information or records when required for the applicable operation, and I understand that TES/carrier may request additional records before dispatch.</span></label>
           </div>
 
+          {(requirements ? requirements.sections.clearinghouse : true) && (
           <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] p-4">
             <h3 className="text-sm font-semibold text-[#1E3A8A]">FMCSA Drug & Alcohol Clearinghouse — limited-query general consent</h3>
             <p className="mt-1 text-xs leading-5 text-[#1E40AF]">
               This section applies only when the driver and position are subject to the FMCSA Clearinghouse rules. A limited query only tells the employer whether information exists in the Clearinghouse; it does not disclose the underlying violation details. A pre-employment full query requires separate, specific electronic consent inside the FMCSA Clearinghouse.
             </p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {!requirements && (
               <Field label="Does this consent apply to this position?" required>
                 <select className={inputClass} value={authorizations.clearinghouseLimitedQueryApplicable ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseLimitedQueryApplicable:e.target.value as ""|"yes"|"no"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No / not applicable</option></select>
               </Field>
-              {authorizations.clearinghouseLimitedQueryApplicable==="yes" && <Field label="Are you registered with the FMCSA Clearinghouse?"><select className={inputClass} value={authorizations.clearinghouseRegistered ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseRegistered:e.target.value as ""|"yes"|"no"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select></Field>}
-              {authorizations.clearinghouseLimitedQueryApplicable==="yes" && <Field label="Limited-query consent scope" required><select className={inputClass} value={authorizations.clearinghouseConsentScope ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentScope:e.target.value as ""|"single"|"multiple"}}))}><option value="">Select</option><option value="single">One limited query</option><option value="multiple">Multiple limited queries during the stated period</option></select></Field>}
-              {authorizations.clearinghouseLimitedQueryApplicable==="yes" && <Field label="Consent begins" required><DriverDateInput className={inputClass} value={authorizations.clearinghouseConsentStartDate ?? ""} onChange={(value)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentStartDate:value}}))}/></Field>}
-              {authorizations.clearinghouseLimitedQueryApplicable==="yes" && authorizations.clearinghouseConsentScope==="multiple" && <Field label="Consent ends" required><DriverDateInput className={inputClass} value={authorizations.clearinghouseConsentEndDate ?? ""} onChange={(value)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentEndDate:value}}))}/></Field>}
+              )}
+              {clearinghouseApplicable==="yes" && <Field label="Are you registered with the FMCSA Clearinghouse?"><select className={inputClass} value={authorizations.clearinghouseRegistered ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseRegistered:e.target.value as ""|"yes"|"no"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select></Field>}
+              {clearinghouseApplicable==="yes" && <Field label="Limited-query consent scope" required><select className={inputClass} value={authorizations.clearinghouseConsentScope ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentScope:e.target.value as ""|"single"|"multiple"}}))}><option value="">Select</option><option value="single">One limited query</option><option value="multiple">Multiple limited queries during the stated period</option></select></Field>}
+              {clearinghouseApplicable==="yes" && <Field label="Consent begins" required><DriverDateInput className={inputClass} value={authorizations.clearinghouseConsentStartDate ?? ""} onChange={(value)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentStartDate:value}}))}/></Field>}
+              {clearinghouseApplicable==="yes" && authorizations.clearinghouseConsentScope==="multiple" && <Field label="Consent ends" required><DriverDateInput className={inputClass} value={authorizations.clearinghouseConsentEndDate ?? ""} onChange={(value)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseConsentEndDate:value}}))}/></Field>}
             </div>
-            {authorizations.clearinghouseLimitedQueryApplicable==="yes" && (
+            {clearinghouseApplicable==="yes" && (
               <label className="mt-4 flex items-start gap-3 rounded-lg border border-[#BFDBFE] bg-white p-4 text-sm">
                 <input type="checkbox" className="mt-1" checked={authorizations.clearinghouseLimitedQueryConsent ?? false} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,clearinghouseLimitedQueryConsent:e.target.checked}}))}/>
                 <span>
@@ -1382,18 +1407,22 @@ export default function DriverApplicationWorkspace({
               </label>
             )}
           </div>
+          )}
 
+          {(requirements ? requirements.sections.psp : true) && (
           <div className="rounded-xl border border-[#FDE68A] bg-[#FFFBEB] p-4">
             <h3 className="text-sm font-semibold text-[#78350F]">FMCSA Pre-Employment Screening Program (PSP)</h3>
             <p className="mt-1 text-xs leading-5 text-[#92400E]">
               PSP is a separate pre-employment screening process. FMCSA requires its prescribed PSP disclosure and authorization to be presented as a standalone document, in the required form, before a prospective employer requests a PSP record. TES must not substitute this application checkbox for that document.
             </p>
+            {!requirements && (
             <div className="mt-4">
               <Field label="Is PSP being used for this application?" required>
                 <select className={inputClass} value={authorizations.pspApplicable ?? ""} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,pspApplicable:e.target.value as ""|"yes"|"no"}}))}><option value="">Select</option><option value="yes">Yes</option><option value="no">No / not applicable</option></select>
               </Field>
             </div>
-            {authorizations.pspApplicable==="yes" && (
+            )}
+            {pspApplicable==="yes" && (
               <div className="mt-4 space-y-3 rounded-lg border border-[#FDE68A] bg-white p-4">
                 <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={authorizations.pspOfficialFormPresented ?? false} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,pspOfficialFormPresented:e.target.checked}}))}/><span>I confirm that the standalone FMCSA-required PSP disclosure and authorization form has been presented to me separately from this application.</span></label>
                 <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={authorizations.pspDisclosureReviewed ?? false} onChange={(e)=>updateDraft((d)=>({...d,authorizations:{...d.authorizations,pspDisclosureReviewed:e.target.checked}}))}/><span>I acknowledge that I had the opportunity to review that standalone PSP disclosure before authorizing the request.</span></label>
@@ -1402,6 +1431,7 @@ export default function DriverApplicationWorkspace({
               </div>
             )}
           </div>
+          )}
 
           <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4 text-xs leading-5 text-[#4B5563]">
             TES records what was presented, accepted and signed. Applicability is determined from the carrier, jurisdiction, intended operation and driver role. A “not applicable” selection does not waive a requirement that actually applies.

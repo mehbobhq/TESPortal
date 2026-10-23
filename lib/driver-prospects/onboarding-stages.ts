@@ -26,7 +26,10 @@ export type ProspectEventRow = { eventType: string; toStatus: string | null; occ
 export function deriveOnboarding(input: { status: ProspectStatus; relationshipStatus: string | null; events: ProspectEventRow[] }): OnboardingProgress {
   const ev = [...input.events].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
   const last = (pred: (e: ProspectEventRow) => boolean) => [...ev].reverse().find(pred)?.occurredAt ?? null
-  const sentAt = last((e) => e.eventType === "INVITATION_SENT")
+  const lastSent = last((e) => e.eventType === "INVITATION_SENT")
+  // A link that was revoked (a resend that failed, or an operating-scope change) is not "sent": the application it carried can no longer be opened.
+  const revokedAfter = lastSent !== null && last((e) => e.eventType === "INVITATION_REVOKED" && e.occurredAt > lastSent) !== null
+  const sentAt = revokedAfter ? null : lastSent
   const openedAt = sentAt ? last((e) => e.eventType === "APPLICATION_OPENED" && e.occurredAt >= sentAt) : null
   const submittedAt = last((e) => e.eventType === "APPLICATION_SUBMITTED")
   const verificationAt = last((e) => e.eventType === "STATUS_CHANGED" && (e.toStatus === "UNDER_REVIEW" || e.toStatus === "APPROVED"))

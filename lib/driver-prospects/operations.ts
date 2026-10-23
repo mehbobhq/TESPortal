@@ -16,7 +16,10 @@ import {
   DriverProspectStateError,
   DriverProspectValidationError,
 } from "./errors"
-import { prospectSchemaMessage, prospectSchemaState } from "./schema-state"
+import { evaluateScope, scopeFromRow, validateScopeInput, SCOPE_RULES_VERSION, type NormalizedScope, type ScopeInput } from "./operating-scope"
+import { prospectSchemaMessage, prospectSchemaState, scopeSchemaAvailable, scopeSchemaMessage } from "./schema-state"
+import type { PresentationContext, PresentationCountry } from "@/lib/jurisdiction-context"
+import { hasAdditionalSystemCapability } from "@/lib/auth/tes-system-context"
 import {
   PROSPECT_STATUS_LABEL,
   REVIEW_TARGETS,
@@ -102,6 +105,35 @@ async function savepoint<T>(ctx: ProspectContext, work: () => Promise<T>, onViol
   }
 }
 
+
+type ScopeRow = { id: string; scope_kind: string; components: string[]; us_jurisdictions: string[]; ca_jurisdictions: string[]; characteristics: Record<string, unknown>; rules_version: string; established_at: Date }
+const SCOPE_COLUMNS = `id, scope_kind, components, us_jurisdictions, ca_jurisdictions, characteristics, rules_version, established_at`
+
+/** Validates a scope as entered, throwing a field-level error with every problem found. */
+function requireValidScope(input: ScopeInput): NormalizedScope {
+  const v = validateScopeInput(input)
+  if (!v.ok) throw new DriverProspectValidationError("operatingScope", v.errors.join(" "))
+  return v.value
+}
+
+async function insertScope(ctx: ProspectContext, prospect: { id: string; organization_id: string }, scope: NormalizedScope): Promise<string> {
+  const id = randomUUID()
+  await ctx.client.query(
+    `INSERT INTO public.driver_prospect_operating_scopes (id, prospect_id, organization_id, scope_kind, components, us_jurisdictions, ca_jurisdictions, characteristics, rules_version, established_by_actor_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)`,
+    [id, prospect.id, prospect.organization_id, scope.kind, scope.components, scope.usJurisdictions, scope.caJurisdictions, JSON.stringify(scope.characteristics), SCOPE_RULES_VERSION, ctx.actor.id],
+  )
+  return id
+}
+
+async function currentScopeRow(ctx: ProspectContext, prospectId: string, organizationId: string): Promise<ScopeRow | null> {
+  const r = await ctx.client.query<ScopeRow>(
+    `SELECT ${SCOPE_COLUMNS} FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1 AND organization_id = $2 AND superseded_at IS NULL`,
+    [prospectId, organizationId],
+  )
+  return r.rows[0] ?? null
+}
+
 function splitFullName(raw: unknown): { given: string; family: string } {
   const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : ""
   const parts = text.split(" ").filter(Boolean)
@@ -124,6 +156,9 @@ export async function createProspect(ctx: ProspectContext, decision: SystemAutho
   const email = input.email && input.email.trim() !== "" ? prepareChannel("EMAIL", input.email, undefined, "email") : null
   const phone = input.phone && input.phone.trim() !== "" ? prepareChannel("PHONE", input.phone, undefined, "phone") : null
   if (!email && !phone) throw new DriverProspectValidationError("contact", "Enter an email address or a phone number.")
+  const scope = input.scope ? requireValidScope(input.scope) : null
+  const recordScope = scope !== null && scope.kind !== "UNDETERMINED"
+  if (recordScope && !(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Recording the operating scope"))
   await requireAdditionalSystemCapability(ctx.client, decision, "DRIVER_MANAGE")
   await activeOrganization(ctx, organizationId)
 
@@ -167,6 +202,11 @@ export async function createProspect(ctx: ProspectContext, decision: SystemAutho
   )
   await event(ctx, prospectId, organizationId, "PROSPECT_CREATED", null, "PROSPECT", null)
   await mr(ctx, "RECORD_CREATED", "DRIVER_PROSPECT_CREATE", "driver_prospects", prospectId, organizationId, [`person:${personId}`])
+  if (recordScope && scope) {
+    const scopeId = await insertScope(ctx, { id: prospectId, organization_id: organizationId }, scope)
+    await event(ctx, prospectId, organizationId, "OPERATING_SCOPE_ESTABLISHED", null, null, null)
+    await mr(ctx, "RECORD_CREATED", "DRIVER_PROSPECT_SCOPE_ESTABLISH", "driver_prospect_operating_scopes", scopeId, organizationId, [`person:${personId}`], { field: "operatingScope", value: scope.kind })
+  }
   return { prospectId, personId, status: "PROSPECT" as const, personReused: reused !== null }
 }
 
@@ -215,9 +255,29 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
     list.push({ eventType: e.event_type, toStatus: e.to_status, occurredAt: new Date(e.occurred_at).toISOString() })
     eventsByProspect.set(e.prospect_id, list)
   }
+  const scopeAvailable = await scopeSchemaAvailable(ctx.client)
+  const scopeByProspect = new Map<string, ScopeRow>()
+  if (scopeAvailable) {
+    const scopes = await ctx.client.query<ScopeRow & { prospect_id: string }>(
+      `SELECT prospect_id, ${SCOPE_COLUMNS} FROM public.driver_prospect_operating_scopes WHERE organization_id = $1 AND superseded_at IS NULL`,
+      [organizationId],
+    )
+    for (const row of scopes.rows) scopeByProspect.set(row.prospect_id, row)
+  }
   return r.rows.map((row) => {
+    const scopeRow = scopeByProspect.get(row.id) ?? null
+    const normalized = scopeRow ? scopeFromRow(scopeRow) : null
+    const scopeEvaluation = evaluateScope(normalized)
     const live = LIVE_STATUSES.slice(0, 2).includes(row.status)
-    const blocked = !live ? "Applications can be sent only while the prospect is a prospect or has an invitation out." : !row.email ? "Add an email address to send an application." : null
+    const blocked = !live
+      ? "Applications can be sent only while the prospect is a prospect or has an invitation out."
+      : !row.email
+        ? "Add an email address to send an application."
+        : !scopeAvailable
+          ? scopeSchemaMessage("Sending an application").replace(" Nothing was changed.", "")
+          : !scopeEvaluation.issuable
+            ? scopeEvaluation.reason
+            : null
     return {
       prospectId: row.id,
       personId: row.person_id,
@@ -234,6 +294,9 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
       invitation: row.invitation_id
         ? { invitationId: row.invitation_id, status: row.invitation_status as InvitationStatus, sentAt: row.sent_at ? new Date(row.sent_at).toISOString() : null, expiresAt: new Date(row.expires_at).toISOString(), deliveryFailed: row.invitation_status === "FAILED" }
         : null,
+      operatingScope: normalized && scopeRow ? { ...normalized, establishedAt: new Date(scopeRow.established_at).toISOString(), rulesVersion: scopeRow.rules_version } : null,
+      scopeEvaluation,
+      scopeAvailable,
       canInvite: blocked === null,
       inviteBlockedReason: blocked,
     }
@@ -256,6 +319,11 @@ export async function prepareInvitation(ctx: ProspectContext, input: { organizat
     [prospect.person_id],
   )
   if (!recipient.rows[0]) throw new DriverProspectStateError("This prospect has no email address. Add one before sending an application. Nothing was sent.")
+  // The application is issued only for the driver's established, supported operating scope, and freezes the requirements that follow from it.
+  if (!(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Sending an application").replace("Nothing was changed.", "Nothing was sent."))
+  const scopeRow = await currentScopeRow(ctx, prospect.id, organizationId)
+  const evaluation = evaluateScope(scopeRow ? scopeFromRow(scopeRow) : null)
+  if (!evaluation.issuable || !scopeRow) throw new DriverProspectStateError(`${evaluation.reason ?? "The operating scope is not established."} Nothing was sent.`)
   const revoked = await ctx.client.query<{ id: string }>(
     `UPDATE public.driver_application_invitations SET status = 'REVOKED' WHERE prospect_id = $1 AND status IN ('PENDING', 'SENT', 'OPENED') RETURNING id`,
     [prospect.id],
@@ -266,8 +334,8 @@ export async function prepareInvitation(ctx: ProspectContext, input: { organizat
   const invitationId = randomUUID()
   const expiresAt = new Date(Date.now() + INVITATION_LIFETIME_MS)
   await ctx.client.query(
-    `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [invitationId, prospect.id, organizationId, hashInvitationToken(token), recipient.rows[0].value_normalized, expiresAt, ctx.actor.id],
+    `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id, operating_scope_id, requirements_profile, requirements_rules_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
+    [invitationId, prospect.id, organizationId, hashInvitationToken(token), recipient.rows[0].value_normalized, expiresAt, ctx.actor.id, scopeRow.id, JSON.stringify(evaluation.profile), evaluation.profile.version],
   )
   await event(ctx, prospect.id, organizationId, "INVITATION_CREATED", prospect.status, prospect.status, invitationId)
   await mr(ctx, "RECORD_CREATED", "DRIVER_APPLICATION_INVITATION_CREATE", "driver_application_invitations", invitationId, organizationId, [`person:${prospect.person_id}`])
@@ -278,6 +346,7 @@ export async function prepareInvitation(ctx: ProspectContext, input: { organizat
     applicantName: [recipient.rows[0].given_name, recipient.rows[0].family_name].filter(Boolean).join(" "),
     companyName: company.name,
     expiresAt: expiresAt.toISOString(),
+    requirements: evaluation.profile,
   }
 }
 
@@ -375,4 +444,88 @@ export async function getProspectSubmission(ctx: ProspectContext, input: { organ
   )
   if (!r.rows[0]) throw new DriverProspectNotFoundError("No submitted application was found for this prospect.")
   return { receiptId: r.rows[0].receipt_id, submittedAt: r.rows[0].submitted_at.toISOString(), payload: r.rows[0].payload }
+}
+
+/**
+ * Establishes (or changes) the driver's intended operating scope. It is a new immutable VERSION; the earlier one is kept. Any application still open for
+ * the old scope is revoked in the same transaction (with its own event), so an outdated or mismatched application can no longer be opened.
+ * Allowed only before the application is submitted: after that the submitted application belongs to the scope it was issued for.
+ */
+export async function establishOperatingScope(ctx: ProspectContext, input: { organizationId: string; prospectId: string; scope: ScopeInput }) {
+  await requireSchema(ctx, "Setting the operating scope")
+  if (!(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Setting the operating scope"))
+  const organizationId = uuid(input.organizationId, "organizationId")
+  const scope = requireValidScope(input.scope)
+  await activeOrganization(ctx, organizationId)
+  const prospect = await lockProspect(ctx, organizationId, uuid(input.prospectId, "prospectId"))
+  if (prospect.status !== "PROSPECT" && prospect.status !== "INVITED") {
+    throw new DriverProspectStateError(`The operating scope can no longer be changed: the prospect is ${PROSPECT_STATUS_LABEL[prospect.status]}. Nothing was changed.`)
+  }
+  const current = await currentScopeRow(ctx, prospect.id, organizationId)
+  const same = current && scopeFromRow(current) && JSON.stringify(scopeFromRow(current)) === JSON.stringify(scope)
+  if (same) return { changed: false as const, scopeId: current.id, revokedInvitations: 0 }
+  if (!current && scope.kind === "UNDETERMINED") return { changed: false as const, scopeId: null, revokedInvitations: 0 }
+
+  const revoked = await ctx.client.query<{ id: string }>(
+    `UPDATE public.driver_application_invitations SET status = 'REVOKED' WHERE prospect_id = $1 AND status IN ('PENDING', 'SENT', 'OPENED') RETURNING id`,
+    [prospect.id],
+  )
+  for (const row of revoked.rows) await event(ctx, prospect.id, organizationId, "INVITATION_REVOKED", null, null, row.id)
+  if (current) await ctx.client.query(`UPDATE public.driver_prospect_operating_scopes SET superseded_at = clock_timestamp() WHERE id = $1`, [current.id])
+  const scopeId = await insertScope(ctx, { id: prospect.id, organization_id: organizationId }, scope)
+  await event(ctx, prospect.id, organizationId, "OPERATING_SCOPE_ESTABLISHED", null, null, null)
+  await mr(ctx, current ? "RECORD_UPDATED" : "RECORD_CREATED", "DRIVER_PROSPECT_SCOPE_ESTABLISH", "driver_prospect_operating_scopes", scopeId, organizationId, [`person:${prospect.person_id}`], { field: "operatingScope", value: scope.kind })
+  return { changed: true as const, scopeId, revokedInvitations: revoked.rows.length }
+}
+
+const COUNTRY_ALIASES: Record<string, PresentationCountry> = { CA: "CA", CAN: "CA", CANADA: "CA", US: "US", USA: "US", "UNITED STATES": "US", "UNITED STATES OF AMERICA": "US" }
+const toCountry = (v: unknown): PresentationCountry | null => (typeof v === "string" ? COUNTRY_ALIASES[v.trim().toUpperCase()] ?? null : null)
+
+/**
+ * The company's primary PRESENTATION jurisdiction: what staff see first. Order of authority: an explicitly established value; else the company's
+ * recorded country of formation when it is a single U.S./Canadian value and no active registration identifier (readable only with registry access)
+ * points to the other country; otherwise UNRESOLVED, and an explicit selection is required. It is presentation only and never decides applicability.
+ */
+export async function getPresentationContext(ctx: ProspectContext, decision: SystemAuthorizationDecision, organizationIdInput: string): Promise<PresentationContext> {
+  const organizationId = uuid(organizationIdInput, "organizationId")
+  const org = await ctx.client.query<{ country_code: string | null }>(`SELECT country_code FROM public.organizations WHERE id = $1`, [organizationId])
+  if (!org.rows[0]) throw new DriverProspectNotFoundError("Company not found.")
+  if (await scopeSchemaAvailable(ctx.client)) {
+    const explicit = await ctx.client.query<{ country_code: string }>(`SELECT country_code FROM public.organization_presentation_jurisdictions WHERE organization_id = $1 AND superseded_at IS NULL`, [organizationId])
+    const c = toCountry(explicit.rows[0]?.country_code)
+    if (c) return { country: c, basis: "EXPLICIT", reason: null }
+  }
+  const formation = toCountry(org.rows[0].country_code)
+  if (!formation) return { country: null, basis: "UNRESOLVED", reason: "The company's registered country is not recorded as the United States or Canada." }
+  if (await hasAdditionalSystemCapability(ctx.client, decision, "ORGANIZATION_REGISTRY_READ")) {
+    await enterSystemCapability(ctx.client, "ORGANIZATION_REGISTRY_READ")
+    const ids = await ctx.client.query<{ jurisdiction_country: string | null }>(`SELECT DISTINCT jurisdiction_country FROM public.organization_identifiers WHERE organization_id = $1 AND status = 'active'`, [organizationId])
+    await enterSystemCapability(ctx.client, "DRIVER_MANAGE")
+    if (ids.rows.some((r) => { const o = toCountry(r.jurisdiction_country); return o !== null && o !== formation })) {
+      return { country: null, basis: "UNRESOLVED", reason: "The company is registered in both the United States and Canada." }
+    }
+  }
+  return { country: formation, basis: "REGISTRATION", reason: null }
+}
+
+/** Establishes the company's primary presentation jurisdiction. A company-profile act: it needs COMPANY_PROFILE_MANAGE in addition to driver authority. */
+export async function establishPresentationJurisdiction(ctx: ProspectContext, decision: SystemAuthorizationDecision, input: { organizationId: string; country: unknown }) {
+  if (!(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Setting the company's primary jurisdiction"))
+  const organizationId = uuid(input.organizationId, "organizationId")
+  const country = toCountry(input.country)
+  if (!country) throw new DriverProspectValidationError("country", "Choose United States or Canada.")
+  await requireAdditionalSystemCapability(ctx.client, decision, "COMPANY_PROFILE_MANAGE")
+  await activeOrganization(ctx, organizationId)
+  await enterSystemCapability(ctx.client, "COMPANY_PROFILE_MANAGE")
+  const previous = await ctx.client.query<{ id: string; country_code: string }>(`SELECT id, country_code FROM public.organization_presentation_jurisdictions WHERE organization_id = $1 AND superseded_at IS NULL FOR UPDATE`, [organizationId])
+  if (previous.rows[0]?.country_code === country) {
+    await enterSystemCapability(ctx.client, "DRIVER_MANAGE")
+    return { country, changed: false as const }
+  }
+  if (previous.rows[0]) await ctx.client.query(`UPDATE public.organization_presentation_jurisdictions SET superseded_at = clock_timestamp() WHERE id = $1`, [previous.rows[0].id])
+  const id = randomUUID()
+  await ctx.client.query(`INSERT INTO public.organization_presentation_jurisdictions (id, organization_id, country_code, established_by_actor_id) VALUES ($1, $2, $3, $4)`, [id, organizationId, country, ctx.actor.id])
+  await enterSystemCapability(ctx.client, "DRIVER_MANAGE")
+  await mr(ctx, previous.rows[0] ? "RECORD_UPDATED" : "RECORD_CREATED", "ORGANIZATION_PRESENTATION_JURISDICTION_ESTABLISH", "organization_presentation_jurisdictions", id, organizationId, [], { field: "presentationJurisdiction", value: country })
+  return { country, changed: true as const }
 }

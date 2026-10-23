@@ -1,11 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import * as api from "./prospect-api"
+import type { PresentationContext, PresentationCountry } from "@/lib/jurisdiction-context"
+import { emptyScopeForm, OperatingScopeFields, previewScope, toScopeInput, type ScopeFormState } from "./operating-scope-fields"
 
 const overlay = "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/55 p-4 md:p-8"
 
@@ -35,17 +37,37 @@ export function AddDriverChooser({ onOnboarding, onEstablished, onClose }: { onO
 
 export function OnboardingDriverDialog({ companyId, onClose, onCreated }: { companyId: string; onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState({ first: "", last: "", email: "", phone: "", sendNow: false })
+  const [scope, setScope] = useState<ScopeFormState>(emptyScopeForm())
+  const [context, setContext] = useState<PresentationContext | null>(null)
+  const [choice, setChoice] = useState<PresentationCountry | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const noContact = !form.email.trim() && !form.phone.trim()
-  const canSend = Boolean(form.email.trim())
+  const preview = previewScope(scope)
+  const scopeIssuable = Boolean(preview.evaluation?.issuable)
+  const canSend = Boolean(form.email.trim()) && scopeIssuable
+  // The company's primary jurisdiction only decides what is listed first. If it cannot be established, an explicit choice is required (never assumed).
+  const needsChoice = context?.basis === "UNRESOLVED" && !choice
+  const presentation: PresentationCountry | null = context?.country ?? choice
+
+  useEffect(() => {
+    let live = true
+    api.getOnboardingContext(companyId).then((c) => live && setContext(c)).catch(() => live && setContext({ country: null, basis: "UNRESOLVED", reason: "The company's primary jurisdiction could not be loaded." }))
+    return () => { live = false }
+  }, [companyId])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     setError(null)
     try {
-      const created = await api.createOnboardingDriver(companyId, { fullName: `${form.first.trim()} ${form.last.trim()}`.trim(), email: form.email, phone: form.phone })
+      if (context?.basis === "UNRESOLVED" && choice) await api.setPresentationCountry(companyId, choice)
+      const created = await api.createOnboardingDriver(companyId, {
+        fullName: `${form.first.trim()} ${form.last.trim()}`.trim(),
+        email: form.email,
+        phone: form.phone,
+        scope: scope.kind === "UNDETERMINED" ? undefined : toScopeInput(scope),
+      })
       if (form.sendNow && canSend) {
         try {
           await api.sendApplication(companyId, created.prospectId)
@@ -77,15 +99,28 @@ export function OnboardingDriverDialog({ companyId, onClose, onCreated }: { comp
           <div className="space-y-1.5"><Label htmlFor="nh-email">Email</Label><Input id="nh-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value, sendNow: e.target.value.trim() ? form.sendNow : false })} autoComplete="off" /></div>
           <div className="space-y-1.5"><Label htmlFor="nh-phone">Phone</Label><Input id="nh-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="off" /></div>
           <p className="text-xs text-muted-foreground sm:col-span-2">Enter an email or a phone number. An application can be emailed only when there is an email address.</p>
+          {context?.basis === "UNRESOLVED" ? (
+            <fieldset className="space-y-1 rounded-md border p-3 sm:col-span-2" data-testid="presentation-choice">
+              <legend className="px-1 text-sm font-medium">Company&apos;s primary jurisdiction *</legend>
+              <p className="text-xs text-muted-foreground">{context.reason} Choose which country TES should list first for this company. This sets display order only; it does not decide what this driver&apos;s application requires.</p>
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-1.5"><input type="radio" name="presentation" checked={choice === "US"} onChange={() => setChoice("US")} />United States</label>
+                <label className="flex items-center gap-1.5"><input type="radio" name="presentation" checked={choice === "CA"} onChange={() => setChoice("CA")} />Canada</label>
+              </div>
+            </fieldset>
+          ) : null}
+          <div className="sm:col-span-2">
+            <OperatingScopeFields value={scope} onChange={setScope} presentation={presentation} />
+          </div>
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input type="checkbox" checked={form.sendNow} disabled={!canSend} onChange={(e) => setForm({ ...form, sendNow: e.target.checked })} />
-            Send the application now
+            Send the application now{!scopeIssuable ? " (available once the operating scope is established)" : ""}
           </label>
           {error ? <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 sm:col-span-2">{error}</div> : null}
         </div>
         <div className="flex justify-end gap-2 border-t p-4">
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={saving || !form.first.trim() || !form.last.trim() || noContact}>{saving ? "Saving…" : "Save driver"}</Button>
+          <Button type="submit" disabled={saving || !form.first.trim() || !form.last.trim() || noContact || needsChoice || preview.errors.length > 0 || context === null}>{saving ? "Saving…" : "Save driver"}</Button>
         </div>
       </form>
     </div>

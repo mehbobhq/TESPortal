@@ -3,6 +3,7 @@ import "server-only"
 import { callInvitationFunction } from "@/lib/auth/tes-invitation-access"
 import { createDriverInvitationToken } from "@/lib/driver-invitation-token"
 import { hashInvitationToken } from "./operations"
+import type { RequirementsProfile } from "./operating-scope"
 
 /**
  * The APPLICANT side has no TES login. It is authorized only by possession of the secret invitation token (or the server-signed token derived from
@@ -12,7 +13,7 @@ import { hashInvitationToken } from "./operations"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export type OpenedInvitation = { invitationId: string; prospectId: string; organizationId: string; companyName: string; applicantName: string; recipientEmail: string; expiresAt: string }
+export type OpenedInvitation = { invitationId: string; prospectId: string; organizationId: string; companyName: string; applicantName: string; recipientEmail: string; expiresAt: string; requirements: RequirementsProfile }
 
 /** Opens a live invitation by its secret. Returns null for anything unknown, expired, revoked, failed or already used (the reasons are not distinguished). */
 export async function openInvitation(token: unknown): Promise<OpenedInvitation | null> {
@@ -27,6 +28,7 @@ export async function openInvitation(token: unknown): Promise<OpenedInvitation |
     applicantName: [row.given_name, row.family_name].filter(Boolean).join(" "),
     recipientEmail: row.recipient_email,
     expiresAt: new Date(row.expires_at).toISOString(),
+    requirements: row.requirements_profile as RequirementsProfile,
   }
 }
 
@@ -43,7 +45,13 @@ export function signedApplicantToken(opened: OpenedInvitation): string {
     applicationId: opened.invitationId,
     recipientEmail: opened.recipientEmail,
     driverName: opened.applicantName,
-    operatingRegion: "Canada",
+    operatingRegion: opened.requirements.applicationRegion,
+    requirements: {
+      version: opened.requirements.version,
+      scopeKind: opened.requirements.scopeKind,
+      employmentHistoryYears: opened.requirements.employmentHistoryYears,
+      sections: opened.requirements.sections,
+    },
     expiresAt: opened.expiresAt,
   })
 }

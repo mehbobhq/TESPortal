@@ -41,4 +41,10 @@ describe("onboarding stage chronology (derived only from recorded events)", () =
     assert.equal(deriveOnboarding({ status: "APPROVED", relationshipStatus: "ACTIVE", events: [e("STATUS_CHANGED", "6", "APPROVED")] }).onboarding, false);
     assert.equal(deriveOnboarding({ status: "APPROVED", relationshipStatus: "ONBOARDING", events: [e("STATUS_CHANGED", "6", "APPROVED")] }).onboarding, true);
   });
+  it("an invitation revoked after it was sent (scope change or failed resend) is not 'Application Sent'", () => {
+    const p = deriveOnboarding({ status: "INVITED", relationshipStatus: null, events: [e("INVITATION_SENT", "2"), e("APPLICATION_OPENED", "3"), e("INVITATION_REVOKED", "4")] });
+    assert.equal(p.currentLabel, "Not sent");
+    const again = deriveOnboarding({ status: "INVITED", relationshipStatus: null, events: [e("INVITATION_SENT", "2"), e("INVITATION_REVOKED", "4"), e("INVITATION_SENT", "5")] });
+    assert.equal(again.currentLabel, "Application Sent");
+  });
 });

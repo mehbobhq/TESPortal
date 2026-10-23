@@ -22,9 +22,12 @@ export interface CreateProspectInput {
   fullName: string
   email?: string
   phone?: string
+  /** Intended operating scope. Omitted or UNDETERMINED = saved as a prospect with the scope still to be established. */
+  scope?: ScopeInput
 }
 
 import type { OnboardingProgress } from "./onboarding-stages"
+import type { NormalizedScope, RequirementsProfile, ScopeEvaluation, ScopeInput } from "./operating-scope"
 
 export interface ProspectView {
   prospectId: string
@@ -41,6 +44,10 @@ export interface ProspectView {
   /** Stage chronology derived from recorded events. */
   onboarding: OnboardingProgress
   invitation: { invitationId: string; status: InvitationStatus; sentAt: string | null; expiresAt: string; deliveryFailed: boolean } | null
+  /** The established intended operating scope (null until one is established) and what it means for the application. */
+  operatingScope: (NormalizedScope & { establishedAt: string; rulesVersion: string }) | null
+  scopeEvaluation: ScopeEvaluation
+  scopeAvailable: boolean
   /** Whether a "Send application" action is possible, and why not. */
   canInvite: boolean
   inviteBlockedReason: string | null
@@ -66,3 +73,5 @@ export interface ConvertProspectInput {
   licence: { country: string; region: string; number: string; licenceClass?: string; effectiveFrom: string }
   driverNumber?: string
 }
+
+export type { RequirementsProfile }

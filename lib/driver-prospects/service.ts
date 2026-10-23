@@ -51,3 +51,9 @@ export async function sendInvitation(input: { organizationId: string; prospectId
 }
 export const getProspectSubmission = (input: { organizationId: string; prospectId: string }) =>
   withAuthorizedSystem("DRIVER_READ", (c, d) => operations.getProspectSubmission(context(c, d), input))
+export const establishOperatingScope = (input: { organizationId: string; prospectId: string; scope: import("./operating-scope").ScopeInput }) =>
+  withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.establishOperatingScope(context(c, d), input))
+export const getPresentationContext = (organizationId: string) =>
+  withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.getPresentationContext(context(c, d), d, organizationId))
+export const establishPresentationJurisdiction = (input: { organizationId: string; country: unknown }) =>
+  withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.establishPresentationJurisdiction(context(c, d), d, input))

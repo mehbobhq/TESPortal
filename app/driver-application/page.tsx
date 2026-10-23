@@ -195,6 +195,7 @@ export default async function DriverApplicationEntry({
         applicantName={invitation.driverName}
         invitationEmail={invitation.recipientEmail}
         operatingRegion={invitation.operatingRegion ?? "Canada"}
+        requirements={invitation.requirements}
         activeStep={step}
       />
     )

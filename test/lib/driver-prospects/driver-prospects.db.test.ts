@@ -53,7 +53,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const adminUrl = process.env.TES_TEST_ADMIN_DATABASE_URL ?? "";
     assert.ok(/@(127\.0\.0\.1|localhost|\[::1\])[:/]|[?&]host=\//.test(adminUrl) || !/@/.test(adminUrl), "cleanup refuses to run against a non-loopback database");
     const tables = [
-      "driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospects",
+      "driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers",
       "organization_driver_relationships", "driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates", "persons",
     ];
     const client = await pools.admin.connect();
@@ -68,7 +68,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
       ).rows;
       for (const r of triggers) await client.query(`ALTER TABLE public.${r.t} DISABLE TRIGGER ${r.n}`);
       const people = (await client.query<{ person_id: string }>(`SELECT DISTINCT person_id FROM public.driver_prospects WHERE organization_id = ANY($1::uuid[])`, [organizations])).rows.map((r) => r.person_id);
-      for (const t of ["driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospects", "organization_driver_relationships"]) {
+      for (const t of ["driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers", "organization_driver_relationships"]) {
         await client.query(`DELETE FROM public.${t} WHERE organization_id = ANY($1::uuid[])`, [organizations]);
       }
       for (const t of ["driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates"]) await client.query(`DELETE FROM public.${t} WHERE person_id = ANY($1::uuid[])`, [people]);
@@ -99,9 +99,9 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
       }
     });
 
-  async function org(label = "Org"): Promise<string> {
+  async function org(label = "Org", country: string | null = "CA"): Promise<string> {
     const id = randomUUID();
-    await pools.admin.query(`INSERT INTO public.organizations (id, legal_name, normalized_legal_name) VALUES ($1, $2, lower($2))`, [id, `DP ${label} ${id.slice(0, 8)}`]);
+    await pools.admin.query(`INSERT INTO public.organizations (id, legal_name, normalized_legal_name, country_code) VALUES ($1, $2, lower($2), $3)`, [id, `DP ${label} ${id.slice(0, 8)}`, country]);
     organizations.push(id);
     return id;
   }
@@ -118,6 +118,9 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     return actor;
   }
   const FULL = ["DRIVER_MANAGE", "DRIVER_READ", "PERSON_IDENTITY_MANAGE"];
+  // Most scenarios are about the lifecycle, not the scope: they save a prospect whose scope is already established (Canadian intraprovincial).
+  const DEFAULT_SCOPE = { kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["ON"] } as const;
+  const mk = (input: Parameters<Kit["svc"]["createProspect"]>[0]) => K.svc.createProspect({ scope: DEFAULT_SCOPE as never, ...input });
   const name = () => `Pat Prospect${n()}`;
   const email = () => `prospect${run}${n()}@example.com`;
   const q = async <T extends Record<string, unknown>>(sql: string, params: unknown[] = []) => (await pools.admin.query<T>(sql, params)).rows;
@@ -135,7 +138,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("1. a prospect can be saved with a full name and an email only", async () => {
     const o = await org();
     await only(...FULL);
-    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const created = await mk({ organizationId: o, fullName: name(), email: email() });
     assert.equal(created.status, "PROSPECT");
     const list = await K.svc.listProspects(o);
     assert.equal(list.length, 1);
@@ -146,7 +149,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("2. a prospect can be saved with a full name and a phone only (cannot be emailed until an email is added)", async () => {
     const o = await org();
     await only(...FULL);
-    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), phone: "(416) 555-0142" });
+    const created = await mk({ organizationId: o, fullName: name(), phone: "(416) 555-0142" });
     const [row] = await K.svc.listProspects(o);
     assert.equal(row.prospectId, created.prospectId);
     assert.equal(row.canInvite, false);
@@ -170,7 +173,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("4. saving needs no date of birth, address, start date, effective dates or licence", async () => {
     const o = await org();
     await only(...FULL);
-    const { personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     assert.equal((await q(`SELECT 1 FROM public.driver_profiles WHERE person_id = $1`, [personId])).length, 0);
     assert.equal((await q(`SELECT 1 FROM public.driver_licences WHERE person_id = $1`, [personId])).length, 0);
     assert.equal((await q(`SELECT 1 FROM public.organization_driver_relationships WHERE person_id = $1`, [personId])).length, 0);
@@ -179,7 +182,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("5. a prospect is never an active or assigned company driver", async () => {
     const o = await org();
     await only(...FULL);
-    const { personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     const roster = await (await import("@/lib/operational-identity/reads")).listOrganizationDrivers(o);
     assert.equal(roster.length, 0);
     await rejects(() => K.oi.establishOrganizationDriver({ organizationId: o, personId, relationshipType: "EMPLOYEE", status: "ACTIVE", effectiveFrom: "2026-01-01" } as never), "StateError");
@@ -189,7 +192,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("6. an authorized invitation is sent, only a hash is stored, and the status persists; a delivery failure is recorded and keeps the prospect", async () => {
     const o = await org();
     await only(...FULL);
-    const { prospectId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId } = await mk({ organizationId: o, fullName: name(), email: email() });
     const calls: string[] = [];
     const sent = await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test/" }, okDelivery(calls));
     assert.equal(sent.sent, true);
@@ -202,7 +205,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     assert.equal(inv.token_hash, K.app && (await import("@/lib/driver-prospects/operations")).hashInvitationToken(secret));
     assert.equal((await K.svc.listProspects(o))[0].status, "INVITED");
 
-    const { prospectId: p2 } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId: p2 } = await mk({ organizationId: o, fullName: name(), email: email() });
     const failed = await K.svc.sendInvitation({ organizationId: o, prospectId: p2, baseUrl: "https://tes.test" }, async () => {
       throw new Error("provider said secret detail");
     });
@@ -217,14 +220,14 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const a = await org("A");
     const b = await org("B");
     await only(...FULL);
-    const { prospectId } = await K.svc.createProspect({ organizationId: a, fullName: name(), email: email() });
+    const { prospectId } = await mk({ organizationId: a, fullName: name(), email: email() });
     const calls: string[] = [];
     await rejects(() => K.svc.sendInvitation({ organizationId: b, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), "NotFoundError");
     assert.equal(calls.length, 0);
     assert.equal((await K.svc.listProspects(b)).length, 0, "tenant isolation: company B sees no prospects of company A");
 
     await only("DRIVER_READ");
-    await assert.rejects(() => K.svc.createProspect({ organizationId: a, fullName: name(), email: email() }));
+    await assert.rejects(() => mk({ organizationId: a, fullName: name(), email: email() }));
     await assert.rejects(() => K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)));
     K.db.setClerkUser(null);
     await assert.rejects(() => K.svc.listProspects(a));
@@ -237,7 +240,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("8. completing the application creates no duplicate person and cannot be repeated or forged", async () => {
     const o = await org();
     await only(...FULL);
-    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId, personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     const calls: string[] = [];
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
     const secret = new URL(calls[0]).searchParams.get("invitation")!;
@@ -267,7 +270,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("9. full onboarding requirements are enforced before a company driver exists, and the result is never ACTIVE", async () => {
     const o = await org();
     await only(...FULL);
-    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId, personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     const convert = (over: Record<string, unknown> = {}) =>
       K.svc.convertProspectToCompanyDriver({
         organizationId: o, prospectId, relationshipType: "EMPLOYEE", relationshipStartDate: "2026-02-01", dateOfBirth: "1990-05-05",
@@ -298,8 +301,8 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const o = await org();
     const actor = await only(...FULL);
     const e = email();
-    const { prospectId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: e });
-    await rejects(() => K.svc.createProspect({ organizationId: o, fullName: name(), email: e }), "ConflictError");
+    const { prospectId } = await mk({ organizationId: o, fullName: name(), email: e });
+    await rejects(() => mk({ organizationId: o, fullName: name(), email: e }), "ConflictError");
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery());
     const ops = await q<{ op: string }>(`SELECT action->>'operation' AS op FROM public.master_register_events WHERE actor_id = $1`, [actor.actorId]);
     for (const wanted of ["DRIVER_PROSPECT_CREATE", "DRIVER_APPLICATION_INVITATION_CREATE", "DRIVER_APPLICATION_INVITATION_SEND"]) assert.ok(ops.some((r) => r.op === wanted), `Master Register records ${wanted}`);
@@ -314,7 +317,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
   scenario("11. the whole lifecycle is accounted for in the Master Register, with the same person throughout", async () => {
     const o = await org();
     const actor = await only(...FULL);
-    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId, personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, async () => {
       throw new Error("down");
     });
@@ -341,7 +344,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const a = await org("A");
     const b = await org("B");
     await only(...FULL);
-    const { prospectId } = await K.svc.createProspect({ organizationId: a, fullName: name(), phone: "416-555-0199" });
+    const { prospectId } = await mk({ organizationId: a, fullName: name(), phone: "416-555-0199" });
     await rejects(() => K.svc.reviewProspect({ organizationId: b, prospectId, to: "UNDER_REVIEW" }), "NotFoundError");
     await rejects(() => K.svc.addProspectEmail({ organizationId: b, prospectId, email: email() }), "NotFoundError");
     await rejects(
@@ -359,11 +362,12 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     // An expired invitation (inserted by the owner with a past expiry) opens nothing and accepts no submission.
     const { createHash } = await import("node:crypto");
     const secret = `expired-${randomUUID()}-${randomUUID()}`;
-    const { prospectId: p2 } = await K.svc.createProspect({ organizationId: a, fullName: name(), email: email() });
+    const { prospectId: p2 } = await mk({ organizationId: a, fullName: name(), email: email() });
     const invitationId = randomUUID();
     await pools.admin.query(
-      `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id, status)
-       VALUES ($1, $2, $3, $4, 'x@example.com', now() - interval '1 minute', (SELECT created_by_actor_id FROM public.driver_prospects WHERE id = $2), 'SENT')`,
+      `INSERT INTO public.driver_application_invitations (id, prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id, status, operating_scope_id, requirements_profile, requirements_rules_version)
+       VALUES ($1, $2, $3, $4, 'x@example.com', now() - interval '1 minute', (SELECT created_by_actor_id FROM public.driver_prospects WHERE id = $2), 'SENT',
+               (SELECT id FROM public.driver_prospect_operating_scopes WHERE prospect_id = $2 AND superseded_at IS NULL), '{}'::jsonb, 'test')`,
       [invitationId, p2, a, createHash("sha256").update(secret).digest("hex")],
     );
     assert.equal(await K.app.openInvitation(secret), null);
@@ -374,7 +378,7 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const o = await org();
     await only(...FULL);
     const stage = async (id: string) => (await K.svc.listProspects(o)).find((p) => p.prospectId === id)!.onboarding;
-    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    const { prospectId, personId } = await mk({ organizationId: o, fullName: name(), email: email() });
     assert.equal((await stage(prospectId)).currentLabel, "Not sent");
     await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, async () => {
       throw new Error("down");
@@ -404,5 +408,194 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     const rel = (await q<{ status: string }>(`SELECT status FROM public.organization_driver_relationships WHERE person_id = $1`, [personId]))[0].status;
     if (rel === "ACTIVE") assert.equal(after.onboarding, false);
     assert.ok((await q(`SELECT 1 FROM public.driver_prospect_events WHERE prospect_id = $1`, [prospectId])).length >= 6, "history is kept");
+  });
+
+  // ---- Operating scope, requirements profile and company presentation jurisdiction (migration 0040) ----
+
+  const CDL = { cmvOperation: "YES", cdlRequired: "YES" } as const;
+  /** Saves a prospect with an email, establishes the scope, sends through the real service, and returns what the APPLICANT receives. */
+  async function issue(o: string, scope: Record<string, unknown>) {
+    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: scope as never });
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    const secret = new URL(calls[0]).searchParams.get("invitation")!;
+    const opened = await K.app.openInvitation(secret);
+    assert.ok(opened, "the invitation opens");
+    process.env.TES_INVITATION_SECRET ??= "test-invitation-secret-0123456789abcdef";
+    const { verifyDriverInvitationToken } = await import("@/lib/driver-invitation-token");
+    const claims = verifyDriverInvitationToken(K.app.signedApplicantToken(opened!));
+    assert.ok(claims, "the signed applicant session verifies");
+    return { created, secret, opened: opened!, claims: claims!, calls };
+  }
+
+  scenario("14. U.S. company: an intrastate hire and an interstate hire each get U.S. requirements; neither is cross-border", async () => {
+    const o = await org("US", "US");
+    await only(...FULL);
+    const intra = await issue(o, { kind: "US_INTRASTATE", usJurisdictions: ["TX"], characteristics: CDL });
+    assert.equal(intra.claims.operatingRegion, "United States");
+    assert.equal(intra.claims.requirements?.sections.clearinghouse, true);
+    assert.equal(intra.claims.requirements?.sections.psp, false, "PSP only when intended");
+    const inter = await issue(o, { kind: "US_INTERSTATE", usJurisdictions: ["OH", "PA"], characteristics: { ...CDL, pspIntended: true } });
+    assert.equal(inter.claims.operatingRegion, "United States");
+    assert.equal(inter.claims.requirements?.employmentHistoryYears, 10);
+    assert.equal(inter.claims.requirements?.sections.psp, true);
+    const [row] = await q<{ requirements_profile: { scopeKind: string }; requirements_rules_version: string }>(`SELECT requirements_profile, requirements_rules_version FROM public.driver_application_invitations WHERE id = $1`, [inter.opened.invitationId]);
+    assert.equal(row.requirements_profile.scopeKind, "US_INTERSTATE", "the requirements are frozen on the invitation");
+    assert.ok(row.requirements_rules_version);
+  });
+
+  scenario("15. Canadian company: intraprovincial and interprovincial hires get Canadian requirements with NO U.S. federal sections", async () => {
+    const o = await org("CA", "CA");
+    await only(...FULL);
+    for (const scope of [{ kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["AB"] }, { kind: "CA_INTERPROVINCIAL", caJurisdictions: ["ON", "QC"] }]) {
+      const r = await issue(o, scope);
+      assert.equal(r.claims.operatingRegion, "Canada");
+      assert.deepEqual(r.claims.requirements?.sections, { clearinghouse: false, psp: false, dotDrugAlcoholHistory: false });
+      assert.equal(r.claims.requirements?.employmentHistoryYears, 3);
+    }
+  });
+
+  scenario("16. cross-border hires get the combined requirements from either country's company", async () => {
+    for (const country of ["CA", "US"]) {
+      const o = await org(`XB-${country}`, country);
+      await only(...FULL);
+      const r = await issue(o, { kind: "CROSS_BORDER", usJurisdictions: ["MI"], caJurisdictions: ["ON"], characteristics: CDL });
+      assert.equal(r.claims.operatingRegion, "Cross-Border", `${country} company`);
+      assert.equal(r.claims.requirements?.sections.clearinghouse, true);
+    }
+  });
+
+  scenario("17. a company with cross-border registrations hiring a domestic-only driver does not make that driver cross-border", async () => {
+    const o = await org("DUAL", "CA");
+    await pools.admin.query(
+      `INSERT INTO public.organization_identifiers (organization_id, identifier_type, namespace, jurisdiction_country, value, normalized_value)
+       VALUES ($1, 'employer_identification_number', 'irs', 'US', '12-3456789', '123456789')`, [o],
+    );
+    await only(...FULL, "ORGANIZATION_REGISTRY_READ");
+    const presentation = await K.svc.getPresentationContext(o);
+    assert.equal(presentation.basis, "UNRESOLVED", "registered in both countries: an explicit presentation choice is required");
+    assert.match(presentation.reason ?? "", /both the United States and Canada/);
+    await only(...FULL);
+    const r = await issue(o, { kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["BC"] });
+    assert.equal(r.claims.operatingRegion, "Canada");
+    assert.notEqual(r.claims.requirements?.scopeKind, "CROSS_BORDER");
+  });
+
+  scenario("18. an undetermined scope can be saved but blocks every application, in the service and in the database", async () => {
+    const o = await org();
+    await only(...FULL);
+    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() }); // no scope
+    const [row] = await K.svc.listProspects(o);
+    assert.equal(row.operatingScope, null);
+    assert.equal(row.canInvite, false);
+    assert.match(row.inviteBlockedReason ?? "", /operating scope is not established/);
+    const calls: string[] = [];
+    await rejects(() => K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), "StateError");
+    assert.equal(calls.length, 0, "nothing is sent");
+    assert.equal((await q(`SELECT 1 FROM public.driver_application_invitations WHERE prospect_id = $1`, [created.prospectId])).length, 0);
+    // US operations with unknown CMV/CDL status are also blocked rather than sent a possibly wrong form.
+    await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "US_INTERSTATE", usJurisdictions: ["OH", "PA"] } as never });
+    assert.match((await K.svc.listProspects(o))[0].inviteBlockedReason ?? "", /commercial motor vehicle/);
+    // The database refuses an invitation row that names no current, determined scope, whatever writes it.
+    await assert.rejects(
+      () => pools.admin.query(`INSERT INTO public.driver_application_invitations (prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id)
+        VALUES ($1, $2, repeat('a', 64), 'x@example.com', now() + interval '1 day', (SELECT created_by_actor_id FROM public.driver_prospects WHERE id = $1))`, [created.prospectId, o]),
+      /cannot be issued without an established operating scope/,
+    );
+  });
+
+  scenario("19. changing the scope after an invitation revokes the old application and requires a new, matching one", async () => {
+    const o = await org();
+    await only(...FULL);
+    const first = await issue(o, { kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["ON"] });
+    const personsBefore = Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.persons`))[0].c);
+    const change = await K.svc.establishOperatingScope({ organizationId: o, prospectId: first.created.prospectId, scope: { kind: "CROSS_BORDER", usJurisdictions: ["NY"], caJurisdictions: ["ON"], characteristics: CDL } as never });
+    assert.equal(change.changed, true);
+    assert.equal(change.revokedInvitations, 1);
+    assert.equal(await K.app.openInvitation(first.secret), null, "the outdated link no longer opens");
+    assert.equal((await K.app.submitApplication(first.opened.invitationId, "stale", {})).kind, "CLOSED", "nor can its application be submitted");
+    const [prospect] = await K.svc.listProspects(o);
+    assert.equal(prospect.onboarding.currentLabel, "Not sent", "the chronology no longer claims it was sent");
+    assert.equal(prospect.operatingScope?.kind, "CROSS_BORDER");
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: o, prospectId: first.created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    const reopened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
+    assert.equal(reopened?.requirements.scopeKind, "CROSS_BORDER");
+    assert.equal(Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.persons`))[0].c), personsBefore, "no duplicate person");
+    const versions = await q<{ superseded_at: string | null }>(`SELECT superseded_at FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1 ORDER BY established_at`, [first.created.prospectId]);
+    assert.equal(versions.length, 2, "history is kept");
+    assert.ok(versions[0].superseded_at && !versions[1].superseded_at);
+    const ops = (await q<{ op: string }>(`SELECT action->>'operation' AS op FROM public.master_register_events WHERE action->>'operation' = 'DRIVER_PROSPECT_SCOPE_ESTABLISH'`)).length;
+    assert.ok(ops >= 2, "each scope version is in the Master Register");
+    // Re-saving the identical scope changes nothing.
+    assert.equal((await K.svc.establishOperatingScope({ organizationId: o, prospectId: first.created.prospectId, scope: { kind: "CROSS_BORDER", usJurisdictions: ["NY"], caJurisdictions: ["ON"], characteristics: CDL } as never })).changed, false);
+  });
+
+  scenario("20. a failed invitation followed by a retry uses the same saved driver: no duplicate person, prospect or scope", async () => {
+    const o = await org();
+    await only(...FULL);
+    const created = await mk({ organizationId: o, fullName: name(), email: email() });
+    const counts = async () => ({ persons: (await q(`SELECT 1 FROM public.persons`)).length, prospects: (await q(`SELECT 1 FROM public.driver_prospects WHERE organization_id = $1`, [o])).length });
+    const before = await counts();
+    const failed = await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, async () => {
+      throw new Error("down");
+    });
+    assert.equal(failed.sent, false);
+    assert.equal((await K.svc.listProspects(o))[0].onboarding.currentLabel, "Not sent");
+    const retry = await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery());
+    assert.equal(retry.sent, true);
+    assert.deepEqual(await counts(), before);
+    assert.deepEqual((await q<{ status: string }>(`SELECT status FROM public.driver_application_invitations WHERE prospect_id = $1 ORDER BY created_at`, [created.prospectId])).map((r) => r.status), ["FAILED", "SENT"]);
+    assert.equal((await q(`SELECT 1 FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1`, [created.prospectId])).length, 1);
+  });
+
+  scenario("21. scope operations are tenant-isolated, authorized, and frozen once the application is submitted", async () => {
+    const a = await org("A");
+    const b = await org("B");
+    await only(...FULL);
+    const { prospectId } = await mk({ organizationId: a, fullName: name(), email: email() });
+    await rejects(() => K.svc.establishOperatingScope({ organizationId: b, prospectId, scope: { kind: "UNDETERMINED" } as never }), "NotFoundError");
+    await rejects(() => K.svc.establishOperatingScope({ organizationId: a, prospectId, scope: { kind: "US_INTRASTATE", usJurisdictions: ["TX", "OK"] } as never }), "ValidationError");
+    for (const t of ["driver_prospect_operating_scopes", "organization_presentation_jurisdictions"]) {
+      assert.equal((await pools.runtime.query(`SELECT 1 FROM public.${t}`)).rowCount, 0, `${t}: no rows without an authorized system context`);
+    }
+    await only("DRIVER_READ");
+    await assert.rejects(() => K.svc.establishOperatingScope({ organizationId: a, prospectId, scope: { kind: "UNDETERMINED" } as never }));
+    await only(...FULL);
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: a, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
+    await K.app.submitApplication(opened!.invitationId, "r-scope", { draft: {} });
+    await rejects(() => K.svc.establishOperatingScope({ organizationId: a, prospectId, scope: { kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["AB"] } as never }), "StateError");
+    // Versions and the invitation's frozen requirements cannot be rewritten, even by the table owner's ordinary UPDATE.
+    await assert.rejects(() => pools.admin.query(`UPDATE public.driver_prospect_operating_scopes SET scope_kind = 'US_INTRASTATE' WHERE prospect_id = $1`, [prospectId]));
+    await assert.rejects(() => pools.admin.query(`UPDATE public.driver_application_invitations SET requirements_profile = '{}'::jsonb WHERE prospect_id = $1`, [prospectId]));
+  });
+
+  scenario("22. company presentation jurisdiction: derived from the registered country, explicit when it cannot be derived, never a regulatory input", async () => {
+    const us = await org("PUS", "US");
+    const ca = await org("PCA", "CA");
+    const none = await org("PNONE", null);
+    await only(...FULL, "ORGANIZATION_REGISTRY_READ");
+    assert.deepEqual(await K.svc.getPresentationContext(us), { country: "US", basis: "REGISTRATION", reason: null });
+    assert.deepEqual(await K.svc.getPresentationContext(ca), { country: "CA", basis: "REGISTRATION", reason: null });
+    const unresolved = await K.svc.getPresentationContext(none);
+    assert.equal(unresolved.country, null);
+    assert.equal(unresolved.basis, "UNRESOLVED");
+    // Selecting a presentation country is a company-profile act and needs that authority.
+    await only(...FULL);
+    await assert.rejects(() => K.svc.establishPresentationJurisdiction({ organizationId: none, country: "US" }));
+    await rejects(() => K.svc.establishPresentationJurisdiction({ organizationId: none, country: "MX" }), "ValidationError");
+    await only(...FULL, "COMPANY_PROFILE_MANAGE");
+    assert.equal((await K.svc.establishPresentationJurisdiction({ organizationId: none, country: "CA" })).changed, true);
+    assert.deepEqual(await K.svc.getPresentationContext(none), { country: "CA", basis: "EXPLICIT", reason: null });
+    // An explicit choice overrides the registered country for presentation (a dual-registered company), and is versioned.
+    assert.equal((await K.svc.establishPresentationJurisdiction({ organizationId: us, country: "CA" })).changed, true);
+    assert.equal((await K.svc.getPresentationContext(us)).country, "CA");
+    assert.equal((await q(`SELECT 1 FROM public.organization_presentation_jurisdictions WHERE organization_id = $1`, [us])).length, 1);
+    // ...yet it decides nothing about the driver: a Canadian-presented company can still hire a U.S. intrastate driver.
+    const r = await issue(us, { kind: "US_INTRASTATE", usJurisdictions: ["TX"], characteristics: CDL });
+    assert.equal(r.claims.operatingRegion, "United States");
+    assert.ok((await q(`SELECT 1 FROM public.master_register_events WHERE action->>'operation' = 'ORGANIZATION_PRESENTATION_JURISDICTION_ESTABLISH'`)).length >= 2);
   });
 });

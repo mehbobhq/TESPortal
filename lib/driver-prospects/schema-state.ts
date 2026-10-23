@@ -28,3 +28,16 @@ export async function prospectSchemaState(client: Pick<PoolClient, "query">): Pr
   const { present, total } = result.rows[0]
   return present === total ? "COMPLETE" : present === 0 ? "ABSENT" : "INCONSISTENT"
 }
+
+/** Migration 0040 (operating scope, requirements frozen on invitations, presentation jurisdiction). Applications cannot be issued without it. */
+export async function scopeSchemaAvailable(client: Pick<PoolClient, "query">): Promise<boolean> {
+  const r = await client.query<{ ok: boolean }>(
+    `SELECT (to_regclass('public.driver_prospect_operating_scopes') IS NOT NULL
+         AND to_regclass('public.organization_presentation_jurisdictions') IS NOT NULL
+         AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.driver_application_invitations') AND attname = 'requirements_profile' AND NOT attisdropped)) AS ok`,
+  )
+  return r.rows[0]?.ok === true
+}
+
+export const scopeSchemaMessage = (what: string) =>
+  `${what} is not available yet: it needs the operating-scope database migration (0040), which has not been applied. Nothing was changed.`

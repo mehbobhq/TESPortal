@@ -18,6 +18,13 @@ export interface DriverInvitationTokenPayload {
   recipientEmail: string
   driverName: string
   operatingRegion?: "Canada" | "United States" | "Cross-Border"
+  /** Requirements profile frozen on the invitation (operating-scope driven). Absent on tokens issued before scope-driven applications. */
+  requirements?: {
+    version: string
+    scopeKind: string
+    employmentHistoryYears: 3 | 10
+    sections: { clearinghouse: boolean; psp: boolean; dotDrugAlcoholHistory: boolean }
+  }
   expiresAt: string
 }
 

@@ -9,7 +9,7 @@ export const runtime = "nodejs"
  */
 export async function POST() {
   return NextResponse.json(
-    { error: "This way of sending applications is no longer available. Add the person under Drivers → Driver prospects and use “Send application”." },
+    { error: "This way of sending applications is no longer available. Use Add Driver → New hire on the Drivers page, then open the driver and choose “Send application”." },
     { status: 410 },
   )
 }

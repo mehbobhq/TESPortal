@@ -1069,11 +1069,11 @@ export function DriverWorkspace({
         <div className="fixed inset-0 z-[155] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-border pb-3">
-              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Moved to Driver prospects.</p></div>
+              <div><h3 className="text-base font-bold">New Driver Application</h3><p className="text-xs text-muted-foreground">Applications are sent from Add Driver.</p></div>
               <button type="button" onClick={() => setIsAddApplicationOpen(false)} className="text-muted-foreground">✕</button>
             </div>
             <div className="space-y-3 text-xs" data-testid="legacy-application-retired">
-              <p>Applications are no longer sent from this browser workspace. Add the person under <strong>Driver prospects</strong> at the top of the Drivers page (name plus an email or phone), then use <strong>Send application</strong> there. That sends a secure, expiring link and keeps the record in the TES database.</p>
+              <p>Applications are no longer sent from this browser workspace. Use <strong>Add Driver → New hire</strong> on the Drivers page (name plus an email or phone), then open the driver and choose <strong>Send application</strong>. That sends a secure, expiring link and keeps the record in the TES database.</p>
             </div>
             <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddApplicationOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Close</button></div>
           </div>

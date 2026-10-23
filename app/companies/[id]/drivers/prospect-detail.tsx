@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, Send } from "lucide-react"
 import { CompanyMissing } from "@/components/company-missing"
-import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -117,26 +116,36 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
       ) : null}
       {message ? <p role="status" className={`text-sm ${message.tone === "error" ? "text-red-600" : "text-emerald-700"}`}>{message.text}</p> : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <Card className="lg:col-start-1">
-          <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h1 className="truncate text-2xl font-semibold" data-testid="driver-name">{name}</h1>
-              <div className="mt-2" data-testid="driver-status"><StatusBadge tone="warn">{statusText}</StatusBadge></div>
-              <p className="mt-3 text-sm text-muted-foreground">{[prospect.email, prospect.phone].filter(Boolean).join(" · ") || "No contact on record"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Not an active company driver{progress.onboarding ? " — activation follows onboarding." : "."}</p>
+      <div className="space-y-6">
+        {/* Same executive header card as the other driver records; the chronology uses the free right-hand space (beneath the name and status on a phone). */}
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-xs">
+          <div className={`grid gap-5 ${progress.onboarding ? "lg:grid-cols-[minmax(0,1fr)_260px]" : ""}`}>
+            <div className="flex items-start gap-4">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-lg font-bold text-primary" aria-hidden>
+                {(prospect.givenName?.[0] ?? "") + (prospect.familyName?.[0] ?? "")}
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl" data-testid="driver-name">{name}</h1>
+                  <span data-testid="driver-status" className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-800">
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {statusText}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">{[prospect.email, prospect.phone].filter(Boolean).join(" · ") || "No contact on record"}</p>
+                <p className="text-xs text-muted-foreground">Not an active company driver{progress.onboarding ? " — activation follows onboarding." : "."}</p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+            {progress.onboarding ? (
+              <div className="rounded-xl border bg-muted/20 p-4" data-testid="hiring-chronology-card">
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Hiring chronology</p>
+                <OnboardingChronology progress={progress} />
+              </div>
+            ) : null}
+          </div>
+        </div>
 
-        {progress.onboarding ? (
-          <Card className="lg:col-start-2 lg:row-span-2 lg:row-start-1" data-testid="hiring-chronology-card">
-            <CardHeader className="border-b bg-muted/30 py-3"><CardTitle className="text-sm">Hiring chronology</CardTitle></CardHeader>
-            <CardContent className="pt-4"><OnboardingChronology progress={progress} /></CardContent>
-          </Card>
-        ) : null}
-
-        <Card className="lg:col-start-1">
+        <Card>
           <CardHeader className="border-b bg-muted/30 py-3"><CardTitle className="text-sm">Application</CardTitle></CardHeader>
           <CardContent className="space-y-4 pt-4">
             <div className="flex flex-wrap items-center gap-2">

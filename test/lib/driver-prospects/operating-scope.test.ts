@@ -117,6 +117,7 @@ describe("country-first presentation ordering (policy: context, never applicabil
   it("with no established presentation country the neutral order makes no assumption", () => {
     const neutral = orderScopeKinds(null);
     assert.notEqual(neutral[0], "UNDETERMINED");
+    assert.deepEqual(neutral.slice(0, 2), ["US_INTRASTATE", "CA_INTRAPROVINCIAL"], "domestic options interleaved");
     assert.equal(neutral.length, orderScopeKinds("US").length);
   });
 });

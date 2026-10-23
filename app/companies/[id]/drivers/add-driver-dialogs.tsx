@@ -110,7 +110,7 @@ export function OnboardingDriverDialog({ companyId, onClose, onCreated }: { comp
             </fieldset>
           ) : null}
           <div className="sm:col-span-2">
-            <OperatingScopeFields value={scope} onChange={setScope} presentation={presentation} />
+            {context ? <OperatingScopeFields value={scope} onChange={setScope} presentation={presentation} /> : <p className="text-xs text-muted-foreground">Loading the company&apos;s jurisdiction…</p>}
           </div>
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input type="checkbox" checked={form.sendNow} disabled={!canSend} onChange={(e) => setForm({ ...form, sendNow: e.target.checked })} />

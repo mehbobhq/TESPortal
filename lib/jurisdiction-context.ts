@@ -1,5 +1,5 @@
 import { JURISDICTIONS, type JurisdictionOption } from "@/lib/jurisdictions"
-import { SCOPE_KINDS, type ScopeKind } from "@/lib/driver-prospects/operating-scope"
+import type { ScopeKind } from "@/lib/driver-prospects/operating-scope"
 
 /**
  * Customer-Jurisdiction Context: the company's primary PRESENTATION jurisdiction decides what staff see FIRST (ordering and terminology).
@@ -21,7 +21,8 @@ const CA_FIRST: ScopeKind[] = ["CA_INTRAPROVINCIAL", "CA_INTERPROVINCIAL", "CROS
 export function orderScopeKinds(country: PresentationCountry | null): ScopeKind[] {
   if (country === "US") return US_FIRST
   if (country === "CA") return CA_FIRST
-  return [...SCOPE_KINDS]
+  // No presentation country: interleave the domestic options so neither country is favoured.
+  return ["US_INTRASTATE", "CA_INTRAPROVINCIAL", "US_INTERSTATE", "CA_INTERPROVINCIAL", "CROSS_BORDER", "MIXED", "UNDETERMINED"]
 }
 
 export interface JurisdictionGroup {

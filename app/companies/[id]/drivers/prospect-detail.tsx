@@ -194,7 +194,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
               {s === "PROSPECT" || s === "INVITED" ? (
                 prospect.canInvite ? (
                   <Button size="sm" disabled={busy} onClick={() => run(() => api.sendApplication(companyId, prospectId), "Application sent.")}>
-                    <Send className="mr-2 size-4" />{s === "INVITED" ? "Resend application" : "Send application"}
+                    <Send className="mr-2 size-4" />{s === "INVITED" && progress.currentLabel !== "Not sent" ? "Resend application" : "Send application"}
                   </Button>
                 ) : (
                   <Button size="sm" disabled title={prospect.inviteBlockedReason ?? undefined}><Send className="mr-2 size-4" />Send application</Button>

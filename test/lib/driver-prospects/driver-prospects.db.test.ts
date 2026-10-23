@@ -1,6 +1,6 @@
 // Run with `npm run test:auth` (scripts/test/run-auth-tests.sh) or against a disposable database via the TES_TEST_* URLs.
 //
-// Migration 0039 (driver prospects and application invitations), driven through the REAL authorization wrappers and the real
+// Migrations 0039 and 0040 (driver prospects, application invitations, operating scope), driven through the REAL authorization wrappers and the real
 // Master Register. Fixtures and owner-level checks use the admin pool; the services run as the RUNTIME role under row-level security.
 
 import assert from "node:assert/strict";
@@ -29,7 +29,7 @@ if (!enabled && process.env.TES_REQUIRE_DB_TESTS === "1") {
   });
 }
 
-describe("Driver prospects and application invitations (migration 0039)", { skip: !enabled }, () => {
+describe("Driver prospects and application invitations (migrations 0039, 0040)", { skip: !enabled }, () => {
   let pools: Pools;
   let fx: AuthFixtures;
   let organizations: string[] = [];

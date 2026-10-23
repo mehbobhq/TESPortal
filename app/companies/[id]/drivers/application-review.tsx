@@ -185,16 +185,14 @@ function RequirementRow({ r, applicationId, companyId, prospectId, busy, run }: 
 
 function DecisionForm({ app, companyId, prospectId, busy, run, canDecide }: { app: ReviewApplication; companyId: string; prospectId: string; busy: boolean; run: (work: () => Promise<unknown>, ok: string) => Promise<void>; canDecide: boolean }) {
   const [reasons, setReasons] = useState("")
-  const [ackExceptions, setAckExceptions] = useState(false)
   const [ackReview, setAckReview] = useState(false)
   if (!canDecide) return null
-  const decide = (decision: string) => run(() => api.recordDecision(companyId, prospectId, { applicationId: app.id, decision, reasons: reasons.split("\n").filter(Boolean), acknowledgeExceptions: ackExceptions, acknowledgeReviewRequirements: ackReview }), "Decision recorded.")
+  const decide = (decision: string) => run(() => api.recordDecision(companyId, prospectId, { applicationId: app.id, decision, reasons: reasons.split("\n").filter(Boolean), acknowledgeReviewRequirements: ackReview }), "Decision recorded.")
   return (
     <section aria-label="Qualification decision" className="space-y-2 rounded-lg border bg-muted/20 p-3">
       <h3 className="text-sm font-semibold">Qualification decision</h3>
       {app.blockers.length ? <ul className="list-disc pl-5 text-xs text-muted-foreground">{app.blockers.map((b) => <li key={b}>{b}</li>)}</ul> : <p className="text-xs text-emerald-700">Every required check has an outcome.</p>}
       <textarea aria-label="Reasons (one per line)" className="min-h-16 w-full rounded-md border bg-background p-2 text-sm" placeholder="Reasons, one per line" value={reasons} onChange={(e) => setReasons(e.target.value)} />
-      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ackExceptions} onChange={(e) => setAckExceptions(e.target.checked)} />I accept the checks recorded as exceptions.</label>
       {app.reviewRequirements.length ? <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ackReview} onChange={(e) => setAckReview(e.target.checked)} />I have reviewed the open regulatory review items.</label> : null}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={busy || !app.canQualify} onClick={() => decide("QUALIFIED")}>Mark qualified</Button>

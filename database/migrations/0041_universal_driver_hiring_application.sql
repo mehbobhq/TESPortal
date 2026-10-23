@@ -865,6 +865,10 @@ BEGIN
     IF p_source_channel NOT IN ('client_upload', 'system_generated') OR p_sensitivity NOT IN ('standard', 'sensitive', 'restricted') THEN
         RAISE EXCEPTION 'Invalid upload registration' USING ERRCODE = '22023';
     END IF;
+    -- The stored object must live under THIS company's tenant-scoped key; the applicant's session decides the company, never the caller's arguments.
+    IF position(sess.organization_id::text IN coalesce(p_object_name, '')) = 0 THEN
+        RAISE EXCEPTION 'The document location does not belong to this application' USING ERRCODE = '22023';
+    END IF;
     IF p_source_channel = 'client_upload' AND NOT EXISTS (SELECT 1 FROM public.driver_applications a WHERE a.id = sess.application_id AND a.status = 'DRAFT') THEN
         RAISE EXCEPTION 'A submitted application cannot be changed' USING ERRCODE = '55000';
     END IF;

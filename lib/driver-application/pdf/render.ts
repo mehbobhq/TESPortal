@@ -33,6 +33,8 @@ export interface PdfInput {
   snapshot: ApplicationSnapshot
   snapshotSha256: string
   consents: PdfConsentRecord[]
+  /** The TES logo (PNG bytes) when available; the PDF is identical for identical inputs including this one. */
+  logoPng?: Uint8Array | null
 }
 
 const LETTER: [number, number] = [612, 792]
@@ -84,6 +86,11 @@ class Writer {
     this.pages.push(this.page)
     this.y = LETTER[1] - M
     return this.page
+  }
+  /** Sections flow one after another; a new page starts only when little room is left. */
+  sectionBreak() {
+    if (!this.page || this.y < M + 260) this.newPage()
+    else this.y -= 14
   }
   ensure(height: number) {
     if (this.y - height < M + 24) this.newPage()
@@ -217,6 +224,19 @@ export async function renderApplicationPdf(input: PdfInput): Promise<Uint8Array>
 
   // ---- Cover ---------------------------------------------------------------------------------------------------------------------------------
   w.newPage()
+  if (input.logoPng) {
+    try {
+      const logo = await w.doc.embedPng(input.logoPng)
+      const height = 46
+      const width = (logo.width / logo.height) * height
+      w.page.drawImage(logo, { x: M, y: w.y - height, width, height })
+      w.y -= height + 10
+    } catch {
+      w.text("TES - Compliance Simplified", { size: 10, font: w.bold, color: NAVY, gap: 6 })
+    }
+  } else {
+    w.text("TES - Compliance Simplified", { size: 10, font: w.bold, color: NAVY, gap: 6 })
+  }
   w.text("DRIVER APPLICATION", { size: 22, font: w.bold, color: NAVY, gap: 4 })
   w.text(input.companyName, { size: 13, font: w.bold, gap: 10 })
   w.banner("APPLICANT-DECLARED INFORMATION. Nothing in this document has been verified by the carrier or by TES. Receipt of an application is not a hiring decision.", "warn")
@@ -240,7 +260,7 @@ export async function renderApplicationPdf(input: PdfInput): Promise<Uint8Array>
     const uploads = snapshot.uploads.filter((u) => fieldById.get(u.fieldId)?.section === section.id)
     const sens = [...snapshot.sensitive, ...snapshot.sensitiveNotCollected].filter((s) => fieldById.get(s.fieldId)?.section === section.id)
     if (!rows.length && !uploads.length && !sens.length) continue
-    w.newPage()
+    w.sectionBreak()
     w.heading(section.title)
     for (const row of rows) {
       const field = fieldById.get(row.id)

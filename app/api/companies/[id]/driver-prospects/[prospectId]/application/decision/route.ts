@@ -12,7 +12,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { id } = await context.params
     const body = await readJsonBody(request)
-    return NextResponse.json(await recordDecision({ organizationId: id, applicationId: String(body.applicationId ?? ""), decision: String(body.decision ?? ""), reasons: body.reasons, acknowledgeExceptions: body.acknowledgeExceptions === true, acknowledgeReviewRequirements: body.acknowledgeReviewRequirements === true }), { status: 200 })
+    return NextResponse.json(await recordDecision({ organizationId: id, applicationId: String(body.applicationId ?? ""), decision: String(body.decision ?? ""), reasons: body.reasons, acknowledgeReviewRequirements: body.acknowledgeReviewRequirements === true }), { status: 200 })
   } catch (error) {
     return canonicalFailure(error, "Unable to record the decision.")
   }

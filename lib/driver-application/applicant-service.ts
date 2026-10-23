@@ -1,6 +1,8 @@
 import "server-only"
 
 import { randomBytes, randomUUID } from "node:crypto"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { PoolClient } from "pg"
 import { applicantRateCheck, ApplicantSessionError, openApplicantSession, sha256Hex, withApplicantSession, type ApplicantSession } from "@/lib/auth/tes-applicant-context"
 import { MAX_PAYLOAD_BYTES } from "@/lib/evidence-payload/definitions"
@@ -385,7 +387,9 @@ export async function ensureApplicationPdf(sessionToken: string | null, port?: E
     if (db.application.status !== "SUBMITTED" || !db.snapshot) return null
     if (db.application.pdfDocumentId && db.application.pdfSha256) return { documentId: db.application.pdfDocumentId, sha256: db.application.pdfSha256, created: false }
     if (snapshotSha256(db.snapshot.payload) !== db.snapshot.payloadSha256) throw new Error("The stored application snapshot does not match its hash; the PDF was not generated.")
+    const logoPng = await readFile(join(process.cwd(), "public", "branding", "TES-Logo.png")).then((b) => new Uint8Array(b)).catch(() => null)
     const bytes = await renderApplicationPdf({
+      logoPng,
       companyName: db.companyName,
       applicantName: [db.applicantGivenName, db.applicantFamilyName].filter(Boolean).join(" ") || legalNameOf(db),
       receiptId: db.application.receiptId!,

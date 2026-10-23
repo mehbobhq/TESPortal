@@ -98,8 +98,20 @@ export async function getApplicationReview(ctx: ProspectContext, decision: Syste
       return { key: r.key, title: r.title, type: r.type, requiredForQualification: r.requiredForQualification, external: Boolean(r.external), consentKey: r.consentKey ?? null, consent: relianceOf(r.consentKey, consents.rows, revokedIds), current: history.length ? history[history.length - 1] : null, history }
     })
     const uploads = await ctx.client.query<{ field_id: string; slot: string; evidence_document_id: string; document_class: string; sensitivity: string; created_at: Date; superseded_at: Date | null; state: string | null; filename: string | null; byte_size: string | null }>(
-      `SELECT u.field_id, u.slot, u.evidence_document_id, u.document_class, u.sensitivity, u.created_at, u.superseded_at, p.lifecycle_state AS state, p.original_filename AS filename, p.byte_size
-         FROM public.driver_application_uploads u LEFT JOIN public.evidence_payloads p ON p.evidence_document_id = u.evidence_document_id WHERE u.application_id = $1 ORDER BY u.created_at`, [app.id])
+      `SELECT u.field_id, u.slot, u.evidence_document_id, u.document_class, u.sensitivity, u.created_at, u.superseded_at, NULL::text AS state, NULL::text AS filename, NULL::bigint AS byte_size
+         FROM public.driver_application_uploads u WHERE u.application_id = $1 ORDER BY u.created_at`, [app.id])
+    // The lifecycle state of a document lives in the evidence domain: it is shown only to staff who also hold evidence-read; others see the document without a state.
+    if (uploads.rows.length && (await hasAdditionalSystemCapability(ctx.client, decision, "EVIDENCE_READ"))) {
+      await enterSystemCapability(ctx.client, "EVIDENCE_READ")
+      const st = await ctx.client.query<{ evidence_document_id: string; lifecycle_state: string; original_filename: string; byte_size: string }>(
+        `SELECT evidence_document_id, lifecycle_state, original_filename, byte_size FROM public.evidence_payloads WHERE organization_id = $1 AND evidence_document_id = ANY($2::uuid[])`, [organizationId, uploads.rows.map((u) => u.evidence_document_id)])
+      await enterSystemCapability(ctx.client, "DRIVER_READ")
+      const byDoc = new Map(st.rows.map((x) => [x.evidence_document_id, x]))
+      for (const u of uploads.rows) {
+        const x = byDoc.get(u.evidence_document_id)
+        if (x) Object.assign(u, { state: x.lifecycle_state, filename: x.original_filename, byte_size: x.byte_size })
+      }
+    }
     const decisions = await ctx.client.query<{ id: string; decision: Decision; reasons: unknown; snapshot_sha256: string; decided_by_actor_id: string; decided_at: Date }>(
       `SELECT id, decision, reasons, snapshot_sha256, decided_by_actor_id, decided_at FROM public.driver_application_decisions WHERE application_id = $1 ORDER BY decided_at`, [app.id])
     const corrections = await ctx.client.query<{ id: string; field_id: string; previous_value: unknown; corrected_value: unknown; reason: string; evidence_document_id: string | null; recorded_by_actor_id: string; recorded_at: Date }>(
@@ -141,22 +153,24 @@ function relianceOf(consentKey: string | undefined, consents: Array<{ id: string
   return { signed: true, legalStatus: signed.legal_status, relianceAllowed: true, reason: null }
 }
 
-/** What stands between this application and a QUALIFIED decision. Required requirements must be VERIFIED, or carry a recorded EXCEPTION that the decision lists. */
-export function qualificationGate(plan: ApplicationPlan, requirements: RequirementState[]): { blockers: string[]; exceptions: string[] } {
+/**
+ * What stands between this application and a QUALIFIED decision. Every required requirement must be VERIFIED, and where it relies on an applicant authorization
+ * that authorization must still be usable (signed, not revoked, legally approved). An EXCEPTION never satisfies a required requirement: it is a record of a
+ * decision to proceed, not a substitute for a mandatory check.
+ */
+export function qualificationGate(plan: ApplicationPlan, requirements: RequirementState[]): { blockers: string[] } {
   const blockers: string[] = []
-  const exceptions: string[] = []
   for (const r of requirements) {
     if (!r.requiredForQualification) continue
     const status = r.current?.status
-    if (status === "VERIFIED") continue
-    if (status === "EXCEPTION") {
-      exceptions.push(r.key)
+    if (status !== "VERIFIED") {
+      blockers.push(`${r.title}: ${status === "EXCEPTION" ? "an exception does not satisfy a required check" : status ? status.toLowerCase().replace("_", " ") : "not started"}`)
       continue
     }
-    blockers.push(`${r.title}: ${status ? status.toLowerCase().replace("_", " ") : "not started"}`)
+    if (r.consent && !r.consent.relianceAllowed) blockers.push(`${r.title}: ${r.consent.reason}`)
   }
   void plan
-  return { blockers, exceptions }
+  return { blockers }
 }
 
 export async function recordVerification(
@@ -205,7 +219,7 @@ export async function recordVerification(
 
 export async function recordDecision(
   ctx: ProspectContext,
-  input: { organizationId: string; applicationId: string; decision: string; reasons?: unknown; acknowledgeExceptions?: boolean; acknowledgeReviewRequirements?: boolean },
+  input: { organizationId: string; applicationId: string; decision: string; reasons?: unknown; acknowledgeReviewRequirements?: boolean },
 ) {
   const organizationId = uuid(input.organizationId, "organizationId")
   const app = await loadApplication(ctx, organizationId, uuid(input.applicationId, "applicationId"), { lock: true })
@@ -218,17 +232,15 @@ export async function recordDecision(
     const review = await getRequirementStates(ctx, organizationId, app)
     const gate = qualificationGate(app.plan, review)
     if (gate.blockers.length) throw new DriverProspectStateError(`This application cannot be marked qualified yet: ${gate.blockers.join("; ")}.`)
-    if (gate.exceptions.length && input.acknowledgeExceptions !== true) throw new DriverProspectValidationError("acknowledgeExceptions", `Required checks are recorded as exceptions (${gate.exceptions.join(", ")}). Confirm that you accept them.`)
     if (app.plan.regulatoryReviewRequirements.length && input.acknowledgeReviewRequirements !== true) {
       throw new DriverProspectValidationError("acknowledgeReviewRequirements", "Open regulatory review items apply to this application. Confirm that you have reviewed them.")
     }
-    detail.exceptions = gate.exceptions
     detail.acknowledgedReviewRequirementIds = app.plan.regulatoryReviewRequirements.map((r) => r.id)
   }
   const id = randomUUID()
   await ctx.client.query(
     `INSERT INTO public.driver_application_decisions (id, application_id, organization_id, decision, reasons, snapshot_sha256, decided_by_actor_id) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
-    [id, app.id, organizationId, input.decision, JSON.stringify(detail.exceptions || detail.acknowledgedReviewRequirementIds ? [...reasons.map((text) => ({ text })), { exceptions: detail.exceptions, acknowledgedReviewRequirementIds: detail.acknowledgedReviewRequirementIds }] : reasons.map((text) => ({ text }))), app.snapshot_sha256, ctx.actor.id],
+    [id, app.id, organizationId, input.decision, JSON.stringify(detail.acknowledgedReviewRequirementIds ? [...reasons.map((text) => ({ text })), { acknowledgedReviewRequirementIds: detail.acknowledgedReviewRequirementIds }] : reasons.map((text) => ({ text }))), app.snapshot_sha256, ctx.actor.id],
   )
   await mr(ctx, "RECORD_CREATED", "DRIVER_APPLICATION_DECISION_RECORD", "driver_application_decisions", id, organizationId, [`driver_application:${app.id}`], { field: "decision", value: input.decision })
   return { decisionId: id, decision: input.decision as Decision }
@@ -237,9 +249,12 @@ export async function recordDecision(
 async function getRequirementStates(ctx: ProspectContext, organizationId: string, app: AppRow): Promise<RequirementState[]> {
   const ver = await ctx.client.query<{ requirement_key: string; status: VerificationStatus; note: string | null; evidence_document_id: string | null; recorded_at: Date; recorded_by_actor_id: string }>(
     `SELECT requirement_key, status, note, evidence_document_id, recorded_at, recorded_by_actor_id FROM public.driver_application_verifications WHERE application_id = $1 AND organization_id = $2 ORDER BY recorded_at, id`, [app.id, organizationId])
+  const consents = await ctx.client.query<{ id: string; consent_key: string; legal_status: string }>(`SELECT id, consent_key, legal_status FROM public.driver_application_consents WHERE application_id = $1 AND organization_id = $2 ORDER BY accepted_at`, [app.id, organizationId])
+  const revoked = await ctx.client.query<{ consent_id: string }>(`SELECT consent_id FROM public.driver_application_consent_revocations WHERE application_id = $1`, [app.id])
+  const revokedIds = new Set(revoked.rows.map((x) => x.consent_id))
   return app.plan.requirements.map((r) => {
     const history = ver.rows.filter((v) => v.requirement_key === r.key).map((v) => ({ status: v.status, note: v.note, evidenceDocumentId: v.evidence_document_id, recordedAt: v.recorded_at.toISOString(), recordedByActorId: v.recorded_by_actor_id }))
-    return { key: r.key, title: r.title, type: r.type, requiredForQualification: r.requiredForQualification, external: Boolean(r.external), consentKey: r.consentKey ?? null, consent: null, current: history.length ? history[history.length - 1] : null, history }
+    return { key: r.key, title: r.title, type: r.type, requiredForQualification: r.requiredForQualification, external: Boolean(r.external), consentKey: r.consentKey ?? null, consent: relianceOf(r.consentKey, consents.rows, revokedIds), current: history.length ? history[history.length - 1] : null, history }
   })
 }
 

@@ -197,6 +197,19 @@ describe("Universal driver application: employer review (migration 0041)", { ski
     await K.as.ensureApplicationPdf(sessionToken, port as never);
     return { sessionToken, csrfToken, applicationId: view.application.id, answers };
   }
+  /** TEST ONLY: simulates counsel's approval of the signed wording (owner-level update with the immutability trigger lifted for that one table). */
+  async function simulateCounselApproval(applicationId: string) {
+    const client = await pools.admin.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`ALTER TABLE public.driver_application_consents DISABLE TRIGGER USER`);
+      await client.query(`UPDATE public.driver_application_consents SET legal_status = 'APPROVED' WHERE application_id = $1`, [applicationId]);
+      await client.query(`ALTER TABLE public.driver_application_consents ENABLE TRIGGER USER`);
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+  }
   const review = async (o: string, prospectId: string) => (await K.rv.getApplicationReview({ organizationId: o, prospectId })).applications;
 
   scenario("a submission is applicant-declared: nothing is verified or qualified, and approval is blocked until a Qualified decision exists", async () => {
@@ -212,7 +225,7 @@ describe("Universal driver application: employer review (migration 0041)", { ski
     assert.ok(app.pdf, "the signed PDF is attached");
     await K.svc.reviewProspect({ organizationId: o, prospectId: s.prospectId, to: "UNDER_REVIEW" });
     await assert.rejects(() => K.svc.reviewProspect({ organizationId: o, prospectId: s.prospectId, to: "APPROVED" }), (e: Error) => e.constructor.name.endsWith("StateError"));
-    await assert.rejects(() => K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["x"], acknowledgeExceptions: true, acknowledgeReviewRequirements: true }), (e: Error) => e.constructor.name.endsWith("StateError"));
+    await assert.rejects(() => K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["x"], acknowledgeReviewRequirements: true }), (e: Error) => e.constructor.name.endsWith("StateError"));
     assert.equal((await q(`SELECT 1 FROM public.driver_application_decisions`)).length, 0);
   });
 
@@ -246,28 +259,57 @@ describe("Universal driver application: employer review (migration 0041)", { ski
     await assert.rejects(() => pools.admin.query(`DELETE FROM public.driver_application_verifications WHERE id = $1`, [exc.verificationId]));
   });
 
-  scenario("qualification: Qualified only when every required check is verified or a recorded exception the reviewer acknowledges; then approval is allowed", async () => {
+  scenario("qualification: an exception NEVER satisfies a required check; Qualified needs every required check verified on usable authorizations; then approval is allowed", async () => {
     const o = await org();
     await asStaff(...FULL);
     const s = await submitFor(o);
     const [app] = await review(o, s.prospectId);
-    const decide = (over: Record<string, unknown> = {}) => K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["Reviewed"], acknowledgeExceptions: true, acknowledgeReviewRequirements: true, ...over });
-    for (const r of app.requirements.filter((x) => x.requiredForQualification)) {
-      await assert.rejects(() => decide(), (e: Error) => e.constructor.name.endsWith("StateError"), "still missing checks");
-      await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: r.consentKey ? "EXCEPTION" : "VERIFIED", note: "Reviewed." });
+    const decide = (over: Record<string, unknown> = {}) => K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["Reviewed"], acknowledgeReviewRequirements: true, ...over });
+    const stateError = (e: Error) => e.constructor.name.endsWith("StateError");
+    const required = app.requirements.filter((x) => x.requiredForQualification);
+    // 1. Authorization wording is pending legal review: the dependent checks cannot be verified, and recording an exception does not get around that.
+    for (const r of required) {
+      if (r.consentKey) {
+        await assert.rejects(() => K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "VERIFIED", note: "x" }), stateError);
+        await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "EXCEPTION", note: "Proceeding on another basis." });
+      } else {
+        await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "VERIFIED", note: "Reviewed." });
+      }
     }
-    await assert.rejects(() => decide({ acknowledgeExceptions: false }), (e: Error) => e.constructor.name.endsWith("ValidationError"));
+    await assert.rejects(() => decide(), (e: Error) => stateError(e) && /exception does not satisfy/.test(e.message));
+    assert.equal((await q(`SELECT 1 FROM public.driver_application_decisions`)).length, 0);
+    await assert.rejects(() => K.svc.reviewProspect({ organizationId: o, prospectId: s.prospectId, to: "APPROVED" }), stateError);
+    // 2. Counsel approves the wording (simulated); the checks can now be verified.
+    await simulateCounselApproval(app.id);
+    await assert.rejects(() => decide(), stateError, "exceptions are still not verification");
+    for (const r of required.filter((x) => x.consentKey)) await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "VERIFIED", note: "Verified after approval." });
     await assert.rejects(() => decide({ acknowledgeReviewRequirements: false }), (e: Error) => e.constructor.name.endsWith("ValidationError"));
     await assert.rejects(() => decide({ decision: "NOT_QUALIFIED", reasons: [] }), (e: Error) => e.constructor.name.endsWith("ValidationError"));
     const ok = await decide();
     assert.equal(ok.decision, "QUALIFIED");
-    const [d] = await q<{ snapshot_sha256: string; reasons: unknown[] }>(`SELECT snapshot_sha256, reasons FROM public.driver_application_decisions WHERE id = $1`, [ok.decisionId]);
+    const [d] = await q<{ snapshot_sha256: string }>(`SELECT snapshot_sha256 FROM public.driver_application_decisions WHERE id = $1`, [ok.decisionId]);
     assert.equal(d.snapshot_sha256, app.snapshotSha256, "the decision is bound to the exact application it was made on");
     await K.svc.reviewProspect({ organizationId: o, prospectId: s.prospectId, to: "UNDER_REVIEW" });
     assert.equal((await K.svc.reviewProspect({ organizationId: o, prospectId: s.prospectId, to: "APPROVED" })).status, "APPROVED");
-    // A later "Not qualified" decision supersedes (history kept) and blocks nothing already approved, but is the latest word.
     await K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "NOT_QUALIFIED", reasons: ["New information"] });
     assert.equal((await review(o, s.prospectId))[0].decisions.length, 2);
+  });
+
+  scenario("revoking an authorization after verification blocks qualification again", async () => {
+    const o = await org();
+    await asStaff(...FULL);
+    const s = await submitFor(o);
+    const [app] = await review(o, s.prospectId);
+    await simulateCounselApproval(app.id);
+    for (const r of app.requirements.filter((x) => x.requiredForQualification)) await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "VERIFIED", note: "ok" });
+    const consent = app.consents.find((c) => app.requirements.some((r) => r.consentKey === c.key && r.requiredForQualification))!;
+    const admin = await pools.admin.connect();
+    try {
+      await admin.query(`INSERT INTO public.driver_application_consent_revocations (application_id, organization_id, consent_id, revoked_by_actor_id, reason) SELECT $1, $2, $3, applicant_actor_id, 'applicant withdrew' FROM public.driver_applications WHERE id = $1`, [app.id, o, consent.id]);
+    } finally {
+      admin.release();
+    }
+    await assert.rejects(() => K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["x"], acknowledgeReviewRequirements: true }), (e: Error) => e.constructor.name.endsWith("StateError") && /revoked/.test(e.message));
   });
 
   scenario("corrections and supplements never alter the signed application; they are separate, traceable records", async () => {

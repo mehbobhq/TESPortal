@@ -178,14 +178,27 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     return { result, sessionToken, csrfToken, view };
   }
 
-  /** Records the carrier's review of every submitted application: verified where nothing relies on an unapproved authorization, a documented exception where something does, then the Qualified decision. */
+  /**
+   * Records the carrier's review of every submitted application. Authorization wording is pending legal review in this repository, so a check that relies on one
+   * cannot be verified; the TEST simulates counsel's approval of the signed wording directly in the database (owner-level, trigger lifted for that one table).
+   */
   async function qualify(o: string, prospectId: string) {
     const { applications } = await K.rv.getApplicationReview({ organizationId: o, prospectId });
     for (const app of applications) {
-      for (const r of app.requirements.filter((x) => x.requiredForQualification)) {
-        await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: r.consentKey ? "EXCEPTION" : "VERIFIED", note: "Checked by the carrier (test)." });
+      const client = await pools.admin.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`ALTER TABLE public.driver_application_consents DISABLE TRIGGER USER`);
+        await client.query(`UPDATE public.driver_application_consents SET legal_status = 'APPROVED' WHERE application_id = $1`, [app.id]);
+        await client.query(`ALTER TABLE public.driver_application_consents ENABLE TRIGGER USER`);
+        await client.query("COMMIT");
+      } finally {
+        client.release();
       }
-      await K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["Reviewed"], acknowledgeExceptions: true, acknowledgeReviewRequirements: true });
+      for (const r of app.requirements.filter((x) => x.requiredForQualification)) {
+        await K.rv.recordVerification({ organizationId: o, applicationId: app.id, requirementKey: r.key, status: "VERIFIED", note: "Checked by the carrier (test)." });
+      }
+      await K.rv.recordDecision({ organizationId: o, applicationId: app.id, decision: "QUALIFIED", reasons: ["Reviewed"], acknowledgeReviewRequirements: true });
     }
   }
 

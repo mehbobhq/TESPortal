@@ -24,6 +24,8 @@ export interface CreateProspectInput {
   phone?: string
 }
 
+import type { OnboardingProgress } from "./onboarding-stages"
+
 export interface ProspectView {
   prospectId: string
   personId: string
@@ -36,6 +38,8 @@ export interface ProspectView {
   createdAt: string
   statusChangedAt: string
   convertedRelationshipId: string | null
+  /** Stage chronology derived from recorded events. */
+  onboarding: OnboardingProgress
   invitation: { invitationId: string; status: InvitationStatus; sentAt: string | null; expiresAt: string; deliveryFailed: boolean } | null
   /** Whether a "Send application" action is possible, and why not. */
   canInvite: boolean

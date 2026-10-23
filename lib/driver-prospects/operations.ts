@@ -1,3 +1,4 @@
+import { deriveOnboarding, type ProspectEventRow } from "./onboarding-stages"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import type { PoolClient } from "pg"
 import { requireAdditionalSystemCapability, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
@@ -195,14 +196,25 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
             n.given_name, n.family_name,
             (SELECT c.value_display FROM public.person_channels c WHERE c.person_id = p.person_id AND c.channel_type = 'EMAIL' AND c.record_status = 'active' AND c.effective_to IS NULL ORDER BY c.is_preferred DESC, c.created_at LIMIT 1) AS email,
             (SELECT c.value_display FROM public.person_channels c WHERE c.person_id = p.person_id AND c.channel_type = 'PHONE' AND c.record_status = 'active' AND c.effective_to IS NULL ORDER BY c.is_preferred DESC, c.created_at LIMIT 1) AS phone,
-            i.id AS invitation_id, i.status AS invitation_status, i.sent_at, i.expires_at
+            i.id AS invitation_id, i.status AS invitation_status, i.sent_at, i.expires_at, rel.status AS relationship_status
        FROM public.driver_prospects p
+       LEFT JOIN public.organization_driver_relationships rel ON rel.id = p.converted_relationship_id
        LEFT JOIN public.person_name_versions n ON n.person_id = p.person_id AND n.record_status = 'active' AND n.effective_to IS NULL
        LEFT JOIN LATERAL (SELECT * FROM public.driver_application_invitations x WHERE x.prospect_id = p.id ORDER BY x.created_at DESC LIMIT 1) i ON true
       WHERE p.organization_id = $1
       ORDER BY p.created_at DESC, p.id`,
     [organizationId],
   )
+  const eventRows = await ctx.client.query<{ prospect_id: string; event_type: string; to_status: string | null; occurred_at: Date }>(
+    `SELECT prospect_id, event_type, to_status, occurred_at FROM public.driver_prospect_events WHERE organization_id = $1 ORDER BY occurred_at, id`,
+    [organizationId],
+  )
+  const eventsByProspect = new Map<string, ProspectEventRow[]>()
+  for (const e of eventRows.rows) {
+    const list = eventsByProspect.get(e.prospect_id) ?? []
+    list.push({ eventType: e.event_type, toStatus: e.to_status, occurredAt: new Date(e.occurred_at).toISOString() })
+    eventsByProspect.set(e.prospect_id, list)
+  }
   return r.rows.map((row) => {
     const live = LIVE_STATUSES.slice(0, 2).includes(row.status)
     const blocked = !live ? "Applications can be sent only while the prospect is a prospect or has an invitation out." : !row.email ? "Add an email address to send an application." : null
@@ -218,6 +230,7 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
       createdAt: new Date(row.created_at).toISOString(),
       statusChangedAt: new Date(row.status_changed_at).toISOString(),
       convertedRelationshipId: row.converted_relationship_id,
+      onboarding: deriveOnboarding({ status: row.status, relationshipStatus: row.relationship_status ?? null, events: eventsByProspect.get(row.id) ?? [] }),
       invitation: row.invitation_id
         ? { invitationId: row.invitation_id, status: row.invitation_status as InvitationStatus, sentAt: row.sent_at ? new Date(row.sent_at).toISOString() : null, expiresAt: new Date(row.expires_at).toISOString(), deliveryFailed: row.invitation_status === "FAILED" }
         : null,

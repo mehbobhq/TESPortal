@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 
+import { ProspectDriverDetail } from "../prospect-detail"
 import { DriverWorkspace } from "@/src/components/drivers/DriverWorkspace"
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
 import { PrototypeBrowserDataIndicator } from "@/src/components/shared/PrototypeBrowserDataIndicator"
@@ -236,7 +237,9 @@ const allDriversCohort = companyStore.relationships
 
 
 export default function DriverPage(props: DriverPageProps) {
-  const { id: companyId } = use(props.params)
+  const { id: companyId, driverId } = use(props.params)
+  // A driver who is still onboarding lives in PostgreSQL ("prospect-<id>"); every other driver id takes the unchanged path below.
+  if (driverId.startsWith("prospect-")) return <ProspectDriverDetail companyId={companyId} prospectId={driverId.slice("prospect-".length)} />
   return (
     <LegacyWorkspaceGate
       single

@@ -4,15 +4,12 @@ import { useParams } from "next/navigation"
 
 import { LegacyWorkspaceGate } from "@/src/components/shared/LegacyWorkspaceGate"
 import LegacyDriversPage from "./legacy-drivers"
-import { DriverProspects } from "./driver-prospects"
 
 // One user-facing Drivers interface: the original detailed workspace. The canonical workspace stays in ./canonical-drivers.tsx (not rendered).
 export default function DriversPage(props: { params: Promise<{ id: string }> }) {
   const params = useParams()
   const companyId = params.id as string
   return (
-    <>
-    <div className="mb-6"><DriverProspects companyId={companyId} /></div>
     <LegacyWorkspaceGate
       single
       companyId={companyId}
@@ -21,6 +18,5 @@ export default function DriversPage(props: { params: Promise<{ id: string }> }) 
     >
       <LegacyDriversPage params={props.params} />
     </LegacyWorkspaceGate>
-    </>
   )
 }

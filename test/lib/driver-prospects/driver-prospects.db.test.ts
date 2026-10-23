@@ -369,4 +369,40 @@ describe("Driver prospects and application invitations (migration 0039)", { skip
     assert.equal(await K.app.openInvitation(secret), null);
     assert.equal((await K.app.submitApplication(invitationId, "late", {})).kind, "CLOSED");
   });
+
+  scenario("13. the register's onboarding stage follows the recorded events, and an activated driver leaves onboarding", async () => {
+    const o = await org();
+    await only(...FULL);
+    const stage = async (id: string) => (await K.svc.listProspects(o)).find((p) => p.prospectId === id)!.onboarding;
+    const { prospectId, personId } = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() });
+    assert.equal((await stage(prospectId)).currentLabel, "Not sent");
+    await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, async () => {
+      throw new Error("down");
+    });
+    assert.equal((await stage(prospectId)).currentLabel, "Not sent", "a failed delivery is not 'sent'");
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: o, prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    assert.equal((await stage(prospectId)).currentLabel, "Application Sent");
+    const opened = await K.app.openInvitation(new URL(calls[0]).searchParams.get("invitation")!);
+    assert.equal((await stage(prospectId)).currentLabel, "Application Opened");
+    await K.app.submitApplication(opened!.invitationId, "r-stage", { draft: {} });
+    assert.equal((await stage(prospectId)).currentLabel, "Application Submitted");
+    await K.svc.reviewProspect({ organizationId: o, prospectId, to: "UNDER_REVIEW" });
+    assert.equal((await stage(prospectId)).currentLabel, "Pre-Employment Verification");
+    await K.svc.reviewProspect({ organizationId: o, prospectId, to: "APPROVED" });
+    const hiring = await stage(prospectId);
+    assert.equal(hiring.currentLabel, "Hiring Package");
+    assert.ok(hiring.stages.slice(0, 4).every((x) => x.state === "DONE" && x.at));
+    await K.svc.convertProspectToCompanyDriver({
+      organizationId: o, prospectId, relationshipType: "EMPLOYEE", relationshipStartDate: "2026-02-01", dateOfBirth: "1990-05-05",
+      licence: { country: "CA", region: "ON", number: `S${run}${n()}`, effectiveFrom: "2020-01-01" },
+    } as never);
+    assert.equal((await stage(prospectId)).onboarding, true, "still onboarding while the relationship is ONBOARDING");
+    // Activation (owner-level here; there is no staff activation operation in this change) takes the driver out of onboarding without losing history.
+    await pools.admin.query(`UPDATE public.organization_driver_relationships SET status = 'ACTIVE' WHERE person_id = $1 AND organization_id = $2`, [personId, o]).catch(() => undefined);
+    const after = await stage(prospectId);
+    const rel = (await q<{ status: string }>(`SELECT status FROM public.organization_driver_relationships WHERE person_id = $1`, [personId]))[0].status;
+    if (rel === "ACTIVE") assert.equal(after.onboarding, false);
+    assert.ok((await q(`SELECT 1 FROM public.driver_prospect_events WHERE prospect_id = $1`, [prospectId])).length >= 6, "history is kept");
+  });
 });

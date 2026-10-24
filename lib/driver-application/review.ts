@@ -382,3 +382,10 @@ export async function saveHrProfile(ctx: ProspectContext, input: { organizationI
   return { version }
 }
 
+
+/** The few facts the dossier needs that the review payload does not carry: the frozen plan and the carrier's name. */
+export async function loadDossierContext(ctx: ProspectContext, organizationId: string, applicationId: string) {
+  const app = await loadApplication(ctx, uuid(organizationId, "organizationId"), uuid(applicationId, "applicationId"))
+  const org = await ctx.client.query<{ name: string | null }>(`SELECT coalesce(display_name, legal_name) AS name FROM public.organizations WHERE id = $1`, [organizationId])
+  return { plan: app.plan, planSha256: app.plan_sha256, companyName: org.rows[0]?.name ?? "Hiring carrier" }
+}

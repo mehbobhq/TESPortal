@@ -268,6 +268,14 @@ describe("Universal driver application: end-to-end gate (migration 0041)", { ski
     for (const wanted of ["DRIVER_APPLICATION_SESSION_OPEN", "DRIVER_APPLICATION_UPLOAD", "DRIVER_APPLICATION_CONSENT_ACCEPT", "DRIVER_APPLICATION_SUBMIT", "DRIVER_APPLICATION_PDF_GENERATED"]) assert.ok(byApplicant.has(wanted), `applicant-attributed Master Register entry ${wanted}`);
     assert.ok(ops.some((e) => e.actor_id === staff.actorId), "staff actions (evidence finalize / view) are attributed to the staff actor");
     assert.equal((await q(`SELECT 1 FROM public.evidence_documents WHERE organization_id = $1 AND document_type = 'DRIVER_APPLICATION_PDF'`, [o])).length, 1);
+
+    // 11. carrier dossier: the original declaration plus a separate review record, generated on demand for a reader with DRIVER_READ.
+    const dossier = await K.rv.getCarrierDossierPdf({ organizationId: o, prospectId: p.prospectId, applicationId: app.id });
+    assert.equal(dossier.receiptId, first.receiptId);
+    if (K.pdfText.hasPdftotext) {
+      const dtext = K.pdfText.pdfText(dossier.bytes).replace(/\s+/g, " ");
+      for (const must of ["Driver Application Dossier", "Pat Synthetic", "Carrier review record", "Evidence register", "Audit provenance", "Application submitted and signed", "NO DECISION RECORDED"]) assert.ok(dtext.includes(must), `dossier contains "${must}"`);
+    }
   });
 
   const SCENARIOS: Array<{ name: string; country: "US" | "CA"; scope: Record<string, unknown>; us: boolean; ca: boolean; years: number; clearinghouse: boolean }> = [
@@ -317,9 +325,9 @@ describe("Universal driver application: end-to-end gate (migration 0041)", { ski
       assert.equal(app.consents.every((c) => c.legalStatus !== "APPROVED"), true);
       // The PDF states the scenario and never prints a restricted identifier.
       const bytes = [...port.stages.quarantine.values()].flat().find((x) => createHash("sha256").update(x.bytes).digest("hex") === pdf!.sha256)!.bytes;
-      const text = K.pdfText.pdfText(bytes);
+      const text = K.pdfText.pdfText(bytes).replace(/\s+/g, " ");
       if (K.pdfText.hasPdftotext) {
-        assert.ok(/Operating scope/.test(text) && text.includes(sc.us && sc.ca ? "United States and Canada" : sc.us ? "United States" : "Canada"));
+        assert.ok(/Operating scope/i.test(text) && text.includes(sc.us && sc.ca ? "United States and Canada" : sc.us ? "United States" : "Canada"));
         assert.ok(!/\b\d{3}-?\d{2}-?\d{4}\b/.test(text));
       }
       if (OUT) (await import("node:fs")).writeFileSync(`${OUT}/scenario-${sc.name.replace(/[^a-z]+/gi, "-").toLowerCase()}.pdf`, bytes);

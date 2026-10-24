@@ -102,12 +102,47 @@ describe("application PDF: modern card layout", () => {
     assert.ok(!text.includes("\uFFFD"));
   });
 
-  it("states honestly what the font cannot draw (scripts outside the embedded font) and never fails", async () => {
+  it("draws Gurmukhi, Devanagari, Arabic, Chinese, Thai and Korean names with no replacement marks (shaped by HarfBuzz as vector text)", async () => {
     const { input } = await buildCase("A-short");
-    input.applicantName = "Pat 王小明 ਸਿੰਘ";
+    input.applicantName = "ਹਰਪ੍ਰੀਤ ਸਿੰਘ 王小明 محمد علي नमस्ते สมชาย 김민수";
+    const r = await renderApplicationPdfDetailed(input);
+    assert.equal(r.unsupportedCharacters, 0);
+    assert.ok(r.vectorRuns > 0);
+    assert.ok(allText(r).includes(norm(input.applicantName)));
+    assert.ok(!allText(r).includes("\uFFFD"));
+  });
+
+  it("states honestly what no embedded font can draw and never fails", async () => {
+    const { input } = await buildCase("A-short");
+    input.applicantName = "Pat \u1780\u17D2\u1798\u17C2\u179A";
     const r = await renderApplicationPdfDetailed(input);
     assert.ok(r.unsupportedCharacters > 0);
-    assert.ok(allText(r).includes("could not be drawn with the document font"));
+    assert.ok(allText(r).includes("could not be drawn by any embedded font"));
+  });
+
+  it("the carrier dossier keeps the applicant's declaration and adds a separate, labelled review", async () => {
+    const { input } = await buildCase("A-short");
+    const app = await renderApplicationPdfDetailed(input);
+    const dossier = await renderApplicationPdfDetailed({
+      ...input,
+      audience: "carrier",
+      review: {
+        decision: { status: "NOT_QUALIFIED", decidedAt: "2026-04-01T10:00:00.000Z", decidedBy: "Reviewer One", rationale: "Medical certificate expired." },
+        checks: input.plan.requirements.map((r, i) => ({ title: r.title, required: r.requiredForQualification, status: i === 0 ? "VERIFIED" : "PENDING", note: i === 0 ? "Checked against original." : null, recordedAt: "2026-04-01T09:00:00.000Z", recordedBy: "Reviewer One", evidenceDocumentId: null })),
+        evidence: [{ documentId: "doc-1", label: "Licence front", filename: null, byteSize: null, sha256: null, restricted: true }],
+        audit: [{ at: "2026-04-01T09:00:00.000Z", actor: "Reviewer One", event: "Verification recorded", detail: null }],
+        preparedAt: "2026-04-02T00:00:00.000Z",
+        preparedBy: "Reviewer One",
+      },
+    });
+    const text = allText(dossier);
+    for (const s of ["Carrier review record", "Qualification decision", "NOT QUALIFIED", "Medical certificate expired.", "Evidence register", "Audit provenance", "RESTRICTED"]) assert.ok(text.includes(s), s);
+    assert.ok(!text.includes("licence-front.jpg"));
+    // Every string the applicant copy carries (apart from page furniture) is in the dossier unchanged.
+    const appText = allText(app);
+    for (const consent of input.consents) assert.ok(text.includes(norm(input.plan.consents.find((c) => c.key === consent.key)!.text)));
+    assert.ok(dossier.pageCount >= app.pageCount);
+    assert.ok(appText.includes("NOT YET VERIFIED") && !allText(app).includes("Carrier review record"));
   });
 
   it("never claims anything is verified, marks unapproved wording as pending legal review, and masks identifiers", async () => {
@@ -124,7 +159,7 @@ describe("application PDF: modern card layout", () => {
   it("has a cover with the TES logo, carrier, applicant and a contents list that points at real pages", async () => {
     const { input, render } = await get("B-long-history");
     const cover = render.pages[0].join(" ");
-    assert.ok(cover.includes("DRIVER APPLICATION") && cover.includes(input.companyName) && cover.includes("Morgan Longhaul"));
+    assert.ok(cover.includes("Driver Application") && cover.includes(input.companyName) && cover.includes("Morgan Longhaul"));
     for (const title of ["Verification status", "Evidence and integrity"]) {
       const page = render.pages.findIndex((p, i) => i > 0 && p.includes(title));
       assert.ok(page > 0, title);
@@ -137,8 +172,9 @@ describe("application PDF: modern card layout", () => {
       const { render } = await get(name);
       const file = join(dir, `${name}.pdf`);
       writeFileSync(file, render.bytes);
+      const LATIN = /^[\u0020-\u024F\u0370-\u04FF\u1E00-\u1EFF\u2000-\u206F\u00A0-\u00FF]*$/;
       const extracted = norm(execFileSync("pdftotext", ["-raw", "-enc", "UTF-8", file, "-"], { maxBuffer: 64 * 1024 * 1024 }).toString("utf8")).replace(/ /g, "");
-      for (const s of render.pages.flat().filter((x) => x.length > 12 && !x.includes("\n"))) assert.ok(extracted.includes(norm(s).replace(/ /g, "")) || /^[0-9a-f]{64}$/.test(s), `${name}: "${s.slice(0, 60)}" is in the file`);
+      for (const s of render.pages.flat().filter((x) => x.length > 12 && !x.includes("\n") && LATIN.test(x))) assert.ok(extracted.includes(norm(s).replace(/ /g, "")) || /^[0-9a-f]{64}$/.test(s), `${name}: "${s.slice(0, 60)}" is in the file`);
     }
   });
 

@@ -1,21 +1,25 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import fontkit from "@pdf-lib/fontkit"
-import { PDFDocument, PDFFont, PDFImage, PDFPage, StandardFonts, rgb } from "pdf-lib"
+import { LineCapStyle, PDFDocument, PDFImage, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib"
 import type { ApplicationPlan, PlanConsent, PlanField } from "../plan"
 import type { ApplicationSnapshot } from "../snapshot"
 import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
+import { ICONS, type IconName } from "./icons"
+import { TextEngine, type Weight } from "./text"
 
 /**
- * Deterministic application PDF ("modern card layout").
+ * Deterministic application PDF ("modern card layout", art-directed).
  *
- * The same snapshot, plan and consent records always produce the same bytes: no clock, no random ids, fixed metadata dates (the submission time), embedded
- * (subset) Inter fonts with a fixed name, no object streams. The PDF reproduces the APPLICANT-DECLARED snapshot; it never states that anything was verified,
- * masks sensitive identifiers, and gives each authorization its own page(s) with the exact text, its SHA-256, the signature and the legal status.
- * Pagination is dynamic: sections, cards and tables break across pages with repeating headers and a "Page n of N" footer, and headings are never orphaned.
+ * The same snapshot, plan, consent and review records always produce the same bytes: no clock, no random ids, fixed metadata dates (the submission time),
+ * embedded Inter fonts with a fixed name, no object streams. Two documents come from one canonical record:
+ *   - the APPLICANT copy: the applicant's declarations, authorizations and signatures, nothing verified;
+ *   - the CARRIER dossier: the same original application, unchanged, followed by a separately identified carrier review (verification results,
+ *     qualification decision, evidence references and audit provenance). The review never alters or restates what the applicant declared.
+ * Pagination is dynamic: panels, timelines and cards break across pages with repeated headers, headings are never orphaned and nothing is clipped.
  */
 
-export const PDF_GENERATOR_VERSION = "tes-driver-application-pdf/2"
+export const PDF_GENERATOR_VERSION = "tes-driver-application-pdf/3"
 
 export interface PdfConsentRecord {
   key: string
@@ -26,6 +30,24 @@ export interface PdfConsentRecord {
   legalStatus: string
   jurisdiction: string | null
   purpose: string
+}
+
+/** The carrier's review of a submitted application. Supplied only to callers permitted to see it; restricted items arrive flagged and without detail. */
+export interface PdfReview {
+  decision: { status: string; decidedAt: string | null; decidedBy: string | null; rationale: string | null } | null
+  checks: Array<{
+    title: string
+    required: boolean
+    status: string
+    note: string | null
+    recordedAt: string | null
+    recordedBy: string | null
+    evidenceDocumentId: string | null
+  }>
+  evidence: Array<{ documentId: string; label: string; filename: string | null; byteSize: number | null; sha256: string | null; restricted: boolean }>
+  audit: Array<{ at: string; actor: string; event: string; detail: string | null }>
+  preparedAt: string
+  preparedBy: string
 }
 
 export interface PdfInput {
@@ -41,6 +63,9 @@ export interface PdfInput {
   consents: PdfConsentRecord[]
   /** The TES logo (PNG bytes). The PDF is identical for identical inputs including this one. */
   logoPng?: Uint8Array | null
+  /** "applicant" (default): the applicant's copy. "carrier": the dossier, which also carries `review`. */
+  audience?: "applicant" | "carrier"
+  review?: PdfReview | null
 }
 
 export interface PdfRender {
@@ -48,12 +73,14 @@ export interface PdfRender {
   pageCount: number
   /** Every logical string drawn, per page, after font sanitising (not wrapped). Used to prove the PDF carries the whole snapshot. */
   pages: string[][]
-  /** Characters the embedded font cannot draw (shown as the replacement mark); the stored snapshot keeps the exact text. */
+  /** Characters that no embedded font can draw (shown as the replacement mark); the stored snapshot keeps the exact text. */
   unsupportedCharacters: number
+  /** Number of text runs drawn as vector outlines (complex scripts); those are not selectable or extractable. */
+  vectorRuns: number
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// Fonts
+// Fonts and tokens
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
 const FONT_DIR = join(process.cwd(), "lib", "driver-application", "pdf", "fonts")
@@ -61,82 +88,105 @@ let fontBytes: Promise<{ regular: Buffer; semibold: Buffer; bold: Buffer }> | nu
 const loadFontBytes = () =>
   (fontBytes ??= Promise.all([readFile(join(FONT_DIR, "Inter-Regular.ttf")), readFile(join(FONT_DIR, "Inter-SemiBold.ttf")), readFile(join(FONT_DIR, "Inter-Bold.ttf"))]).then(([regular, semibold, bold]) => ({ regular, semibold, bold })))
 
-// ---------------------------------------------------------------------------------------------------------------------------------------
-// Design tokens
-// ---------------------------------------------------------------------------------------------------------------------------------------
-
 const W = 612
 const H = 792
 const MX = 48
 const CW = W - 2 * MX
-const TOP = 70
-const BOTTOM = 58
+const TOP = 80
+const BOTTOM = 62
+const PAGE_CAP = H - TOP - BOTTOM
 
-const NAVY = rgb(0.043, 0.122, 0.267)
-const BLUE = rgb(0.114, 0.306, 0.847)
-const BLUE_SOFT = rgb(0.918, 0.945, 0.992)
-const BLUE_LINE = rgb(0.80, 0.86, 0.95)
-const INK = rgb(0.059, 0.09, 0.165)
-const MUTED = rgb(0.337, 0.4, 0.49)
-const ROW_A = rgb(0.972, 0.982, 0.997)
-const WHITE = rgb(1, 1, 1)
-const AMBER_BG = rgb(1, 0.969, 0.878)
-const AMBER_LINE = rgb(0.91, 0.72, 0.32)
-const AMBER = rgb(0.47, 0.21, 0.06)
+const hex = (h: string): RGB => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255)
+const NAVY = hex("#0B1F44")
+const NAVY_2 = hex("#12306A")
+const BLUE = hex("#1D4ED8")
+const BLUE_SOFT = hex("#EAF2FF")
+const BLUE_LINE = hex("#D2DFF3")
+const BLUE_MID = hex("#9DB8E8")
+const INK = hex("#0F172A")
+const MUTED = hex("#56657D")
+const PAPER = hex("#F6F9FE")
+const WHITE = hex("#FFFFFF")
+const AMBER_BG = hex("#FFF7E0")
+const AMBER_LINE = hex("#E8B852")
+const AMBER = hex("#7A3508")
+const GREEN_BG = hex("#E8F8EF")
+const GREEN_LINE = hex("#7BC9A0")
+const GREEN = hex("#0B6B3A")
+const RED_BG = hex("#FDECEC")
+const RED_LINE = hex("#E49A9A")
+const RED = hex("#9B1C1C")
+const GRAY_BG = hex("#EEF1F6")
+const GRAY_LINE = hex("#C5CEDC")
 
-type Tone = "info" | "warn"
-
-interface Fonts {
-  r: PDFFont
-  s: PDFFont
-  b: PDFFont
-  m: PDFFont
-  supported: Set<number>
+type Tone = "info" | "warn" | "ok" | "bad" | "neutral" | "navy" | "blue"
+const TONES: Record<Tone, { bg: RGB; line: RGB | null; fg: RGB }> = {
+  info: { bg: BLUE_SOFT, line: BLUE_LINE, fg: NAVY },
+  warn: { bg: AMBER_BG, line: AMBER_LINE, fg: AMBER },
+  ok: { bg: GREEN_BG, line: GREEN_LINE, fg: GREEN },
+  bad: { bg: RED_BG, line: RED_LINE, fg: RED },
+  neutral: { bg: GRAY_BG, line: GRAY_LINE, fg: MUTED },
+  navy: { bg: NAVY, line: null, fg: WHITE },
+  blue: { bg: BLUE, line: null, fg: WHITE },
 }
 
-const REPLACEMENT = "�"
-
-class Sanitizer {
-  unsupported = 0
-  readonly supported: Set<number>
-  constructor(supported: Set<number>) {
-    this.supported = supported
-  }
-  clean(text: string): string {
-    let out = ""
-    for (const ch of String(text ?? "").normalize("NFC")) {
-      if (ch === "\n") out += "\n"
-      else if (ch === "\t") out += "  "
-      else {
-        const code = ch.codePointAt(0)!
-        if (code < 0x20 || code === 0x7f || (code >= 0x80 && code < 0xa0) || code === 0xfeff || (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e)) continue
-        if (this.supported.has(code)) out += ch
-        else {
-          this.unsupported += 1
-          out += this.supported.has(0xfffd) ? REPLACEMENT : "?"
-        }
-      }
-    }
-    return out
-  }
+const SECTION_ICON: Record<string, IconName> = {
+  identity: "user",
+  address: "mapPin",
+  licence: "idCard",
+  experience: "truck",
+  employment: "briefcase",
+  eligibility: "clipboard",
+  documents: "paperclip",
+  authorizations: "penLine",
 }
+const sectionIcon = (id: string): IconName => SECTION_ICON[id] ?? "fileText"
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Layout engine
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
+interface Unit {
+  h: number
+  draw: (x: number, yTop: number, w: number) => void
+  /** Must stay on the same page as the unit after it. */
+  keep?: boolean
+  /** Continues the unit above (long text split into pieces): no divider is drawn between them. */
+  cont?: boolean
+}
+
+interface PanelSpec {
+  kicker?: string
+  title?: string
+  icon?: IconName
+  chip?: { text: string; tone: Tone }
+  theme?: "light" | "dark" | "amber" | "plain"
+  accent?: RGB
+  inset?: number
+  /** Allow the panel to start mid-page and flow even when it would fit whole on a fresh page. */
+  flow?: boolean
+  onChunk?: (c: { top: number; bottom: number; first: boolean; last: boolean }) => void
+}
+
+interface Field {
+  label: string
+  value: string
+  yn?: boolean
+  mono?: boolean
+}
+
 class Layout {
   doc!: PDFDocument
-  f!: Fonts
-  san!: Sanitizer
+  t!: TextEngine
   logo: PDFImage | null = null
   page!: PDFPage
   pages: PDFPage[] = []
   manifest: string[][] = []
   y = 0
   contents: Array<{ title: string; page: number }> = []
+  private cleaned = new Map<string, string>()
 
-  async init(meta: { title: string; subject: string; date: Date; logo?: Uint8Array | null }) {
+  async init(meta: { title: string; subject: string; date: Date; logo?: Uint8Array | null; scanText: string }) {
     this.doc = await PDFDocument.create({ updateMetadata: false })
     this.doc.registerFontkit(fontkit)
     this.doc.setTitle(meta.title)
@@ -152,10 +202,20 @@ class Layout {
     const s = await this.doc.embedFont(bytes.semibold, { subset: false, customName: "TESInter-SemiBold" })
     const b = await this.doc.embedFont(bytes.bold, { subset: false, customName: "TESInter-Bold" })
     const m = await this.doc.embedFont(StandardFonts.Courier)
-    const supported = new Set<number>(r.getCharacterSet())
-    this.f = { r, s, b, m, supported }
-    this.san = new Sanitizer(supported)
+    this.t = new TextEngine({ r, s, b }, m)
+    await this.t.prepare(meta.scanText)
     if (meta.logo) this.logo = await this.doc.embedPng(meta.logo).catch(() => null)
+  }
+
+  /** Cleans once per distinct string so the unsupported-character count is not inflated by measuring and drawing the same text. */
+  clean(text: string): string {
+    const key = String(text ?? "")
+    let hit = this.cleaned.get(key)
+    if (hit === undefined) {
+      hit = this.t.clean(key)
+      this.cleaned.set(key, hit)
+    }
+    return hit
   }
 
   get index() {
@@ -168,280 +228,435 @@ class Layout {
     this.y = H - TOP
     return this.page
   }
+  atTop() {
+    return this.y >= H - TOP - 0.5
+  }
   need(h: number) {
-    if (this.y - h < BOTTOM) this.newPage()
+    if (this.y - h < BOTTOM && !this.atTop()) this.newPage()
   }
   note(text: string) {
-    this.manifest[this.index].push(text)
+    if (text) this.manifest[this.index].push(text)
   }
 
-  wrap(text: string, font: PDFFont, size: number, width: number): string[] {
-    const lines: string[] = []
-    for (const paragraph of text.split("\n")) {
-      if (paragraph.trim() === "") {
-        lines.push("")
-        continue
-      }
-      let line = ""
-      for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-        let w = word
-        while (font.widthOfTextAtSize(w, size) > width) {
-          let cut = w.length
-          while (cut > 1 && font.widthOfTextAtSize(w.slice(0, cut), size) > width) cut -= 1
-          if (line) {
-            lines.push(line)
-            line = ""
-          }
-          lines.push(w.slice(0, cut))
-          w = w.slice(cut)
-        }
-        const candidate = line ? `${line} ${w}` : w
-        if (font.widthOfTextAtSize(candidate, size) <= width) line = candidate
-        else {
-          lines.push(line)
-          line = w
-        }
-      }
-      lines.push(line)
-    }
-    return lines
+  // ---- text ---------------------------------------------------------------------------------------------------------------------------
+  lines(text: string, weight: Weight, size: number, width: number): string[] {
+    return this.t.wrap(this.clean(text), weight, size, width)
   }
-
-  /** Draws pre-wrapped lines at a fixed position (no page logic). */
-  drawLines(lines: string[], x: number, yTop: number, font: PDFFont, size: number, color = INK, lh = size * 1.4) {
+  textHeight(text: string, weight: Weight, size: number, width: number, lh = size * 1.4) {
+    return Math.max(1, this.lines(text, weight, size, width).length) * lh
+  }
+  /** Draws pre-wrapped lines; top of the first line at yTop. */
+  drawLines(lines: string[], x: number, yTop: number, weight: Weight, size: number, color: RGB, lh = size * 1.4) {
     let y = yTop
     for (const line of lines) {
-      if (line) this.page.drawText(line, { x, y: y - size, size, font, color })
+      if (line) this.t.draw(this.page, line, x, y - (lh - size) / 2 - size * 0.8, weight, size, color, H)
       y -= lh
     }
   }
-
-  measure(text: string, font: PDFFont, size: number, width: number, lh = size * 1.4) {
-    const lines = this.wrap(this.san.clean(text), font, size, width)
-    return { lines, height: Math.max(1, lines.length) * lh }
+  /** Wraps, draws and notes text in one go (the caller has made room). Returns the height used. */
+  put(text: string, x: number, yTop: number, width: number, weight: Weight, size: number, color: RGB, lh = size * 1.4, align: "left" | "right" | "center" = "left"): number {
+    const lines = this.lines(text, weight, size, width)
+    if (align === "left") this.drawLines(lines, x, yTop, weight, size, color, lh)
+    else {
+      let y = yTop
+      for (const line of lines) {
+        const w = this.t.width(line, weight, size)
+        this.t.draw(this.page, line, align === "right" ? x + width - w : x + (width - w) / 2, y - (lh - size) / 2 - size * 0.8, weight, size, color, H)
+        y -= lh
+      }
+    }
+    this.note(lines.filter(Boolean).join(" "))
+    return Math.max(1, lines.length) * lh
+  }
+  /** Single line placed by its left edge, with the text baseline derived from the top of a cap-height box. */
+  label(text: string, x: number, yTop: number, weight: Weight, size: number, color: RGB) {
+    const clean = this.clean(text)
+    this.t.draw(this.page, clean, x, yTop - size * 0.82, weight, size, color, H)
+    this.note(clean)
+    return this.t.width(clean, weight, size)
+  }
+  width(text: string, weight: Weight, size: number) {
+    return this.t.width(this.clean(text), weight, size)
   }
 
-  /** A paragraph that may flow across pages. */
-  paragraph(text: string, o: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; x?: number; width?: number; gap?: number; lh?: number } = {}) {
+  // ---- shapes -------------------------------------------------------------------------------------------------------------------------
+  svg(d: string, o: { fill?: RGB; stroke?: RGB; sw?: number; opacity?: number }) {
+    this.page.drawSvgPath(d, {
+      x: 0,
+      y: H,
+      ...(o.fill ? { color: o.fill, opacity: o.opacity ?? 1 } : {}),
+      ...(o.stroke ? { borderColor: o.stroke, borderWidth: o.sw ?? 0.8, borderOpacity: o.opacity ?? 1 } : {}),
+      ...(!o.fill && !o.stroke ? { color: WHITE, opacity: 0 } : {}),
+    })
+  }
+  /** Rounded rectangle; top-left at (x, yTop) in page coordinates. */
+  rr(x: number, yTop: number, w: number, h: number, r: number, fill?: RGB, stroke?: RGB, sw = 0.8, corners: "all" | "top" = "all", opacity = 1) {
+    const t = H - yTop
+    const b = t + h
+    const rb = corners === "all" ? r : 0
+    const d = `M ${x + r} ${t} L ${x + w - r} ${t} A ${r} ${r} 0 0 1 ${x + w} ${t + r} L ${x + w} ${b - rb} ${rb ? `A ${rb} ${rb} 0 0 1 ${x + w - rb} ${b}` : ""} L ${x + rb} ${b} ${rb ? `A ${rb} ${rb} 0 0 1 ${x} ${b - rb}` : ""} L ${x} ${t + r} A ${r} ${r} 0 0 1 ${x + r} ${t} Z`
+    this.svg(d, { fill, stroke, sw, opacity })
+  }
+  rect(x: number, yTop: number, w: number, h: number, fill: RGB, opacity = 1) {
+    this.page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: fill, opacity })
+  }
+  hline(x1: number, x2: number, y: number, color = BLUE_LINE, thickness = 0.6) {
+    this.page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness, color })
+  }
+  circle(cx: number, cy: number, r: number, fill: RGB, stroke?: RGB, sw = 1) {
+    this.page.drawCircle({ x: cx, y: cy, size: r, color: fill, ...(stroke ? { borderColor: stroke, borderWidth: sw } : {}) })
+  }
+  poly(points: Array<[number, number]>, fill: RGB, opacity = 1) {
+    this.svg(`M ${points.map(([px, py]) => `${px} ${H - py}`).join(" L ")} Z`, { fill, opacity })
+  }
+  icon(name: IconName, x: number, yTop: number, size: number, color: RGB, sw = 2) {
+    for (const d of ICONS[name]) {
+      this.page.drawSvgPath(d, { x, y: yTop, scale: size / 24, borderColor: color, borderWidth: sw, borderLineCap: LineCapStyle.Round })
+    }
+  }
+  /** Icon on a soft rounded tile. */
+  iconTile(name: IconName, x: number, yTop: number, size: number, fg: RGB = BLUE, bg: RGB = BLUE_SOFT) {
+    this.rr(x, yTop, size, size, size * 0.28, bg)
+    const s = size * 0.58
+    this.icon(name, x + (size - s) / 2, yTop - (size - s) / 2, s, fg, 2)
+  }
+
+  chipWidth(text: string, withIcon = false) {
+    return this.width(text, "s", 7.2) + 14 + (withIcon ? 11 : 0)
+  }
+  chip(text: string, x: number, yTop: number, tone: Tone, icon?: IconName) {
+    const clean = this.clean(text)
+    const w = this.chipWidth(clean, Boolean(icon))
+    const c = TONES[tone]
+    this.rr(x, yTop, w, 16, 8, c.bg, c.line ?? undefined, 0.7)
+    let tx = x + 7
+    if (icon) {
+      this.icon(icon, x + 6, yTop - 3.5, 9, c.fg, 2.4)
+      tx += 11
+    }
+    this.t.draw(this.page, clean, tx, yTop - 11.2, "s", 7.2, c.fg, H)
+    this.note(clean)
+    return w
+  }
+
+  // ---- headings -----------------------------------------------------------------------------------------------------------------------
+  /** A section heading is never left alone at the bottom of a page: room for it plus `follow` points of content is required. */
+  sectionHeader(title: string, o: { number?: number; icon: IconName; follow?: number; intro?: string; dark?: boolean }) {
+    const introH = o.intro ? this.textHeight(o.intro, "r", 9, CW, 13) + 8 : 0
+    this.need(58 + introH + (o.follow ?? 110))
+    const clean = this.clean(title)
+    this.contents.push({ title: clean, page: this.index + 1 })
+    const top = this.y
+    const titleW = CW - 96
+    const lines = this.lines(clean, "b", 19, titleW)
+    const th = lines.length * 23
+    const bandH = Math.max(40, th + 14)
+    if (o.dark) {
+      this.rr(MX, top, CW, bandH, 9, NAVY)
+      if (o.number !== undefined) {
+        this.circle(MX + 26, top - bandH / 2, 13, BLUE)
+        const n = String(o.number)
+        this.t.draw(this.page, n, MX + 26 - this.t.width(n, "b", 11) / 2, top - bandH / 2 - 4, "b", 11, WHITE, H)
+      }
+      this.drawLines(lines, MX + 50, top - (bandH - th) / 2, "b", 19, WHITE, 23)
+      this.note(clean)
+      this.icon(o.icon, MX + CW - 36, top - bandH / 2 + 11, 22, BLUE_MID, 1.8)
+      this.y = top - bandH - 12
+    } else {
+      if (o.number !== undefined) {
+        this.circle(MX + 15, top - bandH / 2, 15, BLUE)
+        const n = String(o.number)
+        this.t.draw(this.page, n, MX + 15 - this.t.width(n, "b", 12) / 2, top - bandH / 2 - 4.2, "b", 12, WHITE, H)
+      }
+      this.drawLines(lines, MX + 40, top - (bandH - th) / 2, "b", 19, NAVY, 23)
+      this.note(clean)
+      this.iconTile(o.icon, MX + CW - 34, top - (bandH - 34) / 2, 34)
+      this.hline(MX, MX + CW, top - bandH - 4, BLUE_LINE, 1)
+      this.hline(MX, MX + 64, top - bandH - 4, BLUE, 2.2)
+      this.y = top - bandH - 14
+    }
+    if (o.intro) this.y -= this.put(o.intro, MX, this.y, CW, "r", 9, MUTED, 13) + 8
+  }
+
+  /** A sub-heading that must stay with the block after it. */
+  subheading(text: string, follow = 120, icon?: IconName) {
+    this.need(30 + follow)
+    const clean = this.clean(text)
+    let x = MX
+    if (icon) {
+      this.icon(icon, MX, this.y - 1, 15, BLUE, 2)
+      x += 22
+    }
+    this.label(clean, x, this.y - 2, "b", 11.5, NAVY)
+    this.y -= 22
+  }
+
+  paragraph(text: string, o: { size?: number; weight?: Weight; color?: RGB; x?: number; width?: number; gap?: number; lh?: number } = {}) {
     const size = o.size ?? 9.5
     const lh = o.lh ?? size * 1.45
-    const clean = this.san.clean(text)
-    const lines = this.wrap(clean, o.font ?? this.f.r, size, o.width ?? CW)
-    // Short paragraphs stay whole; longer ones never leave a single line behind (no widows or orphans).
+    const lines = this.lines(text, o.weight ?? "r", size, o.width ?? CW)
     if (lines.length <= 6) this.need(lines.length * lh)
     else {
       const fit = Math.floor((this.y - BOTTOM) / lh)
       if (fit < 2) this.newPage()
       else if (lines.length - fit === 1) this.need((lines.length - 1) * lh + 1000)
     }
-    this.note(clean)
+    let chunk: string[] = []
     for (const line of lines) {
-      this.need(lh)
-      if (line) this.page.drawText(line, { x: o.x ?? MX, y: this.y - size, size, font: o.font ?? this.f.r, color: o.color ?? INK })
+      if (this.y - lh < BOTTOM) {
+        this.note(chunk.filter(Boolean).join(" "))
+        chunk = []
+        this.newPage()
+      }
+      if (line) this.t.draw(this.page, line, o.x ?? MX, this.y - (lh - size) / 2 - size * 0.8, o.weight ?? "r", size, o.color ?? INK, H)
+      chunk.push(line)
       this.y -= lh
     }
+    this.note(chunk.filter(Boolean).join(" "))
     this.y -= o.gap ?? 0
   }
 
-  rect(x: number, yTop: number, w: number, h: number, fill: ReturnType<typeof rgb>, border?: ReturnType<typeof rgb>, opacity = 1) {
-    this.page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: fill, borderColor: border, borderWidth: border ? 0.6 : 0, opacity })
+  /** An outlined information box with an icon. */
+  infoBox(text: string, tone: "info" | "warn" = "info", title?: string) {
+    const w = CW - 52
+    const tH = title ? 16 : 0
+    const bh = this.textHeight(text, "r", 9, w, 13.2)
+    const h = bh + tH + 22
+    this.need(h + 8)
+    const c = TONES[tone]
+    this.rr(MX, this.y, CW, h, 8, tone === "warn" ? AMBER_BG : WHITE, tone === "warn" ? AMBER_LINE : BLUE, 1)
+    this.iconTile(tone === "warn" ? "alert" : "info", MX + 12, this.y - 12, 28, tone === "warn" ? AMBER : BLUE, tone === "warn" ? hex("#FFEDB8") : BLUE_SOFT)
+    if (title) this.label(title, MX + 48, this.y - 11, "b", 10, c.fg)
+    this.put(text, MX + 48, this.y - 11 - tH, w, "r", 9, tone === "warn" ? AMBER : INK, 13.2)
+    this.y -= h + 12
   }
 
-  chip(text: string, x: number, yTop: number, tone: Tone | "navy" | "blue") {
-    const size = 7.5
-    const clean = this.san.clean(text)
-    const tw = this.f.s.widthOfTextAtSize(clean, size)
-    const w = tw + 14
-    const bg = tone === "warn" ? AMBER_BG : tone === "navy" ? NAVY : tone === "blue" ? BLUE : BLUE_SOFT
-    const fg = tone === "warn" ? AMBER : tone === "navy" || tone === "blue" ? WHITE : NAVY
-    this.page.drawRectangle({ x, y: yTop - 16, width: w, height: 16, color: bg, borderColor: tone === "warn" ? AMBER_LINE : BLUE_LINE, borderWidth: tone === "navy" || tone === "blue" ? 0 : 0.6 })
-    this.page.drawText(clean, { x: x + 7, y: yTop - 11.5, size, font: this.f.s, color: fg })
-    this.note(clean)
-    return w
+  // ---- panels -------------------------------------------------------------------------------------------------------------------------
+  private headerHeight(spec: PanelSpec, width: number, cont: boolean): number {
+    if (!spec.title && !spec.kicker) return 0
+    const iconW = spec.icon ? 40 : 14
+    const chipW = spec.chip && !cont ? this.chipWidth(spec.chip.text) + 12 : 0
+    const tw = Math.max(80, width - iconW - chipW - 14)
+    const title = (spec.title ?? "") + (cont ? " (continued)" : "")
+    const lines = this.lines(title, "b", cont ? 9.5 : 11, tw).length
+    const kick = spec.kicker && !cont ? 11 : 0
+    return Math.max(cont ? 26 : 36, 14 + kick + lines * (cont ? 13 : 14.5))
   }
 
-  /** A sub-heading that must stay with the block after it. */
-  subheading(text: string, follow = 120) {
-    this.need(26 + follow)
-    this.paragraph(text, { font: this.f.s, size: 10.5, color: NAVY, gap: 4 })
+  private drawHeader(spec: PanelSpec, x: number, yTop: number, width: number, h: number, cont: boolean) {
+    const dark = spec.theme === "dark"
+    const amber = spec.theme === "amber"
+    this.rr(x, yTop, width, h, 8, dark ? NAVY : amber ? AMBER_BG : BLUE_SOFT, undefined, 0, "top")
+    const fg = dark ? WHITE : amber ? AMBER : NAVY
+    let tx = x + 14
+    if (spec.icon) {
+      const size = cont ? 20 : 26
+      if (dark) {
+        this.rr(x + 10, yTop - (h - size) / 2, size, size, size * 0.28, NAVY_2)
+        this.icon(spec.icon, x + 10 + size * 0.2, yTop - (h - size) / 2 - size * 0.2, size * 0.6, WHITE, 2)
+      } else this.iconTile(spec.icon, x + 10, yTop - (h - size) / 2, size, spec.accent ?? (amber ? AMBER : BLUE), amber ? hex("#FFEDB8") : WHITE)
+      tx = x + 10 + size + 10
+    }
+    const chipW = spec.chip && !cont ? this.chipWidth(spec.chip.text) + 12 : 0
+    const tw = Math.max(80, x + width - tx - chipW - 14)
+    let ty = yTop - 8
+    if (spec.kicker && !cont) {
+      this.label(spec.kicker, tx, ty, "s", 7, dark ? BLUE_MID : MUTED)
+      ty -= 11
+    }
+    const title = (spec.title ?? "") + (cont ? " (continued)" : "")
+    const hl = this.lines(title, "b", cont ? 9.5 : 11, tw)
+    this.drawLines(hl, tx, ty, "b", cont ? 9.5 : 11, fg, cont ? 13 : 14.5)
+    if (!cont) this.note(hl.filter(Boolean).join(" "))
+    if (spec.chip && !cont) this.chip(spec.chip.text, x + width - chipW - 6 + 6 - 0, yTop - (h - 16) / 2, spec.chip.tone)
   }
 
-  /** A section heading is never left alone at the bottom of a page: room for the heading plus `follow` points of content is required. */
-  sectionHeader(title: string, o: { number?: number; follow?: number; intro?: string } = {}) {
-    this.need(34 + (o.follow ?? 96))
-    const clean = this.san.clean(title)
-    this.contents.push({ title: clean, page: this.index + 1 })
-    this.note(clean)
-    const top = this.y
-    if (o.number !== undefined) {
-      this.page.drawRectangle({ x: MX, y: top - 20, width: 20, height: 20, color: BLUE })
-      const n = String(o.number)
-      this.page.drawText(n, { x: MX + 10 - this.f.b.widthOfTextAtSize(n, 10) / 2, y: top - 14, size: 10, font: this.f.b, color: WHITE })
-    }
-    this.page.drawText(clean, { x: MX + (o.number !== undefined ? 30 : 0), y: top - 15, size: 14, font: this.f.b, color: NAVY })
-    this.page.drawLine({ start: { x: MX, y: top - 26 }, end: { x: W - MX, y: top - 26 }, thickness: 1.2, color: BLUE })
-    this.y = top - 36
-    if (o.intro) this.paragraph(o.intro, { size: 8.5, color: MUTED, gap: 4 })
-  }
-
-  /** Label/value rows in one card. Rows never split; the card continues on the next page. */
-  kvCard(rows: Array<{ label: string; value: string; mono?: boolean }>, o: { labelWidth?: number } = {}) {
-    const lw = o.labelWidth ?? 176
-    const vw = CW - lw - 24
-    let alt = false
-    for (const row of rows) {
-      const label = this.measure(row.label, this.f.s, 8.5, lw - 8)
-      const value = this.measure(row.value === "" ? "—" : row.value, row.mono ? this.f.m : this.f.r, row.mono ? 8 : 9.5, vw, row.mono ? 11 : 13.5)
-      const h = Math.max(label.height, value.height) + 11
-      this.need(h)
-      this.rect(MX, this.y, CW, h, alt ? ROW_A : WHITE)
-      this.page.drawLine({ start: { x: MX, y: this.y - h }, end: { x: W - MX, y: this.y - h }, thickness: 0.5, color: BLUE_LINE })
-      this.page.drawLine({ start: { x: MX, y: this.y }, end: { x: MX, y: this.y - h }, thickness: 2, color: BLUE_LINE })
-      this.drawLines(label.lines, MX + 10, this.y - 5.5, this.f.s, 8.5, MUTED, 12)
-      this.drawLines(value.lines, MX + lw + 12, this.y - 5.5, row.mono ? this.f.m : this.f.r, row.mono ? 8 : 9.5, INK, row.mono ? 11 : 13.5)
-      this.note(this.san.clean(row.label))
-      this.note(this.san.clean(row.value === "" ? "—" : row.value))
-      this.y -= h
-      alt = !alt
-    }
-    this.y -= 12
-  }
-
-  /** A titled group of fields on a two-column grid (long values take the full width). Kept together on one page when it fits. */
-  entryCard(title: string, subtitle: string, fields: Array<{ label: string; value: string }>) {
-    const pad = 12
-    const colW = (CW - 2 * pad - 14) / 2
-    type Cell = { label: string; value: string; full: boolean }
-    const cells: Cell[] = fields.map((f) => ({ ...f, full: this.san.clean(f.value).length > 44 || this.san.clean(f.value).includes("\n") }))
-    const rows: Cell[][] = []
-    let pending: Cell | null = null
-    for (const c of cells) {
-      if (c.full) {
-        if (pending) rows.push([pending]), (pending = null)
-        rows.push([c])
-      } else if (pending) {
-        rows.push([pending, c])
-        pending = null
-      } else pending = c
-    }
-    if (pending) rows.push([pending])
-    const measureRow = (row: Cell[]) => {
-      const heights = row.map((c) => {
-        const width = c.full ? CW - 2 * pad : colW
-        return 4 + this.measure(c.label, this.f.s, 7, width, 9).height + this.measure(c.value === "" ? "—" : c.value, this.f.r, 9.5, width, 13).height
-      })
-      return Math.max(...heights) + 3
-    }
-    const rowHeights = rows.map(measureRow)
-    const headerH = 27
-    const total = headerH + rowHeights.reduce((a, b) => a + b, 0) + 6
-    const fits = total <= H - TOP - BOTTOM
-    if (fits) this.need(total)
-    const drawHeader = (cont: boolean) => {
-      this.rect(MX, this.y, CW, headerH, BLUE_SOFT, BLUE_LINE)
-      this.page.drawRectangle({ x: MX, y: this.y - headerH, width: 4, height: headerH, color: BLUE })
-      const t = this.san.clean(title) + (cont ? " (continued)" : "")
-      this.page.drawText(t, { x: MX + 14, y: this.y - 12, size: 10.5, font: this.f.b, color: NAVY })
-      if (subtitle) this.page.drawText(this.san.clean(subtitle), { x: MX + 14, y: this.y - 23, size: 8, font: this.f.r, color: MUTED })
-      this.note(this.san.clean(title))
-      if (subtitle) this.note(this.san.clean(subtitle))
-      this.y -= headerH
-    }
-    this.need(headerH + (rowHeights[0] ?? 0) + 6)
-    drawHeader(false)
-    rows.forEach((row, i) => {
-      const h = rowHeights[i]
-      if (this.y - h < BOTTOM) {
-        this.newPage()
-        drawHeader(true)
+  /**
+   * A card of stacked units. Whole on one page when it fits there (so cards are never split needlessly); otherwise it flows, repeating a compact header
+   * on each page. A unit is never split and a heading is never left without content.
+   */
+  panel(spec: PanelSpec, units: Unit[]) {
+    const inset = spec.inset ?? 0
+    const x = MX + inset
+    const w = CW - inset
+    const hdrFull = this.headerHeight(spec, w, false)
+    const hdrCont = this.headerHeight(spec, w, true)
+    const total = hdrFull + units.reduce((a, u) => a + u.h, 0) + 2
+    if (!spec.flow && total <= PAGE_CAP && this.y - total < BOTTOM) this.newPage()
+    // A panel too long for one page still starts on a fresh page when little room is left, so its header is never stranded with a row or two.
+    else if (total > PAGE_CAP && this.y - BOTTOM < Math.min(300, hdrFull + (units[0]?.h ?? 0) + (units[1]?.h ?? 0) + 120) && !this.atTop()) this.newPage()
+    let i = 0
+    let first = true
+    while (i < units.length) {
+      const hdr = first ? hdrFull : hdrCont
+      const avail = this.y - BOTTOM - hdr - 2
+      let take = 0
+      let used = 0
+      while (i + take < units.length && used + units[i + take].h <= avail) {
+        used += units[i + take].h
+        take += 1
       }
-      this.page.drawLine({ start: { x: MX, y: this.y }, end: { x: MX, y: this.y - h }, thickness: 0.6, color: BLUE_LINE })
-      this.page.drawLine({ start: { x: W - MX, y: this.y }, end: { x: W - MX, y: this.y - h }, thickness: 0.6, color: BLUE_LINE })
-      row.forEach((c, k) => {
-        const x = MX + pad + (c.full ? 0 : k * (colW + 14))
-        const width = c.full ? CW - 2 * pad : colW
-        const label = this.san.clean(c.label)
-        const lab = this.measure(c.label, this.f.s, 7, width, 9)
-        this.drawLines(lab.lines, x, this.y - 5, this.f.s, 7, MUTED, 9)
-        const v = this.measure(c.value === "" ? "—" : c.value, this.f.r, 9.5, width, 13)
-        this.drawLines(v.lines, x, this.y - 7 - lab.height, this.f.r, 9.5, INK, 13)
-        this.note(label)
-        this.note(this.san.clean(c.value === "" ? "—" : c.value))
-      })
-      this.y -= h
-    })
-    this.page.drawLine({ start: { x: MX, y: this.y - 2 }, end: { x: W - MX, y: this.y - 2 }, thickness: 0.6, color: BLUE_LINE })
-    this.y -= 11
-  }
-
-  /** A table with a repeating header row. */
-  table(columns: Array<{ title: string; width: number }>, rows: string[][]) {
-    const widths = columns.map((c) => c.width * CW)
-    const drawHead = () => {
-      this.need(24 + 24)
-      this.rect(MX, this.y, CW, 20, NAVY)
-      let x = MX
-      columns.forEach((c, i) => {
-        this.page.drawText(this.san.clean(c.title), { x: x + 8, y: this.y - 13.5, size: 8, font: this.f.s, color: WHITE })
-        this.note(this.san.clean(c.title))
-        x += widths[i]
-      })
-      this.y -= 20
-    }
-    drawHead()
-    rows.forEach((row, ri) => {
-      const cells = row.map((v, i) => this.measure(v === "" ? "—" : v, this.f.r, 9, widths[i] - 16, 12.5))
-      const h = Math.max(...cells.map((c) => c.height)) + 10
-      if (this.y - h < BOTTOM) {
-        this.newPage()
-        drawHead()
+      while (take > 1 && units[i + take - 1].keep && i + take < units.length) {
+        take -= 1
+        used -= units[i + take].h
       }
-      this.rect(MX, this.y, CW, h, ri % 2 ? ROW_A : WHITE)
-      this.page.drawLine({ start: { x: MX, y: this.y - h }, end: { x: W - MX, y: this.y - h }, thickness: 0.5, color: BLUE_LINE })
-      let x = MX
-      cells.forEach((c, i) => {
-        this.drawLines(c.lines, x + 8, this.y - 5, this.f.r, 9, INK, 12.5)
-        this.note(this.san.clean(row[i] === "" ? "—" : row[i]))
-        x += widths[i]
+      if (take === 0) {
+        if (!this.atTop()) {
+          this.newPage()
+          continue
+        }
+        take = 1
+        used = units[i].h
+      }
+      const boxH = hdr + used + 2
+      const top = this.y
+      this.rr(x, top, w, boxH, 8, WHITE, BLUE_LINE, 0.9)
+      if (hdr) this.drawHeader(spec, x, top, w, hdr, !first)
+      let yy = top - hdr
+      for (let k = 0; k < take; k += 1) {
+        const u = units[i + k]
+        if (k > 0 || hdr === 0) {
+          if (k > 0 && !u.cont) this.hline(x + 14, x + w - 14, yy, hex("#E3EBF7"), 0.6)
+        }
+        u.draw(x, yy, w)
+        yy -= u.h
+      }
+      i += take
+      spec.onChunk?.({ top, bottom: top - boxH, first, last: i >= units.length })
+      first = false
+      this.y = top - boxH - 10
+      if (i < units.length) this.newPage()
+    }
+  }
+
+  // ---- unit builders ------------------------------------------------------------------------------------------------------------------
+  private cell(label: string, value: string, x: number, yTop: number, width: number, mono?: boolean) {
+    const lab = this.clean(label)
+    this.t.draw(this.page, lab, x, yTop - 7.5 * 0.82, "s", 7.5, MUTED, H)
+    this.note(lab)
+    const lh = mono ? 11 : 13.2
+    const size = mono ? 8 : 9.8
+    const lines = this.lines(value === "" ? "—" : value, mono ? "m" : "r", size, width)
+    this.drawLines(lines, x, yTop - 13, mono ? "m" : "r", size, INK, lh)
+    this.note(lines.filter(Boolean).join(" "))
+  }
+  private cellHeight(label: string, value: string, width: number, mono?: boolean) {
+    const lh = mono ? 11 : 13.2
+    const size = mono ? 8 : 9.8
+    const lines = this.lines(value === "" ? "—" : value, mono ? "m" : "r", size, width).length
+    return 13 + lines * lh
+  }
+
+  /** Label/value fields as units: short values pair up in two columns, long values and text take the full width, yes/no answers become statement rows. */
+  fieldUnits(fields: Field[], width: number): Unit[] {
+    const units: Unit[] = []
+    const pad = 14
+    const inner = width - 2 * pad
+    const colW = (inner - 16) / 2
+    let pending: Field | null = null
+    const flushPending = () => {
+      if (!pending) return
+      const f = pending
+      pending = null
+      units.push(this.gridUnit([f], colW, inner))
+    }
+    for (const f of fields) {
+      const shortValue = !f.yn && !f.mono && this.lines(f.value === "" ? "—" : f.value, "r", 9.8, colW).length === 1 && this.lines(f.label, "s", 7.5, colW).length === 1
+      if (f.yn) {
+        flushPending()
+        units.push(this.statementUnit(f, inner))
+      } else if (shortValue) {
+        if (pending) {
+          units.push(this.gridUnit([pending, f], colW, inner))
+          pending = null
+        } else pending = f
+      } else {
+        flushPending()
+        units.push(...this.longUnits(f, inner))
+      }
+    }
+    flushPending()
+    return units
+  }
+
+  private gridUnit(cells: Field[], colW: number, inner: number): Unit {
+    const widths = cells.length === 1 ? [inner] : [colW, colW]
+    const h = Math.max(...cells.map((c, i) => this.cellHeight(c.label, c.value, widths[i], c.mono))) + 14
+    return {
+      h,
+      draw: (x, y, w) => {
+        cells.forEach((c, i) => this.cell(c.label, c.value, x + 14 + i * (colW + 16), y - 7, widths[i], c.mono))
+        void w
+      },
+    }
+  }
+
+  private statementUnit(f: Field, inner: number): Unit {
+    const lw = inner - 70
+    const lines = this.lines(f.label, "r", 9.5, lw)
+    const h = Math.max(30, lines.length * 13.2 + 16)
+    return {
+      h,
+      draw: (x, y) => {
+        this.drawLines(lines, x + 14, y - (h - lines.length * 13.2) / 2, "r", 9.5, INK, 13.2)
+        this.note(lines.filter(Boolean).join(" "))
+        const yes = f.value.toLowerCase() === "yes"
+        const no = f.value.toLowerCase() === "no"
+        this.chip(f.value, x + 14 + inner - this.chipWidth(f.value), y - (h - 16) / 2, yes ? "info" : no ? "neutral" : "warn")
+      },
+    }
+  }
+
+  /** Long or multi-line text: label then lines, split into units of at most `maxLines` lines so it can flow over pages. */
+  longUnits(f: Field, inner: number, maxLines = 12): Unit[] {
+    const mono = Boolean(f.mono)
+    const size = mono ? 8 : 9.8
+    const lh = mono ? 11 : 13.8
+    const all = this.lines(f.value === "" ? "—" : f.value, mono ? "m" : "r", size, inner)
+    const out: Unit[] = []
+    for (let i = 0; i < all.length; i += maxLines) {
+      const chunk = all.slice(i, i + maxLines)
+      const first = i === 0
+      const labelH = first ? 14 : 4
+      const h = labelH + chunk.length * lh + 11
+      out.push({
+        h,
+        cont: !first,
+        draw: (x, y) => {
+          if (first) {
+            const lab = this.clean(f.label)
+            this.t.draw(this.page, lab, x + 14, y - 7 - 7.5 * 0.82, "s", 7.5, MUTED, H)
+            this.note(lab)
+          }
+          this.drawLines(chunk, x + 14, y - 7 - labelH + (first ? 0 : 0), mono ? "m" : "r", size, INK, lh)
+          this.note(chunk.filter(Boolean).join(" "))
+        },
       })
-      this.y -= h
-    })
-    this.y -= 12
+    }
+    return out
   }
 
-  banner(text: string, tone: Tone) {
-    const size = 9
-    const m = this.measure(text, this.f.s, size, CW - 24, size * 1.4)
-    const h = m.height + 14
-    this.need(h + 6)
-    this.rect(MX, this.y, CW, h, tone === "warn" ? AMBER_BG : BLUE_SOFT, tone === "warn" ? AMBER_LINE : BLUE_LINE)
-    this.page.drawRectangle({ x: MX, y: this.y - h, width: 4, height: h, color: tone === "warn" ? AMBER_LINE : BLUE })
-    this.drawLines(m.lines, MX + 16, this.y - 7, this.f.s, size, tone === "warn" ? AMBER : NAVY, size * 1.4)
-    this.note(this.san.clean(text))
-    this.y -= h + 10
-  }
-
-  /** Long text (legal wording) in a panel that continues across pages without losing a line. */
-  textPanel(text: string, o: { size?: number; title?: string } = {}) {
+  /** Free text rows (bullets etc.) as units. */
+  textUnits(text: string, width: number, o: { size?: number; color?: RGB; weight?: Weight; bullet?: boolean; maxLines?: number } = {}): Unit[] {
     const size = o.size ?? 9.5
     const lh = size * 1.5
-    const clean = this.san.clean(text)
-    const lines = this.wrap(clean, this.f.r, size, CW - 32)
-    let i = 0
-    while (i < lines.length) {
-      this.need(lh * 3 + 16)
-      const fit = Math.max(3, Math.floor((this.y - BOTTOM - 16) / lh))
-      const chunk = lines.slice(i, i + fit)
-      const h = chunk.length * lh + 16
-      this.rect(MX, this.y, CW, h, WHITE, BLUE_LINE)
-      this.page.drawRectangle({ x: MX, y: this.y - h, width: 4, height: h, color: BLUE })
-      this.drawLines(chunk, MX + 18, this.y - 8, this.f.r, size, INK, lh)
-      this.note(chunk.filter(Boolean).join(" "))
-      this.y -= h
-      i += chunk.length
-      if (i < lines.length) this.newPage()
+    const indent = o.bullet ? 14 : 0
+    const all = this.lines(text, o.weight ?? "r", size, width - 28 - indent)
+    const out: Unit[] = []
+    const max = o.maxLines ?? 12
+    for (let i = 0; i < all.length; i += max) {
+      const chunk = all.slice(i, i + max)
+      out.push({
+        h: chunk.length * lh + (i === 0 ? 12 : 12),
+        cont: i > 0,
+        draw: (x, y) => {
+          if (o.bullet && i === 0) this.circle(x + 17, y - 6 - size * 0.45, 2, BLUE)
+          this.drawLines(chunk, x + 14 + indent, y - (i > 0 ? 6 : 6), o.weight ?? "r", size, o.color ?? INK, lh)
+          this.note(chunk.filter(Boolean).join(" "))
+        },
+      })
     }
-    this.y -= 12
+    return out
   }
 }
 
@@ -466,7 +681,8 @@ function masked(field: PlanField, text: string): string {
   return text
 }
 
-function itemDisplay(item: NonNullable<PlanField["itemFields"]>[number], raw: unknown): string {
+type ItemField = NonNullable<PlanField["itemFields"]>[number]
+function itemDisplay(item: ItemField, raw: unknown): string {
   if (raw === undefined || raw === null || raw === "") return ""
   if (item.type === "yesno") return raw === "yes" ? "Yes" : raw === "no" ? "No" : String(raw)
   return item.options?.find((o) => o.value === raw)?.label ?? String(raw)
@@ -482,290 +698,728 @@ const fmtUtc = (iso: string) => {
   return `${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 19)} UTC`
 }
 
+const requirementIcon = (title: string): IconName => {
+  const t = title.toLowerCase()
+  if (/medical|health/.test(t)) return "heartPulse"
+  if (/licen[cs]e/.test(t)) return "idCard"
+  if (/identity/.test(t)) return "user"
+  if (/employ/.test(t)) return "briefcase"
+  if (/driving record|record/.test(t)) return "fileText"
+  if (/clearinghouse|drug|alcohol/.test(t)) return "listChecks"
+  return "clipboard"
+}
+
+const statusTone = (status: string): Tone => {
+  const s = status.toUpperCase()
+  if (s === "VERIFIED" || s === "QUALIFIED") return "ok"
+  if (s === "REJECTED" || s === "NOT_QUALIFIED" || s === "FAILED") return "bad"
+  if (s === "EXCEPTION" || s === "NEEDS_INFORMATION" || s === "PENDING" || s === "EVIDENCE_RECEIVED" || s === "DECLARED") return "warn"
+  return "neutral"
+}
+const statusLabel = (status: string) => status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()).toLowerCase().replace(/^./, (c) => c.toUpperCase())
+
+const initialsOf = (first: string, last: string, fallback: string) => {
+  const g = (s: string) => [...s.trim()][0] ?? ""
+  const out = `${g(first)}${g(last)}`.trim() || [...fallback.trim()].slice(0, 2).join("")
+  return out.toLocaleUpperCase("en")
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Cover art: a geography-neutral highway scene (vector only)
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+function drawHero(L: Layout, top: number, bottom: number) {
+  const h = top - bottom
+  const k = h / 230
+  const P = (px: number, py: number): [number, number] => [px, bottom + py * k]
+  // Sky: stacked bands from deep to pale
+  const bands = 26
+  for (let i = 0; i < bands; i += 1) {
+    const t = i / (bands - 1)
+    const col = rgb(0.80 + 0.17 * t, 0.88 + 0.10 * t, 0.98 + 0.015 * t)
+    const y0 = bottom + h * (0.22 + 0.78 * (1 - (i + 1) / bands))
+    const y1 = bottom + h * (0.22 + 0.78 * (1 - i / bands))
+    L.rect(0, y1 + 0.4, W, y1 - y0 + 0.8, col)
+  }
+  L.rect(0, bottom + h * 0.22 + 0.4, W, h * 0.78 * 0 + 0.01, WHITE)
+  // Soft, low horizon layers (no recognisable landmark)
+  const hill = (base: number, amp: number, phase: number, fill: RGB) => {
+    const pts: Array<[number, number]> = [P(0, 0)]
+    for (let x = 0; x <= W; x += 12) pts.push(P(x, base + amp * Math.sin(x / 90 + phase) + amp * 0.5 * Math.sin(x / 41 + phase * 2)))
+    pts.push(P(W, 0))
+    L.poly(pts, fill)
+  }
+  hill(78, 9, 0.4, hex("#DCE8F9"))
+  hill(66, 7, 2.1, hex("#CBDBF3"))
+  // Road
+  L.rect(0, bottom + 54 * k, W, 54 * k, hex("#16264A"))
+  L.rect(0, bottom + 54 * k, W, 1.6, hex("#3A5A9A"))
+  L.rect(0, bottom + 4 * k, W, 4 * k, hex("#22386B"))
+  for (let x = -20; x < W; x += 54) L.rect(x, bottom + 27 * k + 1.1 * k, 30, 2.2 * k, WHITE, 0.55)
+  // Motion lines behind the truck
+  for (const [dy, len, x0] of [[88, 70, 70], [74, 110, 40], [102, 54, 96], [62, 80, 62]] as const) L.rect(x0, bottom + dy * k, len, 1.4, WHITE, 0.8)
+  // Truck (side view, facing right): ground line at road v=18
+  const s = k * 0.72
+  const ox = 130
+  const oy = bottom + 16 * k
+  const T = (tx: number, ty: number): [number, number] => [ox + tx * s, oy + ty * s]
+  const rectT = (x0: number, y0: number, x1: number, y1: number, fill: RGB) => {
+    const a = T(x0, y1)
+    const b = T(x1, y0)
+    L.rect(a[0], a[1], b[0] - a[0], a[1] - b[1], fill)
+  }
+  rectT(0, 16, 262, 28, hex("#0E1A38")) // chassis
+  L.rr(ox, oy + 130 * s, 250 * s, 106 * s, 5, WHITE, BLUE_LINE, 0.8) // trailer box
+  rectT(0, 28, 250, 46, BLUE)
+  rectT(0, 46, 250, 49, NAVY)
+  rectT(8, 112, 242, 114, BLUE_SOFT)
+  L.poly([T(258, 28), T(258, 114), T(300, 114), T(318, 86), T(352, 80), T(352, 28)], NAVY_2) // cab
+  L.poly([T(264, 108), T(294, 108), T(310, 88), T(264, 88)], hex("#BFD6FA")) // window
+  rectT(262, 114, 267, 140, hex("#0E1A38")) // stack
+  rectT(318, 56, 352, 60, BLUE)
+  rectT(348, 44, 354, 52, hex("#FFD27A")) // lamp
+  const wheel = (cx: number) => {
+    const [px, py] = T(cx, 16)
+    L.circle(px, py, 17 * s, hex("#0B1226"))
+    L.circle(px, py, 8 * s, hex("#8FA3C8"))
+    L.circle(px, py, 3 * s, hex("#0B1226"))
+  }
+  for (const cx of [38, 76, 292, 330]) wheel(cx)
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Document
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
 async function build(input: PdfInput, contentsPages: Map<string, number> | null): Promise<{ L: Layout; render: PdfRender }> {
+  const carrier = input.audience === "carrier"
+  const review = carrier ? input.review ?? null : null
   const submitted = new Date(input.submittedAt)
   const L = new Layout()
-  await L.init({ title: `Driver application ${input.receiptId}`, subject: `${input.companyName} - ${input.applicantName}`, date: submitted, logo: input.logoPng })
+  await L.init({
+    title: `${carrier ? "Driver application dossier" : "Driver application"} ${input.receiptId}`,
+    subject: `${input.companyName} - ${input.applicantName}`,
+    date: submitted,
+    logo: input.logoPng,
+    scanText: JSON.stringify({ n: input.companyName, a: input.applicantName, s: input.snapshot, c: input.consents, r: review }),
+  })
   const { plan, snapshot } = input
   const fieldById = new Map(plan.fields.map((f) => [f.id, f]))
-  const company = L.san.clean(input.companyName)
-  const applicant = L.san.clean(input.applicantName)
-
-  // ---- Cover -------------------------------------------------------------------------------------------------------------------------------
-  L.newPage()
-  const cover = L.page
-  const bandH = 262
-  cover.drawRectangle({ x: 0, y: H - bandH, width: W, height: bandH, color: NAVY })
-  cover.drawRectangle({ x: 0, y: H - bandH, width: W, height: 5, color: BLUE })
-  // A restrained, geography-neutral road in perspective (vector only).
-  const vx = W * 0.72
-  const vy = H - 135
-  const road = (x1: number, x2: number, o: number) => {
-    cover.drawSvgPath(`M ${vx - 4} ${H - vy} L ${vx + 4} ${H - vy} L ${x2} ${H - (H - bandH + 5)} L ${x1} ${H - (H - bandH + 5)} Z`, { x: 0, y: H, color: WHITE, opacity: o, borderWidth: 0 })
-  }
-  road(W * 0.30, W * 0.98, 0.07)
-  for (const [a, o] of [[W * 0.46, 0.18], [W * 0.64, 0.18]] as const) cover.drawLine({ start: { x: vx, y: vy }, end: { x: a + 90, y: H - bandH + 5 }, thickness: 1, color: WHITE, opacity: o })
-  for (let i = 0; i < 6; i += 1) {
-    const t0 = 0.12 + i * 0.16
-    const t1 = t0 + 0.07
-    const px = (t: number) => vx + (W * 0.55 + 90 - vx) * t
-    const py = (t: number) => vy + (H - bandH + 5 - vy) * t
-    cover.drawLine({ start: { x: px(t0), y: py(t0) }, end: { x: px(t1), y: py(t1) }, thickness: 1 + i * 0.6, color: WHITE, opacity: 0.5 })
-  }
-  if (L.logo) {
-    const lh = 40
-    const lw = (L.logo.width / L.logo.height) * lh
-    cover.drawRectangle({ x: MX, y: H - 40 - lh - 16, width: lw + 28, height: lh + 20, color: WHITE })
-    cover.drawImage(L.logo, { x: MX + 14, y: H - 40 - lh - 6, width: lw, height: lh })
-  } else {
-    cover.drawText("TES", { x: MX, y: H - 70, size: 26, font: L.f.b, color: WHITE })
-  }
-  cover.drawText("DRIVER APPLICATION", { x: MX, y: H - 150, size: 11, font: L.f.s, color: rgb(0.65, 0.78, 1) })
-  const title = L.measure(company, L.f.b, 25, 330, 29)
-  L.drawLines(title.lines, MX, H - 160, L.f.b, 25, WHITE, 29)
-  L.note("DRIVER APPLICATION")
-  L.note(company)
-  const sub = L.measure(applicant, L.f.r, 13, 330, 18)
-  L.drawLines(sub.lines, MX, H - 160 - title.height - 8, L.f.r, 13, rgb(0.85, 0.91, 1), 18)
-  L.note(applicant)
-  L.y = H - bandH - 20
-  // Status
-  L.chip("APPLICANT-DECLARED", MX, L.y, "navy")
-  L.chip("NOT YET VERIFIED", MX + 120, L.y, "warn")
-  L.y -= 26
-  L.kvCard([
-    { label: "Applicant", value: applicant },
-    { label: "Hiring carrier", value: company },
-    { label: "Receipt number", value: input.receiptId },
-    { label: "Received", value: fmtUtc(input.submittedAt) },
-    { label: "Application", value: stageLabel(snapshot.collectionStage) },
-    { label: "Operating scope", value: scopeLabel(plan.context) },
-  ])
-  L.paragraph("This document records what the applicant declared and signed. Nothing in it has been verified by the carrier or by TES, and receipt of an application is not a hiring decision. Verification and qualification are performed and recorded separately by the carrier.", { size: 9, color: MUTED, gap: 8 })
-  // Contents (page numbers come from the first pass)
-  L.y -= 4
-  L.page.drawText("CONTENTS", { x: MX, y: L.y - 9, size: 8.5, font: L.f.b, color: BLUE })
-  L.y -= 20
+  const company = L.clean(input.companyName)
+  const applicant = L.clean(input.applicantName)
 
   const sections = plan.sections.slice().sort((a, b) => a.order - b.order)
   const present = sections.filter((s) => snapshot.fields.some((f) => f.section === s.id) || snapshot.uploads.some((u) => fieldById.get(u.fieldId)?.section === s.id) || [...snapshot.sensitive, ...snapshot.sensitiveNotCollected].some((x) => fieldById.get(x.fieldId)?.section === s.id))
-  const tocTitles = ["Verification status", ...present.map((s) => s.title), ...(input.consents.length ? ["Authorizations and signatures"] : []), "Open review items and limitations", "Evidence and integrity"]
-  for (const t of tocTitles) {
-    const clean = L.san.clean(t)
+  const hasAuth = input.consents.length > 0
+  const T = {
+    verification: carrier ? "Verification status and decision" : "Verification status",
+    auth: "Authorizations and signatures",
+    reviewItems: "Open review items and limitations",
+    integrity: "Evidence and integrity",
+    carrierReview: "Carrier review record",
+    evidenceRegister: "Evidence register",
+    audit: "Audit provenance",
+  }
+  const tocEntries: Array<{ title: string; icon: IconName }> = [
+    { title: T.verification, icon: "listChecks" },
+    ...present.map((s) => ({ title: s.title, icon: sectionIcon(s.id) })),
+    ...(hasAuth ? [{ title: T.auth, icon: "penLine" as IconName }] : []),
+    ...(carrier && review ? [{ title: T.carrierReview, icon: "clipboard" as IconName }, { title: T.evidenceRegister, icon: "paperclip" as IconName }, { title: T.audit, icon: "clock" as IconName }] : []),
+    { title: T.reviewItems, icon: "info" },
+    { title: T.integrity, icon: "fileText" },
+  ]
+
+  // ---- Cover ---------------------------------------------------------------------------------------------------------------------------
+  L.newPage()
+  const cover = L.page
+  cover.drawRectangle({ x: 0, y: 0, width: 14, height: H, color: BLUE })
+  const logoH = 46
+  if (L.logo) cover.drawImage(L.logo, { x: MX, y: H - 56 - logoH, width: (L.logo.width / L.logo.height) * logoH, height: logoH })
+  else L.label("TES", MX, H - 56, "b", 28, NAVY)
+  const heading = carrier ? "Driver Application Dossier" : "Driver Application"
+  L.label(heading, MX, H - 150, "b", carrier ? 31 : 40, NAVY)
+  L.label(carrier ? "Applicant Record and Carrier Review" : "Applicant-Declared Record", MX, H - (carrier ? 192 : 200), "s", 16, BLUE)
+  let cx = MX
+  cx += L.chip("APPLICANT-DECLARED", cx, H - 232, "navy") + 8
+  if (carrier) L.chip(review?.decision ? `DECISION: ${review.decision.status.replace(/_/g, " ")}` : "NO DECISION RECORDED", cx, H - 232, review?.decision ? statusTone(review.decision.status) : "warn")
+  else L.chip("NOT YET VERIFIED", cx, H - 232, "warn", "alert")
+
+  const colW = (CW - 28) / 2
+  const cells: Array<{ icon: IconName; label: string; value: string }> = [
+    { icon: "user", label: "APPLICANT", value: applicant },
+    { icon: "briefcase", label: "HIRING CARRIER", value: company },
+    { icon: "fileText", label: "RECEIPT NUMBER", value: input.receiptId },
+    { icon: "calendar", label: "RECEIVED", value: fmtUtc(input.submittedAt) },
+    { icon: "clipboard", label: "APPLICATION", value: stageLabel(snapshot.collectionStage) },
+    { icon: "truck", label: "OPERATING SCOPE", value: scopeLabel(plan.context) },
+  ]
+  const cellH = cells.map((c) => 18 + L.textHeight(c.value, "s", 10.5, colW - 46, 14))
+  const rowHs = [0, 1, 2].map((r) => Math.max(cellH[r * 2], cellH[r * 2 + 1]) + 14)
+  const panelH = Math.min(520, 70 + rowHs.reduce((a, b) => a + b, 0))
+  const heroTop = H - 250
+  drawHero(L, heroTop, Math.max(panelH + 2, 0))
+  cover.drawRectangle({ x: 14, y: 0, width: W - 14, height: panelH, color: NAVY })
+  cover.drawRectangle({ x: 14, y: panelH - 3, width: W - 14, height: 3, color: BLUE })
+  L.label(carrier ? "RECORD DETAILS  ·  CARRIER USE" : "APPLICATION DETAILS", MX, panelH - 22, "b", 7.5, BLUE_MID)
+  let py = panelH - 40
+  cells.forEach((c, i) => {
+    const row = Math.floor(i / 2)
+    const col = i % 2
+    if (col === 0 && row > 0) py -= rowHs[row - 1]
+    const x = MX + col * (colW + 28)
+    L.circle(x + 14, py - 16, 14, NAVY_2)
+    L.icon(c.icon, x + 7, py - 9, 14, WHITE, 2)
+    L.label(c.label, x + 38, py - 3, "s", 7, BLUE_MID)
+    L.put(c.value, x + 38, py - 15, colW - 46, "s", 10.5, WHITE, 14)
+  })
+  L.label("Receipt, hashes and generator are recorded on the final page.", MX, 18, "r", 7.5, BLUE_MID)
+
+  // ---- Contents ------------------------------------------------------------------------------------------------------------------------
+  L.newPage()
+  L.label("Contents", MX, L.y, "b", 26, NAVY)
+  L.hline(MX, MX + CW, L.y - 38, BLUE_LINE, 1)
+  L.hline(MX, MX + 64, L.y - 38, BLUE, 2.2)
+  L.y -= 54
+  const rowMin = Math.max(24, Math.min(32, Math.floor((PAGE_CAP - 54 - 6 - 110 - 80) / tocEntries.length) - 4))
+  tocEntries.forEach((e, i) => {
+    const clean = L.clean(e.title)
+    const lines = L.lines(clean, "s", 11, CW - 150)
+    const h = Math.max(rowMin, lines.length * 15 + 14)
+    L.need(h + 4)
+    const top = L.y
+    L.circle(MX + 13, top - h / 2, 11.5, BLUE)
+    const n = String(i + 1)
+    L.t.draw(L.page, n, MX + 13 - L.t.width(n, "b", 9.5) / 2, top - h / 2 - 3.4, "b", 9.5, WHITE, H)
+    L.iconTile(e.icon, MX + 36, top - (h - 26) / 2, 26)
+    L.drawLines(lines, MX + 76, top - (h - lines.length * 15) / 2, "s", 11, INK, 15)
+    L.note(clean)
     const pg = contentsPages?.get(clean)
-    L.page.drawText(clean, { x: MX + 8, y: L.y - 9, size: 9.5, font: L.f.r, color: INK })
     if (pg) {
       const label = String(pg)
-      L.page.drawText(label, { x: W - MX - L.f.s.widthOfTextAtSize(label, 9.5), y: L.y - 9, size: 9.5, font: L.f.s, color: NAVY })
+      const lw = L.t.width(label, "b", 11)
+      L.t.draw(L.page, label, MX + CW - lw, top - h / 2 - 4, "b", 11, NAVY, H)
+      // dotted leader
+      const lastW = L.t.width(lines[lines.length - 1] ?? "", "s", 11)
+      const x1 = MX + 76 + lastW + 8
+      const x2 = MX + CW - lw - 8
+      for (let dx = x1; dx < x2; dx += 5) L.circle(dx, top - h / 2 - 3 + 0.4 - (lines.length - 1) * 7.5 * 0, 0.55, BLUE_MID)
     }
-    L.page.drawLine({ start: { x: MX + 8, y: L.y - 13 }, end: { x: W - MX, y: L.y - 13 }, thickness: 0.4, color: BLUE_LINE })
-    L.note(clean)
-    L.y -= 15.5
-  }
+    L.hline(MX + 76, MX + CW, top - h, hex("#E3EBF7"), 0.6)
+    L.y -= h + 4
+  })
+  L.y -= 6
+  L.infoBox(
+    carrier
+      ? "This dossier reproduces the applicant's declaration exactly as submitted and signed, then records the carrier's own review separately. The applicant's answers are never edited by the review, and review results never appear inside the applicant's sections."
+      : "This document records what the applicant declared and signed. Nothing in it has been verified by the carrier or by TES, and receipt of an application is not a hiring decision. Verification and qualification are performed and recorded separately by the carrier.",
+    "info",
+    carrier ? "How this dossier is organised" : "About this record",
+  )
+  L.need(60)
+  const keyY = L.y
+  let kx = MX
+  kx += L.chip("APPLICANT-DECLARED", kx, keyY, "navy") + 6
+  L.label("What the applicant stated and signed", kx, keyY - 3, "r", 8.5, MUTED)
+  L.y -= 24
+  kx = MX
+  kx += L.chip("Pending", L.y === keyY ? kx : kx, L.y, "warn", "clock") + 6
+  L.label("Not yet verified or approved", kx, L.y - 3, "r", 8.5, MUTED)
+  L.y -= 24
+  kx = MX
+  kx += L.chip("PENDING LEGAL REVIEW", kx, L.y, "warn") + 6
+  L.label("Wording not yet approved by counsel; recorded as presented and signed", kx, L.y - 3, "r", 8.5, MUTED)
+  L.y -= 24
 
-  // ---- Verification status ------------------------------------------------------------------------------------------------------------------
+  // ---- Verification status -------------------------------------------------------------------------------------------------------------
   L.newPage()
   let n = 1
-  L.sectionHeader("Verification status", { number: n++, follow: 120 })
-  L.paragraph("Every requirement below is open. Each will be marked verified only when the carrier records it as verified, with supporting evidence.", { size: 9, color: MUTED, gap: 4 })
-  L.table(
-    [{ title: "Requirement", width: 0.62 }, { title: "Status", width: 0.2 }, { title: "Required", width: 0.18 }],
-    plan.requirements.map((r) => [r.title, "Pending", r.requiredForQualification ? "Yes" : "No"]),
+  L.sectionHeader(T.verification, { number: n++, icon: "listChecks", follow: 150 })
+  L.paragraph(
+    carrier
+      ? "Each requirement shows the carrier's most recent recorded result. A requirement is marked verified only when the carrier recorded it as verified with a note or supporting evidence."
+      : "Every requirement below is open. Each will be marked verified only when the carrier records it as verified, with supporting evidence.",
+    { size: 9, color: MUTED, gap: 10 },
   )
+  {
+    const rows = plan.requirements.map((r) => {
+      const c = review?.checks.find((x) => x.title === r.title)
+      return { title: r.title, required: r.requiredForQualification, status: c ? c.status : "PENDING", note: c?.note ?? null }
+    })
+    const units: Unit[] = rows.map((r) => {
+      const tw = CW - 28 - 44 - 120 - 80
+      const lines = L.lines(r.title, "s", 10, tw)
+      const noteLines = r.note ? L.lines(r.note, "r", 8.5, tw) : []
+      const h = Math.max(46, 20 + lines.length * 14 + (noteLines.length ? noteLines.length * 12 + 4 : 0))
+      return {
+        h,
+        draw: (x, y, w) => {
+          L.iconTile(requirementIcon(r.title), x + 14, y - (h - 30) / 2, 30)
+          L.drawLines(lines, x + 56, y - 10, "s", 10, INK, 14)
+          L.note(lines.filter(Boolean).join(" "))
+          if (noteLines.length) {
+            L.drawLines(noteLines, x + 56, y - 10 - lines.length * 14 - 2, "r", 8.5, MUTED, 12)
+            L.note(noteLines.filter(Boolean).join(" "))
+          }
+          const sx = x + w - 14 - 140
+          const label = statusLabel(r.status)
+          L.chip(label, sx, y - (h - 16) / 2, statusTone(r.status), r.status.toUpperCase() === "VERIFIED" ? "check" : r.status.toUpperCase() === "PENDING" ? "clock" : undefined)
+          const req = r.required ? "Required" : "Optional"
+          L.label(req, x + w - 14 - L.width(req, "s", 8.5), y - (h - 8.5) / 2, "s", 8.5, MUTED)
+        },
+      }
+    })
+    L.panel({ title: "Qualification requirements", icon: "listChecks", chip: { text: carrier ? "CARRIER RESULTS" : "ALL PENDING", tone: carrier ? "info" : "warn" }, flow: true }, units)
+  }
+  if (!carrier) L.infoBox("Nothing in this document confirms identity, licence, medical certification, employment, driving record or eligibility. These checks are carried out and recorded by the carrier, separately from the applicant's declaration.", "info", "Pending carrier verification")
 
-  // ---- Answer sections ----------------------------------------------------------------------------------------------------------------------
+  // ---- Answer sections ----------------------------------------------------------------------------------------------------------------
   for (const section of present) {
     const rows = snapshot.fields.filter((f) => f.section === section.id)
     const uploads = snapshot.uploads.filter((u) => fieldById.get(u.fieldId)?.section === section.id && u.fieldId !== "system.application_pdf")
     const sens = [...snapshot.sensitive.map((x) => ({ ...x, kind: "collected" as const })), ...snapshot.sensitiveNotCollected.map((x) => ({ fieldId: x.fieldId, collected: false, kind: "off" as const }))].filter((x) => fieldById.get(x.fieldId)?.section === section.id)
-    L.sectionHeader(section.title, { number: n++, intro: section.intro, follow: 175 })
-    const simple: Array<{ label: string; value: string }> = []
-    const flush = () => {
-      if (simple.length) L.kvCard(simple.splice(0))
+    const icon = sectionIcon(section.id)
+    L.y -= 8
+    L.sectionHeader(section.title, { number: n++, icon, intro: section.intro, follow: 230 })
+
+    const toField = (field: PlanField, row: { value: unknown }): Field => {
+      const label = field.pdf.label ?? field.label
+      if (field.pdf.mask === "EXCLUDE") return { label, value: "(not shown in this document)" }
+      const value = masked(field, displayValue(field, row.value))
+      return { label, value, yn: field.type === "yesno" && (value === "Yes" || value === "No") }
     }
-    for (const row of rows) {
-      const field = fieldById.get(row.id)
-      if (!field) continue
-      if (field.type === "repeatable") {
-        flush()
-        const label = L.san.clean(field.pdf.label ?? field.label)
-        L.subheading(label, field.id === "address.history" ? 120 : 240)
+    let flushCount = 0
+    const flushPanel = (fields: Field[], title: string, panelIcon: IconName) => {
+      if (!fields.length) return
+      L.panel({ title: flushCount === 0 ? title : "Further answers", icon: panelIcon }, L.fieldUnits(fields, CW))
+      flushCount += 1
+    }
+    const SIMPLE_TITLE: Record<string, string> = { experience: "Driving experience", employment: "Employment overview", eligibility: "Eligibility declarations", documents: "Documents" }
+
+    // -- Identity: profile card
+    if (section.id === "identity") {
+      const byId = new Map(rows.map((r) => [r.id, r]))
+      const get = (id: string) => {
+        const r = byId.get(id)
+        return r && r.value !== null && r.value !== undefined && r.value !== "" ? String(r.value) : ""
+      }
+      const first = get("identity.legal_first_name")
+      const middle = get("identity.legal_middle_name")
+      const last = get("identity.legal_last_name")
+      const fullName = [first, middle, last].filter(Boolean).join(" ") || input.applicantName
+      const contactIds = ["identity.phone", "identity.email", "identity.date_of_birth"]
+      const contactIcon: Record<string, IconName> = { "identity.phone": "phone", "identity.email": "mail", "identity.date_of_birth": "calendar" }
+      const contact = rows.filter((r) => contactIds.includes(r.id))
+      const nameRows = rows.filter((r) => r.id.startsWith("identity.legal_"))
+      const rest = rows.filter((r) => !contactIds.includes(r.id) && !r.id.startsWith("identity.legal_"))
+      const nameLines = L.lines(fullName, "b", 17, CW - 150)
+      const bandH = Math.max(86, nameLines.length * 21 + 52)
+      const units: Unit[] = []
+      units.push({
+        h: bandH,
+        keep: true,
+        draw: (x, y) => {
+          L.rect(x + 0.5, y, CW - 1, bandH - 0.5, PAPER)
+          const r = 28
+          L.circle(x + 20 + r, y - bandH / 2, r, NAVY)
+          const ini = L.clean(initialsOf(first, last, input.applicantName))
+          const iw = L.t.width(ini, "b", 18)
+          L.t.draw(L.page, ini, x + 20 + r - iw / 2, y - bandH / 2 - 6.4, "b", 18, WHITE, H)
+          L.label("LEGAL NAME OF APPLICANT", x + 96, y - bandH / 2 + (nameLines.length * 21) / 2 + 14, "s", 7, MUTED)
+          L.put(fullName, x + 96, y - bandH / 2 + (nameLines.length * 21) / 2, CW - 150, "b", 17, NAVY, 21)
+          L.chip("APPLICANT-DECLARED", x + 96, y - bandH / 2 - (nameLines.length * 21) / 2 - 2, "info")
+        },
+      })
+      if (contact.length) {
+        const cw = (CW - 28 - 14) / 2
+        const items = contact.map((r) => {
+          const f = fieldById.get(r.id)!
+          return { id: r.id, label: f.pdf.label ?? f.label, value: displayValue(f, r.value) }
+        })
+        const rowsOf: Array<typeof items> = []
+        for (let i = 0; i < items.length; i += 2) rowsOf.push(items.slice(i, i + 2))
+        for (const pair of rowsOf) {
+          const h = Math.max(...pair.map((p) => 14 + L.textHeight(p.value, "r", 9.8, cw - 40, 13))) + 18
+          units.push({
+            h,
+            draw: (x, y) =>
+              pair.forEach((p, i) => {
+                const px = x + 14 + i * (cw + 14)
+                L.iconTile(contactIcon[p.id], px, y - 9, 28)
+                L.label(p.label, px + 38, y - 10, "s", 7.5, MUTED)
+                L.put(p.value, px + 38, y - 23, cw - 40, "r", 9.8, INK, 13)
+              }),
+          })
+        }
+      }
+      const nameFields: Field[] = nameRows.map((r) => toField(fieldById.get(r.id)!, r))
+      units.push(...L.fieldUnits(nameFields, CW))
+      L.panel({ title: "Applicant profile", icon: "user", flow: false }, units)
+      const restFields: Field[] = rest.flatMap((r) => {
+        const f = fieldById.get(r.id)
+        return f ? [toField(f, r)] : []
+      })
+      if (restFields.length) L.panel({ title: "Other details", icon: "clipboard" }, L.fieldUnits(restFields, CW))
+      flushCount = 99
+    }
+
+    // -- Licence: licence card, medical certification, declarations
+    else if (section.id === "licence") {
+      const fields = rows.flatMap((r) => {
+        const f = fieldById.get(r.id)
+        return f ? [{ def: f, f: toField(f, r) }] : []
+      })
+      const isMedical = (id: string) => /medical/.test(id)
+      const isDecl = (def: PlanField) => def.type === "yesno" || def.type === "textarea" || /_details$/.test(def.id)
+      const card = fields.filter((x) => !isMedical(x.def.id) && !isDecl(x.def))
+      const medical = fields.filter((x) => isMedical(x.def.id))
+      const decl = fields.filter((x) => !isMedical(x.def.id) && isDecl(x.def))
+      if (card.length) L.panel({ kicker: "COMMERCIAL DRIVER'S LICENCE", title: "Licence details", icon: "idCard", theme: "light" }, L.fieldUnits(card.map((x) => x.f), CW))
+      if (medical.length) L.panel({ kicker: "MEDICAL CERTIFICATION", title: "Medical certificate", icon: "heartPulse", theme: "light" }, L.fieldUnits(medical.map((x) => x.f), CW))
+      if (decl.length) L.panel({ title: "Licence and record declarations", icon: "listChecks", flow: true }, L.fieldUnits(decl.map((x) => x.f), CW))
+      flushCount = 99
+    } else {
+      const simple: Field[] = []
+      for (const row of rows) {
+        const field = fieldById.get(row.id)
+        if (!field) continue
+        if (field.type !== "repeatable") {
+          simple.push(toField(field, row))
+          continue
+        }
+        flushPanel(simple.splice(0), SIMPLE_TITLE[section.id] ?? "Your answers", icon)
         const entries = Array.isArray(row.value) ? (row.value as Array<Record<string, unknown>>) : []
-        if (entries.length === 0) L.paragraph("None entered.", { size: 9, color: MUTED, gap: 6 })
         const items = field.itemFields ?? []
+        const label = field.pdf.label ?? field.label
+        const get = (e: Record<string, unknown>, id: string) => {
+          const it = items.find((i) => i.id === id)
+          return it ? itemDisplay(it, e[id]) : ""
+        }
+        const restOf = (e: Record<string, unknown>, skip: string[]): Field[] =>
+          items.filter((it) => !skip.includes(it.id)).flatMap((it) => {
+            const v = itemDisplay(it, e[it.id])
+            return v === "" ? [] : [{ label: it.label, value: v, yn: it.type === "yesno" }]
+          })
+        if (entries.length === 0) {
+          L.subheading(label, 60, icon)
+          L.paragraph("None entered.", { size: 9, color: MUTED, gap: 8 })
+          continue
+        }
+        L.subheading(label, field.id === "address.history" ? 150 : 300, icon)
+
+        const timeline = (kicker: string, dotIcon: IconName | null, build: (e: Record<string, unknown>, i: number) => { spec: PanelSpec; units: Unit[] }) => {
+          entries.forEach((e, i) => {
+            const { spec, units } = build(e, i)
+            const gx = MX + 11
+            L.panel(
+              {
+                ...spec,
+                inset: 34,
+                onChunk: ({ top, bottom, first, last }) => {
+                  const dotY = top - 20
+                  if (!(last && i === entries.length - 1)) L.page.drawLine({ start: { x: gx, y: first ? dotY : top + 8 }, end: { x: gx, y: bottom - 10 }, thickness: 1.6, color: BLUE_LINE })
+                  if (first) {
+                    L.circle(gx, dotY, 11, BLUE)
+                    if (dotIcon) L.icon(dotIcon, gx - 6.5, dotY + 6.5, 13, WHITE, 2.2)
+                    else {
+                      const num = String(i + 1)
+                      L.t.draw(L.page, num, gx - L.t.width(num, "b", 9) / 2, dotY - 3.2, "b", 9, WHITE, H)
+                    }
+                  }
+                },
+              },
+              units,
+            )
+          })
+          void kicker
+        }
+
         if (field.id === "address.history") {
-          L.table(
-            [{ title: "Address", width: 0.58 }, { title: "From", width: 0.21 }, { title: "Until", width: 0.21 }],
-            entries.map((e) => {
-              const get = (id: string) => itemDisplay(items.find((i) => i.id === id)!, e[id])
-              const addr = [get("street"), [get("city"), get("region")].filter(Boolean).join(", "), get("postal"), get("country")].filter(Boolean).join("\n")
-              return [addr, get("from"), get("to") || "Present"]
-            }),
-          )
+          timeline("RESIDENCE", null, (e, i) => {
+            const addr = [get(e, "street"), [get(e, "city"), get(e, "region"), get(e, "postal")].filter(Boolean).join(", "), get(e, "country")].filter(Boolean).join("\n")
+            const from = get(e, "from")
+            const to = get(e, "to")
+            const current = !to
+            const others = restOf(e, ["street", "city", "region", "postal", "country", "from", "to"])
+            const units: Unit[] = [
+              {
+                h: Math.max(36, L.textHeight(addr, "s", 10.5, CW - 34 - 28 - 26, 14.5) + 18),
+                draw: (x, y, w) => {
+                  L.icon("mapPin", x + 14, y - 11, 14, BLUE, 2)
+                  L.put(addr, x + 36, y - 10, w - 50, "s", 10.5, INK, 14.5)
+                },
+              },
+              ...L.fieldUnits(others, CW - 34),
+            ]
+            return { spec: { kicker: `RESIDENCE ${i + 1}`, title: `${from || "—"}  →  ${to || "Present"}`, icon: "calendar", chip: current ? { text: "CURRENT", tone: "ok" } : undefined }, units }
+          })
+        } else if (field.id === "employment.history") {
+          timeline("EMPLOYER", "truck", (e, i) => {
+            const employer = get(e, "employer") || `Employer ${i + 1}`
+            const from = get(e, "from")
+            const to = get(e, "to")
+            const position = get(e, "position")
+            const fields: Field[] = restOf(e, ["employer", "from", "to", "position"])
+            const loc: Field[] = []
+            const all: Field[] = []
+            for (const f of fields) (f.yn ? all : loc).push(f)
+            const units: Unit[] = []
+            if (position) units.push({ h: Math.max(30, L.textHeight(position, "s", 10, CW - 34 - 28 - 26, 14) + 16), draw: (x, y, w) => { L.icon("briefcase", x + 14, y - 9, 13, BLUE, 2); L.put(position, x + 34, y - 9, w - 48, "s", 10, INK, 14) } })
+            units.push(...L.fieldUnits([...loc, ...all], CW - 34))
+            return { spec: { kicker: `EMPLOYER ${i + 1}`, title: employer, icon: "briefcase", chip: from || to ? { text: `${from || "—"} → ${to || "Present"}`, tone: "info" } : undefined }, units }
+          })
+        } else if (field.id === "experience.accidents" || field.id === "experience.violations") {
+          const accident = field.id === "experience.accidents"
+          entries.forEach((e, i) => {
+            const date = get(e, "date")
+            const titleText = accident ? get(e, "location") || date || `Accident ${i + 1}` : get(e, "offence") || date || `Conviction ${i + 1}`
+            const units = L.fieldUnits(restOf(e, accident ? ["date", "location"] : ["date", "offence"]), CW)
+            L.panel({ kicker: `${accident ? "ACCIDENT" : "CONVICTION"} ${i + 1}`, title: titleText, icon: "alert", theme: accident ? "amber" : "light", accent: accident ? AMBER : NAVY, chip: date ? { text: date, tone: accident ? "warn" : "info" } : undefined }, units.length ? units : L.textUnits("(no further details entered)", CW, { color: MUTED }))
+          })
         } else {
           entries.forEach((e, i) => {
             const titleKey = items.find((it) => ["employer", "course", "school", "name"].includes(it.id)) ?? items[0]
-            const heading = `${label.replace(/s$/i, "")} ${i + 1}${titleKey && e[titleKey.id] ? ` — ${itemDisplay(titleKey, e[titleKey.id])}` : ""}`
-            const from = items.find((it) => it.id === "from")
-            const to = items.find((it) => it.id === "to")
-            const dates = from && e.from ? `${itemDisplay(from, e.from)} to ${to && e.to ? itemDisplay(to, e.to) : "present"}` : ""
-            const fields = items.filter((it) => it !== titleKey && it.id !== "from" && it.id !== "to").map((it) => ({ label: it.label, value: itemDisplay(it, e[it.id]) })).filter((f) => f.value !== "")
-            L.entryCard(heading, dates, fields)
+            const title = (titleKey && get(e, titleKey.id)) || `Record ${i + 1}`
+            const from = get(e, "from") || get(e, "completed") || get(e, "date")
+            const units = L.fieldUnits(restOf(e, [titleKey?.id ?? "", "from", "completed", "date"].filter(Boolean)), CW)
+            L.panel({ kicker: `${label.toUpperCase()} · ${i + 1}`, title, icon: sectionIcon(section.id), chip: from ? { text: from, tone: "info" } : undefined }, units.length ? units : L.textUnits("(no further details entered)", CW, { color: MUTED }))
           })
         }
-        continue
       }
-      if (field.pdf.mask === "EXCLUDE") {
-        simple.push({ label: field.pdf.label ?? field.label, value: "(not shown in this document)" })
-        continue
-      }
-      simple.push({ label: field.pdf.label ?? field.label, value: masked(field, displayValue(field, row.value)) })
+      flushPanel(simple.splice(0), SIMPLE_TITLE[section.id] ?? "Your answers", icon)
     }
-    flush()
+
     if (uploads.length || sens.length) {
-      L.subheading("Supporting documents and restricted information", 70)
-      L.kvCard([
+      const fields: Field[] = [
         ...uploads.map((u) => ({ label: fieldById.get(u.fieldId)?.label ?? u.fieldId, value: `${u.filename} (${u.byteSize} bytes)\nEvidence document ${u.documentId}` })),
         ...sens.map((s) => ({ label: fieldById.get(s.fieldId)?.label ?? s.fieldId, value: s.kind === "collected" ? (s.collected ? "Collected securely (value not shown)" : "Not provided") : "Not collected on this application" })),
-      ])
+      ]
+      L.panel({ title: "Supporting documents and restricted information", icon: "paperclip" }, L.fieldUnits(fields, CW))
+    }
+    if (section === present[present.length - 1] && snapshot.retainedNotApplicable.length) {
+      L.paragraph(`${snapshot.retainedNotApplicable.length} earlier answer(s) were kept in the record but did not apply after later answers; they are not current statements of the applicant.`, { size: 8.5, color: MUTED, gap: 6 })
     }
   }
-  if (snapshot.retainedNotApplicable.length) {
-    L.paragraph(`${snapshot.retainedNotApplicable.length} earlier answer(s) were kept in the record but did not apply after later answers; they are not current statements of the applicant.`, { size: 8.5, color: MUTED, gap: 6 })
-  }
 
-  // ---- Authorizations: each on its own page(s) ------------------------------------------------------------------------------------------------
+  // ---- Authorizations -----------------------------------------------------------------------------------------------------------------
   const byKey = new Map<string, PlanConsent>(plan.consents.map((c) => [c.key, c]))
   const accepted = input.consents.slice().sort((a, b) => a.key.localeCompare(b.key))
   let firstAuth = true
   for (const c of accepted) {
     const def = byKey.get(c.key)
     if (!def) continue
-    // Each authorization is its own block, kept whole on a page when it fits; a long one starts on a fresh page and flows.
-    const textLines = L.measure(def.text, L.f.r, 9.5, CW - 32, 14.25).lines.length
-    const estimate = 40 + (c.legalStatus !== "APPROVED" ? 52 : 0) + 150 + textLines * 14.25 + 24 + 100
-    const room = L.y - BOTTOM
     if (firstAuth) {
-      if (estimate + 70 > room) L.newPage()
-      L.sectionHeader("Authorizations and signatures", { number: n++, follow: 200 })
-      L.paragraph("Each authorization is separate, has its own stated purpose, and was read in full before it was signed.", { size: 9, color: MUTED, gap: 8 })
+      L.newPage()
+      L.sectionHeader(T.auth, { number: n++, icon: "penLine", follow: 220, intro: "Each authorization is separate, has its own stated purpose, and was read in full before it was signed." })
       firstAuth = false
-    } else if (estimate > room) L.newPage()
-    else L.y -= 6
-    L.paragraph(def.title, { font: L.f.b, size: 13, color: NAVY, gap: 6 })
-    if (c.legalStatus !== "APPROVED") L.banner("PENDING LEGAL REVIEW — this wording has not been approved by counsel. It is recorded as presented and signed, and must not be relied on until approved.", "warn")
-    L.kvCard([
-      { label: "Authorization", value: `${def.key} · version ${c.version}` },
-      { label: "Purpose", value: c.purpose },
-      { label: "Authorized parties", value: def.authorizedParties.join(", ") },
-      { label: "Scope", value: Object.entries(def.scope).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`).join("; ") },
-      { label: "Jurisdiction", value: c.jurisdiction ?? "—" },
-      { label: "Wording SHA-256", value: c.textSha256, mono: true },
-    ])
-    L.paragraph("Text presented to the applicant", { font: L.f.s, size: 10, color: NAVY, gap: 4 })
-    L.textPanel(def.text)
-    // Signature block is kept whole.
-    L.need(112)
-    L.paragraph("Signature", { font: L.f.s, size: 10, color: NAVY, gap: 4 })
-    L.need(84)
-    L.rect(MX, L.y, CW, 84, BLUE_SOFT, BLUE_LINE)
-    const sig = L.san.clean(c.signatureName)
-    L.page.drawText(sig, { x: MX + 16, y: L.y - 34, size: 19, font: L.f.b, color: NAVY })
-    L.note(sig)
-    L.page.drawLine({ start: { x: MX + 16, y: L.y - 42 }, end: { x: MX + 330, y: L.y - 42 }, thickness: 0.8, color: NAVY })
-    L.page.drawText("Typed signature of the applicant", { x: MX + 16, y: L.y - 54, size: 7.5, font: L.f.r, color: MUTED })
-    L.page.drawText(`Signed ${fmtUtc(c.acceptedAt)}`, { x: MX + 16, y: L.y - 68, size: 9, font: L.f.s, color: INK })
-    L.page.drawText("Affirmative acceptance: checkbox with typed signature", { x: MX + 16, y: L.y - 79, size: 8, font: L.f.r, color: MUTED })
-    L.note(`Signed ${fmtUtc(c.acceptedAt)}`)
-    L.note("Affirmative acceptance: checkbox with typed signature")
-    L.y -= 96
+    }
+    const inner = CW - 28
+    const units: Unit[] = []
+    if (c.legalStatus !== "APPROVED") {
+      const msg = "PENDING LEGAL REVIEW — this wording has not been approved by counsel. It is recorded as presented and signed, and must not be relied on until approved."
+      const lines = L.lines(msg, "s", 8.8, inner - 34)
+      const h = lines.length * 12.6 + 20
+      units.push({
+        h,
+        keep: true,
+        draw: (x, y) => {
+          L.rect(x + 0.5, y, CW - 1, h, AMBER_BG)
+          L.icon("alert", x + 14, y - 9, 15, AMBER, 2)
+          L.drawLines(lines, x + 38, y - 10, "s", 8.8, AMBER, 12.6)
+          L.note(lines.filter(Boolean).join(" "))
+        },
+      })
+    }
+    units.push(
+      ...L.fieldUnits(
+        [
+          { label: "Authorization", value: `${def.key} · version ${c.version}` },
+          { label: "Jurisdiction", value: c.jurisdiction ?? "—" },
+          { label: "Purpose", value: c.purpose },
+          { label: "Authorized parties", value: def.authorizedParties.join(", ") },
+          { label: "Scope", value: Object.entries(def.scope).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`).join("; ") },
+        ],
+        CW,
+      ),
+    )
+    units.push({
+      h: 28,
+      keep: true,
+      draw: (x, y) => L.label("TEXT PRESENTED TO THE APPLICANT", x + 14, y - 14, "b", 7.5, BLUE),
+    })
+    units.push(...L.textUnits(def.text, CW, { size: 9.5, maxLines: 8 }))
+    const sig = L.clean(c.signatureName)
+    const sigLines = L.lines(sig, "b", 19, 300)
+    const sigH = 74 + sigLines.length * 24
+    units.push({
+      h: sigH,
+      draw: (x, y, w) => {
+        L.rect(x + 0.5, y, w - 1, sigH - 1, PAPER)
+        L.label("SIGNATURE (TYPED, WITH AFFIRMATIVE ACCEPTANCE)", x + 14, y - 12, "s", 7, MUTED)
+        L.drawLines(sigLines, x + 14, y - 28, "b", 19, NAVY, 24)
+        L.note(sig)
+        const ly = y - 28 - sigLines.length * 24 - 4
+        L.hline(x + 14, x + 14 + 310, ly, NAVY, 0.9)
+        L.label("Typed signature of the applicant", x + 14, ly - 6, "r", 7.5, MUTED)
+        L.label("DATE SIGNED", x + w - 190, y - 12, "s", 7, MUTED)
+        L.label(fmtUtc(c.acceptedAt), x + w - 190, y - 26, "s", 9.5, INK)
+        L.label("METHOD", x + w - 190, y - 46, "s", 7, MUTED)
+        L.label("Checkbox with typed signature", x + w - 190, y - 60, "r", 8.5, INK)
+        L.label("Wording SHA-256", x + 14, ly - 24, "s", 7, MUTED)
+        L.label(c.textSha256, x + 14, ly - 35, "m", 7.2, INK)
+      },
+    })
+    L.panel({ kicker: "AUTHORIZATION", title: def.title, icon: "penLine", theme: "dark", chip: c.legalStatus !== "APPROVED" ? { text: "PENDING LEGAL REVIEW", tone: "warn" } : { text: "APPROVED", tone: "ok" } }, units)
   }
 
   const externals = snapshot.externalProcesses.map((e) => byKey.get(e.key)).filter((c): c is PlanConsent => Boolean(c))
   if (externals.length) {
-    L.sectionHeader("Authorizations completed outside this application", { follow: 100 })
+    L.subheading("Authorizations completed outside this application", 100, "info")
     for (const c of externals) {
-      L.paragraph(c.title, { font: L.f.s, size: 10.5, color: NAVY, gap: 2 })
-      L.paragraph("This is completed through a separate, official or standalone process. This application does not capture or replace it.", { size: 9, color: MUTED, gap: 8 })
+      L.panel({ title: c.title, icon: "fileText" }, L.textUnits("This is completed through a separate, official or standalone process. This application does not capture or replace it.", CW, { color: MUTED, size: 9 }))
     }
   }
 
-  // ---- Review items and limitations ---------------------------------------------------------------------------------------------------------
-  L.newPage()
-  L.sectionHeader("Open review items and limitations", { number: n++, follow: 120 })
-  if (plan.regulatoryReviewRequirements.length === 0) L.paragraph("None recorded.", { gap: 6 })
-  for (const r of plan.regulatoryReviewRequirements) L.paragraph(`•  ${r.text}`, { x: MX + 6, width: CW - 6, gap: 3 })
-  L.y -= 6
-  L.subheading("Limitations", 70)
-  for (const l of plan.limitations) L.paragraph(`•  ${l}`, { x: MX + 6, width: CW - 6, gap: 3 })
-  L.y -= 6
-  L.subheading("Legal sources referenced (none verified by counsel)", 70)
-  for (const [key, s] of Object.entries(plan.legalSources).sort(([a], [b]) => a.localeCompare(b))) L.paragraph(`•  ${s.citation} [${key}] — ${s.verification}`, { x: MX + 6, width: CW - 6, size: 8.5, gap: 2 })
+  // ---- Carrier review (dossier only) ---------------------------------------------------------------------------------------------------
+  if (carrier && review) {
+    L.newPage()
+    L.sectionHeader(T.carrierReview, { number: n++, icon: "clipboard", dark: true, follow: 180, intro: `Prepared ${fmtUtc(review.preparedAt)} by ${review.preparedBy}. This record is the carrier's own; it does not alter the applicant's declaration above.` })
+    const d = review.decision
+    L.panel(
+      { title: "Qualification decision", icon: "listChecks", theme: "light", chip: d ? { text: d.status.replace(/_/g, " "), tone: statusTone(d.status) } : { text: "NO DECISION RECORDED", tone: "warn" } },
+      L.fieldUnits(
+        d
+          ? [{ label: "Decided by", value: d.decidedBy ?? "—" }, { label: "Decided at", value: d.decidedAt ? fmtUtc(d.decidedAt) : "—" }, { label: "Rationale", value: d.rationale ?? "(none recorded)" }]
+          : [{ label: "Status", value: "No qualification decision has been recorded for this application." }],
+        CW,
+      ),
+    )
+    L.subheading("Verification results", 150, "listChecks")
+    for (const ch of review.checks) {
+      L.panel(
+        { kicker: ch.required ? "REQUIRED CHECK" : "OPTIONAL CHECK", title: ch.title, icon: requirementIcon(ch.title), chip: { text: statusLabel(ch.status), tone: statusTone(ch.status) } },
+        L.fieldUnits(
+          [
+            { label: "Recorded by", value: ch.recordedBy ?? "—" },
+            { label: "Recorded at", value: ch.recordedAt ? fmtUtc(ch.recordedAt) : "—" },
+            { label: "Note", value: ch.note ?? "(none)" },
+            { label: "Evidence document", value: ch.evidenceDocumentId ?? "(none)", mono: Boolean(ch.evidenceDocumentId) },
+          ],
+          CW,
+        ),
+      )
+    }
+    L.newPage()
+    L.sectionHeader(T.evidenceRegister, { number: n++, icon: "paperclip", dark: true, follow: 140 })
+    if (review.evidence.length === 0) L.paragraph("No evidence documents are linked to this application.", { size: 9, color: MUTED, gap: 8 })
+    for (const e of review.evidence) {
+      L.panel(
+        { title: e.label, icon: "paperclip", chip: e.restricted ? { text: "RESTRICTED", tone: "bad" } : undefined },
+        e.restricted
+          ? L.fieldUnits([{ label: "Evidence document id", value: e.documentId, mono: true }, { label: "Access", value: "Restricted. File details are not shown in this document and require the sensitive-information permission." }], CW)
+          : L.fieldUnits([{ label: "File", value: `${e.filename ?? "—"}${e.byteSize !== null ? ` (${e.byteSize} bytes)` : ""}` }, { label: "Evidence document id", value: e.documentId, mono: true }, ...(e.sha256 ? [{ label: "SHA-256", value: e.sha256, mono: true }] : [])], CW),
+      )
+    }
+    L.sectionHeader(T.audit, { number: n++, icon: "clock", dark: true, follow: 140 })
+    if (review.audit.length === 0) L.paragraph("No audit events are available to this reader.", { size: 9, color: MUTED, gap: 8 })
+    review.audit.forEach((a, i) => {
+      L.panel({ kicker: fmtUtc(a.at), title: a.event, icon: "clock", inset: 0 }, L.fieldUnits([{ label: "Actor", value: a.actor }, ...(a.detail ? [{ label: "Detail", value: a.detail }] : [])], CW))
+      void i
+    })
+  }
 
-  // ---- Evidence and integrity ---------------------------------------------------------------------------------------------------------------
+  // ---- Review items and limitations ---------------------------------------------------------------------------------------------------
   L.newPage()
-  L.sectionHeader("Evidence and integrity", { number: n++, follow: 160 })
-  L.paragraph("Technical provenance for record-keeping and audit. The application SHA-256 is the SHA-256 of the canonical JSON (keys sorted, no whitespace) of the stored application snapshot and can be recomputed independently.", { size: 9, color: MUTED, gap: 6 })
-  L.kvCard([
-    { label: "Receipt number", value: input.receiptId, mono: true },
-    ...(input.applicationId ? [{ label: "Application id", value: input.applicationId, mono: true }] : []),
-    { label: "Catalogue version", value: plan.catalogueVersion },
-    { label: "Rules / scope-rules version", value: `${plan.rulesVersion} / ${plan.scopeRulesVersion}` },
-    { label: "Plan SHA-256", value: input.planSha256, mono: true },
-    { label: "Application SHA-256", value: input.snapshotSha256, mono: true },
-    { label: "Received (UTC)", value: fmtUtc(input.submittedAt) },
-    { label: "Document generator", value: PDF_GENERATOR_VERSION },
-  ])
+  L.sectionHeader(T.reviewItems, { number: n++, icon: "info", follow: 150 })
+  L.panel({ title: "Open review items", icon: "alert", theme: "amber", flow: true }, plan.regulatoryReviewRequirements.length ? plan.regulatoryReviewRequirements.flatMap((r) => L.textUnits(r.text, CW, { bullet: true })) : L.textUnits("None recorded.", CW, { color: MUTED }))
+  L.panel({ title: "Limitations", icon: "info", flow: true }, plan.limitations.length ? plan.limitations.flatMap((l) => L.textUnits(l, CW, { bullet: true })) : L.textUnits("None recorded.", CW, { color: MUTED }))
+  L.panel(
+    { title: "Legal sources referenced (none verified by counsel)", icon: "fileText", flow: true },
+    Object.entries(plan.legalSources).sort(([a], [b]) => a.localeCompare(b)).flatMap(([key, s]) => L.textUnits(`${s.citation} [${key}] — ${s.verification}`, CW, { bullet: true, size: 8.6 })),
+  )
+
+  // ---- Evidence and integrity (technical provenance, kept apart from the answers) ---------------------------------------------------------
+  L.newPage()
+  L.sectionHeader(T.integrity, { number: n++, icon: "fileText", dark: true, follow: 220, intro: "Technical provenance for record-keeping and audit. The application SHA-256 is the SHA-256 of the canonical JSON (keys sorted, no whitespace) of the stored application snapshot and can be recomputed independently." })
+  L.panel(
+    { title: "Record identifiers", icon: "fileText" },
+    L.fieldUnits(
+      [
+        { label: "Receipt number", value: input.receiptId, mono: true },
+        ...(input.applicationId ? [{ label: "Application id", value: input.applicationId, mono: true }] : []),
+        { label: "Received (UTC)", value: fmtUtc(input.submittedAt) },
+        { label: "Catalogue version", value: plan.catalogueVersion },
+        { label: "Rules / scope-rules version", value: `${plan.rulesVersion} / ${plan.scopeRulesVersion}` },
+        { label: "Document generator", value: PDF_GENERATOR_VERSION },
+        { label: "Plan SHA-256", value: input.planSha256, mono: true },
+        { label: "Application SHA-256", value: input.snapshotSha256, mono: true },
+      ],
+      CW,
+    ),
+  )
   if (accepted.length) {
-    L.subheading("Signed authorizations", 80)
-    L.table(
-      [{ title: "Authorization", width: 0.3 }, { title: "Status", width: 0.22 }, { title: "Wording SHA-256", width: 0.48 }],
-      accepted.map((c) => [`${c.key} v${c.version}`, c.legalStatus === "APPROVED" ? "Approved" : "Pending legal review", c.textSha256]),
+    L.panel(
+      { title: "Signed authorizations", icon: "penLine", flow: true },
+      accepted.flatMap((c) =>
+        L.fieldUnits(
+          [{ label: `${c.key} v${c.version} — ${c.legalStatus === "APPROVED" ? "Approved" : "Pending legal review"}`, value: c.textSha256, mono: true }],
+          CW,
+        ),
+      ),
     )
   }
   const docs = snapshot.uploads.filter((u) => u.fieldId !== "system.application_pdf")
   if (docs.length) {
-    L.subheading("Supporting documents (evidence references)", 80)
-    L.table(
-      [{ title: "Document", width: 0.36 }, { title: "File", width: 0.24 }, { title: "Evidence document id", width: 0.4 }],
-      docs.map((u) => [fieldById.get(u.fieldId)?.label ?? u.fieldId, `${u.filename}\n${u.byteSize} bytes`, u.documentId]),
+    L.panel(
+      { title: "Supporting documents (evidence references)", icon: "paperclip", flow: true },
+      docs.flatMap((u) => L.fieldUnits([{ label: `${fieldById.get(u.fieldId)?.label ?? u.fieldId} — ${u.filename} (${u.byteSize} bytes)`, value: u.documentId, mono: true }], CW)),
     )
   }
-  L.subheading("Verification limitations", 70)
-  L.paragraph("Every item in this document is applicant-declared. No identity, licence, medical, employment, driving-record, background or eligibility check has been performed by this document. Authorization wording marked pending legal review has not been approved and must not be relied on.", { size: 9, gap: 6 })
-  if (L.san.unsupported > 0) L.paragraph(`${L.san.unsupported} character(s) could not be drawn with the document font and appear as the replacement mark (${REPLACEMENT}). The stored application snapshot holds the exact text as submitted.`, { size: 8.5, color: MUTED, gap: 4 })
+  L.infoBox("Every item in this document is applicant-declared. No identity, licence, medical, employment, driving-record, background or eligibility check has been performed by this document. Authorization wording marked pending legal review has not been approved and must not be relied on.", "info", "Verification limitations")
+  if (L.t.unsupported > 0) L.infoBox(`${L.t.unsupported} character(s) could not be drawn by any embedded font and appear as the replacement mark (${"�"}). The stored application snapshot holds the exact text as submitted.`, "warn", "Characters outside the document fonts")
 
-  // ---- Running header and footer ------------------------------------------------------------------------------------------------------------
+  // ---- Running header and footer ------------------------------------------------------------------------------------------------------
   const total = L.pages.length
   L.pages.forEach((page, i) => {
     if (i > 0) {
+      page.drawRectangle({ x: 0, y: 0, width: 5, height: H, color: BLUE })
       if (L.logo) {
-        const lh = 20
-        page.drawImage(L.logo, { x: MX, y: H - 44, width: (L.logo.width / L.logo.height) * lh, height: lh })
+        const lh = 22
+        page.drawImage(L.logo, { x: MX, y: H - 50, width: (L.logo.width / L.logo.height) * lh, height: lh })
       }
-      const head = L.san.clean(`${input.companyName}  ·  Driver application  ·  ${input.applicantName}`)
-      const shown = head.length > 80 ? `${head.slice(0, 79)}…` : head
-      page.drawText(shown, { x: W - MX - L.f.r.widthOfTextAtSize(shown, 8), y: H - 38, size: 8, font: L.f.r, color: MUTED })
-      page.drawLine({ start: { x: MX, y: H - 52 }, end: { x: W - MX, y: H - 52 }, thickness: 0.8, color: BLUE })
+      let head = L.clean(`${input.companyName}  ·  ${carrier ? "Driver application dossier" : "Driver application"}  ·  ${input.applicantName}`)
+      let size = 8
+      const maxW = CW - 120
+      while (L.t.width(head, "r", size) > maxW && size > 6.5) size -= 0.5
+      if (L.t.width(head, "r", size) > maxW) {
+        const chars = [...head]
+        while (chars.length > 4 && L.t.width(`${chars.join("")}…`, "r", size) > maxW) chars.pop()
+        head = `${chars.join("")}…`
+      }
+      L.t.draw(page, head, W - MX - L.t.width(head, "r", size), H - 40, "r", size, MUTED, H)
+      page.drawLine({ start: { x: MX, y: H - 56 }, end: { x: W - MX, y: H - 56 }, thickness: 1, color: BLUE_LINE })
+      page.drawLine({ start: { x: MX, y: H - 56 }, end: { x: MX + 64, y: H - 56 }, thickness: 2.2, color: BLUE })
+      page.drawLine({ start: { x: MX, y: 46 }, end: { x: W - MX, y: 46 }, thickness: 0.5, color: BLUE_LINE })
+      const left = L.clean(carrier ? `Receipt ${input.receiptId}  ·  Carrier dossier — confidential` : `Receipt ${input.receiptId}  ·  Applicant-declared, not verified`)
+      L.t.draw(page, left, MX, 30, "r", 7.5, MUTED, H)
+      const right = `Page ${i + 1} of ${total}`
+      const rw = L.t.width(right, "s", 8)
+      page.drawRectangle({ x: W - MX - rw - 16, y: 24, width: rw + 16, height: 17, color: BLUE_SOFT, borderColor: BLUE_LINE, borderWidth: 0.6 })
+      L.t.draw(page, right, W - MX - rw - 8, 29.2, "s", 8, NAVY, H)
+      L.manifest[i].push(right)
+    } else {
+      const right = `Page 1 of ${total}`
+      L.page = page
+      page.drawText(right, { x: W - MX - L.t.width(right, "s", 8), y: 18, size: 8, font: L.t.fontFor("s"), color: BLUE_MID })
+      L.manifest[i].push(right)
     }
-    page.drawLine({ start: { x: MX, y: 44 }, end: { x: W - MX, y: 44 }, thickness: 0.5, color: BLUE_LINE })
-    const left = L.san.clean(`Receipt ${input.receiptId}  ·  Applicant-declared, not verified`)
-    page.drawText(left, { x: MX, y: 30, size: 7.5, font: L.f.r, color: MUTED })
-    const right = `Page ${i + 1} of ${total}`
-    page.drawText(right, { x: W - MX - L.f.s.widthOfTextAtSize(right, 8), y: 30, size: 8, font: L.f.s, color: NAVY })
-    L.manifest[i].push(right)
   })
 
   const bytes = await L.doc.save({ useObjectStreams: false, addDefaultPage: false, updateFieldAppearances: false })
-  return { L, render: { bytes, pageCount: total, pages: L.manifest, unsupportedCharacters: L.san.unsupported } }
+  return { L, render: { bytes, pageCount: total, pages: L.manifest, unsupportedCharacters: L.t.unsupported, vectorRuns: L.t.vectorRuns } }
 }
 
 export async function renderApplicationPdfDetailed(input: PdfInput): Promise<PdfRender> {
-  // Pass 1 finds which page each section lands on (the contents list is on the cover); pass 2 prints it. Both passes lay out identically.
+  // Pass 1 finds which page each section lands on (the contents list is on page 2); pass 2 prints it. Both passes lay out identically.
   const first = await build(input, null)
   const map = new Map<string, number>(first.L.contents.map((c) => [c.title, c.page]))
   const second = await build(input, map)
@@ -776,8 +1430,16 @@ export async function renderApplicationPdf(input: PdfInput): Promise<Uint8Array>
   return (await renderApplicationPdfDetailed(input)).bytes
 }
 
-/** Kept for callers that only need the text a given font set can draw. */
+/** Kept for callers that only need the text a given set of drawable code points can render. */
 export function pdfSafe(text: string, supported?: Set<number>): string {
   const set = supported ?? new Set(Array.from({ length: 0x250 }, (_, i) => i))
-  return new Sanitizer(set).clean(text)
+  let out = ""
+  for (const ch of String(text ?? "").normalize("NFC")) {
+    const code = ch.codePointAt(0)!
+    if (ch === "\n") out += "\n"
+    else if (ch === "\t") out += "  "
+    else if (code < 0x20 || code === 0x7f || (code >= 0x80 && code < 0xa0) || code === 0xfeff || (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e)) continue
+    else out += set.has(code) ? ch : "�"
+  }
+  return out
 }

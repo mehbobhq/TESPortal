@@ -1,0 +1,2 @@
+Inter (Regular, SemiBold, Bold) from the Inter Project (SIL Open Font License 1.1; see LICENSE-Inter.txt), pre-subset with fontTools to Latin, Latin Extended, Latin Extended Additional (Vietnamese), Greek, Cyrillic, combining marks, general punctuation, currency and arrows; hinting and layout features removed.
+They are embedded WHOLE (pdf-lib's own subsetter corrupts this font). Characters outside this set are shown as U+FFFD and counted in the document's integrity section.

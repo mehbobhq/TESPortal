@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0B1F44"/><stop offset=".55" stop-color="#1E4FA8"/><stop offset="1" stop-color="#8FB6EE"/></linearGradient>
+    <linearGradient id="land" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3C5F8F"/><stop offset="1" stop-color="#16294A"/></linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#52627C"/><stop offset="1" stop-color="#1B2638"/></linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#sky)"/>
+  <ellipse cx="420" cy="230" rx="260" ry="46" fill="#fff" opacity=".10"/><ellipse cx="1120" cy="170" rx="320" ry="40" fill="#fff" opacity=".08"/>
+  <rect y="470" width="1600" height="430" fill="url(#land)"/>
+  <polygon points="800,470 760,470 -200,900 1800,900 840,470" fill="url(#road)"/>
+  <polygon points="800,470 760,470 -200,900 -40,900 782,470" fill="#fff" opacity=".10"/>
+  <polygon points="800,470 840,470 1800,900 1640,900 818,470" fill="#fff" opacity=".10"/>
+  <g fill="#fff" opacity=".75"><polygon points="799,480 801,480 806,520 794,520"/><polygon points="798,540 802,540 812,610 788,610"/><polygon points="796,640 804,640 824,740 776,740"/><polygon points="792,780 808,780 848,900 752,900"/></g>
+</svg>

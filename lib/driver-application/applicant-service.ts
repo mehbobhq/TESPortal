@@ -390,6 +390,7 @@ export async function ensureApplicationPdf(sessionToken: string | null, port?: E
     const logoPng = await readFile(join(process.cwd(), "public", "branding", "TES-Logo.png")).then((b) => new Uint8Array(b)).catch(() => null)
     const bytes = await renderApplicationPdf({
       logoPng,
+      applicationId: db.application.id,
       companyName: db.companyName,
       applicantName: [db.applicantGivenName, db.applicantFamilyName].filter(Boolean).join(" ") || legalNameOf(db),
       receiptId: db.application.receiptId!,

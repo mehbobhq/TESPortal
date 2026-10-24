@@ -1,26 +1,22 @@
-import { inflateSync } from "node:zlib";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-/** Extracts the text drawn by pdf-lib (hex or literal strings in Tj operators) so tests can assert on what a PDF actually says. */
-export function pdfText(bytes: Uint8Array): string {
-  const buffer = Buffer.from(bytes);
-  const latin = buffer.toString("latin1");
-  const out: string[] = [];
-  const re = /stream\r?\n/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(latin))) {
-    const start = m.index + m[0].length;
-    const end = latin.indexOf("endstream", start);
-    if (end < 0) break;
-    let content = buffer.subarray(start, end);
-    try {
-      content = inflateSync(content);
-    } catch {
-      /* not compressed */
-    }
-    const text = content.toString("latin1");
-    for (const t of text.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) out.push(Buffer.from(t[1], "hex").toString("latin1"));
-    for (const t of text.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)) out.push(t[1].replace(/\\(.)/g, "$1"));
-    out.push("\n");
+/** True when poppler's pdftotext is installed (the PDFs embed CID fonts, so an independent extractor is needed to read them back). */
+export const hasPdftotext = (() => {
+  try {
+    execFileSync("pdftotext", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
   }
-  return out.join("\n");
+})();
+
+/** Extracts the text of a PDF with an independent tool. Returns "" when none is available (callers must skip their text assertions then). */
+export function pdfText(bytes: Uint8Array): string {
+  if (!hasPdftotext) return "";
+  const file = join(mkdtempSync(join(tmpdir(), "pdftext-")), "doc.pdf");
+  writeFileSync(file, bytes);
+  return execFileSync("pdftotext", ["-raw", "-enc", "UTF-8", file, "-"], { maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
 }

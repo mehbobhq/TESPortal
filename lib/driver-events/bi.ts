@@ -45,7 +45,7 @@ export type FactEvent = {
 }
 export type FactEvidence = { link_status: string; verification_state: string; lifecycle_state: string | null }
 export type FactConsequence = {
-  kind: string; measurement_state: string; quantity: string | number | null; unit: string | null; amount_minor: string | number | null; currency: string | null
+  kind: string; measurement_state: string; confidence?: string; quantity: string | number | null; unit: string | null; amount_minor: string | number | null; currency: string | null
   started_at: string | null; ended_at: string | null; state: string
 }
 export type FactAction = { required: boolean; status: string; due_date: string | null }
@@ -129,6 +129,17 @@ export function deriveFact(input: {
   const net = !mixed && act.amount !== null && rec.amount !== null ? act.amount - rec.amount : null
   if (act.amount !== null && rec.amount === null && of("RECOVERY").length === 0) flags.add("RECOVERY_NOT_COLLECTED")
 
+  // Measured, estimated, unverified, none-confirmed and unknown stay distinguishable: a per-kind profile, and the actual cost split by confidence.
+  const profile: Record<string, { state: Record<string, number>; confidence: Record<string, number> }> = {}
+  for (const c of rows) {
+    const entry = (profile[c.kind] ??= { state: {}, confidence: {} })
+    entry.state[c.measurement_state] = (entry.state[c.measurement_state] ?? 0) + 1
+    if (c.confidence) entry.confidence[c.confidence] = (entry.confidence[c.confidence] ?? 0) + 1
+  }
+  const actualMeasured = of("COST_ACTUAL").filter((c) => c.measurement_state === "MEASURED" && c.amount_minor !== null)
+  const sumOf = (list: FactConsequence[]) => list.reduce((a, c) => a + Number(c.amount_minor), 0)
+  const confirmedActual = actualMeasured.filter((c) => c.confidence === "CONFIRMED")
+  const unconfirmedActual = actualMeasured.filter((c) => c.confidence !== "CONFIRMED")
   const delay = durationFor(of("OPERATIONAL_DELAY"))
   const downtime = durationFor(of("ASSET_DOWNTIME"))
   const facts = e.record.facts ?? {}
@@ -199,6 +210,9 @@ export function deriveFact(input: {
     claim_amount_minor: money(claim.amount),
     recovery_amount_minor: money(rec.amount),
     net_impact_minor: net,
+    cost_actual_confirmed_minor: mixed || !actualMeasured.length ? null : sumOf(confirmedActual),
+    cost_actual_unconfirmed_minor: mixed || !actualMeasured.length ? null : sumOf(unconfirmedActual),
+    measurement_profile: JSON.stringify(profile),
     actions_total: input.actions.length,
     actions_open: actionsOpen.length,
     required_actions_open: requiredOpen.length,

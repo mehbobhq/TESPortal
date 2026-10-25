@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
 import { setCanonicalVehicleRecordsProvider } from "@/lib/vehicle-data"
 import { CanonicalVehicleChoicesProvider } from "@/src/components/drivers/canonical-vehicle-choices"
 import { DriverPerformanceEventWorkflow } from "@/src/components/drivers/DriverPerformanceEventWorkflow"
@@ -24,7 +23,6 @@ export function DetailedWizardHost({ companyId, category, drivers, vehicles, onS
   const api = useMemo(() => eventsApi(companyId), [companyId])
   const [driver, setDriver] = useState("")
   const [zone, setZone] = useState(browserZone())
-  const [started, setStarted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The wizard calls onSave and then onClose in the same tick; while the save is in flight the wizard must stay open so a refusal is shown and nothing typed is lost.
   const saving = useRef(false)
@@ -48,6 +46,7 @@ export function DetailedWizardHost({ companyId, category, drivers, vehicles, onS
     saving.current = true
     setError(null)
     try {
+      if (!driver) throw new EventsApiError("Select the driver this event is about (above the steps) before saving.", 400)
       const { input, followUp } = wizardPayloadToEventInput(payload, { driverRelationshipId: driver, timeZone: zone })
       const created = await api.create(input)
       let notice = created.possibleDuplicates.length ? `Saved. ${created.possibleDuplicates.length} possible duplicate(s) found - review them on the event.` : undefined
@@ -58,33 +57,11 @@ export function DetailedWizardHost({ companyId, category, drivers, vehicles, onS
     } catch (e) {
       setError(e instanceof EventsApiError ? [e.message, ...e.issues.slice(1, 4).map((i) => i.message)].join(" · ") : "The event could not be saved.")
     } finally {
-      saving.current = false
+      // the wizard calls onClose in the same tick as onSave: keep the flag up until that has passed
+      setTimeout(() => { saving.current = false }, 0)
     }
   }
 
-  if (!started) {
-    return (
-      <div className="max-w-xl space-y-4 rounded-2xl border border-border p-5" data-testid="wizard-start">
-        <h3 className="text-sm font-bold">{category}</h3>
-        <p className="text-xs text-muted-foreground">The detailed {category.toLowerCase()} workflow records this event against the company&apos;s own driver and vehicle records.</p>
-        <div>
-          <Label htmlFor="wh-driver" required>Driver</Label>
-          <select id="wh-driver" className={inputClass} value={driver} onChange={(e) => setDriver(e.target.value)}>
-            <option value="">Select…</option>
-            {drivers.map((d) => <option key={d.relationshipId} value={d.relationshipId}>{d.label}</option>)}
-          </select>
-          {drivers.length === 0 ? <p className="mt-1 text-[11px] text-destructive">This company has no drivers on record yet.</p> : null}
-        </div>
-        <div>
-          <Label htmlFor="wh-zone">Time zone the event happened in</Label>
-          <select id="wh-zone" className={inputClass} value={zone} onChange={(e) => setZone(e.target.value)}>
-            {[...new Set([zone, ...IANA_TIME_ZONES.map((z: { value: string } | string) => (typeof z === "string" ? z : z.value))])].map((z) => <option key={z} value={z}>{z}</option>)}
-          </select>
-        </div>
-        <div className="flex justify-end gap-2"><Button variant="outline" onClick={onCancel}>Cancel</Button><Button disabled={!driver} onClick={() => setStarted(true)}>Start</Button></div>
-      </div>
-    )
-  }
   return (
     <>
       {error ? <div role="alert" data-testid="wizard-error" className="fixed left-1/2 top-4 z-[60] max-w-xl -translate-x-1/2 rounded-xl border border-destructive/40 bg-background px-4 py-2 text-xs text-destructive shadow-lg">{error}</div> : null}
@@ -97,6 +74,24 @@ export function DetailedWizardHost({ companyId, category, drivers, vehicles, onS
           initialEntryMode="MANUAL"
           initialCategory={category}
           evidenceOnSavedEvent
+          headerSlot={
+            <div className="grid gap-3 sm:grid-cols-2" data-testid="wizard-context">
+              <div>
+                <Label htmlFor="wh-driver" required>Driver</Label>
+                <select id="wh-driver" className={inputClass} value={driver} onChange={(e) => setDriver(e.target.value)}>
+                  <option value="">Select…</option>
+                  {drivers.map((d) => <option key={d.relationshipId} value={d.relationshipId}>{d.label}</option>)}
+                </select>
+                {drivers.length === 0 ? <p className="mt-1 text-[11px] text-destructive">This company has no drivers on record yet.</p> : null}
+              </div>
+              <div>
+                <Label htmlFor="wh-zone">Time zone the event happened in</Label>
+                <select id="wh-zone" className={inputClass} value={zone} onChange={(e) => setZone(e.target.value)}>
+                  {[...new Set([zone, ...IANA_TIME_ZONES.map((z: { value: string } | string) => (typeof z === "string" ? z : z.value))])].map((z) => <option key={z} value={z}>{z}</option>)}
+                </select>
+              </div>
+            </div>
+          }
           onClose={() => { if (!saving.current) onCancel() }}
           onSave={(data) => void save(data as unknown as WizardPayload)}
         />

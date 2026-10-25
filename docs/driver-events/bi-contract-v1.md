@@ -16,7 +16,8 @@ tables) and carries its own data-quality and provenance indicators.
 4. **Exposure is not stored.** Rates join distance / driving hours from the trip and ELD fact layer on `driver_relationship_id`, `vehicle_id`, `occurred_local_date`. `exposure_basis` names the keys.
 5. **One occurrence counts once.** A duplicate is excluded by the view; a repair order, citation, claim or maintenance record attaches to one event only; one invoice/claim reference carries one active consequence per kind (database-enforced).
 6. **Linked is not verified.** `evidence_links_active` / `evidence_stored` / `evidence_verified` are separate; `source_reliability` is `AUTHORITATIVE` only when an authority-sourced event has a *person-verified* document.
-7. **No regulatory conclusion is computed.** Reportability, reporting deadlines and compliance status are person-entered facts; the governing texts (49 CFR 390.15, 396.9 and Canadian equivalents) could not be verified in the build environment.
+7. **Measured, estimated and unknown are distinguishable.** Use `measurement_profile` and the confirmed/unconfirmed split before relying on a total; an `ESTIMATED` amount is in `cost_actual_unconfirmed_minor`, an unknown or not-collected one is in no total at all.
+8. **No regulatory conclusion is computed.** Reportability, reporting deadlines and compliance status are person-entered facts; the governing texts (49 CFR 390.15, 396.9 and Canadian equivalents) could not be verified in the build environment.
 
 ## Columns
 
@@ -29,7 +30,8 @@ tables) and carries its own data-quality and provenance indicators.
 | Evidence & quality | `verification_state, evidence_links_active, evidence_stored, evidence_verified, data_quality_score, required_fields_total, required_fields_missing, quality_flags` | score = 1 − missing/total required (NULL when none apply) |
 | Outcomes | `injuries_count, fatalities_count, tow_away, property_damage` | counts from INJURY consequences (units `injuries`, `fatalities`); tow-away / damage YES/NO/UNKNOWN |
 | Disruption | `delay_minutes, downtime_minutes, service_interrupted, missed_service` | durations normalised to minutes from minutes/hours/days or a start–end window |
-| Financial | `currency, cost_estimated_minor, cost_actual_minor, claim_amount_minor, recovery_amount_minor, net_impact_minor` | net = actual − recovery, only when both are established |
+| Financial | `currency, cost_estimated_minor, cost_actual_minor, cost_actual_confirmed_minor, cost_actual_unconfirmed_minor, claim_amount_minor, recovery_amount_minor, net_impact_minor` | net = actual − recovery, only when both are established; `cost_actual_minor = confirmed + unconfirmed` (unconfirmed = ESTIMATED or UNVERIFIED confidence) |
+| Measurement profile | `measurement_profile` (jsonb) | per consequence kind: counts by state (`MEASURED / NONE_CONFIRMED / NOT_COLLECTED / UNKNOWN`) and by confidence (`CONFIRMED / ESTIMATED / UNVERIFIED`). A kind absent from the profile was never addressed. Added by migration 0043; nothing was removed or renamed |
 | Resolution | `actions_total, actions_open, required_actions_open, next_action_due, restrictions_active, restrictions_released, resolution_state, closed_at, hours_to_close` | resolution: DRAFT / OPEN / RESTRICTED / AWAITING_ACTIONS / CLOSED |
 | Recurrence & exposure | `recurrence_driver_key, recurrence_vehicle_key, exposure_basis, corrections_count, derived_at` | keys are `<category>|driver:<id>` and `<category>|vehicle:<id>` |
 

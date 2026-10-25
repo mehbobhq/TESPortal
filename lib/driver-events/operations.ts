@@ -113,7 +113,7 @@ export async function refreshFact(ctx: EventContext, organizationId: string, eve
     `SELECT l.link_status, l.verification_state, tes_security.driver_event_evidence_state(l.organization_id, l.evidence_document_id) AS lifecycle_state FROM public.driver_event_evidence l WHERE l.event_id = $1`,
     [eventId],
   )
-  const consequences = await sql<FactConsequence>(ctx, `SELECT kind, measurement_state, quantity, unit, amount_minor, currency, started_at, ended_at, state FROM public.driver_event_consequences WHERE event_id = $1`, [eventId])
+  const consequences = await sql<FactConsequence>(ctx, `SELECT kind, measurement_state, confidence, quantity, unit, amount_minor, currency, started_at, ended_at, state FROM public.driver_event_consequences WHERE event_id = $1`, [eventId])
   const actions = await sql<FactAction>(ctx, `SELECT required, status, to_char(due_date, 'YYYY-MM-DD') AS due_date FROM public.driver_event_actions WHERE event_id = $1`, [eventId])
   const restrictions = await sql<FactRestriction>(ctx, `SELECT state, mandatory FROM public.driver_event_restrictions WHERE event_id = $1`, [eventId])
   const [{ n }] = await sql<{ n: string }>(ctx, `SELECT count(*)::text AS n FROM public.driver_event_history WHERE event_id = $1 AND entry_type = 'CORRECTION'`, [eventId])
@@ -127,7 +127,7 @@ export async function refreshFact(ctx: EventContext, organizationId: string, eve
   } as FactEvent
   const fact = deriveFact({ event: normalized, evidence, consequences, actions, restrictions, corrections: Number(n) })
   const keys = Object.keys(fact) as (keyof typeof fact)[]
-  const jsonKeys = new Set(["quality_flags", "exposure_basis"])
+  const jsonKeys = new Set(["quality_flags", "exposure_basis", "measurement_profile"])
   const cols = keys.map((k) => `"${k}"`).join(", ")
   const vals = keys.map((k, i) => (jsonKeys.has(k) ? `$${i + 1}::jsonb` : `$${i + 1}`)).join(", ")
   const updates = keys.filter((k) => k !== "event_id" && k !== "record_version").map((k) => `"${k}" = EXCLUDED."${k}"`).join(", ")
@@ -225,9 +225,8 @@ export async function createEvent(ctx: EventContext, organizationId: string, inp
   const placeholders = cols.map((c, i) => (c === "data_quality" || c === "record" ? `$${i + 1}::jsonb` : `$${i + 1}`)).join(", ")
   await sql(ctx, `INSERT INTO public.driver_events (${cols.join(", ")}) VALUES (${placeholders})`, values)
   await addHistory(ctx, id, organizationId, "CREATED", { version: 1, snapshot: snapshotOf(prepared), changes: [] })
-  if (prepared.recordState === "RECORDED") {
-    await ensureObligations(ctx, { id, organization_id: organizationId, driver_relationship_id: prepared.driverRelationshipId, vehicle_id: links.vehicle, trailer_vehicle_id: links.trailer }, deriveObligations(prepared.categoryCode, prepared.record.facts), prepared.sourceReference)
-  }
+  // A restriction follows the stated answer, not the record state: a draft that says "out of service: yes" holds the subject exactly as a recorded event does.
+  await ensureObligations(ctx, { id, organization_id: organizationId, driver_relationship_id: prepared.driverRelationshipId, vehicle_id: links.vehicle, trailer_vehicle_id: links.trailer }, deriveObligations(prepared.categoryCode, prepared.record.facts), prepared.sourceReference)
   await refreshFact(ctx, organizationId, id)
   await mr(ctx, "RECORD_CREATED", "driver-event-create", id, organizationId, [`driver_event:${id}`], { field: "category", value: prepared.category })
   return { id, version: 1, possibleDuplicates: duplicates }
@@ -276,7 +275,7 @@ export async function reviseEvent(ctx: EventContext, organizationId: string, eve
   const sets = [...setCols.map((c, i) => `${c} = $${i + 3}${c === "data_quality" || c === "record" ? "::jsonb" : ""}`), `current_version = $${setCols.length + 3}`]
   await sql(ctx, `UPDATE public.driver_events SET ${sets.join(", ")} WHERE id = $1 AND organization_id = $2`, [eventId, organizationId, ...setCols.map((c) => valueByCol.get(c)), nextVersion])
   await addHistory(ctx, eventId, organizationId, wasRecorded ? "CORRECTION" : "VERSION", { version: nextVersion, snapshot: snapshotOf(prepared), changes, reason })
-  if (prepared.recordState === "RECORDED") await ensureObligations(ctx, { id: eventId, organization_id: organizationId, driver_relationship_id: prepared.driverRelationshipId, vehicle_id: links.vehicle, trailer_vehicle_id: links.trailer }, after, prepared.sourceReference)
+  await ensureObligations(ctx, { id: eventId, organization_id: organizationId, driver_relationship_id: prepared.driverRelationshipId, vehicle_id: links.vehicle, trailer_vehicle_id: links.trailer }, after, prepared.sourceReference)
   await refreshFact(ctx, organizationId, eventId)
   await mr(ctx, wasRecorded ? "RECORD_CORRECTED" : "RECORD_UPDATED", wasRecorded ? "driver-event-correct" : "driver-event-update", eventId, organizationId, [`driver_event:${eventId}`], { field: changes[0].field, value: String(changes[0].after ?? "") })
   return { id: eventId, version: nextVersion, changedFields: changes.map((c) => c.field) }
@@ -381,6 +380,8 @@ export async function addRelationship(ctx: EventContext, organizationId: string,
     const [target] = await sql<{ id: string }>(ctx, `SELECT id FROM public.driver_events WHERE id = $1 AND organization_id = $2`, [toEventId, organizationId])
     if (!target) throw new DriverEventNotFoundError("The related event was not found in this company.")
     if (type === "DUPLICATE_OF") {
+      const restricted = await sql(ctx, `SELECT 1 FROM public.driver_event_restrictions WHERE event_id = $1 AND state = 'ACTIVE' AND mandatory`, [eventId])
+      if (restricted.length) throw new DriverEventStateError("An event with an active mandatory safety restriction cannot be marked a duplicate. Release the restriction first, or record the restriction on the original event.")
       const loops = await sql(ctx, `SELECT 1 FROM public.driver_event_relationships WHERE relationship_type = 'DUPLICATE_OF' AND status = 'active' AND ((from_event_id = $1 AND to_event_id = $2) OR (from_event_id = $2) OR (to_event_id = $1))`, [toEventId, eventId])
       if (loops.length) throw new DriverEventStateError("Point a duplicate at the ORIGINAL event: the target is itself a duplicate, or this event already has duplicates of its own.")
     }
@@ -541,6 +542,7 @@ export async function issueRestriction(ctx: EventContext, organizationId: string
   const restrictionKind = oneOf(input.restrictionKind, RESTRICTION_KINDS, "restrictionKind")
   const authority = oneOf(input.authority, ["ENFORCEMENT", "REGULATOR", "COMPANY", "OTHER"] as const, "authority")
   const subjectType = oneOf(input.subjectType, ["DRIVER", "VEHICLE", "TRAILER", "CARGO", "OTHER"] as const, "subjectType")
+  if ((authority === "ENFORCEMENT" || authority === "REGULATOR") && input.mandatory === false) throw new DriverEventValidationError("mandatory", "An enforcement or regulator restriction is always mandatory.")
   const driver = subjectType === "DRIVER" ? row.driver_relationship_id : null
   const vehicle = subjectType === "VEHICLE" ? row.vehicle_id : subjectType === "TRAILER" ? row.trailer_vehicle_id : null
   const label = text(input.subjectLabel, "subjectLabel", 300, !driver && !vehicle)
@@ -597,15 +599,16 @@ export async function releaseRestriction(ctx: EventContext, organizationId: stri
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 export async function getEvent(ctx: EventContext, organizationId: string, eventId: string) {
-  const [event] = await sql(ctx, `SELECT * FROM public.driver_events WHERE id = $1 AND organization_id = $2`, [uuid(eventId, "eventId"), organizationId])
+  // Calendar dates and wall-clock times leave the database as TEXT: a DATE read into a JavaScript Date would shift with the server's time zone.
+  const [event] = await sql(ctx, `SELECT to_jsonb(e) || jsonb_build_object('occurred_local_date', to_char(e.occurred_local_date, 'YYYY-MM-DD'), 'reported_local_date', to_char(e.reported_local_date, 'YYYY-MM-DD'), 'occurred_local_time', to_char(e.occurred_local_time, 'HH24:MI')) AS j FROM public.driver_events e WHERE e.id = $1 AND e.organization_id = $2`, [uuid(eventId, "eventId"), organizationId]).then((r) => r.map((x) => (x as { j: Record<string, unknown> }).j))
   if (!event) throw new DriverEventNotFoundError("Event not found.")
   const [history, evidence, relationships, consequences, actions, restrictions, facts] = await Promise.all([
     sql(ctx, `SELECT id, seq, entry_type, record_version, changes, reason, actor_id, occurred_at FROM public.driver_event_history WHERE event_id = $1 ORDER BY seq`, [eventId]),
     sql(ctx, `SELECT l.*, tes_security.driver_event_evidence_state(l.organization_id, l.evidence_document_id) AS lifecycle_state FROM public.driver_event_evidence l WHERE l.event_id = $1 ORDER BY l.linked_at`, [eventId]),
     sql(ctx, `SELECT * FROM public.driver_event_relationships WHERE (from_event_id = $1 OR to_event_id = $1) AND organization_id = $2 ORDER BY created_at`, [eventId, organizationId]),
-    sql(ctx, `SELECT * FROM public.driver_event_consequences WHERE event_id = $1 ORDER BY recorded_at`, [eventId]),
-    sql(ctx, `SELECT * FROM public.driver_event_actions WHERE event_id = $1 ORDER BY created_at`, [eventId]),
-    sql(ctx, `SELECT * FROM public.driver_event_restrictions WHERE event_id = $1 ORDER BY created_at`, [eventId]),
+    sql(ctx, `SELECT to_jsonb(c) || jsonb_build_object('measured_on', to_char(c.measured_on, 'YYYY-MM-DD')) AS j FROM public.driver_event_consequences c WHERE c.event_id = $1 ORDER BY c.recorded_at`, [eventId]).then((r) => r.map((x) => (x as { j: unknown }).j)),
+    sql(ctx, `SELECT to_jsonb(a) || jsonb_build_object('due_date', to_char(a.due_date, 'YYYY-MM-DD')) AS j FROM public.driver_event_actions a WHERE a.event_id = $1 ORDER BY a.created_at`, [eventId]).then((r) => r.map((x) => (x as { j: unknown }).j)),
+    sql(ctx, `SELECT to_jsonb(r) || jsonb_build_object('response_deadline', to_char(r.response_deadline, 'YYYY-MM-DD')) AS j FROM public.driver_event_restrictions r WHERE r.event_id = $1 ORDER BY r.created_at`, [eventId]).then((r) => r.map((x) => (x as { j: unknown }).j)),
     sql(ctx, `SELECT * FROM public.driver_event_bi_facts WHERE event_id = $1 ORDER BY record_version DESC LIMIT 1`, [eventId]),
   ])
   return { event, history, evidence, relationships, consequences, actions, restrictions, fact: facts[0] ?? null, contractVersion: BI_CONTRACT_VERSION }
@@ -633,7 +636,7 @@ export async function listEvents(ctx: EventContext, organizationId: string, f: L
   const limit = Math.min(Math.max(Math.trunc(f.limit ?? 50), 1), 200)
   const rows = await sql(
     ctx,
-    `SELECT e.id, e.category, e.category_code, e.title, e.status, e.record_state, e.occurrence_precision, e.occurred_at, e.occurred_local_date, e.occurred_time_zone, e.observed_severity, e.verification_state,
+    `SELECT e.id, e.category, e.category_code, e.title, e.status, e.record_state, e.occurrence_precision, e.occurred_at, to_char(e.occurred_local_date, 'YYYY-MM-DD') AS occurred_local_date, e.occurred_time_zone, e.observed_severity, e.verification_state,
             e.driver_relationship_id, e.vehicle_id, e.current_version, e.created_at,
             (SELECT count(*) FROM public.driver_event_restrictions r WHERE r.event_id = e.id AND r.state = 'ACTIVE')::int AS active_restrictions,
             EXISTS (SELECT 1 FROM public.driver_event_relationships r WHERE r.from_event_id = e.id AND r.relationship_type = 'DUPLICATE_OF' AND r.status = 'active') AS is_duplicate
@@ -652,4 +655,20 @@ export async function listFacts(ctx: EventContext, organizationId: string, f: { 
   if (f.categoryCode) { params.push(f.categoryCode); where.push(`category_code = $${params.length}`) }
   const limit = Math.min(Math.max(Math.trunc(f.limit ?? 1000), 1), 5000)
   return sql(ctx, `SELECT * FROM public.driver_event_facts_v1 WHERE ${where.join(" AND ")} ORDER BY occurred_local_date NULLS LAST, event_id LIMIT ${limit}`, params)
+}
+
+/** Active safety restrictions for a driver (by person or relationship) and/or a vehicle, in one company. The call every dispatch, assignment, movement or HOS workflow makes before putting them to use. */
+export async function listActiveRestrictions(ctx: EventContext, organizationId: string, f: { personId?: string; driverRelationshipId?: string; vehicleId?: string }) {
+  if (!f.personId && !f.driverRelationshipId && !f.vehicleId) throw new DriverEventValidationError("subject", "Name a driver or a vehicle.")
+  const person = f.personId ? uuid(f.personId, "personId") : null
+  const rel = f.driverRelationshipId ? uuid(f.driverRelationshipId, "driverRelationshipId") : null
+  const vehicle = f.vehicleId ? uuid(f.vehicleId, "vehicleId") : null
+  return sql(
+    ctx,
+    `SELECT * FROM public.driver_event_active_restrictions_v1
+      WHERE organization_id = $1 AND ((subject_type = 'DRIVER' AND ($2::uuid IS NOT NULL AND subject_person_id = $2::uuid OR $3::uuid IS NOT NULL AND subject_driver_relationship_id = $3::uuid))
+         OR ($4::uuid IS NOT NULL AND subject_vehicle_id = $4::uuid))
+      ORDER BY created_at`,
+    [organizationId, person, rel, vehicle],
+  )
 }

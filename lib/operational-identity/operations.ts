@@ -143,6 +143,20 @@ export class DriverProspectPendingStateError extends Error{}
  * migration 0037 and after it; from 0037 the unique index and exclusion constraint also decide any race that bypasses this function. The refusal
  * never says which company holds the driver. Moving a driver from one company to another is an explicit transfer, never a side effect.
  */
+
+/**
+ * A driver under an active mandatory safety restriction (a roadside driver out-of-service order, a stand-down) cannot be activated as a company driver, or transferred to another company, while it stands.
+ * The lookup is a boolean only (tes_security.driver_event_person_restricted, migration 0043): it names no event. Where the migration is not applied there is nothing to
+ * consult and the check is skipped, so existing deployments keep working.
+ */
+async function assertDriverNotSafetyRestricted(ctx:IdentityContext,organizationId:string,personId:string,status:string|undefined){
+ if(status!=="ACTIVE")return
+ const present=(await ctx.client.query(`SELECT to_regprocedure('tes_security.driver_event_person_restricted(uuid,uuid)') IS NOT NULL AS present`)).rows[0]?.present
+ if(!present)return
+ const r=await ctx.client.query<{restricted:boolean|null}>("SELECT tes_security.driver_event_person_restricted($1,$2) AS restricted",[organizationId,personId])
+ if(r.rows[0]?.restricted===true)throw new DriverIdentityStateError("This driver is under an active safety restriction (for example an out-of-service order). Release the restriction on the event that issued it, with its documented correction, before activating or transferring the driver. Nothing was changed.")
+}
+
 export async function establishOrganizationDriver(ctx:IdentityContext,input:OrganizationDriverRelationshipInput,decision:SystemAuthorizationDecision){
  const person=await repo.lockPerson(ctx.client,input.personId)
  await activeOrg(ctx,input.organizationId)
@@ -158,6 +172,7 @@ export async function establishOrganizationDriver(ctx:IdentityContext,input:Orga
   if(state!=="COMPLETE")throw new DriverIdentityStateError(migration0037Message(state,"The ON_LEAVE status"))
  }
  if(await identityIsAmbiguous(ctx,decision,input.personId))throw new DriverIdentityStateError(PENDING_IDENTITY_MESSAGE)
+ await assertDriverNotSafetyRestricted(ctx,input.organizationId,input.personId,input.status)
  const open=await repo.lockOpenAssignments(ctx.client,input.personId)
  if(open.some((r)=>r.organization_id===input.organizationId))throw new DriverIdentityConflictError(DRIVER_ASSIGNMENT_HERE_MESSAGE)
  if(open.length>0)throw new DriverIdentityConflictError(DRIVER_ASSIGNMENT_ELSEWHERE_MESSAGE)
@@ -236,6 +251,8 @@ export async function transferOrganizationDriver(ctx:IdentityContext,decision:Sy
  if(person.record_status!=="active")throw new DriverIdentityStateError("Person must be active.")
  for(const id of [from,to].sort()){const o=await repo.lockOrganization(ctx.client,id);if(!o)throw new DriverIdentityNotFoundError("Organization not found.");if(id===to&&o.status!=="active")throw new DriverIdentityStateError("Organization must be active.")}
  if(await identityIsAmbiguous(ctx,decision,personId))throw new DriverIdentityStateError(PENDING_IDENTITY_MESSAGE)
+ // the restriction belongs to the driver: moving the driver to another company must not shed it (checked in the company that holds it)
+ await assertDriverNotSafetyRestricted(ctx,from,personId,"ACTIVE")
  const verification=await repo.latestIdentityVerification(ctx.client,personId)
  if(verification?.verification_status!=="VERIFIED")throw new DriverIdentityStateError("A driver can be transferred only when the identity is verified against evidence. A matching name, date of birth or licence number is not verification. Nothing was changed.")
  const open=await repo.lockOpenAssignments(ctx.client,personId)

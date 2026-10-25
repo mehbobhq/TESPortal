@@ -20,7 +20,7 @@ function payloadFor(category: "Collision" | "Roadside Inspection" | "Speeding"):
       const field = definition.fields.find((f) => f.key === key)!;
       return { dataPointId: field.dataPointId, value, valueType: field.valueType, unit: field.unitOptions?.[0] };
     }),
-    childCollections: [{ collectionId: "DRV.PERF.TEST.ITEMS", collectionVersion: "1.0", itemType: "TEST", completeness: "COMPLETE", items: [] }],
+    childCollections: category !== "Collision" ? [] : [{ collectionId: "DRV.PERF.COLLISION.INVOLVED_PARTIES", collectionVersion: "1.0", itemType: "COLLISION_INVOLVED_PARTY", completeness: "COMPLETE", items: [] }],
   } as unknown as WizardPayload;
 }
 
@@ -34,7 +34,7 @@ describe("detailed wizard payload -> canonical event input", () => {
     assert.equal(input.location?.jurisdictionCode, "CA-ON");
     assert.equal(input.reportedDate, "2026-03-09");
     assert.ok("collisionClassType" in (input.facts ?? {}), "keyed by field, not by data point id");
-    assert.ok(input.childCollections && "DRV.PERF.TEST.ITEMS" in input.childCollections, "child collections are keyed by collection id");
+    assert.ok(input.childCollections && "DRV.PERF.COLLISION.INVOLVED_PARTIES" in input.childCollections, "child collections are keyed by collection id");
     assert.deepEqual(followUp, { title: "Check the brake adjustment", dueDate: "2026-03-20" });
     const prepared = prepareEvent(input, NOW);
     assert.equal(prepared.occurredAt, "2026-03-09T12:30:00.000Z");

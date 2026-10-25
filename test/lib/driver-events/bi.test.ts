@@ -10,7 +10,7 @@ const event = (over: Partial<FactEvent> = {}): FactEvent => ({
   jurisdiction_code: "CA-ON", country: "CA", state_province: "ON", load_reference: null, shipment_reference: null, customer_reference: null, verification_state: "UNVERIFIED", closed_at: null,
   created_at: "2026-03-09T14:31:00.000Z", record: { facts: {} }, data_quality: { requiredTotal: 5, requiredMissing: 1, flags: [] }, ...over,
 });
-const cons = (over: Partial<FactConsequence>): FactConsequence => ({ kind: "COST_ACTUAL", measurement_state: "MEASURED", quantity: null, unit: null, amount_minor: null, currency: null, started_at: null, ended_at: null, state: "ACTIVE", ...over });
+const cons = (over: Partial<FactConsequence>): FactConsequence => ({ kind: "COST_ACTUAL", measurement_state: "MEASURED", confidence: "CONFIRMED", quantity: null, unit: null, amount_minor: null, currency: null, started_at: null, ended_at: null, state: "ACTIVE", ...over });
 const fact = (over: { event?: Partial<FactEvent>; consequences?: FactConsequence[]; evidence?: Parameters<typeof deriveFact>[0]["evidence"]; actions?: Parameters<typeof deriveFact>[0]["actions"]; restrictions?: Parameters<typeof deriveFact>[0]["restrictions"] } = {}) =>
   deriveFact({ event: event(over.event), evidence: over.evidence ?? [], consequences: over.consequences ?? [], actions: over.actions ?? [], restrictions: over.restrictions ?? [], corrections: 0 });
 
@@ -62,6 +62,25 @@ describe("Driver Event analytical fact (contract v1)", () => {
     assert.ok(JSON.parse(noRecovery.quality_flags).includes("RECOVERY_NOT_COLLECTED"));
     const net = fact({ consequences: [cons({ amount_minor: 5000, currency: "CAD" }), cons({ kind: "RECOVERY", amount_minor: 1500, currency: "CAD" })] });
     assert.equal(net.net_impact_minor, 3500);
+  });
+
+  it("confirmed and estimated amounts are separable and the measurement profile keeps every state apart", () => {
+    const f = fact({ consequences: [
+      cons({ amount_minor: 7000, currency: "CAD", confidence: "CONFIRMED" }),
+      cons({ amount_minor: 1500, currency: "CAD", confidence: "ESTIMATED" }),
+      cons({ kind: "OPERATIONAL_DELAY", measurement_state: "NOT_COLLECTED", confidence: "UNVERIFIED" }),
+      cons({ kind: "RECOVERY", measurement_state: "NONE_CONFIRMED" }),
+    ] });
+    assert.equal(f.cost_actual_minor, 8500);
+    assert.equal(f.cost_actual_confirmed_minor, 7000);
+    assert.equal(f.cost_actual_unconfirmed_minor, 1500);
+    const profile = JSON.parse(f.measurement_profile);
+    assert.deepEqual(profile.COST_ACTUAL, { state: { MEASURED: 2 }, confidence: { CONFIRMED: 1, ESTIMATED: 1 } });
+    assert.deepEqual(profile.OPERATIONAL_DELAY.state, { NOT_COLLECTED: 1 });
+    assert.equal(profile.INJURY, undefined);
+    const none = fact();
+    assert.equal(none.cost_actual_confirmed_minor, null);
+    assert.equal(none.measurement_profile, "{}");
   });
 
   it("evidence counts, verification and source reliability: linked is not verified", () => {

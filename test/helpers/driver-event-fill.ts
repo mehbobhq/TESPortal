@@ -1,4 +1,5 @@
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, type PerformanceFieldDefinition } from "@/lib/driver-performance-schema";
+import { createRoadsideEquipmentCollection, createRoadsideEquipmentItem, ROADSIDE_EQUIPMENT_COLLECTION_ID } from "@/lib/driver-performance-child-facts";
 import { fieldIsVisible, type EventInput, type Scalar } from "@/lib/driver-events/validation";
 
 function sample(field: PerformanceFieldDefinition): Scalar {
@@ -33,6 +34,7 @@ export function unitsFor(code: string, facts: Record<string, Scalar>): Record<st
 export const minimalInput = (code: string, over: Partial<EventInput> = {}): EventInput => {
   const definition = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.find((d) => d.code === code)!;
   const facts = over.facts ?? minimalFacts(code);
-  return { category: definition.value, title: `${definition.label} test`, sourceType: definition.sources[0], occurrence: { date: "2026-03-09", time: "08:30", timeZone: "America/Toronto" }, factUnits: unitsFor(code, facts), ...over, facts };
+  const childCollections = code === "ROADSIDE_INSPECTION" ? { [ROADSIDE_EQUIPMENT_COLLECTION_ID]: createRoadsideEquipmentCollection([createRoadsideEquipmentItem({ role: "POWER_UNIT", equipmentType: "Tractor" })]) } : {};
+  return { category: definition.value, title: `${definition.label} test`, sourceType: definition.sources[0], occurrence: { date: "2026-03-09", time: "08:30", timeZone: "America/Toronto" }, factUnits: unitsFor(code, facts), childCollections, ...over, facts };
 };
 

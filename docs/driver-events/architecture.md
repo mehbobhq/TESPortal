@@ -22,6 +22,7 @@ retyped, and no browser-local test record is migrated (migration 0042 loads no d
 | Relationships and de-duplication | Possible duplicates are offered (same category, driver or vehicle, same day, within two hours); `DUPLICATE_OF` removes the later event from analytics. A citation, repair order, claim or maintenance record attaches to one event only, and one source reference carries one active consequence per kind, so the same occurrence is never counted twice. Source references make ingestion idempotent. |
 | Consequences | Delay, downtime, missed service, estimated / actual cost, claim, recovery, injury, damage, enforcement, environmental, customer impact, investigation time and corrective-action cost, each with source, confidence, measurement date and canonical link. Measurement state is explicit (`MEASURED / NONE_CONFIRMED / NOT_COLLECTED / UNKNOWN`); missing is never zero; a newer measurement supersedes and the old one is kept. |
 | Safety restrictions | Facts that oblige a restriction create it automatically: roadside driver / vehicle out-of-service = YES → mandatory enforcement restriction plus required follow-up; equipment "not safe to operate" = NO → mandatory equipment hold. An active mandatory restriction **blocks closing** (database trigger), **cannot be dissolved by correcting the answer** (service) and is **released only through the dedicated capability**, with the documented correction; an enforcement or regulator restriction additionally needs a stored, scanned, **person-verified** release document linked to that event (company clearance is refused for it). A released restriction is final. |
+| Detail records (child collections) | Parties, injured persons, violations, inspected equipment, items, materials ... are validated for structure on the server (and, for Roadside Inspection, by the existing collection validators) and corrected like any other fact: a correction is a new version with its reason, the history lists each item **added, changed or removed** (item id, before, after), the earlier version stays readable in full, and nothing is silently overwritten. The correction screen edits the items' recorded values and can add or remove items. |
 | Follow-up | Corrective actions with owner / due / status; a *required* action blocks closure until completed with a note. |
 | Analytical fact | Contract `driver-event-fact/1` ([contract](bi-contract-v1.md)). |
 
@@ -49,6 +50,10 @@ its sections, its statement of what it does *not* conclude, its suggested eviden
 | Others (Other Event) | own workflow with classification review | Yes |
 | Route Deviation (existing conditional category) | preserved, own workflow | Yes |
 
+## Safety enforcement beyond the event
+
+See [safety-enforcement.md](safety-enforcement.md): what is enforced where, and which workflows do not exist yet.
+
 ## Not verified or not done (stated, not hidden)
 
 1. **Regulatory text could not be verified** in the build environment (network access to eCFR and the other sources was refused). Therefore no reportability, reporting deadline, accident-register
@@ -60,5 +65,5 @@ its sections, its statement of what it does *not* conclude, its suggested eviden
 4. **Trip, shipment and customer** have no canonical records yet: those links are references (text) until they exist, then become ids.
 5. **Customer-facing access** to events does not exist (SYSTEM scope only), by design for this phase.
 6. The legacy browser-local Driver workspace still exists for drivers that were never moved; its events are **not** copied into PostgreSQL.
-7. Child-collection edits (parties, violations, items, materials …) are made in the detailed wizards at creation; a later *correction* of facts keeps the collections as recorded (a collection-level editor is future work).
+7. The cross-field rules of the Collision / Cargo / Spill / Customer wizards (which reference browser-held evidence ids) are enforced in the wizard, not re-run on the server; the server enforces structure, registry facts, units, required facts and the Roadside collection rules. Controlled values inside child items other than Roadside are not checked against their taxonomies by the server.
 8. Production: the migration, deployment and any push require explicit owner approval and have not been performed.

@@ -8,6 +8,7 @@ import { fieldIsVisible, SEVERITIES, type EventInput, type FactState, type Scala
 import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY, resolvePerformanceApplicability } from "@/lib/driver-performance-schema"
 import { IANA_TIME_ZONES } from "@/lib/performance-near-miss-taxonomy"
 import { EventsApiError, eventsApi, type DriverOption, type Issue, type VehicleOption } from "./events-api"
+import { ChildCollectionsEditor } from "./child-collections-editor"
 import { FieldInput, Label, inputClass } from "./field-input"
 
 type Header = {
@@ -17,7 +18,9 @@ type Header = {
 }
 
 export type CorrectionSeed = {
-  id: string; version: number; header: Partial<Header>; facts: Record<string, Scalar>; factStates: Record<string, FactState>; factUnits: Record<string, string>; childCollections: Record<string, unknown>
+  id: string; version: number; header: Partial<Header>;
+  /** Recorded header values this form does not edit (reporter, subtype, origin, exact report time, coordinates): a correction carries them through unchanged. */
+  preserved?: Pick<EventInput, "reporterLabel" | "subtype" | "ingestionOrigin" | "reportedAt" | "tripReference"> & { latitude?: number | null; longitude?: number | null }; facts: Record<string, Scalar>; factStates: Record<string, FactState>; factUnits: Record<string, string>; childCollections: Record<string, unknown>
 }
 
 const browserZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Toronto" } catch { return "America/Toronto" } }
@@ -46,6 +49,7 @@ export function CategoryEventForm({
   const [facts, setFacts] = useState<Record<string, Scalar>>(seed?.facts ?? {})
   const [states, setStates] = useState<Record<string, FactState>>(seed?.factStates ?? {})
   const [units, setUnits] = useState<Record<string, string>>(seed?.factUnits ?? {})
+  const [collections, setCollections] = useState<Record<string, unknown>>(seed?.childCollections ?? {})
   const [reason, setReason] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,6 +67,7 @@ export function CategoryEventForm({
       recordState,
       occurrence: { date: h.date || null, time: h.time || null, timeZone: h.time ? h.timeZone : h.timeZone || null, approximate: h.approximate },
       reportedDate: h.reportedDate || null,
+      ...(seed?.preserved ? { reporterLabel: seed.preserved.reporterLabel ?? null, subtype: seed.preserved.subtype ?? null, ingestionOrigin: seed.preserved.ingestionOrigin, reportedAt: seed.preserved.reportedAt ?? null, tripReference: seed.preserved.tripReference ?? null } : {}),
       sourceType: h.sourceType,
       sourceReference: h.sourceReference || null,
       driverRelationshipId: h.driver || null,
@@ -71,11 +76,11 @@ export function CategoryEventForm({
       loadReference: h.loadReference || null,
       shipmentReference: h.shipmentReference || null,
       customerReference: h.customerReference || null,
-      location: { text: h.locationText || null, city: h.city || null, stateProvince: h.stateProvince || null, country: h.country || null, jurisdictionCode: h.jurisdictionCode || null },
+      location: { text: h.locationText || null, city: h.city || null, stateProvince: h.stateProvince || null, country: h.country || null, jurisdictionCode: h.jurisdictionCode || null, latitude: seed?.preserved?.latitude ?? null, longitude: seed?.preserved?.longitude ?? null },
       observedSeverity: h.severity,
       potentialSeverity: h.potentialSeverity || null,
       facts, factStates: states, factUnits: cleanUnits,
-      childCollections: seed?.childCollections ?? {},
+      childCollections: collections,
     }
   }
 
@@ -182,8 +187,12 @@ export function CategoryEventForm({
           <p className="text-[10px] text-muted-foreground">A report or record number as given. The same source can create an event only once.</p>
         </div>
         <div>
-          <Label htmlFor="ev-load">Load / shipment reference</Label>
-          <input id="ev-load" className={inputClass} value={h.shipmentReference} onChange={(e) => { set("shipmentReference", e.target.value); set("loadReference", e.target.value) }} />
+          <Label htmlFor="ev-load">Load reference</Label>
+          <input id="ev-load" className={inputClass} value={h.loadReference} onChange={(e) => set("loadReference", e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="ev-shipment">Shipment reference</Label>
+          <input id="ev-shipment" className={inputClass} value={h.shipmentReference} onChange={(e) => set("shipmentReference", e.target.value)} />
         </div>
         <div>
           <Label htmlFor="ev-customer">Customer reference</Label>
@@ -238,6 +247,8 @@ export function CategoryEventForm({
           </Section>
         )
       })}
+
+      {seed ? <ChildCollectionsEditor value={collections} onChange={setCollections} /> : null}
 
       {seed ? (
         <Section title="Why is this being corrected?" hint="The earlier version stays in the history exactly as it was recorded.">

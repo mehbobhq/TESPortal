@@ -46,6 +46,7 @@ export const findEventDuplicates = (organizationId: string, eventId: string) =>
   read(async (ctx) => {
     const { event } = await ops.getEvent(ctx, organizationId, eventId)
     const e = event as { category_code: string; occurred_at: string | null; occurred_local_date: Date | string | null; driver_relationship_id: string | null; vehicle_relationship_id: string | null }
-    const day = e.occurred_local_date instanceof Date ? `${e.occurred_local_date.getFullYear()}-${String(e.occurred_local_date.getMonth() + 1).padStart(2, "0")}-${String(e.occurred_local_date.getDate()).padStart(2, "0")}` : e.occurred_local_date
+    const day = e.occurred_local_date as string | null // already text (YYYY-MM-DD) from getEvent
     return ops.findPossibleDuplicates(ctx, organizationId, { categoryCode: e.category_code, occurredAt: e.occurred_at, occurredLocalDate: day, driverRelationshipId: e.driver_relationship_id, vehicleRelationshipId: e.vehicle_relationship_id }, eventId)
   })
+export const listActiveEventRestrictions = (organizationId: string, subject: Parameters<typeof ops.listActiveRestrictions>[2]) => read((ctx) => ops.listActiveRestrictions(ctx, organizationId, subject))

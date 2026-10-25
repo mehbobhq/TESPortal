@@ -54,7 +54,9 @@ export function EventDetail({ companyId, eventId, drivers, vehicles, onBack, onC
 
   if (correcting) {
     const seed: CorrectionSeed = {
-      id: e.id, version: e.current_version, facts: record.facts ?? {}, factStates: record.factStates ?? {}, factUnits: record.factUnits ?? {}, childCollections: record.childCollections ?? {},
+      id: e.id, version: e.current_version,
+      preserved: { tripReference: e.trip_reference ?? null, reporterLabel: e.reporter_label ?? null, subtype: e.subtype ?? null, ingestionOrigin: e.ingestion_origin, reportedAt: e.reported_at ? new Date(e.reported_at).toISOString() : null, latitude: e.latitude === null || e.latitude === undefined ? null : Number(e.latitude), longitude: e.longitude === null || e.longitude === undefined ? null : Number(e.longitude) },
+      facts: record.facts ?? {}, factStates: record.factStates ?? {}, factUnits: record.factUnits ?? {}, childCollections: record.childCollections ?? {},
       header: {
         title: e.title, narrative: e.narrative ?? "", date: e.occurred_local_date ? String(e.occurred_local_date).slice(0, 10) : "", time: e.occurred_local_time ? String(e.occurred_local_time).slice(0, 5) : "",
         timeZone: e.occurred_time_zone ?? undefined, approximate: e.occurrence_precision === "APPROXIMATE", reportedDate: e.reported_local_date ? String(e.reported_local_date).slice(0, 10) : "", sourceType: e.source_type,

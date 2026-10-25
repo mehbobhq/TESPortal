@@ -9,6 +9,7 @@ import {
   type PerformanceFieldDefinition,
 } from "@/lib/driver-performance-schema"
 import type { EventType } from "@/types/drivers"
+import { diffChildCollections, validateChildCollections } from "./child-collections"
 import { DriverEventValidationError } from "./errors"
 
 /**
@@ -325,6 +326,7 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
   const children = input.childCollections ?? {}
   if (typeof children !== "object" || Array.isArray(children)) issues.push({ field: "childCollections", message: "Child collections must be an object." })
   else if (JSON.stringify(children).length > MAX_CHILD_BYTES) issues.push({ field: "childCollections", message: "Child collections are too large." })
+  else if (recordState === "RECORDED") issues.push(...validateChildCollections(definition.code, facts, children as Record<string, unknown>))
 
   // ---- canonical links ----
   const driverRelationshipId = uuidOrNull(input.driverRelationshipId, "driverRelationshipId", issues)
@@ -392,10 +394,10 @@ export function diffPrepared(before: PreparedEvent, after: PreparedEvent): { fie
     for (const [k, v] of Object.entries(record.facts)) o[`facts.${k}`] = v
     for (const [k, v] of Object.entries(record.factStates)) if (v !== "PROVIDED") o[`factStates.${k}`] = v
     for (const [k, v] of Object.entries(record.factUnits ?? {})) o[`factUnits.${k}`] = v
-    o.childCollections = JSON.stringify(record.childCollections)
     return o
   }
   const a = flat(before), b = flat(after)
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[key] ?? null) !== JSON.stringify(b[key] ?? null)) out.push({ field: key, before: a[key] ?? null, after: b[key] ?? null })
+  for (const c of diffChildCollections(before.record.childCollections, after.record.childCollections)) out.push({ field: c.field, before: { change: c.change, ...(c.before !== null ? { facts: c.before } : {}) }, after: { change: c.change, ...(c.after !== null ? { facts: c.after } : {}) } })
   return out
 }

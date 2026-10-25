@@ -20,6 +20,8 @@ async function loadKit() {
     sysdb: await import("@/lib/auth/tes-system-context"),
     queries: await import("@/lib/driver-events/example-queries"),
     fill: await import("../../helpers/driver-event-fill"),
+    cc: await import("@/lib/driver-performance-child-facts"),
+    oi: await import("@/lib/operational-identity/service"),
     schema: await import("@/lib/driver-performance-schema"),
   };
 }
@@ -159,10 +161,11 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     jurisdiction: "ON", inspectionRegime: "CA_NSC_CVSA", inspectionScope: "BOTH", inspectionResult: "VIOLATIONS_FOUND", driverInspectionResult: "VIOLATIONS_FOUND", driverOOSState: "NO",
     vehicleInspectionResult: "VIOLATIONS_FOUND", vehicleOOSState: "YES", sourceReportedViolationCount: 2, sourceType: "ROADSIDE_INSPECTION",
   };
+  const equipment = () => ({ [K.cc.ROADSIDE_EQUIPMENT_COLLECTION_ID]: K.cc.createRoadsideEquipmentCollection([K.cc.createRoadsideEquipmentItem({ role: "POWER_UNIT", equipmentType: "Tractor" })]) });
   const roadside = (over: Record<string, unknown> = {}) => ({
     category: "Roadside Inspection", title: "Roadside inspection, Highway 401", sourceType: "Roadside Inspection", sourceReference: `RPT-${randomUUID().slice(0, 8)}`,
     occurrence: { date: day(-2), time: "09:30", timeZone: "America/Toronto" }, location: { city: "Milton", stateProvince: "ON", country: "CA", jurisdictionCode: "CA-ON" },
-    observedSeverity: "High", facts: ROADSIDE_FACTS, ...over,
+    observedSeverity: "High", facts: ROADSIDE_FACTS, childCollections: equipment(), ...over,
   });
   const speeding = (over: Record<string, unknown> = {}) => ({
     category: "Speeding", title: "Speeding observation", sourceType: "ELD / Telematics", ingestionOrigin: "TELEMATICS_INGESTION",
@@ -201,6 +204,11 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     assert.equal(e.occurred_time_zone, "America/Toronto");
     assert.ok(e.occurred_at, "an exact occurrence has an instant");
     assert.equal(e.vehicle_id, vehicle, "the canonical vehicle id is resolved server-side from the company relationship");
+    // calendar dates and wall-clock times are text, so no server time zone can shift a day
+    assert.match(e.occurred_local_date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(typeof e.occurred_local_time, "string");
+    assert.match(e.occurred_local_time, /^\d{2}:\d{2}$/);
+    assert.equal(e.occurred_local_date, day(-1));
     assert.equal(e.record.facts.actualSpeed, 118);
     assert.equal(got.history.length, 1);
     assert.equal(got.history[0].entry_type, "CREATED");
@@ -464,6 +472,159 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     }
   });
 
+  scenario("child-collection corrections are versioned, attributed, validated and never overwrite history", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    const created = await create(o, roadside());
+    const eqId = K.cc.ROADSIDE_EQUIPMENT_COLLECTION_ID;
+    const v1 = (await K.svc.getEvent(o, created.id)).event as any;
+    const original = JSON.parse(JSON.stringify(v1.record.childCollections[eqId]));
+    const towed = K.cc.createRoadsideEquipmentItem({ role: "TOWED_UNIT", equipmentType: "Van trailer", sourcePlate: "ABC123" });
+    const withTowed = { ...roadside({ sourceReference: v1.source_reference }), childCollections: { [eqId]: K.cc.createRoadsideEquipmentCollection([...original.items, towed]) } };
+    await rejects(() => K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: withTowed as never }), "ValidationError"); // a correction needs its reason
+    const done = await K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: withTowed as never, reason: "A second unit was inspected" });
+    assert.equal(done.version, 2);
+    assert.ok(done.changedFields.some((f) => f.startsWith(`childCollections.${eqId}.`)), "the history names the item that was added");
+    const hist = (await K.svc.getEvent(o, created.id)).history as any[];
+    const entry = hist.find((h) => h.entry_type === "CORRECTION");
+    assert.equal(entry.reason, "A second unit was inspected");
+    assert.equal(entry.changes.find((c: any) => c.field.includes(towed.itemId)).before.change, "ADDED");
+    // version 1 is exactly what was recorded; version 2 holds both units
+    const [snap1] = await K.svc.getEventVersion(o, created.id, 1);
+    assert.deepEqual((snap1.snapshot as any).record.childCollections[eqId].items.map((i: any) => i.itemId), original.items.map((i: any) => i.itemId));
+    const [, snap2] = [null, ...(await K.svc.getEventVersion(o, created.id, 2))];
+    assert.equal((snap2!.snapshot as any).record.childCollections[eqId].items.length, 2);
+    // item-level change, then removal, each a new version with an item-level history entry
+    const changed = JSON.parse(JSON.stringify(withTowed)); changed.childCollections[eqId].items[1].facts.equipmentType = "Reefer trailer";
+    const v3 = await K.svc.reviseEvent(o, created.id, { expectedVersion: 2, event: changed as never, reason: "Trailer type corrected" });
+    assert.equal(v3.version, 3);
+    const removed = JSON.parse(JSON.stringify(changed)); removed.childCollections[eqId].items = removed.childCollections[eqId].items.slice(0, 1);
+    await K.svc.reviseEvent(o, created.id, { expectedVersion: 3, event: removed as never, reason: "Second unit was not part of this inspection" });
+    const hist2 = (await K.svc.getEvent(o, created.id)).history as any[];
+    assert.ok(hist2.some((h) => (h.changes as any[]).some((c) => c.before?.change === "CHANGED")), "a changed item is recorded as changed");
+    assert.ok(hist2.some((h) => (h.changes as any[]).some((c) => c.before?.change === "REMOVED")), "a removed item is recorded as removed, not silently dropped");
+    assert.equal((await q(`SELECT count(*)::int AS n FROM public.driver_event_history WHERE event_id = $1 AND snapshot IS NOT NULL`, [created.id]))[0].n, 4, "every version keeps its snapshot");
+    // structure and the roadside rules are enforced by the server
+    const twoPower = { ...roadside({ sourceReference: v1.source_reference }), childCollections: { [eqId]: K.cc.createRoadsideEquipmentCollection([K.cc.createRoadsideEquipmentItem({ role: "POWER_UNIT" }), K.cc.createRoadsideEquipmentItem({ role: "POWER_UNIT" })]) } };
+    await rejects(() => K.svc.reviseEvent(o, created.id, { expectedVersion: 4, event: twoPower as never, reason: "x" }), "ValidationError");
+    const foreign = { ...roadside({ sourceReference: v1.source_reference }), childCollections: { ...equipment(), "DRV.PERF.COLLISION.INVOLVED_PARTIES": { collectionId: "DRV.PERF.COLLISION.INVOLVED_PARTIES", collectionVersion: "1.0", itemType: "X", completeness: "COMPLETE", items: [] } } };
+    await rejects(() => K.svc.reviseEvent(o, created.id, { expectedVersion: 4, event: foreign as never, reason: "x" }), "ValidationError");
+    await rejects(() => create(o, roadside({ sourceReference: "NO-EQUIPMENT", childCollections: {} })), "ValidationError"); // every roadside inspection lists its equipment
+  });
+
+  scenario("safety restrictions cannot be bypassed: drafts, status, duplicates, non-mandatory orders, driver activation and transfer", async () => {
+    await signIn(...MANAGE, "DRIVER_MANAGE", "DRIVER_READ", "PERSON_IDENTITY_MANAGE");
+    const o = await org();
+    const { rel: vrel, vehicle } = await vehicleRel(o);
+    const driver = await driverRel(o);
+    const [{ person_id }] = await q<{ person_id: string }>(`SELECT person_id FROM public.organization_driver_relationships WHERE id = $1`, [driver]);
+    // 1. a DRAFT that states "out of service: yes" already holds the driver and the vehicle
+    const draft = await create(o, roadside({ recordState: "DRAFT", driverRelationshipId: driver, vehicleRelationshipId: vrel, facts: { ...ROADSIDE_FACTS, driverOOSState: "YES", vehicleOOSState: "YES" } }));
+    let got = await K.svc.getEvent(o, draft.id);
+    assert.equal(got.restrictions.length, 2, "a draft creates the restrictions its answers oblige");
+    // 2. the restriction is visible to every workflow that consults the active-restriction lookup, by person, relationship and vehicle
+    const byPerson = await K.svc.listActiveEventRestrictions(o, { personId: person_id });
+    const byVehicle = await K.svc.listActiveEventRestrictions(o, { vehicleId: vehicle });
+    const byRelationship = await K.svc.listActiveEventRestrictions(o, { driverRelationshipId: driver });
+    assert.deepEqual([byPerson.length, byVehicle.length, byRelationship.length], [1, 1, 1]);
+    assert.equal((await K.svc.listActiveEventRestrictions(await org("Other"), { personId: person_id })).length, 0, "another company's lookup finds nothing");
+    await rejects(() => K.svc.listActiveEventRestrictions(o, {}), "ValidationError");
+    // 3. neither "Closed" nor "Not Applicable" nor "duplicate" hides it
+    await rejects(() => K.svc.changeEventStatus(o, draft.id, { to: "Not Applicable", reason: "not relevant" }), "StateError");
+    await rejects(() => K.svc.changeEventStatus(o, draft.id, { to: "Closed", reason: "x" }), "StateError"); // a draft cannot be closed at all
+    const original = await create(o, roadside({ sourceReference: "ORIG" }));
+    await rejects(() => K.svc.addEventRelationship(o, draft.id, { type: "DUPLICATE_OF", toEventId: original.id }), "StateError");
+    await assert.rejects(pools.admin.query(`INSERT INTO public.driver_event_relationships (organization_id, from_event_id, relationship_type, to_event_id, created_by_actor_id) VALUES ($1, $2, 'DUPLICATE_OF', $3, (SELECT id FROM public.actors LIMIT 1))`, [o, draft.id, original.id]), /duplicate/i);
+    // 4. an enforcement order cannot be issued as non-mandatory (service and database)
+    await rejects(() => K.svc.issueEventRestriction(o, original.id, { restrictionKind: "OTHER_SAFETY", authority: "ENFORCEMENT", subjectType: "OTHER", subjectLabel: "x", mandatory: false }), "ValidationError");
+    await assert.rejects(pools.admin.query(`INSERT INTO public.driver_event_restrictions (event_id, organization_id, restriction_kind, authority, mandatory, subject_type, subject_label, created_by_actor_id) VALUES ($1, $2, 'OTHER_SAFETY', 'ENFORCEMENT', false, 'OTHER', 'x', (SELECT id FROM public.actors LIMIT 1))`, [original.id, o]), /authority_mandatory/);
+    // 5. the driver cannot be activated again, nor transferred to another company, while the restriction stands
+    await pools.admin.query(`UPDATE public.organization_driver_relationships SET status = 'ENDED', effective_to = current_date, activated_at = coalesce(activated_at, now()) WHERE id = $1`, [driver]).catch(() => undefined);
+    await assert.rejects(() => K.oi.establishOrganizationDriver({ organizationId: o, personId: person_id, relationshipType: "EMPLOYEE", status: "ACTIVE", effectiveFrom: day(0) } as never), (e: Error) => {
+      assert.match(e.message, /active safety restriction/, `refused for the right reason: ${e.message}`);
+      return true;
+    });
+    // the same activation for a driver with NO restriction is not affected by the check (it may be refused for other reasons, never for this one)
+    const clean = await driverRel(o);
+    const [{ person_id: cleanPerson }] = await q<{ person_id: string }>(`SELECT person_id FROM public.organization_driver_relationships WHERE id = $1`, [clean]);
+    await pools.admin.query(`UPDATE public.organization_driver_relationships SET status = 'ENDED', effective_to = current_date WHERE id = $1`, [clean]).catch(() => undefined);
+    await K.oi.establishOrganizationDriver({ organizationId: o, personId: cleanPerson, relationshipType: "EMPLOYEE", status: "ACTIVE", effectiveFrom: day(0) } as never).catch((e: Error) => assert.doesNotMatch(e.message, /safety restriction/));
+    // 6. only the documented release ends it, and then activation is no longer blocked by the restriction
+    got = await K.svc.getEvent(o, draft.id);
+    assert.equal(got.fact?.resolution_state, "DRAFT");
+  });
+
+  scenario("evidence lifecycle failure cases: failed scan, tampered bytes, wrong role, wrong company, unverified release document", async () => {
+    await signIn(...RELEASE);
+    const o = await org();
+    const other = await org("Other");
+    // a scanner that returns different bytes than were uploaded: the payload is BLOCKED and can never support an event
+    const { documentId: tampered } = await K.ev.uploadEvidence({ organizationId: o, documentType: "DRIVER_EVENT_EVIDENCE", documentTitle: "Swapped", file: { bytes: K.fake.samplePdf("t"), mimeType: "application/pdf", filename: "t.pdf" } }, storage as never);
+    const [{ quarantine_object_name }] = await q<{ quarantine_object_name: string }>(`SELECT quarantine_object_name FROM public.evidence_payloads WHERE evidence_document_id = $1`, [tampered]);
+    storage.scannerPromote(quarantine_object_name, () => Buffer.from("%PDF-1.4 swapped bytes"));
+    assert.equal((await K.ev.finalizeEvidence({ organizationId: o, documentId: tampered }, storage as never)).state, "blocked");
+    const created = await create(o, roadside());
+    await rejects(() => K.svc.linkEventEvidence(o, created.id, { documentId: tampered, role: "SOURCE_REPORT" }), "StateError");
+    // not yet scanned
+    const { documentId: pending } = await K.ev.uploadEvidence({ organizationId: o, documentType: "DRIVER_EVENT_EVIDENCE", documentTitle: "Pending", file: { bytes: K.fake.samplePdf("p"), mimeType: "application/pdf", filename: "p.pdf" } }, storage as never);
+    await rejects(() => K.svc.linkEventEvidence(o, created.id, { documentId: pending, role: "SOURCE_REPORT" }), "StateError");
+    // another company's stored document
+    const foreign = await storedDocument(other);
+    await rejects(() => K.svc.linkEventEvidence(o, created.id, { documentId: foreign, role: "RELEASE_EVIDENCE" }), "NotFoundError");
+    // the restriction can only be released with a stored, verified document linked as RELEASE evidence
+    const [r] = (await K.svc.getEvent(o, created.id)).restrictions as any[];
+    const doc = await storedDocument(o);
+    const wrongRole = await K.svc.linkEventEvidence(o, created.id, { documentId: doc, role: "SOURCE_REPORT" });
+    await K.svc.verifyEventEvidence(o, created.id, wrongRole.id, { decision: "VERIFIED" });
+    const attempt = (evidenceDocumentId: string | null) => K.svc.releaseEventRestriction(o, created.id, r.id, { releaseBasis: "AUTHORITY_RELEASE_DOCUMENTED", correctionSummary: "Repaired", evidenceDocumentId });
+    await rejects(() => attempt(doc), "StateError"); // verified, but linked for another purpose
+    await rejects(() => attempt(null), "ValidationError"); // no document at all
+    const doc2 = await storedDocument(o);
+    const rel = await K.svc.linkEventEvidence(o, created.id, { documentId: doc2, role: "RELEASE_EVIDENCE" });
+    await rejects(() => attempt(doc2), "StateError"); // linked for release but nobody has verified it
+    await K.svc.verifyEventEvidence(o, created.id, rel.id, { decision: "REJECTED", note: "Does not match the inspector's sheet" });
+    await rejects(() => attempt(doc2), "StateError"); // a rejected document releases nothing
+    assert.equal((await q<{ state: string }>(`SELECT state FROM public.driver_event_restrictions WHERE id = $1`, [r.id]))[0].state, "ACTIVE");
+    // the database enforces the same beneath the service
+    await assert.rejects(pools.admin.query(`UPDATE public.driver_event_restrictions SET state = 'RELEASED', release_basis = 'AUTHORITY_RELEASE_DOCUMENTED', release_evidence_document_id = $2, correction_summary = 'x', released_by_actor_id = (SELECT id FROM public.actors LIMIT 1), released_at = now() WHERE id = $1`, [r.id, doc2]), /release evidence/i);
+  });
+
+  scenario("analytical fact: measured, estimated, unverified, none-confirmed and unknown stay distinguishable and are refreshed without double counting", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    const a = await create(o, speeding({ sourceReference: "A" }));
+    const rec = (i: Record<string, unknown>) => K.svc.recordEventConsequence(o, a.id, { source: "Ledger", ...i } as never);
+    const fact = async () => (await K.svc.getEvent(o, a.id)).fact as any;
+    await rec({ kind: "COST_ACTUAL", measurementState: "MEASURED", amountMinor: 10000, currency: "CAD", confidence: "CONFIRMED", linkType: "INVOICE", linkRef: "I-1" });
+    await rec({ kind: "COST_ACTUAL", measurementState: "MEASURED", amountMinor: 2500, currency: "CAD", confidence: "ESTIMATED", linkType: "QUOTE", linkRef: "Q-1" });
+    let f = await fact();
+    assert.equal(Number(f.cost_actual_minor), 12500);
+    assert.equal(Number(f.cost_actual_confirmed_minor), 10000, "the confirmed part is separable");
+    assert.equal(Number(f.cost_actual_unconfirmed_minor), 2500, "the estimated part is separable");
+    // the same invoice re-recorded replaces, never adds
+    await rec({ kind: "COST_ACTUAL", measurementState: "MEASURED", amountMinor: 11000, currency: "CAD", confidence: "CONFIRMED", linkType: "INVOICE", linkRef: "I-1" });
+    f = await fact();
+    assert.equal(Number(f.cost_actual_minor), 13500);
+    // the other kinds: none-confirmed is a stated zero, not-collected and unknown stay NULL
+    await rec({ kind: "RECOVERY", measurementState: "NONE_CONFIRMED", confidence: "CONFIRMED" });
+    await rec({ kind: "OPERATIONAL_DELAY", measurementState: "NOT_COLLECTED", confidence: "UNVERIFIED" });
+    await rec({ kind: "ASSET_DOWNTIME", measurementState: "UNKNOWN", confidence: "UNVERIFIED" });
+    f = await fact();
+    assert.equal(Number(f.recovery_amount_minor), 0);
+    assert.equal(f.delay_minutes, null);
+    assert.equal(f.downtime_minutes, null);
+    assert.equal(Number(f.net_impact_minor), 13500);
+    const profile = f.measurement_profile;
+    assert.deepEqual(profile.COST_ACTUAL.state, { MEASURED: 2 });
+    assert.deepEqual(profile.COST_ACTUAL.confidence, { CONFIRMED: 1, ESTIMATED: 1 });
+    assert.deepEqual(profile.RECOVERY.state, { NONE_CONFIRMED: 1 });
+    assert.deepEqual(profile.OPERATIONAL_DELAY.state, { NOT_COLLECTED: 1 });
+    assert.deepEqual(profile.ASSET_DOWNTIME.state, { UNKNOWN: 1 });
+    assert.equal(profile.INJURY, undefined, "a kind nobody addressed is absent, not zero");
+    // every fact refresh is the SAME row for the version, never an extra one
+    assert.equal((await q(`SELECT 1 FROM public.driver_event_bi_facts WHERE event_id = $1`, [a.id])).length, 1);
+  });
+
   scenario("EVERY recordable category: create, server-validate, save, reload, correct, evidence, verify, close, export, and be invisible to another company", async () => {
     await signIn(...MANAGE);
     const o = await org();
@@ -477,6 +638,19 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
       let got = await K.svc.getEvent(o, created.id);
       assert.equal((got.event as any).category, d.value, d.code);
       assert.equal(got.fact?.contract_version, "driver-event-fact/1", d.code);
+      // the derived fact says the right things for THIS category: identity, completeness, resolution, and no invented measures
+      const fact = got.fact as Record<string, any>;
+      assert.equal(fact.category_code, d.code);
+      assert.equal(fact.category, d.value);
+      assert.equal(fact.record_state, "RECORDED");
+      assert.equal(fact.required_fields_missing, 0, `${d.code}: every required fact was supplied`);
+      assert.ok(fact.data_quality_score === null || Number(fact.data_quality_score) === 1, `${d.code}: completeness is full`);
+      assert.equal(fact.resolution_state, "OPEN", d.code);
+      assert.equal(fact.occurrence_precision, "EXACT_DATETIME");
+      for (const k of ["delay_minutes", "downtime_minutes", "cost_actual_minor", "net_impact_minor", "injuries_count"]) assert.equal(fact[k], null, `${d.code}: ${k} is not collected, so it is NULL`);
+      // a consequence recorded afterwards refreshes THIS event's fact and nothing else
+      await K.svc.recordEventConsequence(o, created.id, { kind: "COST_ACTUAL", measurementState: "MEASURED", amountMinor: 1000, currency: "CAD", source: "Ledger", confidence: "ESTIMATED", linkType: "LEDGER", linkRef: `L-${d.code}` });
+      assert.equal(Number(((await K.svc.getEvent(o, created.id)).fact as any).cost_actual_unconfirmed_minor), 1000, d.code);
       // a correction is a new version with a reason
       const done = await K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: { ...base, title: `${base.title} (corrected)` } as never, reason: "Title clarified" });
       assert.equal(done.version, 2, d.code);
@@ -494,6 +668,7 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     const facts = await K.svc.listEventFacts(o, {});
     assert.equal(facts.length, recordable.length, "one analytical fact per category event");
     assert.equal(new Set(facts.map((f) => f.category_code)).size, recordable.length);
+    assert.equal(facts.reduce((n, f) => n + Number(f.cost_actual_minor), 0), recordable.length * 1000, "each category's cost is counted once");
     assert.equal((await K.svc.listEventFacts(other, {})).length, 0);
   });
 

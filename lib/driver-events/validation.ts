@@ -39,6 +39,8 @@ export type EventInput = {
   subtype?: string | null
   occurrence?: { date?: string | null; time?: string | null; timeZone?: string | null; approximate?: boolean }
   reportedAt?: string | null
+  /** When only the calendar day of the report is known. Ignored if reportedAt is given. */
+  reportedDate?: string | null
   reporterLabel?: string | null
   sourceType: string
   sourceReference?: string | null
@@ -55,6 +57,9 @@ export type EventInput = {
   potentialSeverity?: string | null
   facts?: Record<string, Scalar>
   factStates?: Record<string, FactState>
+  /** Explicit unit for a measurement whose field offers several (for example km/h or mph). A bare number without its unit is refused. */
+  factUnits?: Record<string, string>
+  /** Existing rich-workflow child collections, keyed by collection id. */
   childCollections?: Record<string, unknown>
 }
 
@@ -93,7 +98,7 @@ export type PreparedEvent = {
   longitude: number | null
   observedSeverity: string
   potentialSeverity: string | null
-  record: { schema: typeof RECORD_SCHEMA; registrySchemaVersion: string; facts: Record<string, Scalar>; factStates: Record<string, FactState>; childCollections: Record<string, unknown> }
+  record: { schema: typeof RECORD_SCHEMA; registrySchemaVersion: string; facts: Record<string, Scalar>; factStates: Record<string, FactState>; factUnits: Record<string, string>; childCollections: Record<string, unknown> }
   quality: { requiredTotal: number; requiredMissing: number; missingKeys: string[]; flags: string[] }
 }
 
@@ -222,6 +227,13 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
       if (ms > now.getTime() + 5 * 60_000) issues.push({ field: "reportedAt", message: "The reported time cannot be in the future." })
       if (occurredAt && ms < Date.parse(occurredAt)) issues.push({ field: "reportedAt", message: "The event cannot be reported before it occurred." })
     }
+  } else if (input.reportedDate) {
+    if (!isValidDateOnly(input.reportedDate)) issues.push({ field: "reportedDate", message: "The reported date is not a valid date." })
+    else {
+      reportedLocalDate = input.reportedDate
+      if (input.reportedDate > todayInZone("UTC", new Date(now.getTime() + 24 * 3600_000))) issues.push({ field: "reportedDate", message: "The reported date cannot be in the future." })
+      if (date && input.reportedDate < date) issues.push({ field: "reportedDate", message: "The event cannot be reported before it occurred." })
+    }
   }
 
   // ---- source ----
@@ -272,6 +284,22 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
       facts[field.key] = validateFact(field, value, issues)
       factStates[field.key] = "PROVIDED"
     } else if (state && state !== "PROVIDED") factStates[field.key] = state
+  }
+
+  // units: a measurement whose field offers several units must say which one
+  const rawUnits = input.factUnits && typeof input.factUnits === "object" ? input.factUnits : {}
+  const factUnits: Record<string, string> = {}
+  for (const key of Object.keys(rawUnits)) if (!byKey.has(key)) issues.push({ field: `factUnits.${key}`, message: `"${key}" is not a field of ${definition.label}.` })
+  for (const field of definition.fields) {
+    if (!field.unitOptions?.length) {
+      if (field.key in rawUnits) issues.push({ field: `factUnits.${field.key}`, message: `${field.label} has a fixed unit.` })
+      continue
+    }
+    const unit = rawUnits[field.key]
+    if (field.key in facts) {
+      if (typeof unit !== "string" || !field.unitOptions.includes(unit)) issues.push({ field: `factUnits.${field.key}`, message: `${field.label} needs its unit (${field.unitOptions.join(", ")}).` })
+      else factUnits[field.key] = unit
+    } else if (unit !== undefined) issues.push({ field: `factUnits.${field.key}`, message: `${field.label} has a unit but no value.` })
   }
 
   // required / conditionally required fields
@@ -349,7 +377,7 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
     longitude: lon,
     observedSeverity: severity,
     potentialSeverity: potential,
-    record: { schema: RECORD_SCHEMA, registrySchemaVersion: PERFORMANCE_EVENT_SCHEMA_VERSION, facts, factStates, childCollections: children as Record<string, unknown> },
+    record: { schema: RECORD_SCHEMA, registrySchemaVersion: PERFORMANCE_EVENT_SCHEMA_VERSION, facts, factStates, factUnits, childCollections: children as Record<string, unknown> },
     quality: { requiredTotal, requiredMissing: missingKeys.length, missingKeys, flags },
   }
 }
@@ -362,6 +390,7 @@ export function diffPrepared(before: PreparedEvent, after: PreparedEvent): { fie
     const o: Record<string, unknown> = { ...header }
     for (const [k, v] of Object.entries(record.facts)) o[`facts.${k}`] = v
     for (const [k, v] of Object.entries(record.factStates)) if (v !== "PROVIDED") o[`factStates.${k}`] = v
+    for (const [k, v] of Object.entries(record.factUnits ?? {})) o[`factUnits.${k}`] = v
     o.childCollections = JSON.stringify(record.childCollections)
     return o
   }

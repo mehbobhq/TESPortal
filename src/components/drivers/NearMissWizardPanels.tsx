@@ -2,6 +2,7 @@
 
 import React, { useMemo } from "react";
 import { loadVehicleStore } from "@/lib/vehicle-data";
+import { useCanonicalVehicleChoices } from "./canonical-vehicle-choices";
 import {
   NEAR_MISS_IMMEDIATE_RESPONSES,
   NEAR_MISS_POTENTIAL_CONSEQUENCES,
@@ -114,10 +115,12 @@ export function NearMissReviewBlock({ selection, vehicles, primaryLabel }: { sel
 const isTrailer = (equipmentType: string) => /^trailer/i.test(equipmentType.trim());
 
 export function useNearMissVehicles(companyId: string): { powerUnits: NearMissVehicleChoice[]; trailers: NearMissVehicleChoice[] } {
+  const canonical = useCanonicalVehicleChoices();
   return useMemo(() => {
+    if (canonical) return canonical;
     const vehicles = loadVehicleStore(companyId).vehicles.map((vehicle) => ({ id: vehicle.id, unitNumber: String((vehicle as { unitNumber?: string }).unitNumber || vehicle.id), equipmentType: String((vehicle as { equipmentType?: string }).equipmentType || "") }));
     return { powerUnits: vehicles.filter((vehicle) => !isTrailer(vehicle.equipmentType)), trailers: vehicles.filter((vehicle) => isTrailer(vehicle.equipmentType)) };
-  }, [companyId]);
+  }, [companyId, canonical]);
 }
 
 /** Canonical relationships only: Power Unit (required) and Trailer(s) come from the company Vehicle store; nothing is invented. */

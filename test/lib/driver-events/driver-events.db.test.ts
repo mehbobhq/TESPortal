@@ -163,7 +163,7 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
   });
   const speeding = (over: Record<string, unknown> = {}) => ({
     category: "Speeding", title: "Speeding observation", sourceType: "ELD / Telematics", ingestionOrigin: "TELEMATICS_INGESTION",
-    occurrence: { date: day(-1), time: "14:05", timeZone: "America/Toronto" }, facts: { thresholdBasis: "POSTED_SPEED_LIMIT", actualSpeed: 118, sourceType: "ELD_TELEMATICS" }, ...over,
+    occurrence: { date: day(-1), time: "14:05", timeZone: "America/Toronto" }, facts: { thresholdBasis: "POSTED_SPEED_LIMIT", actualSpeed: 118, sourceType: "ELD_TELEMATICS" }, factUnits: { actualSpeed: "KMH" }, ...over,
   });
   const other = (over: Record<string, unknown> = {}) => ({
     category: "Other Event", title: "Unclassified event", sourceType: "Company Staff", occurrence: { date: day(-1) }, facts: { noCategoryReason: "No defined category describes a trailer gate failure.", sourceType: "COMPANY_STAFF" }, ...over,
@@ -224,7 +224,7 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     await rejects(() => create(o, speeding({ sourceType: "Customer" })), "ValidationError");
     await rejects(() => create(o, speeding({ driverRelationshipId: "not-a-uuid" })), "ValidationError");
     // a draft may be incomplete; recording it is not
-    const draft = await create(o, speeding({ recordState: "DRAFT", facts: { thresholdBasis: "POSTED_SPEED_LIMIT", sourceType: "ELD_TELEMATICS" } }));
+    const draft = await create(o, speeding({ recordState: "DRAFT", factUnits: {}, facts: { thresholdBasis: "POSTED_SPEED_LIMIT", sourceType: "ELD_TELEMATICS" } }));
     const f = (await K.svc.getEvent(o, draft.id)).fact!;
     assert.equal(f.resolution_state, "DRAFT");
     assert.ok(Number(f.required_fields_missing) > 0, "the missing required field is visible as a data-quality fact");

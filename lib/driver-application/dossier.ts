@@ -15,10 +15,21 @@ export function buildDossierInput(app: ReviewApplication, ctx: { plan: Applicati
   const text = (id: string) => (typeof answers.get(id) === "string" ? (answers.get(id) as string) : "")
   const applicantName = [text("identity.legal_first_name"), text("identity.legal_middle_name"), text("identity.legal_last_name")].filter(Boolean).join(" ") || "Applicant"
   const latest = app.decisions[app.decisions.length - 1]
+  const fieldDef = new Map(ctx.plan.fields.map((f) => [f.id, f]))
+  const shown = (fieldId: string, value: unknown) => {
+    const def = fieldDef.get(fieldId)
+    if (!def || def.sensitivity === "RESTRICTED" || (def.pdf.mask && def.pdf.mask !== "NONE")) return "(not shown in this document)"
+    return value === null || value === undefined || value === "" ? "(none)" : typeof value === "object" ? JSON.stringify(value) : String(value)
+  }
+  const reasonText = (reasons: unknown) => (Array.isArray(reasons) ? (reasons as unknown[]).map(String).join("; ") : reasons ? JSON.stringify(reasons) : null)
   const review: PdfReview = {
-    decision: latest ? { status: latest.decision, decidedAt: latest.decidedAt, decidedBy: `Staff actor ${latest.decidedByActorId}`, rationale: Array.isArray(latest.reasons) ? (latest.reasons as unknown[]).map(String).join("; ") : latest.reasons ? JSON.stringify(latest.reasons) : null } : null,
+    decision: latest ? { status: latest.decision, decidedAt: latest.decidedAt, decidedBy: `Staff actor ${latest.decidedByActorId}`, rationale: reasonText(latest.reasons) } : null,
+    decisions: app.decisions.map((d) => ({ status: d.decision, decidedAt: d.decidedAt, decidedBy: `Staff actor ${d.decidedByActorId}`, rationale: reasonText(d.reasons) })),
+    blockers: app.blockers,
+    corrections: app.corrections.map((c) => ({ fieldId: c.fieldId, label: fieldDef.get(c.fieldId)?.label ?? c.fieldId, previous: shown(c.fieldId, c.previousValue), corrected: shown(c.fieldId, c.correctedValue), reason: c.reason, recordedAt: c.recordedAt, recordedBy: `Staff actor ${c.recordedByActorId}` })),
     checks: app.requirements.map((r) => ({
       title: r.title,
+      type: r.type,
       required: r.requiredForQualification,
       status: r.current?.status ?? "PENDING",
       note: r.current?.note ?? null,
@@ -31,7 +42,7 @@ export function buildDossierInput(app: ReviewApplication, ctx: { plan: Applicati
       .map((u) => {
         const restricted = u.sensitivity !== "normal" && !ctx.canSeeSensitive
         const label = ctx.plan.fields.find((f) => f.id === u.fieldId)?.label ?? u.fieldId
-        return { documentId: u.documentId, label, filename: restricted ? null : u.filename ?? null, byteSize: restricted ? null : u.byteSize ?? null, sha256: null, restricted }
+        return { documentId: u.documentId, label, filename: restricted ? null : u.filename ?? null, byteSize: restricted ? null : u.byteSize ?? null, sha256: null, restricted, state: u.state }
       }),
     audit: [
       { at: app.submittedAt, actor: "Applicant", event: "Application submitted and signed", detail: `Receipt ${app.receiptId}` },

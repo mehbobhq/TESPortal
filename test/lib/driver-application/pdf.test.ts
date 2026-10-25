@@ -120,36 +120,69 @@ describe("application PDF: modern card layout", () => {
     assert.ok(allText(r).includes("could not be drawn by any embedded font"));
   });
 
-  it("the carrier dossier keeps the applicant's declaration and adds a separate, labelled review", async () => {
-    const { input } = await buildCase("A-short");
-    const app = await renderApplicationPdfDetailed(input);
-    const dossier = await renderApplicationPdfDetailed({
-      ...input,
-      audience: "carrier",
-      review: {
-        decision: { status: "NOT_QUALIFIED", decidedAt: "2026-04-01T10:00:00.000Z", decidedBy: "Reviewer One", rationale: "Medical certificate expired." },
-        checks: input.plan.requirements.map((r, i) => ({ title: r.title, required: r.requiredForQualification, status: i === 0 ? "VERIFIED" : "PENDING", note: i === 0 ? "Checked against original." : null, recordedAt: "2026-04-01T09:00:00.000Z", recordedBy: "Reviewer One", evidenceDocumentId: null })),
-        evidence: [{ documentId: "doc-1", label: "Licence front", filename: null, byteSize: null, sha256: null, restricted: true }],
-        audit: [{ at: "2026-04-01T09:00:00.000Z", actor: "Reviewer One", event: "Verification recorded", detail: null }],
-        preparedAt: "2026-04-02T00:00:00.000Z",
-        preparedBy: "Reviewer One",
-      },
-    });
+  const review = (input: PdfInput) => ({
+    decision: { status: "NEEDS_INFORMATION", decidedAt: "2026-04-01T10:00:00.000Z", decidedBy: "Reviewer One", rationale: "Awaiting the previous-employer response." },
+    checks: input.plan.requirements.map((r, i) => ({ title: r.title, type: r.type, required: r.requiredForQualification, status: ["VERIFIED", "EXCEPTION", "PENDING", "REJECTED"][i % 4], note: i === 0 ? "Checked against the original document." : null, recordedAt: "2026-04-01T09:00:00.000Z", recordedBy: "Reviewer One", evidenceDocumentId: null })),
+    blockers: ["Licence class, endorsements and validity verified: an exception does not satisfy a required check"],
+    evidence: [{ documentId: "doc-1", label: "Licence front", filename: null, byteSize: null, sha256: null, restricted: true }],
+    audit: [{ at: "2026-04-01T09:00:00.000Z", actor: "Reviewer One", event: "Verification recorded", detail: null }],
+    preparedAt: "2026-04-02T00:00:00.000Z",
+    preparedBy: "Reviewer One",
+  });
+
+  it("the applicant PDF contains no employer verification, qualification or hiring content, and ignores any review passed to it", async () => {
+    const banned = [/Verification status/, /Qualification requirements/, /Pending carrier verification/, /NOT YET VERIFIED/, /Qualification decision/, /Hiring decision/, /Driver hiring process/, /Carrier review/, /Qualification assessment/, /Onboarding handoff/];
+    for (const name of CASES) {
+      const { input, render } = await get(name);
+      const text = allText(render);
+      for (const re of banned) assert.ok(!re.test(text), `${name}: ${re}`);
+      for (const r of input.plan.requirements) assert.ok(!text.includes(norm(r.title)), `${name}: requirement "${r.title}" is not in the applicant copy`);
+      assert.ok(/SIGNED AND SUBMITTED/.test(text) && /APPLICANT-DECLARED/.test(text));
+    }
+    const { input, render } = await get("D-complex-declarations");
+    const withReview = await renderApplicationPdf({ ...input, review: review(input) });
+    assert.equal(createHash("sha256").update(withReview).digest("hex"), createHash("sha256").update(render.bytes).digest("hex"), "a review never changes the applicant's PDF");
+  });
+
+  it("the carrier dossier keeps the signed application as Part 1 and adds the hiring process separately, stage by stage", async () => {
+    const { input } = await buildCase("D-complex-declarations");
+    const app = await get("D-complex-declarations");
+    const dossier = await renderApplicationPdfDetailed({ ...input, audience: "carrier", review: review(input) });
     const text = allText(dossier);
-    for (const s of ["Carrier review record", "Qualification decision", "NOT QUALIFIED", "Medical certificate expired.", "Evidence register", "Audit provenance", "RESTRICTED"]) assert.ok(text.includes(s), s);
+    for (const s of ["PART 1", "Driver hiring process", "Document intake and processing", "Identity and licence verification", "Medical qualification verification", "Driving abstracts and applicable record checks", "Previous-employer investigations", "Applicable background and external regulatory checks", "Qualification assessment", "Authorized carrier hiring decision", "Onboarding handoff", "Awaiting the previous-employer response.", "RESTRICTED", "Audit provenance"]) assert.ok(text.includes(s), s);
     assert.ok(!text.includes("licence-front.jpg"));
-    // Every string the applicant copy carries (apart from page furniture) is in the dossier unchanged.
-    const appText = allText(app);
-    for (const consent of input.consents) assert.ok(text.includes(norm(input.plan.consents.find((c) => c.key === consent.key)!.text)));
-    assert.ok(dossier.pageCount >= app.pageCount);
-    assert.ok(appText.includes("NOT YET VERIFIED") && !allText(app).includes("Carrier review record"));
+    const iPart2 = text.indexOf("Driver hiring process", text.indexOf("Contents") + 2000);
+    const part1 = text.slice(0, iPart2 > 0 ? iPart2 : undefined);
+    // Every applicant answer, signature and authorization text is in Part 1 unchanged.
+    for (const consent of input.consents) {
+      const def = input.plan.consents.find((c) => c.key === consent.key)!;
+      assert.ok(part1.includes(norm(def.text)) && part1.includes(consent.textSha256) && part1.includes(norm(consent.signatureName)), consent.key);
+    }
+    for (const f of input.snapshot.fields) {
+      const def = input.plan.fields.find((x) => x.id === f.id)!;
+      if (def.type === "text" && def.pdf.mask !== "LAST4" && def.pdf.mask !== "EXCLUDE" && f.value) assert.ok(part1.includes(norm(String(f.value))), f.id);
+    }
+    assert.ok(!allText(app.render).includes("Driver hiring process"));
+    // Review outcomes are only in the carrier document.
+    assert.ok(text.includes("Rejected") && text.includes("Verified") && text.includes("Pending"));
+    assert.ok(dossier.pageCount > app.render.pageCount);
+  });
+
+  it("colour convention: yellow is attention only, green only confirmed, red only failure", async () => {
+    const { requirementsAttention } = await import("@/lib/driver-application/hiring-stages");
+    assert.equal(requirementsAttention([{ required: true, status: "VERIFIED" }]).tone, "ok");
+    assert.equal(requirementsAttention([{ required: true, status: "EXCEPTION" }, { required: true, status: "VERIFIED" }]).tone, "attention");
+    assert.equal(requirementsAttention([{ required: true, status: "PENDING" }]).tone, "attention");
+    assert.equal(requirementsAttention([{ required: true, status: null }]).tone, "attention");
+    assert.equal(requirementsAttention([{ required: true, status: "REJECTED" }, { required: true, status: "VERIFIED" }]).tone, "bad");
+    assert.equal(requirementsAttention([]).tone, "neutral");
   });
 
   it("never claims anything is verified, marks unapproved wording as pending legal review, and masks identifiers", async () => {
     for (const name of CASES) {
       const text = allText((await get(name)).render);
-      assert.ok(/APPLICANT-DECLARED/.test(text) && /NOT YET VERIFIED/.test(text) && /PENDING LEGAL REVIEW/.test(text), name);
-      for (const line of text.replace(/NOT YET VERIFIED/g, "").split(/(?<=\.)\s/).filter((l) => /\bverified\b/i.test(l))) assert.ok(/pending|not (been )?verified|nothing in it|only when|counsel|unverified|no .* check has been performed|verified, with/i.test(line), `${name}: "${line.slice(0, 90)}"`);
+      assert.ok(/APPLICANT-DECLARED/.test(text) && /PENDING LEGAL REVIEW/.test(text), name);
+      for (const line of text.replace(/NOT YET VERIFIED/g, "").split(/(?<=\.)\s/).filter((l) => /\bverified\b/i.test(l))) assert.ok(/pending|not (been )?verified|nothing in it|only when|counsel|unverified|no .* check has been performed|verified, with|never|unchanged/i.test(line), `${name}: "${line.slice(0, 90)}"`);
       assert.ok(!/\b\d{3}-?\d{2}-?\d{4}\b/.test(text), `${name}: no SSN-shaped value`);
     }
     const d = allText((await get("D-complex-declarations")).render);
@@ -160,7 +193,7 @@ describe("application PDF: modern card layout", () => {
     const { input, render } = await get("B-long-history");
     const cover = render.pages[0].join(" ");
     assert.ok(cover.includes("Driver Application") && cover.includes(input.companyName) && cover.includes("Morgan Longhaul"));
-    for (const title of ["Verification status", "Evidence and integrity"]) {
+    for (const title of ["Evidence and integrity"]) {
       const page = render.pages.findIndex((p, i) => i > 0 && p.includes(title));
       assert.ok(page > 0, title);
     }

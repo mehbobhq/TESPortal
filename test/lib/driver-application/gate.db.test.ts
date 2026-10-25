@@ -246,6 +246,7 @@ describe("Universal driver application: end-to-end gate (migration 0041)", { ski
     const text = K.pdfText.pdfText(opened.bytes).replace(/\s+/g, " ");
     if (K.pdfText.hasPdftotext) {
       for (const must of ["Prairie", "Pat Synthetic", first.receiptId, "APPLICANT-DECLARED", "Typed signature of the applicant", "PENDING LEGAL REVIEW"]) assert.ok(text.includes(must), `PDF contains "${must}"`);
+      for (const banned of ["Verification status", "Qualification requirements", "Driver hiring process", "Hiring decision"]) assert.ok(!text.includes(banned), `applicant PDF has no "${banned}"`);
       const pages = text.match(/Page (\d+) of (\d+)/g) ?? [];
       assert.ok(pages.length >= 5 && pages.every((x, i) => x.startsWith(`Page ${i + 1} of `)), "every page is numbered in order");
     }
@@ -274,7 +275,7 @@ describe("Universal driver application: end-to-end gate (migration 0041)", { ski
     assert.equal(dossier.receiptId, first.receiptId);
     if (K.pdfText.hasPdftotext) {
       const dtext = K.pdfText.pdfText(dossier.bytes).replace(/\s+/g, " ");
-      for (const must of ["Driver Application Dossier", "Pat Synthetic", "Carrier review record", "Evidence register", "Audit provenance", "Application submitted and signed", "NO DECISION RECORDED"]) assert.ok(dtext.includes(must), `dossier contains "${must}"`);
+      for (const must of ["Driver Application Dossier", "Pat Synthetic", "PART 1", "Driver hiring process", "Document intake and processing", "Onboarding handoff", "Audit provenance", "Application submitted and signed", "NO DECISION RECORDED"]) assert.ok(dtext.includes(must), `dossier contains "${must}"`);
     }
   });
 

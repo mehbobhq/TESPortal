@@ -51,6 +51,7 @@ export interface ReviewApplication {
 }
 const appBase = (companyId: string, prospectId: string) => `${base(companyId)}/${encodeURIComponent(prospectId)}/application`
 export const getApplicationReview = (companyId: string, prospectId: string) => call<{ applications: ReviewApplication[]; canSeeSensitive: boolean }>(appBase(companyId, prospectId))
+export const dossierUrl = (companyId: string, prospectId: string, applicationId: string) => `${appBase(companyId, prospectId)}/dossier?applicationId=${encodeURIComponent(applicationId)}`
 export const recordVerification = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/verification`, body)
 export const recordDecision = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/decision`, body)
 export const recordCorrection = (companyId: string, prospectId: string, body: unknown) => post(`${appBase(companyId, prospectId)}/correction`, body)

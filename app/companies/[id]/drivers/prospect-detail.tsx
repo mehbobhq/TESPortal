@@ -137,7 +137,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl" data-testid="driver-name">{name}</h1>
-                  <span data-testid="driver-status" className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-800">
+                  <span data-testid="driver-status" className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary">
                     <span className="size-1.5 rounded-full bg-current" />
                     {statusText}
                   </span>
@@ -161,7 +161,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
             {scopeForm ? (
               <>
                 <OperatingScopeFields value={scopeForm} onChange={setScopeForm} presentation={presentation?.country ?? null} idPrefix="detail-scope" />
-                {s === "INVITED" ? <p className="text-xs text-amber-700">Changing the scope cancels the application already sent. Send a new application afterwards.</p> : null}
+                {s === "INVITED" ? <p className="rounded border border-yellow-400 bg-yellow-50 px-2 py-1 text-xs text-yellow-900">Changing the scope cancels the application already sent. Send a new application afterwards.</p> : null}
                 <div className="flex gap-2">
                   <Button size="sm" disabled={busy || previewScope(scopeForm).errors.length > 0} onClick={() => run(() => api.setOperatingScope(companyId, prospectId, toScopeInput(scopeForm)), "Operating scope saved.")}>Save operating scope</Button>
                   <Button size="sm" variant="ghost" onClick={() => setScopeForm(null)}>Cancel</Button>

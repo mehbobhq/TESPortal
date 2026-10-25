@@ -11,7 +11,7 @@ type Item = { id: string; title: string; description: string; rules: Record<"US"
 type Profile = { version: number; selections: Record<string, { enabled: boolean; acknowledgedRestriction?: boolean }>; items: Item[]; legalNotice: string }
 
 const STAGES = [["PRE_OFFER", "Before an offer"], ["CONDITIONAL_OFFER", "After a conditional offer"], ["POST_OFFER", "After hiring"]] as const
-const tone: Record<Rule, string> = { ALLOWED: "text-emerald-700", RESTRICTED: "text-amber-700", PROHIBITED: "text-red-700" }
+const tone: Record<Rule, string> = { ALLOWED: "text-emerald-700", RESTRICTED: "text-yellow-800", PROHIBITED: "text-red-700" }
 const word: Record<Rule, string> = { ALLOWED: "Allowed", RESTRICTED: "Restricted", PROHIBITED: "Not available" }
 
 /** The carrier's own screening choices. The legal matrix decides what can be switched on; it is a configuration aid, not legal advice. */

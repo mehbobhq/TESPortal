@@ -7,9 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import * as api from "./prospect-api"
 import type { ReviewApplication, ReviewRequirement } from "./prospect-api"
+import { HIRING_STAGES, requirementsAttention, stageOfRequirement, type Attention } from "@/lib/driver-application/hiring-stages"
 
 const STATUS_LABEL: Record<string, string> = { DECLARED: "Declared", EVIDENCE_RECEIVED: "Evidence received", PENDING: "Pending", VERIFIED: "Verified", EXCEPTION: "Exception", REJECTED: "Rejected" }
-const STATUS_TONE: Record<string, string> = { VERIFIED: "border-emerald-300 bg-emerald-50 text-emerald-800", EXCEPTION: "border-amber-300 bg-amber-50 text-amber-800", REJECTED: "border-red-300 bg-red-50 text-red-800" }
+const YELLOW = "border-yellow-400 bg-yellow-50 text-yellow-900"
+const ATTENTION_TONE: Record<Attention, string> = { ok: "border-emerald-300 bg-emerald-50 text-emerald-800", attention: YELLOW, bad: "border-red-300 bg-red-50 text-red-800", neutral: "border-slate-300 bg-slate-50 text-slate-700" }
+const STATUS_TONE: Record<string, string> = { VERIFIED: "border-emerald-300 bg-emerald-50 text-emerald-800", EXCEPTION: YELLOW, PENDING: YELLOW, REJECTED: "border-red-300 bg-red-50 text-red-800" }
 const select = "h-9 w-full rounded-md border bg-background px-2 text-sm"
 
 const show = (value: unknown): string => {
@@ -72,86 +75,131 @@ function ApplicationBlock({ app, companyId, prospectId, prospectStatus, canSeeSe
   const latestDecision = app.decisions[app.decisions.length - 1]
   const doc = (id: string) => api.documentUrl(companyId, prospectId, app.id, id)
 
+  const docs = app.uploads.filter((u) => u.current)
+  const decisionTone: Attention = !latestDecision ? "attention" : latestDecision.decision === "QUALIFIED" ? "ok" : latestDecision.decision === "NOT_QUALIFIED" ? "bad" : "attention"
+  const canDecide = prospectStatus === "APPLICATION_SUBMITTED" || prospectStatus === "UNDER_REVIEW"
+  const stageTone = (id: string): { tone: Attention; label: string } => {
+    if (id === "intake") return docs.length === 0 ? { tone: "neutral", label: "No documents" } : docs.every((u) => u.state === "stored") ? { tone: "ok", label: "Documents processed" } : { tone: "attention", label: `${docs.filter((u) => u.state !== "stored").length} not yet processed` }
+    if (id === "assessment") return app.blockers.length === 0 ? { tone: "ok", label: "Every required check verified" } : { tone: "attention", label: `${app.blockers.length} unresolved` }
+    if (id === "decision") return { tone: decisionTone, label: latestDecision ? latestDecision.decision.replace(/_/g, " ").toLowerCase() : "No decision recorded" }
+    if (id === "handoff") return { tone: "neutral", label: prospectStatus === "APPROVED" ? "Approved" : "After approval" }
+    const rows = app.requirements.filter((r) => stageOfRequirement(r.type) === id)
+    return requirementsAttention(rows.map((r) => ({ required: r.requiredForQualification, status: r.current?.status ?? null })))
+  }
+
   return (
-    <Card>
-      <CardHeader className="border-b bg-muted/30 py-3">
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {app.stage === "PRE_OFFER" ? "Application" : "Supplement"} · receipt {app.receiptId}
-          <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">Applicant-declared — not verified</span>
-          {latestDecision ? <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">Latest decision: {latestDecision.decision.replace("_", " ").toLowerCase()}</span> : null}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5 pt-4 text-sm">
-        <p className="text-xs text-muted-foreground">
-          Received {app.submittedAt?.slice(0, 19).replace("T", " ")} UTC · SHA-256 {app.snapshotSha256?.slice(0, 16)}…{app.snapshotIntact === false ? " · INTEGRITY CHECK FAILED" : ""}
-          {app.pdf ? <> · <a className="font-medium text-primary underline" href={doc(app.pdf.documentId)} target="_blank" rel="noreferrer">Open signed PDF</a></> : " · signed PDF pending"}
-        </p>
+    <div className="space-y-6">
+      <Card data-testid="submitted-application">
+        <CardHeader className="border-b bg-muted/30 py-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            Submitted application · {app.stage === "PRE_OFFER" ? "Application" : "Supplement"} · receipt {app.receiptId}
+            <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">Applicant-declared · signed · unchanged</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5 pt-4 text-sm">
+          <p className="text-xs text-muted-foreground">
+            Received {app.submittedAt?.slice(0, 19).replace("T", " ")} UTC · SHA-256 {app.snapshotSha256?.slice(0, 16)}…{app.snapshotIntact === false ? " · INTEGRITY CHECK FAILED" : ""}
+            {app.pdf ? <> · <a className="font-medium text-primary underline" href={doc(app.pdf.documentId)} target="_blank" rel="noreferrer">Open signed PDF</a></> : " · signed PDF pending"}
+            {" "}· <a className="font-medium text-primary underline" href={api.dossierUrl(companyId, prospectId, app.id)}>Carrier dossier (PDF)</a>
+          </p>
 
-        <section aria-label="Checks" className="space-y-3">
-          <h3 className="text-sm font-semibold">Checks</h3>
-          {app.requirements.map((r) => <RequirementRow key={r.key} r={r} applicationId={app.id} companyId={companyId} prospectId={prospectId} busy={busy} run={run} />)}
-        </section>
-
-        <DecisionForm app={app} companyId={companyId} prospectId={prospectId} busy={busy} run={run} canDecide={prospectStatus === "APPLICATION_SUBMITTED" || prospectStatus === "UNDER_REVIEW"} />
-
-        <section aria-label="Authorizations" className="space-y-2">
-          <h3 className="text-sm font-semibold">Authorizations</h3>
-          {app.consents.length === 0 ? <p className="text-xs text-muted-foreground">None signed.</p> : null}
-          {app.consents.map((c) => (
-            <p key={c.id} className="text-xs">
-              <span className="font-medium">{c.key}</span> v{c.version} · signed by {c.signatureName} · {c.acceptedAt.slice(0, 10)}
-              {c.legalStatus !== "APPROVED" ? <span className="ml-2 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Pending legal review — cannot be relied on</span> : null}
-              {c.revoked ? <span className="ml-2 rounded border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-800">Revoked</span> : null}
-            </p>
-          ))}
-        </section>
-
-        {app.reviewRequirements.length ? (
-          <section aria-label="Open review items" className="space-y-1">
-            <h3 className="text-sm font-semibold">Open regulatory review items</h3>
-            <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">{app.reviewRequirements.map((r) => <li key={r.id}>{r.text}</li>)}</ul>
-          </section>
-        ) : null}
-
-        <section aria-label="Documents" className="space-y-1">
-          <h3 className="text-sm font-semibold">Documents</h3>
-          {app.uploads.filter((u) => u.current).map((u) => (
-            <p key={u.documentId} className="text-xs">
-              {u.fieldId} · {u.filename} · {u.state ?? "recorded"} ·{" "}
-              <a className="font-medium text-primary underline" href={doc(u.documentId)} target="_blank" rel="noreferrer">{u.state === "evidence" || u.state === "finalized" ? "View" : "View (when cleared)"}</a>
-              {u.sensitivity === "restricted" ? <span className="ml-2 text-[10px] font-semibold text-amber-800">Restricted</span> : null}
-            </p>
-          ))}
-          {app.uploads.filter((u) => u.current).length === 0 ? <p className="text-xs text-muted-foreground">No documents uploaded.</p> : null}
-        </section>
-
-        <details>
-          <summary className="cursor-pointer text-sm font-semibold">Applicant’s answers</summary>
-          <div className="mt-3 space-y-4">
-            {[...sections.entries()].map(([section, fields]) => (
-              <div key={section}>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{section}</p>
-                <dl className="mt-1 grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,240px)_1fr]">
-                  {fields.map((f) => (<div key={f.id} className="contents"><dt className="text-xs text-muted-foreground">{f.label}</dt><dd className="break-words text-xs">{show(f.value)}</dd></div>))}
-                </dl>
-              </div>
+          <section aria-label="Authorizations" className="space-y-2">
+            <h3 className="text-sm font-semibold">Authorizations signed</h3>
+            {app.consents.length === 0 ? <p className="text-xs text-muted-foreground">None signed.</p> : null}
+            {app.consents.map((c) => (
+              <p key={c.id} className="text-xs">
+                <span className="font-medium">{c.key}</span> v{c.version} · signed by {c.signatureName} · {c.acceptedAt.slice(0, 10)}
+                {c.legalStatus !== "APPROVED" ? <span className="ml-2 rounded border border-yellow-400 bg-yellow-50 px-1.5 py-0.5 text-[10px] font-semibold text-yellow-900">Pending legal review — cannot be relied on</span> : null}
+                {c.revoked ? <span className="ml-2 rounded border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-800">Revoked</span> : null}
+              </p>
             ))}
-            {app.snapshot?.sensitiveNotCollected.length ? <p className="text-xs text-muted-foreground">Not collected on this application: {app.snapshot.sensitiveNotCollected.map((s) => s.fieldId).join(", ")}.</p> : null}
-            {app.snapshot?.retainedNotApplicable.length ? <p className="text-xs text-muted-foreground">{app.snapshot.retainedNotApplicable.length} earlier answer(s) did not apply after later answers and are not treated as current.</p> : null}
-          </div>
-        </details>
+          </section>
 
-        <SensitiveSection app={app} canSee={canSeeSensitive} companyId={companyId} prospectId={prospectId} />
-        <CorrectionSection app={app} companyId={companyId} prospectId={prospectId} busy={busy} run={run} />
+          {app.reviewRequirements.length ? (
+            <section aria-label="Open review items" className="space-y-1 rounded-lg border border-yellow-400 bg-yellow-50 p-3 text-yellow-900">
+              <h3 className="text-sm font-semibold">Open regulatory review items</h3>
+              <ul className="list-disc space-y-1 pl-5 text-xs">{app.reviewRequirements.map((r) => <li key={r.id}>{r.text}</li>)}</ul>
+            </section>
+          ) : null}
 
-        {app.stage === "PRE_OFFER" && (prospectStatus === "APPLICATION_SUBMITTED" || prospectStatus === "UNDER_REVIEW") ? (
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">After a conditional offer, request the later-stage information (work eligibility, authorized background screening). It is a separate application; this one stays unchanged.</p>
-            <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => run(() => api.requestSupplement(companyId, prospectId, app.id), "Conditional-offer application sent.")}>Request conditional-offer information</Button>
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold">Applicant’s answers</summary>
+            <div className="mt-3 space-y-4">
+              {[...sections.entries()].map(([section, fields]) => (
+                <div key={section}>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{section}</p>
+                  <dl className="mt-1 grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,240px)_1fr]">
+                    {fields.map((f) => (<div key={f.id} className="contents"><dt className="text-xs text-muted-foreground">{f.label}</dt><dd className="break-words text-xs">{show(f.value)}</dd></div>))}
+                  </dl>
+                </div>
+              ))}
+              {app.snapshot?.sensitiveNotCollected.length ? <p className="text-xs text-muted-foreground">Not collected on this application: {app.snapshot.sensitiveNotCollected.map((s) => s.fieldId).join(", ")}.</p> : null}
+              {app.snapshot?.retainedNotApplicable.length ? <p className="text-xs text-muted-foreground">{app.snapshot.retainedNotApplicable.length} earlier answer(s) did not apply after later answers and are not treated as current.</p> : null}
+            </div>
+          </details>
+        </CardContent>
+      </Card>
+
+      <Card data-testid="hiring-process">
+        <CardHeader className="border-b bg-primary/5 py-3">
+          <CardTitle className="text-sm">Driver Hiring Process</CardTitle>
+          <p className="text-xs text-muted-foreground">Everything below happens after submission and is recorded separately from the signed application, which is never edited. Submitting an application does not qualify or hire the applicant.</p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4 text-sm">
+          {HIRING_STAGES.map((stage, i) => {
+            const t = stageTone(stage.id)
+            const reqs = app.requirements.filter((r) => stageOfRequirement(r.type) === stage.id)
+            return (
+              <section key={stage.id} aria-label={stage.title} data-testid={`stage-${stage.id}`} className="rounded-xl border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground" aria-hidden>{i + 1}</span>
+                  <h3 className="min-w-0 flex-1 text-sm font-semibold">{stage.title}</h3>
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${ATTENTION_TONE[t.tone]}`}>{t.label}</span>
+                </div>
+                <div className="mt-3 space-y-3 pl-8">
+                  {stage.id === "intake" ? (
+                    <div className="space-y-1">
+                      {docs.map((u) => (
+                        <p key={u.documentId} className="text-xs">
+                          {u.fieldId} · {u.filename} · {u.state ?? "recorded"} ·{" "}
+                          <a className="font-medium text-primary underline" href={doc(u.documentId)} target="_blank" rel="noreferrer">{u.state === "evidence" || u.state === "finalized" ? "View" : "View (when cleared)"}</a>
+                          {u.sensitivity === "restricted" ? <span className="ml-2 rounded border border-yellow-400 bg-yellow-50 px-1.5 py-0.5 text-[10px] font-semibold text-yellow-900">Restricted</span> : null}
+                        </p>
+                      ))}
+                      {docs.length === 0 ? <p className="text-xs text-muted-foreground">No documents uploaded.</p> : null}
+                      <SensitiveSection app={app} canSee={canSeeSensitive} companyId={companyId} prospectId={prospectId} />
+                    </div>
+                  ) : null}
+                  {reqs.map((r) => <RequirementRow key={r.key} r={r} applicationId={app.id} companyId={companyId} prospectId={prospectId} busy={busy} run={run} />)}
+                  {stage.id === "assessment" ? (
+                    app.blockers.length ? <ul className="list-disc space-y-1 rounded-lg border border-yellow-400 bg-yellow-50 py-2 pl-7 pr-3 text-xs text-yellow-900">{app.blockers.map((b) => <li key={b}>{b}</li>)}</ul> : <p className="text-xs text-emerald-700">Every required check is verified on a signed, approved authorization.</p>
+                  ) : null}
+                  {stage.id === "decision" ? (
+                    <>
+                      {app.decisions.map((d) => <p key={d.id} className="text-xs"><span className="font-medium">{d.decision.replace(/_/g, " ").toLowerCase()}</span> · {d.decidedAt.slice(0, 10)}{Array.isArray(d.reasons) && d.reasons.length ? ` · ${(d.reasons as unknown[]).join("; ")}` : ""}</p>)}
+                      <DecisionForm app={app} companyId={companyId} prospectId={prospectId} busy={busy} run={run} canDecide={canDecide} />
+                    </>
+                  ) : null}
+                  {stage.id === "handoff" ? (
+                    <p className="text-xs text-muted-foreground">
+                      {prospectStatus === "APPROVED" ? "Approved. Continue with onboarding from the driver record." : "Onboarding starts only after an authorized approval of a qualified applicant."}
+                    </p>
+                  ) : null}
+                  {reqs.length === 0 && !["intake", "assessment", "decision", "handoff"].includes(stage.id) ? <p className="text-xs text-muted-foreground">No check in this stage applies to this application.</p> : null}
+                </div>
+              </section>
+            )
+          })}
+          <CorrectionSection app={app} companyId={companyId} prospectId={prospectId} busy={busy} run={run} />
+          {app.stage === "PRE_OFFER" && canDecide ? (
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">After a conditional offer, request the later-stage information (work eligibility, authorized background screening). It is a separate application; this one stays unchanged.</p>
+              <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => run(() => api.requestSupplement(companyId, prospectId, app.id), "Conditional-offer application sent.")}>Request conditional-offer information</Button>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -165,10 +213,10 @@ function RequirementRow({ r, applicationId, companyId, prospectId, busy, run }: 
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 font-medium">{r.title}</p>
         {r.requiredForQualification ? <span className="text-[10px] font-semibold uppercase text-muted-foreground">Required</span> : null}
-        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_TONE[current ?? ""] ?? "border-slate-300 bg-slate-50 text-slate-700"}`}>{current ? STATUS_LABEL[current] : "Not started"}</span>
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_TONE[current ?? ""] ?? (r.requiredForQualification && !current ? YELLOW : "border-slate-300 bg-slate-50 text-slate-700")}`}>{current ? STATUS_LABEL[current] : "Not started"}</span>
         <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Close" : "Record"}</Button>
       </div>
-      {r.consent && !r.consent.relianceAllowed ? <p className="mt-1 text-xs text-amber-800">{r.consent.reason}</p> : null}
+      {r.consent && !r.consent.relianceAllowed ? <p className="mt-1 rounded border border-yellow-400 bg-yellow-50 px-2 py-1 text-xs text-yellow-900">{r.consent.reason}</p> : null}
       {r.external ? <p className="mt-1 text-xs text-muted-foreground">Completed through its own official process; record the outcome here.</p> : null}
       {r.current?.note ? <p className="mt-1 text-xs text-muted-foreground">Note: {r.current.note}</p> : null}
       {open ? (
@@ -190,8 +238,6 @@ function DecisionForm({ app, companyId, prospectId, busy, run, canDecide }: { ap
   const decide = (decision: string) => run(() => api.recordDecision(companyId, prospectId, { applicationId: app.id, decision, reasons: reasons.split("\n").filter(Boolean), acknowledgeReviewRequirements: ackReview }), "Decision recorded.")
   return (
     <section aria-label="Qualification decision" className="space-y-2 rounded-lg border bg-muted/20 p-3">
-      <h3 className="text-sm font-semibold">Qualification decision</h3>
-      {app.blockers.length ? <ul className="list-disc pl-5 text-xs text-muted-foreground">{app.blockers.map((b) => <li key={b}>{b}</li>)}</ul> : <p className="text-xs text-emerald-700">Every required check has an outcome.</p>}
       <textarea aria-label="Reasons (one per line)" className="min-h-16 w-full rounded-md border bg-background p-2 text-sm" placeholder="Reasons, one per line" value={reasons} onChange={(e) => setReasons(e.target.value)} />
       {app.reviewRequirements.length ? <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ackReview} onChange={(e) => setAckReview(e.target.checked)} />I have reviewed the open regulatory review items.</label> : null}
       <div className="flex flex-wrap gap-2">
@@ -209,8 +255,8 @@ function CorrectionSection({ app, companyId, prospectId, busy, run }: { app: Rev
   const [value, setValue] = useState("")
   const [reason, setReason] = useState("")
   return (
-    <section aria-label="Corrections" className="space-y-2">
-      <h3 className="text-sm font-semibold">Corrections</h3>
+    <section aria-label="Corrections" className="space-y-2 rounded-xl border p-3">
+      <h3 className="text-sm font-semibold">Corrections to the record</h3>
       <p className="text-xs text-muted-foreground">The signed application is never edited. A correction is a separate record that names the field, the declared value and the reason.</p>
       {app.corrections.map((c) => <p key={c.id} className="text-xs"><span className="font-medium">{c.fieldId}</span>: {show(c.previousValue)} → {show(c.correctedValue)} · {c.reason} · {c.recordedAt.slice(0, 10)}</p>)}
       {open ? (
@@ -233,7 +279,7 @@ function SensitiveSection({ app, canSee, companyId, prospectId }: { app: ReviewA
   if (app.sensitive.length === 0) return null
   return (
     <section aria-label="Restricted identifiers" className="space-y-2">
-      <h3 className="text-sm font-semibold">Restricted identifiers</h3>
+      <h4 className="text-xs font-semibold">Restricted identifiers</h4>
       {err ? <p role="alert" className="text-xs text-red-600">{err}</p> : null}
       {app.sensitive.map((s) => (
         <div key={s.fieldId} className="flex flex-wrap items-center gap-2 text-xs">

@@ -6,6 +6,7 @@ import type { ApplicationPlan, PlanConsent, PlanField } from "../plan"
 import type { ApplicationSnapshot } from "../snapshot"
 import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
 import { ICONS, type IconName } from "./icons"
+import { HIRING_STAGES, requirementsAttention, stageOfRequirement, type Attention } from "../hiring-stages"
 import { TextEngine, type Weight } from "./text"
 
 /**
@@ -37,6 +38,8 @@ export interface PdfReview {
   decision: { status: string; decidedAt: string | null; decidedBy: string | null; rationale: string | null } | null
   checks: Array<{
     title: string
+    /** Requirement type (IDENTITY, LICENCE, MEDICAL, …); places the check in its hiring-process stage. */
+    type: string
     required: boolean
     status: string
     note: string | null
@@ -44,7 +47,12 @@ export interface PdfReview {
     recordedBy: string | null
     evidenceDocumentId: string | null
   }>
-  evidence: Array<{ documentId: string; label: string; filename: string | null; byteSize: number | null; sha256: string | null; restricted: boolean }>
+  /** Every recorded decision, oldest first (the last is the current one). */
+  decisions?: Array<{ status: string; decidedAt: string | null; decidedBy: string | null; rationale: string | null }>
+  /** Why the qualification gate is not yet satisfied (empty when every required check is verified). */
+  blockers?: string[]
+  corrections?: Array<{ fieldId: string; label: string; previous: string; corrected: string; reason: string; recordedAt: string; recordedBy: string }>
+  evidence: Array<{ documentId: string; label: string; filename: string | null; byteSize: number | null; sha256: string | null; restricted: boolean; state?: string | null }>
   audit: Array<{ at: string; actor: string; event: string; detail: string | null }>
   preparedAt: string
   preparedBy: string
@@ -107,9 +115,9 @@ const INK = hex("#0F172A")
 const MUTED = hex("#56657D")
 const PAPER = hex("#F6F9FE")
 const WHITE = hex("#FFFFFF")
-const AMBER_BG = hex("#FFF7E0")
-const AMBER_LINE = hex("#E8B852")
-const AMBER = hex("#7A3508")
+const AMBER_BG = hex("#FFF6CC")
+const AMBER_LINE = hex("#D9B72B")
+const AMBER = hex("#5A4400")
 const GREEN_BG = hex("#E8F8EF")
 const GREEN_LINE = hex("#7BC9A0")
 const GREEN = hex("#0B6B3A")
@@ -378,6 +386,20 @@ class Layout {
     if (o.intro) this.y -= this.put(o.intro, MX, this.y, CW, "r", 9, MUTED, 13) + 8
   }
 
+  /** A numbered stage heading of the hiring process, with its attention state. */
+  stageHeader(number: number, title: string, state: { tone: Tone; label: string }) {
+    this.need(40 + 120)
+    const top = this.y
+    this.rr(MX, top, CW, 30, 8, PAPER, BLUE_LINE, 0.8)
+    this.circle(MX + 18, top - 15, 10, BLUE)
+    const nn = String(number)
+    this.t.draw(this.page, nn, MX + 18 - this.t.width(nn, "b", 9.5) / 2, top - 18.4, "b", 9.5, WHITE, H)
+    const cw = this.chipWidth(state.label)
+    this.label(title, MX + 36, top - 9.5, "b", 10.5, NAVY)
+    this.chip(state.label, MX + CW - cw - 10, top - 7, state.tone)
+    this.y -= 40
+  }
+
   /** A sub-heading that must stay with the block after it. */
   subheading(text: string, follow = 120, icon?: IconName) {
     this.need(30 + follow)
@@ -425,7 +447,7 @@ class Layout {
     this.need(h + 8)
     const c = TONES[tone]
     this.rr(MX, this.y, CW, h, 8, tone === "warn" ? AMBER_BG : WHITE, tone === "warn" ? AMBER_LINE : BLUE, 1)
-    this.iconTile(tone === "warn" ? "alert" : "info", MX + 12, this.y - 12, 28, tone === "warn" ? AMBER : BLUE, tone === "warn" ? hex("#FFEDB8") : BLUE_SOFT)
+    this.iconTile(tone === "warn" ? "alert" : "info", MX + 12, this.y - 12, 28, tone === "warn" ? AMBER : BLUE, tone === "warn" ? hex("#FBE9A0") : BLUE_SOFT)
     if (title) this.label(title, MX + 48, this.y - 11, "b", 10, c.fg)
     this.put(text, MX + 48, this.y - 11 - tH, w, "r", 9, tone === "warn" ? AMBER : INK, 13.2)
     this.y -= h + 12
@@ -454,7 +476,7 @@ class Layout {
       if (dark) {
         this.rr(x + 10, yTop - (h - size) / 2, size, size, size * 0.28, NAVY_2)
         this.icon(spec.icon, x + 10 + size * 0.2, yTop - (h - size) / 2 - size * 0.2, size * 0.6, WHITE, 2)
-      } else this.iconTile(spec.icon, x + 10, yTop - (h - size) / 2, size, spec.accent ?? (amber ? AMBER : BLUE), amber ? hex("#FFEDB8") : WHITE)
+      } else this.iconTile(spec.icon, x + 10, yTop - (h - size) / 2, size, spec.accent ?? (amber ? AMBER : BLUE), amber ? hex("#FBE9A0") : WHITE)
       tx = x + 10 + size + 10
     }
     const chipW = spec.chip && !cont ? this.chipWidth(spec.chip.text) + 12 : 0
@@ -812,20 +834,16 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
   const present = sections.filter((s) => snapshot.fields.some((f) => f.section === s.id) || snapshot.uploads.some((u) => fieldById.get(u.fieldId)?.section === s.id) || [...snapshot.sensitive, ...snapshot.sensitiveNotCollected].some((x) => fieldById.get(x.fieldId)?.section === s.id))
   const hasAuth = input.consents.length > 0
   const T = {
-    verification: carrier ? "Verification status and decision" : "Verification status",
     auth: "Authorizations and signatures",
     reviewItems: "Open review items and limitations",
     integrity: "Evidence and integrity",
-    carrierReview: "Carrier review record",
-    evidenceRegister: "Evidence register",
-    audit: "Audit provenance",
+    process: "Driver hiring process",
   }
   const tocEntries: Array<{ title: string; icon: IconName }> = [
-    { title: T.verification, icon: "listChecks" },
     ...present.map((s) => ({ title: s.title, icon: sectionIcon(s.id) })),
     ...(hasAuth ? [{ title: T.auth, icon: "penLine" as IconName }] : []),
-    ...(carrier && review ? [{ title: T.carrierReview, icon: "clipboard" as IconName }, { title: T.evidenceRegister, icon: "paperclip" as IconName }, { title: T.audit, icon: "clock" as IconName }] : []),
     { title: T.reviewItems, icon: "info" },
+    ...(carrier && review ? [{ title: T.process, icon: "clipboard" as IconName }] : []),
     { title: T.integrity, icon: "fileText" },
   ]
 
@@ -838,16 +856,16 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
   else L.label("TES", MX, H - 56, "b", 28, NAVY)
   const heading = carrier ? "Driver Application Dossier" : "Driver Application"
   L.label(heading, MX, H - 150, "b", carrier ? 31 : 40, NAVY)
-  L.label(carrier ? "Applicant Record and Carrier Review" : "Applicant-Declared Record", MX, H - (carrier ? 192 : 200), "s", 16, BLUE)
+  L.label(carrier ? "Submitted Application and Hiring Records" : "Submitted Application", MX, H - (carrier ? 192 : 200), "s", 16, BLUE)
   let cx = MX
   cx += L.chip("APPLICANT-DECLARED", cx, H - 232, "navy") + 8
   if (carrier) L.chip(review?.decision ? `DECISION: ${review.decision.status.replace(/_/g, " ")}` : "NO DECISION RECORDED", cx, H - 232, review?.decision ? statusTone(review.decision.status) : "warn")
-  else L.chip("NOT YET VERIFIED", cx, H - 232, "warn", "alert")
+  else L.chip("SIGNED AND SUBMITTED", cx, H - 232, "info", "check")
 
   const colW = (CW - 28) / 2
   const cells: Array<{ icon: IconName; label: string; value: string }> = [
     { icon: "user", label: "APPLICANT", value: applicant },
-    { icon: "briefcase", label: "HIRING CARRIER", value: company },
+    { icon: "briefcase", label: "CARRIER", value: company },
     { icon: "fileText", label: "RECEIPT NUMBER", value: input.receiptId },
     { icon: "calendar", label: "RECEIVED", value: fmtUtc(input.submittedAt) },
     { icon: "clipboard", label: "APPLICATION", value: stageLabel(snapshot.collectionStage) },
@@ -910,8 +928,8 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
   L.y -= 6
   L.infoBox(
     carrier
-      ? "This dossier reproduces the applicant's declaration exactly as submitted and signed, then records the carrier's own review separately. The applicant's answers are never edited by the review, and review results never appear inside the applicant's sections."
-      : "This document records what the applicant declared and signed. Nothing in it has been verified by the carrier or by TES, and receipt of an application is not a hiring decision. Verification and qualification are performed and recorded separately by the carrier.",
+      ? "Part 1 reproduces the applicant's application exactly as submitted and signed. Part 2 is the carrier's separate, post-submission hiring process: document intake, verification, qualification and hiring decision. Nothing in Part 2 edits or restates what the applicant declared."
+      : "This document is the applicant's submitted application: what the applicant declared, the authorizations they signed and the evidence they referenced. Submitting is not a hiring decision. Anything that happens afterwards is the carrier's separate hiring process and is not part of this document.",
     "info",
     carrier ? "How this dossier is organised" : "About this record",
   )
@@ -922,55 +940,26 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
   L.label("What the applicant stated and signed", kx, keyY - 3, "r", 8.5, MUTED)
   L.y -= 24
   kx = MX
-  kx += L.chip("Pending", L.y === keyY ? kx : kx, L.y, "warn", "clock") + 6
-  L.label("Not yet verified or approved", kx, L.y - 3, "r", 8.5, MUTED)
-  L.y -= 24
-  kx = MX
   kx += L.chip("PENDING LEGAL REVIEW", kx, L.y, "warn") + 6
-  L.label("Wording not yet approved by counsel; recorded as presented and signed", kx, L.y - 3, "r", 8.5, MUTED)
+  L.label("Attention: wording not yet approved by counsel; recorded as presented and signed", kx, L.y - 3, "r", 8.5, MUTED)
   L.y -= 24
+  if (carrier) {
+    kx = MX
+    kx += L.chip("Verified", kx, L.y, "ok", "check") + 4
+    kx += L.chip("Rejected", kx, L.y, "bad") + 4
+    kx += L.chip("Unresolved", kx, L.y, "warn") + 6
+    L.label("Part 2 only: green confirmed, red failed, yellow still needs attention", kx, L.y - 3, "r", 8.5, MUTED)
+    L.y -= 24
+  }
 
-  // ---- Verification status -------------------------------------------------------------------------------------------------------------
+  // ---- Part 1: the application ---------------------------------------------------------------------------------------------------------
   L.newPage()
   let n = 1
-  L.sectionHeader(T.verification, { number: n++, icon: "listChecks", follow: 150 })
-  L.paragraph(
-    carrier
-      ? "Each requirement shows the carrier's most recent recorded result. A requirement is marked verified only when the carrier recorded it as verified with a note or supporting evidence."
-      : "Every requirement below is open. Each will be marked verified only when the carrier records it as verified, with supporting evidence.",
-    { size: 9, color: MUTED, gap: 10 },
-  )
-  {
-    const rows = plan.requirements.map((r) => {
-      const c = review?.checks.find((x) => x.title === r.title)
-      return { title: r.title, required: r.requiredForQualification, status: c ? c.status : "PENDING", note: c?.note ?? null }
-    })
-    const units: Unit[] = rows.map((r) => {
-      const tw = CW - 28 - 44 - 120 - 80
-      const lines = L.lines(r.title, "s", 10, tw)
-      const noteLines = r.note ? L.lines(r.note, "r", 8.5, tw) : []
-      const h = Math.max(46, 20 + lines.length * 14 + (noteLines.length ? noteLines.length * 12 + 4 : 0))
-      return {
-        h,
-        draw: (x, y, w) => {
-          L.iconTile(requirementIcon(r.title), x + 14, y - (h - 30) / 2, 30)
-          L.drawLines(lines, x + 56, y - 10, "s", 10, INK, 14)
-          L.note(lines.filter(Boolean).join(" "))
-          if (noteLines.length) {
-            L.drawLines(noteLines, x + 56, y - 10 - lines.length * 14 - 2, "r", 8.5, MUTED, 12)
-            L.note(noteLines.filter(Boolean).join(" "))
-          }
-          const sx = x + w - 14 - 140
-          const label = statusLabel(r.status)
-          L.chip(label, sx, y - (h - 16) / 2, statusTone(r.status), r.status.toUpperCase() === "VERIFIED" ? "check" : r.status.toUpperCase() === "PENDING" ? "clock" : undefined)
-          const req = r.required ? "Required" : "Optional"
-          L.label(req, x + w - 14 - L.width(req, "s", 8.5), y - (h - 8.5) / 2, "s", 8.5, MUTED)
-        },
-      }
-    })
-    L.panel({ title: "Qualification requirements", icon: "listChecks", chip: { text: carrier ? "CARRIER RESULTS" : "ALL PENDING", tone: carrier ? "info" : "warn" }, flow: true }, units)
+  if (carrier) {
+    L.rr(MX, L.y, CW, 30, 8, BLUE)
+    L.label("PART 1  ·  SUBMITTED APPLICATION (APPLICANT-DECLARED, SIGNED, UNCHANGED)", MX + 14, L.y - 10, "b", 8.5, WHITE)
+    L.y -= 44
   }
-  if (!carrier) L.infoBox("Nothing in this document confirms identity, licence, medical certification, employment, driving record or eligibility. These checks are carried out and recorded by the carrier, separately from the applicant's declaration.", "info", "Pending carrier verification")
 
   // ---- Answer sections ----------------------------------------------------------------------------------------------------------------
   for (const section of present) {
@@ -978,7 +967,7 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
     const uploads = snapshot.uploads.filter((u) => fieldById.get(u.fieldId)?.section === section.id && u.fieldId !== "system.application_pdf")
     const sens = [...snapshot.sensitive.map((x) => ({ ...x, kind: "collected" as const })), ...snapshot.sensitiveNotCollected.map((x) => ({ fieldId: x.fieldId, collected: false, kind: "off" as const }))].filter((x) => fieldById.get(x.fieldId)?.section === section.id)
     const icon = sectionIcon(section.id)
-    L.y -= 8
+    L.y -= section === present[0] ? 0 : 8
     L.sectionHeader(section.title, { number: n++, icon, intro: section.intro, follow: 230 })
 
     const toField = (field: PlanField, row: { value: unknown }): Field => {
@@ -1173,7 +1162,7 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
             const date = get(e, "date")
             const titleText = accident ? get(e, "location") || date || `Accident ${i + 1}` : get(e, "offence") || date || `Conviction ${i + 1}`
             const units = L.fieldUnits(restOf(e, accident ? ["date", "location"] : ["date", "offence"]), CW)
-            L.panel({ kicker: `${accident ? "ACCIDENT" : "CONVICTION"} ${i + 1}`, title: titleText, icon: "alert", theme: accident ? "amber" : "light", accent: accident ? AMBER : NAVY, chip: date ? { text: date, tone: accident ? "warn" : "info" } : undefined }, units.length ? units : L.textUnits("(no further details entered)", CW, { color: MUTED }))
+            L.panel({ kicker: `${accident ? "ACCIDENT" : "CONVICTION"} ${i + 1}`, title: titleText, icon: "alert", theme: "light", accent: NAVY, chip: date ? { text: date, tone: "info" } : undefined }, units.length ? units : L.textUnits("(no further details entered)", CW, { color: MUTED }))
           })
         } else {
           entries.forEach((e, i) => {
@@ -1279,54 +1268,6 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
     }
   }
 
-  // ---- Carrier review (dossier only) ---------------------------------------------------------------------------------------------------
-  if (carrier && review) {
-    L.newPage()
-    L.sectionHeader(T.carrierReview, { number: n++, icon: "clipboard", dark: true, follow: 180, intro: `Prepared ${fmtUtc(review.preparedAt)} by ${review.preparedBy}. This record is the carrier's own; it does not alter the applicant's declaration above.` })
-    const d = review.decision
-    L.panel(
-      { title: "Qualification decision", icon: "listChecks", theme: "light", chip: d ? { text: d.status.replace(/_/g, " "), tone: statusTone(d.status) } : { text: "NO DECISION RECORDED", tone: "warn" } },
-      L.fieldUnits(
-        d
-          ? [{ label: "Decided by", value: d.decidedBy ?? "—" }, { label: "Decided at", value: d.decidedAt ? fmtUtc(d.decidedAt) : "—" }, { label: "Rationale", value: d.rationale ?? "(none recorded)" }]
-          : [{ label: "Status", value: "No qualification decision has been recorded for this application." }],
-        CW,
-      ),
-    )
-    L.subheading("Verification results", 150, "listChecks")
-    for (const ch of review.checks) {
-      L.panel(
-        { kicker: ch.required ? "REQUIRED CHECK" : "OPTIONAL CHECK", title: ch.title, icon: requirementIcon(ch.title), chip: { text: statusLabel(ch.status), tone: statusTone(ch.status) } },
-        L.fieldUnits(
-          [
-            { label: "Recorded by", value: ch.recordedBy ?? "—" },
-            { label: "Recorded at", value: ch.recordedAt ? fmtUtc(ch.recordedAt) : "—" },
-            { label: "Note", value: ch.note ?? "(none)" },
-            { label: "Evidence document", value: ch.evidenceDocumentId ?? "(none)", mono: Boolean(ch.evidenceDocumentId) },
-          ],
-          CW,
-        ),
-      )
-    }
-    L.newPage()
-    L.sectionHeader(T.evidenceRegister, { number: n++, icon: "paperclip", dark: true, follow: 140 })
-    if (review.evidence.length === 0) L.paragraph("No evidence documents are linked to this application.", { size: 9, color: MUTED, gap: 8 })
-    for (const e of review.evidence) {
-      L.panel(
-        { title: e.label, icon: "paperclip", chip: e.restricted ? { text: "RESTRICTED", tone: "bad" } : undefined },
-        e.restricted
-          ? L.fieldUnits([{ label: "Evidence document id", value: e.documentId, mono: true }, { label: "Access", value: "Restricted. File details are not shown in this document and require the sensitive-information permission." }], CW)
-          : L.fieldUnits([{ label: "File", value: `${e.filename ?? "—"}${e.byteSize !== null ? ` (${e.byteSize} bytes)` : ""}` }, { label: "Evidence document id", value: e.documentId, mono: true }, ...(e.sha256 ? [{ label: "SHA-256", value: e.sha256, mono: true }] : [])], CW),
-      )
-    }
-    L.sectionHeader(T.audit, { number: n++, icon: "clock", dark: true, follow: 140 })
-    if (review.audit.length === 0) L.paragraph("No audit events are available to this reader.", { size: 9, color: MUTED, gap: 8 })
-    review.audit.forEach((a, i) => {
-      L.panel({ kicker: fmtUtc(a.at), title: a.event, icon: "clock", inset: 0 }, L.fieldUnits([{ label: "Actor", value: a.actor }, ...(a.detail ? [{ label: "Detail", value: a.detail }] : [])], CW))
-      void i
-    })
-  }
-
   // ---- Review items and limitations ---------------------------------------------------------------------------------------------------
   L.newPage()
   L.sectionHeader(T.reviewItems, { number: n++, icon: "info", follow: 150 })
@@ -1336,6 +1277,71 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
     { title: "Legal sources referenced (none verified by counsel)", icon: "fileText", flow: true },
     Object.entries(plan.legalSources).sort(([a], [b]) => a.localeCompare(b)).flatMap(([key, s]) => L.textUnits(`${s.citation} [${key}] — ${s.verification}`, CW, { bullet: true, size: 8.6 })),
   )
+
+  // ---- Part 2: the hiring process (dossier only) ------------------------------------------------------------------------------------------
+  if (carrier && review) {
+    L.newPage()
+    L.sectionHeader(T.process, { number: n++, icon: "clipboard", dark: true, follow: 200, intro: `Carrier records prepared ${fmtUtc(review.preparedAt)} by ${review.preparedBy}. Every item below happened after the application was submitted and is recorded separately. The signed application in Part 1 is unchanged by any of it.` })
+    const decisions = review.decisions ?? (review.decision ? [review.decision] : [])
+    const stageTone = (id: string): { tone: Tone; label: string } => {
+      const att = (a: Attention): Tone => (a === "ok" ? "ok" : a === "bad" ? "bad" : a === "attention" ? "warn" : "neutral")
+      if (id === "intake") {
+        if (review.evidence.length === 0) return { tone: "neutral", label: "No documents" }
+        const open = review.evidence.filter((e) => e.state !== undefined && e.state !== null && e.state !== "stored").length
+        return open ? { tone: "warn", label: `${open} not yet processed` } : { tone: "ok", label: "Documents processed" }
+      }
+      if (id === "assessment") return review.blockers && review.blockers.length ? { tone: "warn", label: `${review.blockers.length} unresolved` } : { tone: "ok", label: "Every required check verified" }
+      if (id === "decision") {
+        const d = decisions[decisions.length - 1]
+        return d ? { tone: statusTone(d.status), label: d.status.replace(/_/g, " ").toLowerCase() } : { tone: "warn", label: "No decision recorded" }
+      }
+      if (id === "handoff") return { tone: "neutral", label: decisions[decisions.length - 1]?.status === "QUALIFIED" ? "Eligible for approval" : "Not started" }
+      const t = requirementsAttention(review.checks.filter((c) => stageOfRequirement(c.type) === id).map((c) => ({ required: c.required, status: c.status })))
+      return { tone: att(t.tone), label: t.label }
+    }
+    const fieldTexts = (ch: PdfReview["checks"][number]): Field[] => [
+      { label: "Recorded by", value: ch.recordedBy ?? "—" },
+      { label: "Recorded at", value: ch.recordedAt ? fmtUtc(ch.recordedAt) : "—" },
+      { label: "Evidence or note", value: ch.note ?? "(none)" },
+      { label: "Evidence document", value: ch.evidenceDocumentId ?? "(none)", mono: Boolean(ch.evidenceDocumentId) },
+    ]
+    HIRING_STAGES.forEach((stage, i) => {
+      const t = stageTone(stage.id)
+      const checks = review.checks.filter((c) => stageOfRequirement(c.type) === stage.id)
+      L.stageHeader(i + 1, stage.title, t)
+      if (stage.id === "intake") {
+        if (review.evidence.length === 0) L.paragraph("No evidence documents are linked to this application.", { size: 9, color: MUTED, gap: 8 })
+        for (const e of review.evidence) {
+          L.panel(
+            { title: e.label, icon: "paperclip", chip: e.restricted ? { text: "RESTRICTED", tone: "warn" } : e.state ? { text: e.state, tone: e.state === "stored" ? "ok" : "warn" } : undefined },
+            e.restricted
+              ? L.fieldUnits([{ label: "Evidence document id", value: e.documentId, mono: true }, { label: "Access", value: "Restricted. File details are not shown in this document and require the sensitive-information permission." }], CW)
+              : L.fieldUnits([{ label: "File", value: `${e.filename ?? "—"}${e.byteSize !== null ? ` (${e.byteSize} bytes)` : ""}` }, { label: "Evidence document id", value: e.documentId, mono: true }, ...(e.sha256 ? [{ label: "SHA-256", value: e.sha256, mono: true }] : [])], CW),
+          )
+        }
+      } else if (stage.id === "assessment") {
+        if (review.blockers && review.blockers.length) L.panel({ title: "Why this applicant cannot yet be qualified", icon: "alert", theme: "amber", flow: true }, review.blockers.flatMap((b) => L.textUnits(b, CW, { bullet: true })))
+        else L.panel({ title: "Qualification gate", icon: "check" }, L.textUnits("Every required check is verified on a signed, legally approved authorization.", CW))
+      } else if (stage.id === "decision") {
+        if (decisions.length === 0) L.panel({ title: "Hiring decision", icon: "listChecks", chip: { text: "NO DECISION RECORDED", tone: "warn" } }, L.textUnits("No decision has been recorded for this application.", CW, { color: MUTED }))
+        decisions.forEach((d, k) => L.panel({ kicker: k === decisions.length - 1 ? "CURRENT DECISION" : "EARLIER DECISION", title: d.status.replace(/_/g, " "), icon: "listChecks", chip: { text: d.status.replace(/_/g, " "), tone: statusTone(d.status) } }, L.fieldUnits([{ label: "Decided by", value: d.decidedBy ?? "—" }, { label: "Decided at", value: d.decidedAt ? fmtUtc(d.decidedAt) : "—" }, { label: "Rationale", value: d.rationale ?? "(none recorded)" }], CW)))
+      } else if (stage.id === "handoff") {
+        const q = decisions[decisions.length - 1]?.status === "QUALIFIED"
+        L.panel({ title: "Onboarding handoff", icon: "truck", chip: { text: q ? "ELIGIBLE FOR APPROVAL" : "NOT STARTED", tone: q ? "info" : "neutral" } }, L.textUnits(q ? "The applicant has been assessed as qualified. Approval and onboarding are separate authorized actions recorded on the driver record." : "Onboarding starts only after an authorized approval of an applicant assessed as qualified.", CW))
+      } else {
+        if (checks.length === 0) L.paragraph("No check in this stage applies to this application.", { size: 9, color: MUTED, gap: 8 })
+        for (const ch of checks) L.panel({ kicker: ch.required ? "REQUIRED CHECK" : "OPTIONAL CHECK", title: ch.title, icon: requirementIcon(ch.title), chip: { text: statusLabel(ch.status), tone: statusTone(ch.status) } }, L.fieldUnits(fieldTexts(ch), CW))
+      }
+    })
+    if (review.corrections && review.corrections.length) {
+      L.subheading("Corrections to the record", 150, "clipboard")
+      L.paragraph("The signed application is never edited. Each correction below is a separate carrier record.", { size: 9, color: MUTED, gap: 6 })
+      for (const c of review.corrections) L.panel({ kicker: fmtUtc(c.recordedAt), title: c.label, icon: "clipboard" }, L.fieldUnits([{ label: "Declared value", value: c.previous }, { label: "Corrected value", value: c.corrected }, { label: "Reason", value: c.reason }, { label: "Recorded by", value: c.recordedBy }], CW))
+    }
+    L.subheading("Audit provenance", 150, "clock")
+    if (review.audit.length === 0) L.paragraph("No audit events are available to this reader.", { size: 9, color: MUTED, gap: 8 })
+    for (const a of review.audit) L.panel({ kicker: fmtUtc(a.at), title: a.event, icon: "clock" }, L.fieldUnits([{ label: "Actor", value: a.actor }, ...(a.detail ? [{ label: "Detail", value: a.detail }] : [])], CW))
+  }
 
   // ---- Evidence and integrity (technical provenance, kept apart from the answers) ---------------------------------------------------------
   L.newPage()
@@ -1374,7 +1380,7 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
       docs.flatMap((u) => L.fieldUnits([{ label: `${fieldById.get(u.fieldId)?.label ?? u.fieldId} — ${u.filename} (${u.byteSize} bytes)`, value: u.documentId, mono: true }], CW)),
     )
   }
-  L.infoBox("Every item in this document is applicant-declared. No identity, licence, medical, employment, driving-record, background or eligibility check has been performed by this document. Authorization wording marked pending legal review has not been approved and must not be relied on.", "info", "Verification limitations")
+  L.infoBox(carrier ? "Part 1 is applicant-declared. Part 2 records the carrier's later activity and never alters Part 1. Authorization wording marked pending legal review has not been approved and must not be relied on." : "Every item in this document is applicant-declared and was recorded when the application was submitted. Authorization wording marked pending legal review has not been approved and must not be relied on.", "info", "About these records")
   if (L.t.unsupported > 0) L.infoBox(`${L.t.unsupported} character(s) could not be drawn by any embedded font and appear as the replacement mark (${"�"}). The stored application snapshot holds the exact text as submitted.`, "warn", "Characters outside the document fonts")
 
   // ---- Running header and footer ------------------------------------------------------------------------------------------------------
@@ -1399,7 +1405,7 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
       page.drawLine({ start: { x: MX, y: H - 56 }, end: { x: W - MX, y: H - 56 }, thickness: 1, color: BLUE_LINE })
       page.drawLine({ start: { x: MX, y: H - 56 }, end: { x: MX + 64, y: H - 56 }, thickness: 2.2, color: BLUE })
       page.drawLine({ start: { x: MX, y: 46 }, end: { x: W - MX, y: 46 }, thickness: 0.5, color: BLUE_LINE })
-      const left = L.clean(carrier ? `Receipt ${input.receiptId}  ·  Carrier dossier — confidential` : `Receipt ${input.receiptId}  ·  Applicant-declared, not verified`)
+      const left = L.clean(carrier ? `Receipt ${input.receiptId}  ·  Carrier dossier — confidential` : `Receipt ${input.receiptId}  ·  Submitted application`)
       L.t.draw(page, left, MX, 30, "r", 7.5, MUTED, H)
       const right = `Page ${i + 1} of ${total}`
       const rw = L.t.width(right, "s", 8)

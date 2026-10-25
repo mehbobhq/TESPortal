@@ -16,6 +16,7 @@ import {
   updatePerformanceEventWorkflow,
 } from "@/lib/driver-data"
 import { getJurisdictionLabel } from "@/lib/jurisdictions"
+import { Input } from "@/components/ui/input"
 
 const fieldsOf = () => DRIVER_PERFORMANCE_CATEGORY_BY_VALUE["Roadside Inspection"]?.fields || []
 
@@ -111,8 +112,8 @@ export function RoadsideEventPanels({ event, companyId, onChange }: { event: Dri
           <summary className="cursor-pointer text-xs font-bold text-foreground">Record a Driver Statement{statementCount ? ` (${statementCount} on record)` : ""} <span className="font-normal text-muted-foreground">- available on every inspection, required or not</span></summary>
           <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <select aria-label="Statement status" value={statement.status} onChange={(e) => setStatement((value) => ({ ...value, status: e.target.value as typeof value.status }))} className={inputClass}><option value="OBTAINED">Obtained</option><option value="REQUESTED">Requested</option><option value="DECLINED">Declined</option><option value="UNABLE_TO_OBTAIN">Unable to Obtain</option></select>
-            <input aria-label="Statement date" type="date" value={statement.date} onChange={(e) => setStatement((value) => ({ ...value, date: e.target.value }))} className={inputClass} />
-            <input aria-label="Statement time" type="time" value={statement.time} onChange={(e) => setStatement((value) => ({ ...value, time: e.target.value }))} className={inputClass} />
+            <Input aria-label="Statement date" type="date" value={statement.date} onChange={(e) => setStatement((value) => ({ ...value, date: e.target.value }))} className={inputClass} />
+            <Input aria-label="Statement time" type="time" value={statement.time} onChange={(e) => setStatement((value) => ({ ...value, time: e.target.value }))} className={inputClass} />
             <select aria-label="Statement method" value={statement.method} onChange={(e) => setStatement((value) => ({ ...value, method: e.target.value as typeof value.method }))} className={inputClass}><option value="">Method</option><option value="WRITTEN">Written</option><option value="RECORDED">Recorded</option><option value="INTERVIEW">Interview</option><option value="OTHER">Other</option></select>
             <textarea aria-label="Statement content" rows={3} value={statement.content} onChange={(e) => setStatement((value) => ({ ...value, content: e.target.value }))} placeholder="Driver's actual account / statement" className={`${inputClass} sm:col-span-2 lg:col-span-4`} />
           </div>

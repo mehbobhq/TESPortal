@@ -3,6 +3,8 @@
 import React from "react";
 import { Plus, FileText, Archive, RotateCcw, X } from "lucide-react";
 import { BusinessTaxAccountRecord } from "@/src/types/business";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 type Props = {
   company: any;
@@ -63,10 +65,10 @@ export function GstTaxCard({ company, needsCanadianTaxes, showAddGst, gstError, 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-[11px] font-bold text-foreground">Obtained Date</label>
-                      <input
+                      <Input
                         name="obtainedDate"
                         type="date"
-                        defaultValue={new Date().toISOString().split("T")[0]}
+                        defaultValue={todayLocalDate()}
                         required
                         className="w-full h-8 rounded-lg border border-border bg-background px-2.5 text-xs text-foreground"
                       />

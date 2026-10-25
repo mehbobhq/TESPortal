@@ -4,6 +4,7 @@ import type { AuthorityDraft, SafetyDraft, AuditDraft, AuthorityRecord, AuditRec
 import type { AuthorityProfile } from "@/lib/authorities/model"
 import { authorityOptions, authorityDisplayName, defaultIssuingAuthority } from "@/lib/authorities/model"
 import { JurisdictionCountryFields } from "./shared-fields"
+import { Input } from "@/components/ui/input"
 
 export function AuthorityForm({
   draft,
@@ -124,7 +125,7 @@ export function AuthorityForm({
           <>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Filed / Update Date</label>
-              <input
+              <Input
                 type="date"
                 value={draft.eventDate}
                 onChange={(e) => patch({ eventDate: e.target.value })}
@@ -134,7 +135,7 @@ export function AuthorityForm({
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Next Action Date</label>
-              <input
+              <Input
                 type="date"
                 value={draft.nextActionDate}
                 onChange={(e) => patch({ nextActionDate: e.target.value })}
@@ -149,7 +150,7 @@ export function AuthorityForm({
           <>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Issue Date</label>
-              <input
+              <Input
                 type="date"
                 value={draft.issueDate}
                 onChange={(e) => patch({ issueDate: e.target.value })}
@@ -159,7 +160,7 @@ export function AuthorityForm({
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Effective Date</label>
-              <input
+              <Input
                 type="date"
                 value={draft.effectiveDate}
                 onChange={(e) => patch({ effectiveDate: e.target.value })}
@@ -169,7 +170,7 @@ export function AuthorityForm({
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Expiry Date</label>
-              <input
+              <Input
                 type="date"
                 value={draft.expiryDate}
                 onChange={(e) => patch({ expiryDate: e.target.value })}
@@ -236,7 +237,7 @@ export function SafetyForm({
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-foreground">Review Date</label>
-          <input
+          <Input
             type="date"
             value={draft.reviewDate}
             onChange={(e) => patch({ reviewDate: e.target.value })}
@@ -331,7 +332,7 @@ export function AuditForm({
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-foreground">Notice Date</label>
-          <input
+          <Input
             type="date"
             value={draft.noticeDate}
             onChange={(e) => patch({ noticeDate: e.target.value })}
@@ -341,7 +342,7 @@ export function AuditForm({
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-foreground">Due Date</label>
-          <input
+          <Input
             type="date"
             value={draft.dueDate}
             onChange={(e) => patch({ dueDate: e.target.value })}
@@ -351,7 +352,7 @@ export function AuditForm({
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-foreground">Completed Date</label>
-          <input
+          <Input
             type="date"
             value={draft.completedDate}
             onChange={(e) => patch({ completedDate: e.target.value })}
@@ -414,7 +415,7 @@ export function AuditForm({
         {draft.followUpRequired && (
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-foreground">Follow-up Due Date</label>
-            <input
+            <Input
               type="date"
               value={draft.followUpDueDate}
               onChange={(e) => patch({ followUpDueDate: e.target.value })}

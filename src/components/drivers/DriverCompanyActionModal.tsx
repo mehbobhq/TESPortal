@@ -15,6 +15,8 @@ import {
   CompanyActionRecord,
   DriverPerformanceEvent,
 } from "@/types/drivers";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverCompanyActionModalProps {
   companyId: string;
@@ -38,7 +40,7 @@ export function DriverCompanyActionModal({
   const [decidedBy, setDecidedBy] = useState("");
   const [decidedByRole, setDecidedByRole] = useState("");
   const [factualBasis, setFactualBasis] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const [effectiveDate, setEffectiveDate] = useState(todayLocalDate());
   const [endDate, setEndDate] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [status, setStatus] = useState<CompanyActionRecord["status"]>("Active");
@@ -76,7 +78,7 @@ export function DriverCompanyActionModal({
       followUpDate: followUpDate || undefined,
       status,
       driverAcknowledged,
-      acknowledgementDate: driverAcknowledged ? new Date().toISOString().slice(0, 10) : undefined,
+      acknowledgementDate: driverAcknowledged ? todayLocalDate() : undefined,
       actionItems,
       linkedEventIds: linkedEventId ? [linkedEventId] : undefined,
     });
@@ -205,7 +207,7 @@ export function DriverCompanyActionModal({
               <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Effective Date *
               </label>
-              <input
+              <Input
                 type="date"
                 value={effectiveDate}
                 onChange={(e) => setEffectiveDate(e.target.value)}
@@ -218,7 +220,7 @@ export function DriverCompanyActionModal({
               <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 Follow-up / Expiry Date (Optional)
               </label>
-              <input
+              <Input
                 type="date"
                 value={followUpDate}
                 onChange={(e) => setFollowUpDate(e.target.value)}

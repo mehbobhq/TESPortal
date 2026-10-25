@@ -9,6 +9,7 @@ import {
   CE_RESPONSE_FACT_KEYS, emptyCustomerBehavior, emptyCustomerClaim, emptyCustomerCommendation, emptyCustomerCondition, emptyCustomerParty, emptyCustomerStatement, emptyCustomerStep, idsFromFact, idsToFact,
   type CustomerDraft,
 } from "@/lib/performance-customer-event";
+import { Input } from "@/components/ui/input"
 
 const inputClass = "mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20";
 const sectionClass = "space-y-3 rounded-xl border border-border bg-muted/10 p-4";
@@ -21,7 +22,7 @@ function Pick({ label, value, options, onChange, required, className = "" }: { l
   return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}{required ? <span className="text-destructive"> *</span> : null}<select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}><option value="">Select...</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
 }
 function Txt({ label, value, onChange, type = "text", required, className = "" }: { label: string; value: string; onChange: (value: string) => void; type?: string; required?: boolean; className?: string }) {
-  return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}{required ? <span className="text-destructive"> *</span> : null}<input type={type} value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} /></label>;
+  return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}{required ? <span className="text-destructive"> *</span> : null}<Input type={type} value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} /></label>;
 }
 function Area({ label, value, onChange, required, className = "" }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; className?: string }) {
   return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}{required ? <span className="text-destructive"> *</span> : null}<textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} /></label>;

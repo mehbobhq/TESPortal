@@ -13,6 +13,7 @@ import { getWorkflowProvidersForEventType } from "@/lib/performance-workflow-reg
 import type { PerformanceFoundationState } from "@/lib/performance-foundation-state";
 import { CollisionInvestigationPanel, type EngineRun } from "./CollisionInvestigationPanel";
 import { workflowStateLabel } from "./NearMissEventPanel";
+import { Input } from "@/components/ui/input"
 
 const TONE: Record<DerivedWorkflow["state"], string> = {
   NOT_REQUIRED: "bg-muted text-muted-foreground",
@@ -45,7 +46,7 @@ function EnrichForm({ title, testId, fields, submitLabel, onSubmit }: { title: s
       <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {fields.map((field) => field.type === "select"
           ? <label key={field.key} className="block min-w-0 text-[11px] font-semibold">{field.label}<select aria-label={field.label} value={values[field.key] || ""} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })} className={inputClass}><option value="">Select...</option>{(field.options || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-          : <label key={field.key} className="block min-w-0 text-[11px] font-semibold">{field.label}<input aria-label={field.label} type={field.type || "text"} value={values[field.key] || ""} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })} className={inputClass} /></label>)}
+          : <label key={field.key} className="block min-w-0 text-[11px] font-semibold">{field.label}<Input aria-label={field.label} type={field.type || "text"} value={values[field.key] || ""} onChange={(e) => setValues({ ...values, [field.key]: e.target.value })} className={inputClass} /></label>)}
       </div>
       <div className="mt-2 flex items-center gap-2"><button type="button" onClick={() => { try { setError(null); onSubmit(values); setValues({}); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not record."); } }} className="rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-bold hover:bg-muted">{submitLabel}</button></div>
       {error ? <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p> : null}

@@ -3,6 +3,7 @@
 import React from "react";
 import { FileText, Pencil, X, Check } from "lucide-react";
 import { ReadOnlyField } from "@/src/components/shared/ReadOnlyField";
+import { Input } from "@/components/ui/input"
 
 type Props = {
   company: any;
@@ -76,7 +77,7 @@ export function IncorporationSection({ company, isCanadaRegistered, isEditingInc
                   <label className="text-xs font-bold text-foreground uppercase tracking-wider">
                     Incorporation Date <span className="text-destructive">*</span>
                   </label>
-                  <input
+                  <Input
                     type="date"
                     value={incorpDateDraft}
                     onChange={(e) => setIncorpDateDraft(e.target.value)}

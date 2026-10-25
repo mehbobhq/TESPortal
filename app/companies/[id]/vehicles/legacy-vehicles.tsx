@@ -76,6 +76,7 @@ import {
   resolveEvidenceFile,
   saveEvidenceFile,
 } from "@/lib/evidence-file-store"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 const VEHICLE_TYPES: EquipmentType[] = [
   "Tractor",
@@ -118,7 +119,7 @@ function PrototypeIndicator() {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  return todayLocalDate()
 }
 
 function money(value: string) {

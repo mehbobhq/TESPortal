@@ -6,6 +6,7 @@ import type { AuthorityProfile } from "@/lib/authorities/model"
 import { isoNow } from "@/lib/authorities/model"
 import { ScanDocumentIcon } from "./shared-fields"
 import { AuthorityForm, SafetyForm, AuditForm } from "./forms"
+import { Input } from "@/components/ui/input"
 
 export async function requestOCR(session: OCRSession): Promise<Partial<OCRSession>> {
   try {
@@ -181,7 +182,7 @@ export function OCRWorkspace({
             <div className="mb-5 grid gap-4 md:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-foreground">Document Date</label>
-                <input
+                <Input
                   type="date"
                   value={session.documentDate}
                   onChange={(e) =>

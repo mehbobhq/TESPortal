@@ -7,6 +7,8 @@ import type { PlanField } from "@/lib/driver-application/plan"
 import { JURISDICTIONS } from "@/lib/jurisdictions"
 import { evalCond } from "@/lib/driver-application/conditions"
 import { ApiError, api, prepareFile } from "./api-client"
+import { TESDateField } from "@/components/ui/tes-date-field"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 const inputCls =
   "w-full min-h-12 rounded-xl border border-[#C9D6EA] bg-white px-3.5 py-3 text-base text-[#0B1F44] shadow-[0_1px_0_rgba(11,31,68,0.04)] outline-none transition motion-reduce:transition-none placeholder:text-[#94A3B8] hover:border-[#9DB4DA] focus:border-[#1D4ED8] focus:ring-4 focus:ring-[#1D4ED8]/15 aria-[invalid=true]:border-[#B91C1C] aria-[invalid=true]:ring-[#B91C1C]/10 disabled:opacity-60"
@@ -41,7 +43,7 @@ export function Labelled({ id, label, help, required, error, children }: Common 
   )
 }
 
-function Scalar({ type, value, onChange, id, options, optionsRef, error, hasHelp, onBlur }: { type: string; value: unknown; onChange: (v: unknown) => void; id: string; options?: Option[]; optionsRef?: OptionsRef; error?: string; hasHelp: boolean; onBlur?: () => void }) {
+function Scalar({ type, value, onChange, id, options, optionsRef, error, hasHelp, onBlur, validation }: { validation?: { notFuture?: boolean; notPast?: boolean }; type: string; value: unknown; onChange: (v: unknown) => void; id: string; options?: Option[]; optionsRef?: OptionsRef; error?: string; hasHelp: boolean; onBlur?: () => void }) {
   const aria = { "aria-invalid": error ? true : undefined, "aria-describedby": [hasHelp ? `${id}-help` : "", error ? `${id}-err` : ""].filter(Boolean).join(" ") || undefined } as const
   const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : ""
   switch (type) {
@@ -77,6 +79,11 @@ function Scalar({ type, value, onChange, id, options, optionsRef, error, hasHelp
           ))}
         </div>
       )
+    }
+    case "date": {
+      // The shared TES date control: the same look, keyboard entry and YYYY-MM-DD value in every browser (no native picker, no locale-dependent display).
+      const today = todayLocalDate()
+      return <TESDateField id={id} value={text} onValueChange={(v) => onChange(v)} onBlur={onBlur} className={inputCls} max={validation?.notFuture ? today : undefined} min={validation?.notPast ? today : undefined} aria-invalid={error ? true : undefined} invalid={Boolean(error)} aria-describedby={aria["aria-describedby"]} />
     }
     default: {
       const htmlType = type === "email" ? "email" : type === "date" ? "date" : type === "number" ? "number" : type === "phone" ? "tel" : "text"
@@ -126,7 +133,7 @@ function Repeatable({ field, value, onChange, errors, onBlur }: { field: PlanFie
               return (
                 <div key={f.id} className={wide ? "md:col-span-2" : ""}>
                   <Labelled id={id} label={f.label} required={f.required} error={err}>
-                    <Scalar type={f.type} value={row[f.id]} onChange={(v) => set(i, f.id, v)} id={id} options={f.options} optionsRef={f.optionsRef} error={err} hasHelp={false} onBlur={onBlur} />
+                    <Scalar type={f.type} validation={f.validation} value={row[f.id]} onChange={(v) => set(i, f.id, v)} id={id} options={f.options} optionsRef={f.optionsRef} error={err} hasHelp={false} onBlur={onBlur} />
                   </Labelled>
                 </div>
               )
@@ -262,7 +269,7 @@ export function FieldControl(props: {
       ) : field.type === "sensitive" ? (
         <SensitiveControl field={field} id={id} collected={props.sensitiveCollected} disabled={props.locked} />
       ) : (
-        <Scalar type={field.type} value={props.value} onChange={props.onChange} id={id} options={field.options} optionsRef={field.optionsRef} error={props.error} hasHelp={Boolean(field.help)} onBlur={props.onBlur} />
+        <Scalar type={field.type} validation={field.validation} value={props.value} onChange={props.onChange} id={id} options={field.options} optionsRef={field.optionsRef} error={props.error} hasHelp={Boolean(field.help)} onBlur={props.onBlur} />
       )}
     </Labelled>
   )

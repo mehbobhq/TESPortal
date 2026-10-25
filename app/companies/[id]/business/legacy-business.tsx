@@ -37,6 +37,7 @@ import { SalesTaxCard } from "@/src/components/business/SalesTaxCard";
 import { BusinessHistory } from "@/src/components/business/BusinessHistory";
 import { AuditCasesSection } from "@/src/components/business/AuditCasesSection";
 import { BusinessDocumentModals } from "@/src/components/business/BusinessDocumentModals";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 // --- Stable ID Generator (Full UUID, Non-Truncated) ---
 function generateStableId(prefix: string, companyId: string): string {
@@ -528,7 +529,7 @@ export default function LegacyBusinessPage() {
         jurisdiction: "Federal (Canada)",
         accountNo: normalizedBN,
         rootBN: normalizedBN,
-        obtainedDate: obtainedDate || new Date().toISOString().split("T")[0],
+        obtainedDate: obtainedDate || todayLocalDate(),
         obtainedBy,
         isPrimary: true,
         isArchived: false,
@@ -606,7 +607,7 @@ export default function LegacyBusinessPage() {
       taxType: "IRS_EIN",
       jurisdiction: "Federal (US)",
       accountNo: normalized,
-      obtainedDate: obtainedDate || new Date().toISOString().split("T")[0],
+      obtainedDate: obtainedDate || todayLocalDate(),
       obtainedBy,
       isPrimary: true,
       isArchived: false,
@@ -679,7 +680,7 @@ export default function LegacyBusinessPage() {
       rootBN: parsed.rootBN,
       programIdentifier: "RT",
       programSequence: parsed.programSequence,
-      obtainedDate: obtainedDate || new Date().toISOString().split("T")[0],
+      obtainedDate: obtainedDate || todayLocalDate(),
       obtainedBy,
       isPrimary: false,
       isArchived: false,
@@ -725,7 +726,7 @@ export default function LegacyBusinessPage() {
       taxType: "STATE_SALES_TAX",
       jurisdiction,
       accountNo: normalized,
-      obtainedDate: obtainedDate || new Date().toISOString().split("T")[0],
+      obtainedDate: obtainedDate || todayLocalDate(),
       obtainedBy,
       isPrimary: true,
       isArchived: false,

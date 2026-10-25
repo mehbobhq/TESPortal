@@ -6,6 +6,7 @@ import { FileCheck2, ShieldAlert, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 type Contact = { person: { id: string }; relationship: { id: string; effectiveTo: string | null }; current: { name: { givenName: string | null; familyName: string | null } | null; purposes: Array<{ purpose: string; isPrimary: boolean }> } }
 type EvidenceItem = { documentId: string; documentType: string; documentTitle: string; documentStatus: string; payload: { state: string; integrityVerified: boolean } }
@@ -38,7 +39,7 @@ export function LegalNameChange({ companyId, currentName, canExecuteHint, onClos
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [holders, setHolders] = useState<{ restricted: boolean; holders: Array<{ personId: string; authorityTypes: string[] }> }>({ restricted: false, holders: [] })
-  const [form, setForm] = useState({ name: "", requesterId: "", basis: "CUSTOMER_AUTHORITY", source: "EMAIL", reference: "", received: new Date().toISOString().slice(0, 10) })
+  const [form, setForm] = useState({ name: "", requesterId: "", basis: "CUSTOMER_AUTHORITY", source: "EMAIL", reference: "", received: todayLocalDate() })
   const [effective, setEffective] = useState("")
 
   const load = useCallback(async () => {

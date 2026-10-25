@@ -68,6 +68,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 /* =========================================================
    TYPES
@@ -288,7 +289,7 @@ function isoNow() {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  return todayLocalDate()
 }
 
 function loadDeadlineRules(): DeadlineRules {

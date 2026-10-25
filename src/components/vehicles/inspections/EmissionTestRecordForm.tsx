@@ -13,6 +13,7 @@ import {
   type RegistrationForEmissionLink,
   type VehicleEmissionTestRecord,
 } from "./emission-test-schema"
+import { Input } from "@/components/ui/input"
 
 type VehicleOption = {
   id: string
@@ -151,8 +152,8 @@ export function EmissionTestRecordForm({ companyId, vehicles, evidence, onSave }
         {errors.length ? <div role="alert" className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive"><ul className="list-disc space-y-1 pl-4">{errors.map((error) => <li key={error}>{error}</li>)}</ul></div> : null}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Vehicle" required><select className={inputClass} value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>{vehicles.map((item) => <option key={item.id} value={item.id}>Unit {item.unitNumber} · {item.vin}</option>)}</select></Field>
-          <Field label="Test date and time" required><input className={inputClass} type="datetime-local" value={testedAt} onChange={(e) => setTestedAt(e.target.value)} /></Field>
-          <Field label="Expiry date"><input className={inputClass} type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} /></Field>
+          <Field label="Test date and time" required><Input className={inputClass} type="datetime-local" value={testedAt} onChange={(e) => setTestedAt(e.target.value)} /></Field>
+          <Field label="Expiry date"><Input className={inputClass} type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} /></Field>
           <Field label="Jurisdiction" required><input className={inputClass} value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} /></Field>
           <Field label="Program" required><input className={inputClass} value={programName} onChange={(e) => setProgramName(e.target.value)} /></Field>
           <Field label="Requirement trigger"><select className={inputClass} value={trigger} onChange={(e) => setTrigger(e.target.value as EmissionRequirementTrigger)}>{["INITIAL_REGISTRATION","OWNERSHIP_TRANSFER","REGISTRATION_RENEWAL","PERIODIC_INSPECTION","ROADSIDE_ENFORCEMENT","RETEST","OTHER"].map((value) => <option key={value}>{value}</option>)}</select></Field>

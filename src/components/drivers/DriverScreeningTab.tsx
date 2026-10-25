@@ -17,6 +17,7 @@ import { DriverMaster, ScreeningRecord, ScreeningCategory } from "@/types/driver
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { getDeadlineStatus, getDeadlineClasses, getDaysRemaining } from "@/lib/deadline-engine";
 import { driverDateInputValue } from "@/lib/driver-date";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverScreeningTabProps {
   master: DriverMaster;
@@ -105,7 +106,7 @@ export function DriverScreeningTab({
     notes: string;
   }>({
     category: "Medical Card / DOT Physical",
-    recordDate: new Date().toISOString().slice(0, 10),
+    recordDate: todayLocalDate(),
     expiryDate: "",
     status: "Qualified",
     resultSummary: "",
@@ -286,7 +287,7 @@ export function DriverScreeningTab({
               onClick={() => {
                 setForm({
                   category: "Medical Card / DOT Physical",
-                  recordDate: new Date().toISOString().slice(0, 10),
+                  recordDate: todayLocalDate(),
                   expiryDate: "",
                   status: "Qualified",
                   resultSummary: "",

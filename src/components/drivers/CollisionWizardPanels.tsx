@@ -8,6 +8,7 @@ import {
 } from "@/lib/performance-collision-taxonomy";
 import { carrierPartyItemId, emptyUnitDetail, type CollisionDraft, type CollisionDraftUnitDetail } from "@/lib/performance-collision";
 import { useNearMissVehicles, type NearMissVehicleChoice } from "./NearMissWizardPanels";
+import { Input } from "@/components/ui/input"
 
 const inputClass = "mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20";
 const sectionClass = "space-y-3 rounded-xl border border-border bg-muted/10 p-4";
@@ -27,7 +28,7 @@ function Pick({ label, value, options, onChange, required, className = "" }: { l
 }
 
 function Txt({ label, value, onChange, placeholder, type = "text", className = "" }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string; className?: string }) {
-  return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}<input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={inputClass} /></label>;
+  return <label className={`block min-w-0 text-[11px] font-semibold text-foreground ${className}`}>{label}<Input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={inputClass} /></label>;
 }
 
 function Header({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {

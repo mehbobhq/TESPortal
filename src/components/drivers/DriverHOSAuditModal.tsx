@@ -17,6 +17,7 @@ import {
   HOSViolationDetails,
 } from "@/types/drivers";
 import { HOS_REVIEW_SOURCES, HOS_INITIAL_FINDINGS, HOS_RULE_JURISDICTIONS, HOS_RULE_PROFILES, HOS_CARRIER_RESOLUTIONS, HOS_VIOLATION_TYPES } from "@/lib/driver-taxonomy";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverHOSAuditModalProps {
   event: DriverPerformanceEvent;
@@ -115,9 +116,9 @@ export function DriverHOSAuditModal({
       violationType: event.hosDetails?.violationType,
       legacyViolationType: event.hosDetails?.legacyViolationType,
       violationMappingState: "CANONICAL",
-      logDate: event.hosDetails?.logDate || event.eventDate || new Date().toISOString().slice(0, 10),
+      logDate: event.hosDetails?.logDate || event.eventDate || todayLocalDate(),
       reviewStatus: derivedStatus,
-      reviewDate: new Date().toISOString().slice(0, 10),
+      reviewDate: todayLocalDate(),
       auditorName: auditorName.trim(),
       auditorRole: auditorRole.trim(),
       sourceOfFinding: sourceOfFinding as HOSReview["sourceOfFinding"],

@@ -82,6 +82,7 @@ import {
   type CanonicalContact,
   type InsuranceOCRDraft
 } from "@/src/components/insurance/insurance-domain";
+import { todayLocalDate } from "@/lib/dates/date-only"
 export { levenshteinDistance, similarityRatio } from "@/src/components/insurance/insurance-domain";
 export type { CoverageItem, BrokerReference, InsuranceEvidence, TransportationInsuranceRecord, WorkersInsuranceRecord, BondRecord, StoredInsuranceData, CanonicalCompany, CanonicalContact, InsuranceOCRDraft } from "@/src/components/insurance/insurance-domain";
 
@@ -443,7 +444,7 @@ export default function LegacyInsurancePage() {
             companyName: brokerOrgName,
             role: "Broker Agent",
             status: "active" as const,
-            startDate: new Date().toISOString().split("T")[0],
+            startDate: todayLocalDate(),
           };
 
           // If updating an existing contact from v5, update tes_contacts_v5
@@ -509,7 +510,7 @@ export default function LegacyInsurancePage() {
             companyName: brokerOrgName,
             role: "Broker Agent",
             status: "active",
-            startDate: new Date().toISOString().split("T")[0],
+            startDate: todayLocalDate(),
           },
         ],
       };
@@ -1370,7 +1371,7 @@ export default function LegacyInsurancePage() {
           evidence: createdEvidence,
           insurerName: "Northbridge General Insurance Corporation",
           policyNumber: `NBC-${Math.floor(100000 + Math.random() * 900000)}`,
-          effectiveDate: new Date().toISOString().split("T")[0],
+          effectiveDate: todayLocalDate(),
           expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
           coverageAmount: 2000000,
           brokerOrgName: "Hub International Ontario Ltd.",

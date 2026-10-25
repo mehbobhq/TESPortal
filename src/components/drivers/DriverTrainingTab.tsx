@@ -16,6 +16,7 @@ import { getTrainingCourseCatalog } from "@/lib/driver-data";
 import { ReadOnlyField } from "../shared/ReadOnlyField";
 import { getDeadlineStatus, getDeadlineClasses } from "@/lib/deadline-engine";
 import { driverDateInputValue } from "@/lib/driver-date";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverTrainingTabProps {
   master: DriverMaster;
@@ -59,7 +60,7 @@ export function DriverTrainingTab({
     trainingType: "OTHER",
     provider: "",
     status: "Assigned",
-    assignedDate: new Date().toISOString().slice(0, 10),
+    assignedDate: todayLocalDate(),
     startDate: "",
     completionDate: "",
     expiryDate: "",

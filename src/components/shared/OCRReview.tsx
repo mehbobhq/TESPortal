@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { OCRDocumentResult, OCRFieldResult } from "../../types/ocr";
 import { SecureDocumentViewer } from "./SecureDocumentViewer";
 import { Check, AlertCircle, RefreshCw, Upload, Camera, Edit2, ShieldAlert } from "lucide-react";
+import { Input } from "@/components/ui/input"
 
 export interface OCRReviewProps<T extends Record<string, unknown>> {
   documentResult: OCRDocumentResult;
@@ -187,7 +188,7 @@ export function OCRReview<T extends Record<string, unknown>>({
                       ))}
                     </select>
                   ) : (
-                    <input
+                    <Input
                       type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
                       value={currentValue}
                       onChange={(e) => handleFieldChange(field.key, e.target.value)}

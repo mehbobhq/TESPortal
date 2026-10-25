@@ -22,6 +22,7 @@ import {
 } from "@/lib/driver-data";
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
 import { driverDateInputValue } from "@/lib/driver-date";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverQualificationsTabProps {
   master: DriverMaster;
@@ -48,7 +49,7 @@ export function DriverQualificationsTab({
     airBrakeQualified: false,
     issueDate: "",
     expiryDate: "",
-    effectiveFrom: new Date().toISOString().slice(0, 10),
+    effectiveFrom: todayLocalDate(),
     verificationState: "Unverified" as LicenceRecord["verificationState"],
     notes: "",
   });
@@ -157,7 +158,7 @@ const syntaxCheck = {
                   airBrakeQualified: false,
                   issueDate: "",
                   expiryDate: "",
-                  effectiveFrom: new Date().toISOString().slice(0, 10),
+                  effectiveFrom: todayLocalDate(),
                   verificationState: "Unverified",
                   notes: "",
                 });

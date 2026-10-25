@@ -3,6 +3,8 @@
 import React from "react";
 import { Briefcase, ShieldCheck, X } from "lucide-react";
 import type { TransportationInsuranceRecord } from "@/app/companies/[id]/insurance/legacy-insurance";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 interface TransportationPolicyFormProps {
   open: boolean;
@@ -106,10 +108,10 @@ export function TransportationPolicyForm({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="font-bold text-foreground">Effective Date *</label>
-                  <input
+                  <Input
                     type="date"
                     name="effectiveDate"
-                    defaultValue={isRenewalMode ? editingTransportation?.expiryDate : editingTransportation?.effectiveDate || new Date().toISOString().split("T")[0]}
+                    defaultValue={isRenewalMode ? editingTransportation?.expiryDate : editingTransportation?.effectiveDate || todayLocalDate()}
                     className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3 font-mono font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-xs"
                     required
                   />
@@ -117,7 +119,7 @@ export function TransportationPolicyForm({
 
                 <div>
                   <label className="font-bold text-foreground">Expiry Date *</label>
-                  <input
+                  <Input
                     type="date"
                     name="expiryDate"
                     defaultValue={isRenewalMode ? "" : editingTransportation?.expiryDate || ""}

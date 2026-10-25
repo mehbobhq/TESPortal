@@ -62,6 +62,8 @@ import {
 import { reevaluatePerformanceRelationshipsAfterSourceMutation } from "@/lib/driver-performance-relationship-resolution";
 import { getEvidencePayloads, migrateLegacyDriverEvidencePayloads, putEvidencePayload } from "@/lib/evidence-payload-store";
 import { logAuditEvent } from "@/lib/audit-log";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverWorkspaceProps {
   master: DriverMaster;
@@ -382,7 +384,7 @@ export function DriverWorkspace({
         invitationDeliveryMethod: "Email",
         invitationProvider: "Resend",
         operatingRegion: applicationRegion,
-        createdDate: new Date().toISOString().slice(0, 10),
+        createdDate: todayLocalDate(),
         evidenceIds: [],
       });
 
@@ -464,7 +466,7 @@ export function DriverWorkspace({
       addHiringPackage(company.id, master.id, {
         companyDriverRelationshipId: relationship.id,
         packageVersion: packageVersion.trim(),
-        issuedDate: new Date().toISOString().slice(0, 10),
+        issuedDate: todayLocalDate(),
         status: "Issued / In Progress",
         items: [],
         evidenceIds: [],
@@ -1103,7 +1105,7 @@ export function DriverWorkspace({
               </select></label>
               <label className="block"><span className="font-bold text-muted-foreground">Tax Year *</span><input value={taxYear} onChange={(e) => setTaxYear(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" placeholder="YYYY" /></label>
               <label className="block"><span className="font-bold text-muted-foreground">Jurisdiction *</span><input value={taxJurisdiction} onChange={(e) => setTaxJurisdiction(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" placeholder="State / Province / Federal" /></label>
-              <label className="block"><span className="font-bold text-muted-foreground">Effective Date *</span><input type="date" value={taxEffectiveDate} onChange={(e) => setTaxEffectiveDate(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" /></label>
+              <label className="block"><span className="font-bold text-muted-foreground">Effective Date *</span><Input type="date" value={taxEffectiveDate} onChange={(e) => setTaxEffectiveDate(e.target.value)} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3" /></label>
               <label className="block"><span className="font-bold text-muted-foreground">Status</span><select value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as DriverTaxDocRecord["status"])} className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3"><option>Pending</option><option>Completed</option><option>Superseded</option></select></label>
             </div>
             <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddTaxDocOpen(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold">Cancel</button><button type="button" onClick={handleCreateTaxDoc} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground">Add Tax Record</button></div>

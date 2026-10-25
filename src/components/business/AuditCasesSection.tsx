@@ -10,6 +10,8 @@ import {
   loadAuditCases, newAuditId, saveAuditCases, summarizeAuditTasks,
   type AuditCaseSource, type AuditDocumentPurpose, type AuditTaskState, type CarrierAuditCase,
 } from "@/lib/audit-case-store";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 const readDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -92,7 +94,7 @@ export function AuditCasesSection({ companyId, companyName, onBusinessEvent }: {
       update(caseId, "AUDIT_DOCUMENT_ATTACHED", `${purpose}: ${file.name}`, (item) => ({
         ...item, documents: [...item.documents, document],
         status: purpose === "Audit report" ? "Report received" : purpose === "Submission proof" ? "Submitted" : item.status,
-        reportDate: purpose === "Audit report" ? new Date().toISOString().slice(0,10) : item.reportDate,
+        reportDate: purpose === "Audit report" ? todayLocalDate() : item.reportDate,
         submittedAt: purpose === "Submission proof" ? new Date().toISOString() : item.submittedAt,
       }), evidenceId);
     } catch (err) { setError(err instanceof Error ? err.message : "Could not store audit evidence."); }
@@ -166,10 +168,10 @@ export function AuditCasesSection({ companyId, companyName, onBusinessEvent }: {
       <label>Regime<select name="regimeId" className="mt-1 w-full rounded-lg border bg-background p-2"><option value="">Other / manually scoped</option>{AUDIT_REGIMES.map((regime) => <option key={regime.id} value={regime.id}>{regime.name}</option>)}</select></label>
       <label>Other audit type<input name="customRegime" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
       <label>Authority<input name="authority" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
-      <label>Notice date<input name="noticeDate" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
-      <label>Submission deadline<input name="deadline" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
-      <label>Audit period from<input name="periodStart" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
-      <label>Audit period to<input name="periodEnd" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
+      <label>Notice date<Input name="noticeDate" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
+      <label>Submission deadline<Input name="deadline" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
+      <label>Audit period from<Input name="periodStart" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
+      <label>Audit period to<Input name="periodEnd" type="date" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
       <label>Notice/reference #<input name="reference" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
       <label className="sm:col-span-2">Notes<textarea name="notes" className="mt-1 w-full rounded-lg border bg-background p-2" /></label>
       <div className="flex items-end"><button type="submit" className="rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground">Create case</button></div>
@@ -192,7 +194,7 @@ export function AuditCasesSection({ companyId, companyName, onBusinessEvent }: {
           <p className="mt-1 text-xs text-muted-foreground">{companyName} · {selected.authority || "Authority not recorded"} · {selected.reference || "No reference"}</p>
           <div className="mt-3 grid gap-3 text-xs sm:grid-cols-3"><p>Notice: <strong>{selected.noticeDate || "Not recorded"}</strong></p><p>Submission deadline: <strong>{selected.deadline || "Historical"}</strong></p><p>Status: <strong>{selected.status}</strong></p></div>
           {!selected.historical && <><p className="mt-2 text-[11px] text-muted-foreground">The deadline controls this case. Requirement checks below remain unresolved until assessed with source evidence; no percentage is inferred from document counts.</p>
-            <div className="mt-3 flex flex-wrap items-end gap-2 text-xs"><label>Revised deadline<input type="date" value={revisedDeadline} onChange={(e) => setRevisedDeadline(e.target.value)} className="mt-1 block rounded-lg border bg-background p-2" /></label>
+            <div className="mt-3 flex flex-wrap items-end gap-2 text-xs"><label>Revised deadline<Input type="date" value={revisedDeadline} onChange={(e) => setRevisedDeadline(e.target.value)} className="mt-1 block rounded-lg border bg-background p-2" /></label>
               <label className="min-w-[190px] flex-1">Reason / amended notice reference<input value={deadlineReason} onChange={(e) => setDeadlineReason(e.target.value)} className="mt-1 block w-full rounded-lg border bg-background p-2" /></label>
               <button type="button" onClick={() => { if (!revisedDeadline || !deadlineReason.trim()) { setError("A revised deadline and reason are required."); return; } if (revisedDeadline !== selected.deadline) update(selected.id, "AUDIT_DEADLINE_REVISED", `${selected.deadline} → ${revisedDeadline}. ${deadlineReason.trim()}`, (item) => ({ ...item, deadline: revisedDeadline })); }} className="rounded-lg border px-3 py-2">Save deadline revision</button></div>
           </>}
@@ -200,7 +202,7 @@ export function AuditCasesSection({ companyId, companyName, onBusinessEvent }: {
           {selected.documents.length > 0 && <div className="mt-3 space-y-1">{selected.documents.map((document) => <button key={document.id} type="button" onClick={() => void openDocument(document.evidenceId, document.name, document.mimeType)} className="block text-left text-xs text-primary underline">{document.purpose}: {document.name} · {new Date(document.addedAt).toLocaleString()}</button>)}</div>}
           {view && <div className="mt-3 h-80 overflow-hidden rounded-xl border"><SecureDocumentViewer fileName={view.name} mimeType={view.mimeType} dataUrl={view.dataUrl} documentTitle={`${selected.title} — ${view.name}`} onClose={() => setView(null)} /></div>}
           {selected.status === "Report received" && selected.documents.some((document) => document.purpose === "Audit report") && <button type="button" onClick={() => update(selected.id, "AUDIT_CLOSED", "Audit case closed after report receipt.", (item) => ({ ...item, status: "Closed" }))} className="mt-3 rounded-lg border px-3 py-1.5 text-xs font-semibold">Close case</button>}
-          {selected.documents.some((document) => document.purpose === "Audit report") && <label className="mt-3 block text-xs">Report issue date<input type="date" value={selected.reportDate || ""} onChange={(e) => update(selected.id, "AUDIT_REPORT_DATE_RECORDED", `Report issue date ${e.target.value}.`, (item) => ({ ...item, reportDate: e.target.value }))} className="mt-1 block rounded-lg border bg-background p-2" /></label>}
+          {selected.documents.some((document) => document.purpose === "Audit report") && <label className="mt-3 block text-xs">Report issue date<Input type="date" value={selected.reportDate || ""} onChange={(e) => update(selected.id, "AUDIT_REPORT_DATE_RECORDED", `Report issue date ${e.target.value}.`, (item) => ({ ...item, reportDate: e.target.value }))} className="mt-1 block rounded-lg border bg-background p-2" /></label>}
           {selected.documents.some((document) => document.purpose === "Audit report") && <label className="mt-3 block text-xs">Report outcome / findings<textarea key={selected.id} defaultValue={selected.outcome || ""} onBlur={(e) => { if (e.target.value !== (selected.outcome || "")) update(selected.id, "AUDIT_OUTCOME_RECORDED", "Recorded report outcome and findings.", (item) => ({ ...item, outcome: e.target.value })); }} className="mt-1 w-full rounded-lg border bg-background p-2" /></label>}
         </div>
         {!selected.historical && <div className="rounded-xl border p-4"><div className="flex flex-wrap justify-between gap-2"><h4 className="text-xs font-bold">Preparedness work queue</h4><span className="text-xs text-muted-foreground">{summarizeAuditTasks(selected.tasks).verified} verified · {summarizeAuditTasks(selected.tasks).unresolved} unresolved</span></div>

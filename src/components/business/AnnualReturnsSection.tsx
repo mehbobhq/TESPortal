@@ -3,6 +3,7 @@
 import React from "react";
 import { Plus, UploadCloud, CheckCircle2, Clock, Archive, RotateCcw, X, Check } from "lucide-react";
 import { BusinessAnnualReturnRecord } from "@/src/types/business";
+import { Input } from "@/components/ui/input"
 
 type Props = {
   visibleReturns: BusinessAnnualReturnRecord[];
@@ -83,7 +84,7 @@ export function AnnualReturnsSection({ visibleReturns, showArchivedReturns, show
                 <label className="text-xs font-bold text-foreground">
                   Statutory Due Date <span className="text-destructive">*</span>
                 </label>
-                <input
+                <Input
                   name="dueDate"
                   type="date"
                   defaultValue={editingReturn?.dueDate || ""}
@@ -94,7 +95,7 @@ export function AnnualReturnsSection({ visibleReturns, showArchivedReturns, show
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-foreground">Actual Filed Date</label>
-                <input
+                <Input
                   name="filedDate"
                   type="date"
                   defaultValue={editingReturn?.filedDate || ""}

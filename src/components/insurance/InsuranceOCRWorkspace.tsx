@@ -4,6 +4,7 @@ import React from "react";
 import { Sparkles, X } from "lucide-react";
 import { SecureDocumentViewer } from "@/src/components/shared/SecureDocumentViewer";
 import type { InsuranceOCRDraft } from "@/app/companies/[id]/insurance/legacy-insurance";
+import { Input } from "@/components/ui/input"
 
 interface InsuranceOCRWorkspaceProps {
   open: boolean;
@@ -98,7 +99,7 @@ export function InsuranceOCRWorkspace({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="font-bold text-foreground">Effective Date</label>
-                    <input
+                    <Input
                       type="date"
                       name="effectiveDate"
                       defaultValue={ocrDraft.effectiveDate}
@@ -108,7 +109,7 @@ export function InsuranceOCRWorkspace({
                   </div>
                   <div>
                     <label className="font-bold text-foreground">Expiry Date</label>
-                    <input
+                    <Input
                       type="date"
                       name="expiryDate"
                       defaultValue={ocrDraft.expiryDate}

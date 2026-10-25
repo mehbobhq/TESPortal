@@ -3,6 +3,8 @@
 import React from "react";
 import { Award, X } from "lucide-react";
 import type { BondRecord } from "@/app/companies/[id]/insurance/legacy-insurance";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 interface SuretyBondFormProps {
   open: boolean;
@@ -95,10 +97,10 @@ export function SuretyBondForm({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="font-bold text-foreground">Effective Date *</label>
-                  <input
+                  <Input
                     type="date"
                     name="effectiveDate"
-                    defaultValue={editingBond?.effectiveDate || new Date().toISOString().split("T")[0]}
+                    defaultValue={editingBond?.effectiveDate || todayLocalDate()}
                     className="mt-1 w-full h-9 rounded-xl border border-border bg-background px-3 font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-xs"
                     required
                   />
@@ -106,7 +108,7 @@ export function SuretyBondForm({
 
                 <div>
                   <label className="font-bold text-foreground">Expiry Date (Optional / Continuous)</label>
-                  <input
+                  <Input
                     type="date"
                     name="expiryDate"
                     defaultValue={editingBond?.expiryDate || ""}

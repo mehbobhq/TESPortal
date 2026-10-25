@@ -27,6 +27,8 @@ import {
 } from "@/types/drivers";
 import { fullLegalName, currentLicence, currentAddress, calculateAge, findDriverDuplicate } from "@/lib/driver-data";
 import { JURISDICTIONS, getJurisdictionLabel } from "@/lib/jurisdictions";
+import { Input } from "@/components/ui/input"
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 export interface DriverListProps {
   companies: CanonicalCompany[];
@@ -88,7 +90,7 @@ export function DriverList({
     recordType: "Employee" as RecordType,
     operatingRegion: "" as OperatingRegion | "",
     driverStatus: "" as DriverStatus | "",
-    startDate: new Date().toISOString().slice(0, 10),
+    startDate: todayLocalDate(),
     licenceNumber: "",
     licenceJurisdiction: "",
     licenceClass: "",
@@ -320,7 +322,7 @@ export function DriverList({
                 recordType: "Employee" as RecordType,
                 operatingRegion: "" as OperatingRegion | "",
                 driverStatus: "Active" as DriverStatus,
-                startDate: new Date().toISOString().slice(0, 10),
+                startDate: todayLocalDate(),
                 licenceNumber: "",
                 licenceJurisdiction: "",
                 licenceClass: "",
@@ -628,7 +630,7 @@ export function DriverList({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Date of Birth *
                   </label>
-                  <input
+                  <Input
                     type="date"
                     value={newDriverDraft.dateOfBirth}
                     onChange={(e) => setNewDriverDraft({ ...newDriverDraft, dateOfBirth: e.target.value })}
@@ -725,7 +727,7 @@ export function DriverList({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Start Date *
                   </label>
-                  <input
+                  <Input
                     type="date"
                     value={newDriverDraft.startDate}
                     onChange={(e) => setNewDriverDraft({ ...newDriverDraft, startDate: e.target.value })}
@@ -804,7 +806,7 @@ export function DriverList({
                   <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Licence Expiry Date
                   </label>
-                  <input
+                  <Input
                     type="date"
                     value={newDriverDraft.licenceExpiryDate}
                     onChange={(e) => setNewDriverDraft({ ...newDriverDraft, licenceExpiryDate: e.target.value })}

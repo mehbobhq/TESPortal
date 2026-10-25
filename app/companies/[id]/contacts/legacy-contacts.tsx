@@ -71,6 +71,7 @@ import {
   storeContactEvidenceDataUrl,
   storeContactEvidenceManifest,
 } from "@/src/components/contacts/evidence-storage";
+import { todayLocalDate } from "@/lib/dates/date-only"
 
 // Re-exported for backward compatibility: these types/constants/helpers used
 // to be declared in this file. They now live in src/components/contacts/ (see
@@ -480,7 +481,7 @@ export default function LegacyContactsPage() {
           role: manualForm.role,
           isPrimary: manualForm.isPrimary,
           status: "active",
-          startDate: new Date().toISOString().split("T")[0],
+          startDate: todayLocalDate(),
           source: "manual",
         };
         updatedPerson = {
@@ -523,7 +524,7 @@ export default function LegacyContactsPage() {
       role: manualForm.role,
       isPrimary: manualForm.isPrimary,
       status: "active",
-      startDate: new Date().toISOString().split("T")[0],
+      startDate: todayLocalDate(),
       source: "manual",
     };
 
@@ -645,7 +646,7 @@ export default function LegacyContactsPage() {
               role: ocrDraft.role,
               isPrimary: ocrDraft.isPrimary,
               status: "active" as const,
-              startDate: new Date().toISOString().split("T")[0],
+              startDate: todayLocalDate(),
               source: "document" as const,
             },
           ];
@@ -712,7 +713,7 @@ export default function LegacyContactsPage() {
       role: ocrDraft.role,
       isPrimary: ocrDraft.isPrimary,
       status: "active",
-      startDate: new Date().toISOString().split("T")[0],
+      startDate: todayLocalDate(),
       source: "document",
     };
 

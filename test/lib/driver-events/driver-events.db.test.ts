@@ -554,6 +554,82 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     assert.equal(got.fact?.resolution_state, "DRAFT");
   });
 
+  scenario("safety lookup fails closed: a missing function, an unauthorized (NULL) answer or a database error refuses activation and transfer", async () => {
+    await signIn(...MANAGE, "DRIVER_MANAGE", "DRIVER_READ", "PERSON_IDENTITY_MANAGE");
+    const o = await org();
+    const dest = await org("Dest");
+    const FN = "tes_security.driver_event_person_restricted";
+    const RUNTIME_ROLE = `"tes-backend@tes-production-510007.iam"`;
+    const relCount = async (person: string) => Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.organization_driver_relationships WHERE person_id = $1`, [person]))[0].c);
+    const personOf = async (rel: string) => (await q<{ person_id: string }>(`SELECT person_id FROM public.organization_driver_relationships WHERE id = $1`, [rel]))[0].person_id;
+    const UNCONFIRMED = /could not be confirmed/;
+    // runs `body` with the lookup replaced (stubSql = the replacement body) or removed (stubSql = null); the original is always put back
+    async function withLookup(stubSql: string | null, body: () => Promise<void>) {
+      await pools.admin.query(`ALTER FUNCTION ${FN}(uuid, uuid) RENAME TO driver_event_person_restricted_original`);
+      try {
+        if (stubSql) {
+          await pools.admin.query(`CREATE FUNCTION ${FN}(p_org uuid, p_person uuid) RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN ${stubSql} END $$`);
+          await pools.admin.query(`GRANT EXECUTE ON FUNCTION ${FN}(uuid, uuid) TO ${RUNTIME_ROLE}`);
+        }
+        await body();
+      } finally {
+        await pools.admin.query(`DROP FUNCTION IF EXISTS ${FN}(uuid, uuid)`);
+        await pools.admin.query(`ALTER FUNCTION tes_security.driver_event_person_restricted_original(uuid, uuid) RENAME TO driver_event_person_restricted`);
+      }
+    }
+    const activate = (person: string) => K.oi.establishOrganizationDriver({ organizationId: o, personId: person, relationshipType: "EMPLOYEE", status: "ACTIVE", effectiveFrom: day(0) } as never);
+    const transfer = (person: string) => K.oi.transferOrganizationDriver({ fromOrganizationId: o, toOrganizationId: dest, personId: person, relationshipType: "EMPLOYEE", status: "ACTIVE" } as never);
+
+    // a CLEAN driver (no restriction at all): the only thing that can refuse activation here is the failed lookup
+    const clean = await driverRel(o);
+    const cleanPerson = await personOf(clean);
+    await pools.admin.query(`UPDATE public.organization_driver_relationships SET status = 'ENDED', effective_to = current_date WHERE id = $1`, [clean]);
+    const before = await relCount(cleanPerson);
+    await withLookup(null, async () => {
+      await assert.rejects(() => activate(cleanPerson), UNCONFIRMED, "missing function: activation refused");
+    });
+    await withLookup("RETURN NULL;", async () => {
+      await assert.rejects(() => activate(cleanPerson), UNCONFIRMED, "unauthorized (NULL) answer: activation refused");
+    });
+    await withLookup("RAISE EXCEPTION 'simulated database failure';", async () => {
+      await assert.rejects(() => activate(cleanPerson), /simulated database failure/, "database error: activation refused (the error is not swallowed)");
+    });
+    assert.equal(await relCount(cleanPerson), before, "no relationship was created by any refused activation");
+    // control: with the real lookup restored the same driver is not refused for a safety reason
+    await activate(cleanPerson).catch((e: Error) => assert.doesNotMatch(e.message, /safety|could not be confirmed/));
+
+    // TRANSFER: an open assignment that is restricted, and one that is clean
+    const restrictedRel = await driverRel(o);
+    const restrictedPerson = await personOf(restrictedRel);
+    await create(o, roadside({ driverRelationshipId: restrictedRel, facts: { ...ROADSIDE_FACTS, driverOOSState: "YES" } }));
+    const openBefore = await relCount(restrictedPerson);
+    await assert.rejects(() => transfer(restrictedPerson), /active safety restriction/, "a restricted driver cannot be transferred");
+    await withLookup(null, async () => {
+      await assert.rejects(() => transfer(restrictedPerson), UNCONFIRMED, "transfer with the lookup missing is refused");
+    });
+    const openClean = await driverRel(o);
+    const openCleanPerson = await personOf(openClean);
+    await withLookup(null, async () => {
+      await assert.rejects(() => transfer(openCleanPerson), UNCONFIRMED, "transfer of an unrestricted driver is refused while the lookup is missing");
+    });
+    await withLookup("RETURN NULL;", async () => {
+      await assert.rejects(() => transfer(openCleanPerson), UNCONFIRMED, "transfer on an unauthorized (NULL) answer is refused");
+    });
+    await withLookup("RAISE EXCEPTION 'simulated database failure';", async () => {
+      await assert.rejects(() => transfer(openCleanPerson), /simulated database failure/, "transfer on a database error is refused");
+    });
+    // control: the unrestricted driver is refused only for the identity-verification rule, never for safety
+    await assert.rejects(() => transfer(openCleanPerson), (e: Error) => {
+      assert.doesNotMatch(e.message, /safety|could not be confirmed/);
+      assert.match(e.message, /verified/);
+      return true;
+    });
+    assert.equal(await relCount(restrictedPerson), openBefore, "nothing was moved");
+    assert.equal(Number((await q<{ c: string }>(`SELECT count(*) AS c FROM public.organization_driver_relationships WHERE person_id = ANY($1::uuid[]) AND end_reason = 'TRANSFERRED'`, [[restrictedPerson, openCleanPerson]]))[0].c), 0, "no transfer was recorded");
+    // the real function is back in place
+    assert.equal((await q<{ ok: boolean }>(`SELECT to_regprocedure('${FN}(uuid,uuid)') IS NOT NULL AS ok`))[0].ok, true);
+  });
+
   scenario("evidence lifecycle failure cases: failed scan, tampered bytes, wrong role, wrong company, unverified release document", async () => {
     await signIn(...RELEASE);
     const o = await org();

@@ -146,15 +146,21 @@ export class DriverProspectPendingStateError extends Error{}
 
 /**
  * A driver under an active mandatory safety restriction (a roadside driver out-of-service order, a stand-down) cannot be activated as a company driver, or transferred to another company, while it stands.
- * The lookup is a boolean only (tes_security.driver_event_person_restricted, migration 0043): it names no event. Where the migration is not applied there is nothing to
- * consult and the check is skipped, so existing deployments keep working.
+ * The lookup is a boolean only (tes_security.driver_event_person_restricted, migration 0043): it names no event.
+ * FAIL CLOSED: where Driver Events exists (migration 0042 applied) the lookup MUST answer. A missing function, a database error, or an answer that is not exactly true/false
+ * (NULL means the caller was not authorized to ask) refuses the operation; nothing is ever assumed "not restricted". Only a database with no Driver Events store at all
+ * (neither the tables nor the function) has nothing to consult.
  */
+export const SAFETY_LOOKUP_UNAVAILABLE_MESSAGE="The driver's safety-restriction status could not be confirmed, so the driver cannot be activated or transferred. Nothing was changed. Apply the Driver Events migrations or contact an administrator."
 async function assertDriverNotSafetyRestricted(ctx:IdentityContext,organizationId:string,personId:string,status:string|undefined){
  if(status!=="ACTIVE")return
- const present=(await ctx.client.query(`SELECT to_regprocedure('tes_security.driver_event_person_restricted(uuid,uuid)') IS NOT NULL AS present`)).rows[0]?.present
- if(!present)return
+ const state=(await ctx.client.query<{store:boolean;fn:boolean}>(`SELECT (to_regclass('public.driver_event_restrictions') IS NOT NULL OR to_regclass('public.driver_events') IS NOT NULL) AS store, to_regprocedure('tes_security.driver_event_person_restricted(uuid,uuid)') IS NOT NULL AS fn`)).rows[0]
+ if(!state?.store&&!state?.fn)return
+ if(!state.fn)throw new DriverIdentityStateError(SAFETY_LOOKUP_UNAVAILABLE_MESSAGE)
  const r=await ctx.client.query<{restricted:boolean|null}>("SELECT tes_security.driver_event_person_restricted($1,$2) AS restricted",[organizationId,personId])
- if(r.rows[0]?.restricted===true)throw new DriverIdentityStateError("This driver is under an active safety restriction (for example an out-of-service order). Release the restriction on the event that issued it, with its documented correction, before activating or transferring the driver. Nothing was changed.")
+ const restricted=r.rows[0]?.restricted
+ if(restricted===true)throw new DriverIdentityStateError("This driver is under an active safety restriction (for example an out-of-service order). Release the restriction on the event that issued it, with its documented correction, before activating or transferring the driver. Nothing was changed.")
+ if(restricted!==false)throw new DriverIdentityStateError(SAFETY_LOOKUP_UNAVAILABLE_MESSAGE)
 }
 
 export async function establishOrganizationDriver(ctx:IdentityContext,input:OrganizationDriverRelationshipInput,decision:SystemAuthorizationDecision){

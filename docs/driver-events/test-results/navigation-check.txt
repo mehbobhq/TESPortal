@@ -1,0 +1,6 @@
+COLLISION: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 
+NEAR_MISS: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 
+ROADSIDE_INSPECTION: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 
+CARGO_INCIDENT: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 
+SPILL_RELEASE: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 
+CUSTOMER_EVENT: acquisition cards on first screen: 0 | first step title: Occurrence & Source saved: true detail: 1 errors: [] 

@@ -292,7 +292,8 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
   for (const key of Object.keys(rawUnits)) if (!byKey.has(key)) issues.push({ field: `factUnits.${key}`, message: `"${key}" is not a field of ${definition.label}.` })
   for (const field of definition.fields) {
     if (!field.unitOptions?.length) {
-      if (field.key in rawUnits) issues.push({ field: `factUnits.${field.key}`, message: `${field.label} has a fixed unit.` })
+      // A fixed-unit field may restate its own unit (the detailed workflows do); any other unit is refused.
+      if (field.key in rawUnits && String(rawUnits[field.key]).toLowerCase() !== String(field.unit ?? "").toLowerCase()) issues.push({ field: `factUnits.${field.key}`, message: `${field.label} has a fixed unit${field.unit ? ` (${field.unit})` : ""}.` })
       continue
     }
     const unit = rawUnits[field.key]

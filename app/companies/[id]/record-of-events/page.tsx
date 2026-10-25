@@ -1,16 +1,8 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { EventsWorkspace } from "./events-workspace"
 
-import { DeferredWorkspace } from "@/src/components/shared/LegacyWorkspaceGate"
-
-export default function recordofeventsPage() {
-  const params = useParams()
-  return (
-    <DeferredWorkspace
-      companyId={params.id as string}
-      title="Record of Events"
-      description="Roadside inspection, collision, near-miss and customer-event records have no canonical (PostgreSQL) implementation yet, so there is nothing to show or save here. This workspace is intentionally deferred, not empty."
-    />
-  )
+// Driver Events are canonical (PostgreSQL) records: server-validated, versioned, evidence-linked and tenant-isolated. Nothing is read from or written to the browser.
+export default function RecordOfEventsPage() {
+  return <EventsWorkspace />
 }

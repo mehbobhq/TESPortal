@@ -169,7 +169,15 @@ describe("Credentials, Settings, Citations: one workspace; Record of Events, Cus
     assert.doesNotMatch(read("app/companies/[id]/settings/page.tsx"), /CanonicalSettings/)
   })
 
-  for (const [route, title] of [["record-of-events", "Record of Events"], ["customs", "Customs"], ["programs", "Programs"]]) {
+  it("Record of Events: is the canonical (PostgreSQL) workspace - server API only, no browser storage, no legacy gate", () => {
+    const dir = "app/companies/[id]/record-of-events"
+    const sources = ["page.tsx", "events-workspace.tsx", "event-detail.tsx", "category-form.tsx", "wizard-host.tsx", "events-api.ts"].map((f) => read(`${dir}/${f}`)).join("\n")
+    assert.match(sources, /\/driver-events/)
+    assert.doesNotMatch(sources, /localStorage|sessionStorage|indexedDB|PrototypeBrowserDataIndicator|<LegacyWorkspaceGate|<DeferredWorkspace/)
+    assert.doesNotMatch(sources, /addPerformanceEvent|loadCompanyDriverStore|saveCompanyDriverStore/, "nothing is written through the browser-local driver store")
+  })
+
+  for (const [route, title] of [["customs", "Customs"], ["programs", "Programs"]]) {
     it(`${title}: remains the truthful deferred placeholder: no browser storage, no indicator, no gate`, () => {
       const page = read(`app/companies/[id]/${route}/page.tsx`)
       assert.match(page, /<DeferredWorkspace/)

@@ -247,7 +247,18 @@ function registrationEffectiveOn(record: VehicleRegistrationRecord, asOfDate: st
   return record.status === "Active" || record.status === "Draft";
 }
 
-function loadAllCompanyVehicleRecords(): Array<{ companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }> {
+type VehicleRecordEntry = { companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore };
+let canonicalVehicleProvider: (() => VehicleRecordEntry[]) | null = null;
+/**
+ * Record of Events resolves inspected equipment against the company's CANONICAL (PostgreSQL) vehicles instead of this browser's local store. The page
+ * installs a provider while it is mounted and removes it when it unmounts; with none installed the local store is read exactly as before.
+ */
+export function setCanonicalVehicleRecordsProvider(provider: (() => VehicleRecordEntry[]) | null) {
+  canonicalVehicleProvider = provider;
+}
+
+function loadAllCompanyVehicleRecords(): VehicleRecordEntry[] {
+  if (canonicalVehicleProvider) return canonicalVehicleProvider();
   const results: Array<{ companyId: string; companyName?: string; vehicle: VehicleRecord; store: VehicleStore }> = [];
   if (typeof window === "undefined") return results;
   const companies = loadCompanies();

@@ -18,6 +18,9 @@ async function loadKit() {
     ev: await import("@/lib/evidence-payload/service"),
     fake: await import("../../helpers/fake-evidence-storage"),
     sysdb: await import("@/lib/auth/tes-system-context"),
+    queries: await import("@/lib/driver-events/example-queries"),
+    fill: await import("../../helpers/driver-event-fill"),
+    schema: await import("@/lib/driver-performance-schema"),
   };
 }
 type Kit = Awaited<ReturnType<typeof loadKit>>;
@@ -458,6 +461,63 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
       assert.equal((await client.query(`UPDATE public.driver_events SET title = 'x'`)).rowCount, 0, "nothing is updatable without an authorized context");
     } finally {
       client.release();
+    }
+  });
+
+  scenario("EVERY recordable category: create, server-validate, save, reload, correct, evidence, verify, close, export, and be invisible to another company", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    const other = await org("Other");
+    const doc = await storedDocument(o);
+    const recordable = K.schema.DRIVER_PERFORMANCE_CATEGORY_REGISTRY.filter((d) => K.schema.PERFORMANCE_CATEGORY_OWNERSHIP[d.value] === "RECORDABLE_EVENT");
+    assert.ok(recordable.length >= 19);
+    for (const d of recordable) {
+      const base = K.fill.minimalInput(d.code, { occurrence: { date: day(-2), time: "09:00", timeZone: "America/Toronto" }, sourceReference: `LC-${d.code}` });
+      const created = await create(o, base as never);
+      let got = await K.svc.getEvent(o, created.id);
+      assert.equal((got.event as any).category, d.value, d.code);
+      assert.equal(got.fact?.contract_version, "driver-event-fact/1", d.code);
+      // a correction is a new version with a reason
+      const done = await K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: { ...base, title: `${base.title} (corrected)` } as never, reason: "Title clarified" });
+      assert.equal(done.version, 2, d.code);
+      // evidence: link, then a person verifies
+      const link = await K.svc.linkEventEvidence(o, created.id, { documentId: doc, role: "SOURCE_REPORT" });
+      await K.svc.verifyEventEvidence(o, created.id, link.id, { decision: "VERIFIED", note: "checked" });
+      got = await K.svc.getEvent(o, created.id);
+      assert.equal(got.fact?.evidence_verified, 1, d.code);
+      // closure (no restriction is created by the minimal answers), reopen not needed
+      await K.svc.changeEventStatus(o, created.id, { to: "Closed", reason: "Lifecycle test" });
+      assert.equal(((await K.svc.getEvent(o, created.id)).fact as any).resolution_state, "CLOSED", d.code);
+      // another company can neither see nor touch it
+      await rejects(() => K.svc.getEvent(other, created.id), "NotFoundError");
+    }
+    const facts = await K.svc.listEventFacts(o, {});
+    assert.equal(facts.length, recordable.length, "one analytical fact per category event");
+    assert.equal(new Set(facts.map((f) => f.category_code)).size, recordable.length);
+    assert.equal((await K.svc.listEventFacts(other, {})).length, 0);
+  });
+
+  scenario("every documented BI example query runs against the fact view, excludes duplicates and never turns missing into zero", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    const driver = await driverRel(o);
+    const a = await create(o, speeding({ driverRelationshipId: driver, sourceReference: "A", occurrence: { date: day(-3), time: "10:00", timeZone: "America/Toronto" } }));
+    const b = await create(o, speeding({ driverRelationshipId: driver, sourceReference: "B", occurrence: { date: day(-2), time: "10:00", timeZone: "America/Toronto" } }));
+    const dup = await create(o, speeding({ driverRelationshipId: driver, sourceReference: "C", occurrence: { date: day(-2), time: "10:30", timeZone: "America/Toronto" } }));
+    await K.svc.addEventRelationship(o, dup.id, { type: "DUPLICATE_OF", toEventId: b.id });
+    await K.svc.recordEventConsequence(o, a.id, { kind: "COST_ACTUAL", measurementState: "MEASURED", amountMinor: 4000, currency: "CAD", source: "Invoice", confidence: "CONFIRMED" });
+    for (const [name, sql] of Object.entries(K.queries.BI_EXAMPLE_QUERIES)) {
+      const rows = (await pools.admin.query(sql, [o])).rows;
+      assert.ok(Array.isArray(rows), name);
+      if (name === "recurrenceByDriver") assert.equal(Number(rows[0].events), 2, "the duplicate is not counted as a third occurrence");
+      if (name === "costAndDowntimeCoverage") {
+        assert.equal(Number(rows[0].events), 2);
+        assert.equal(Number(rows[0].events_with_actual_cost), 1, "only one event has a measured cost");
+        assert.equal(Number(rows[0].actual_cost_minor_where_known), 4000);
+        assert.equal(Number(rows[0].events_with_downtime), 0, "no downtime is reported as zero");
+        assert.equal(rows[0].downtime_minutes_where_known, null);
+      }
+      if (name === "dataQuality") assert.equal(Number(rows[0].no_evidence), 2);
     }
   });
 

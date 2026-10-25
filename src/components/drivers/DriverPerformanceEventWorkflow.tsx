@@ -39,6 +39,10 @@ interface Props {
   ocrError?: string | null;
   companyRegJurisdiction?: string;
   initialEntryMode?: "DOCUMENT" | "MANUAL";
+  /** Start with this category already chosen (the Record of Events page has already asked). */
+  initialCategory?: DriverPerformanceEvent["eventType"];
+  /** Canonical mode: files are uploaded, scanned and linked on the SAVED event, so the wizard does not demand a browser-held file. The event shows 'no evidence' until one is linked. */
+  evidenceOnSavedEvent?: boolean;
   evidenceCreatedId?: string | null;
   pendingPerformanceSources?: import("@/types/drivers").PerformanceSourceIngestionItem[];
   onClearEvidenceCreatedId?: () => void;
@@ -189,7 +193,7 @@ function roadsideViolationRowsFromDraft(
 }
 
 
-export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdiction, evidence, onRequestEvidenceUpload, machineAcquisitionDraft, initialMachineAcquisitionDraft, isProcessingOCR = false, ocrError = null, evidenceCreatedId, onClearEvidenceCreatedId, initialEntryMode, pendingPerformanceSources = [], onClose, onSave }: Props) {
+export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdiction, evidence, onRequestEvidenceUpload, machineAcquisitionDraft, initialMachineAcquisitionDraft, isProcessingOCR = false, ocrError = null, evidenceCreatedId, onClearEvidenceCreatedId, initialEntryMode, initialCategory, evidenceOnSavedEvent = false, pendingPerformanceSources = [], onClose, onSave }: Props) {
   console.log("[WORKFLOW] machineAcquisitionDraft prop received:", machineAcquisitionDraft);
   const appliedDraftRef = useRef(false);
   const appliedFieldsRef = useRef(false);
@@ -680,25 +684,25 @@ export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdi
     }
     if (category === "Collision" && key && key !== "CATEGORY") {
       const issues = validateNewCollisionDetailed({ ...(buildPayload() as unknown as Record<string, unknown>), id: "PENDING_EVENT", driverMasterId: relationship.driverMasterId } as never);
-      if (key === "EVIDENCE" && definition?.evidenceRequired && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
+      if (key === "EVIDENCE" && definition?.evidenceRequired && !evidenceOnSavedEvent && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
       const own = issues.find((issue) => (key === "REVIEW" ? true : issue.step === key));
       if (own) return own.message;
     }
     if (category === "Cargo Incident" && key && key !== "CATEGORY") {
       const issues = validateNewCargoIncidentDetailed({ ...(buildPayload() as unknown as Record<string, unknown>), id: "PENDING_EVENT", driverMasterId: relationship.driverMasterId } as never);
-      if (key === "EVIDENCE" && definition?.evidenceRequired && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
+      if (key === "EVIDENCE" && definition?.evidenceRequired && !evidenceOnSavedEvent && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
       const own = issues.find((issue) => (key === "REVIEW" ? true : issue.step === key));
       if (own) return own.message;
     }
     if (category === "Spill or Release" && key && key !== "CATEGORY") {
       const issues = validateNewSpillReleaseDetailed({ ...(buildPayload() as unknown as Record<string, unknown>), id: "PENDING_EVENT", driverMasterId: relationship.driverMasterId } as never);
-      if (key === "EVIDENCE" && definition?.evidenceRequired && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
+      if (key === "EVIDENCE" && definition?.evidenceRequired && !evidenceOnSavedEvent && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
       const own = issues.find((issue) => (key === "REVIEW" ? true : issue.step === key));
       if (own) return own.message;
     }
     if (category === "Customer Event" && key && key !== "CATEGORY") {
       const issues = validateNewCustomerEventDetailed({ ...(buildPayload() as unknown as Record<string, unknown>), id: "PENDING_EVENT", driverMasterId: relationship.driverMasterId } as never);
-      if (key === "EVIDENCE" && definition?.evidenceRequired && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
+      if (key === "EVIDENCE" && definition?.evidenceRequired && !evidenceOnSavedEvent && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
       const own = issues.find((issue) => (key === "REVIEW" ? true : issue.step === key));
       if (own) return own.message;
     }
@@ -707,7 +711,7 @@ export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdi
       // Relationship creation is intentionally independent from Performance record creation.
       // The domain resolver evaluates applicable relationships after the canonical event exists.
     }
-    if (key === "EVIDENCE" && definition?.evidenceRequired && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
+    if (key === "EVIDENCE" && definition?.evidenceRequired && !evidenceOnSavedEvent && effectiveEvidenceIds.length === 0) return "Evidence is required. Upload a source document or link existing Event evidence before saving.";
     return null;
   };
 
@@ -779,6 +783,16 @@ export function DriverPerformanceEventWorkflow({ relationship, companyRegJurisdi
     setCommon((current) => ({ ...current, sourceType: "", sourceRecordId: "", reportedBy: "" }));
     setRoadsideEquipment(value === "Roadside Inspection" ? [{ itemId: `RIE-DRAFT-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`, role: "POWER_UNIT", equipmentType: "", sourceVin: "", sourcePlate: "", plateJurisdiction: companyRegJurisdiction ?? "", sourceUnitNumber: "" }] : []);
   };
+
+  // A caller that already knows the category (Record of Events) opens the wizard on it, in manual mode.
+  const appliedInitialCategory = useRef(false);
+  useEffect(() => {
+    if (!initialCategory || appliedInitialCategory.current) return;
+    appliedInitialCategory.current = true;
+    selectCategory(initialCategory);
+    setEntryMode("MANUAL");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCategory]);
 
   // Presentation-only grouping: stored categories are unchanged (see lib/driver-performance-families.ts).
   const renderCategoryPicker = () => {

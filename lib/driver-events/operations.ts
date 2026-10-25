@@ -6,17 +6,15 @@ import type { MasterRegisterRepository } from "@/lib/master-register/repository"
 import type { ActorType } from "@/lib/master-register/types"
 import { BI_CONTRACT_VERSION, deriveFact, type FactAction, type FactConsequence, type FactEvent, type FactEvidence, type FactRestriction } from "./bi"
 import { DriverEventConflictError, DriverEventNotFoundError, DriverEventStateError, DriverEventValidationError } from "./errors"
+import { ACTION_TYPES, CONSEQUENCE_KINDS, EVENT_RELATIONSHIPS, EVENT_STATUSES, EVIDENCE_ROLES, RESTRICTION_KINDS } from "./operations-constants"
 import { deriveObligations, type Obligations } from "./obligations"
 import { diffPrepared, prepareEvent, type EventInput, type PreparedEvent } from "./validation"
 
+export { ACTION_TYPES, CONSEQUENCE_KINDS, EVENT_RELATIONSHIPS, EVENT_STATUSES, EVIDENCE_ROLES, RESTRICTION_KINDS }
 export type EventContext = { client: PoolClient; actor: { id: string; actorType: ActorType }; masterRegister: MasterRegisterRepository }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-export const EVENT_STATUSES = ["Open", "Under Review", "Awaiting Information", "Follow-up Required", "Closed", "Not Applicable"] as const
-export const EVIDENCE_ROLES = ["SOURCE_REPORT", "PHOTO_VIDEO", "POLICE_REPORT", "INSPECTION_REPORT", "REPAIR_RECORD", "RELEASE_EVIDENCE", "CORRECTION_EVIDENCE", "MEDICAL_RECORD", "INSURER_RECORD", "REGULATORY_NOTICE", "OTHER"] as const
-export const EVENT_RELATIONSHIPS = ["DUPLICATE_OF", "SAME_OCCURRENCE", "CAUSED_BY", "CAUSES", "FOLLOW_UP_OF", "RELATED", "CITATION", "REPAIR_ORDER", "CLAIM", "INSPECTION_FINDING", "TRAINING_RECORD", "COMPANY_ACTION", "MAINTENANCE_RECORD", "DISPATCH_RECORD"] as const
 const EVENT_TO_EVENT = new Set(["DUPLICATE_OF", "SAME_OCCURRENCE", "CAUSED_BY", "CAUSES", "FOLLOW_UP_OF", "RELATED"])
-export const CONSEQUENCE_KINDS = ["OPERATIONAL_DELAY", "ASSET_DOWNTIME", "MISSED_SERVICE", "COST_ESTIMATED", "COST_ACTUAL", "CLAIM", "RECOVERY", "INJURY", "DAMAGE", "ENFORCEMENT", "ENVIRONMENTAL", "CUSTOMER_IMPACT", "INVESTIGATION_TIME", "CORRECTIVE_ACTION_COST"] as const
 
 const uuid = (value: unknown, field: string) => {
   if (typeof value !== "string" || !UUID.test(value.trim())) throw new DriverEventValidationError(field, `${field} must be a record id.`)
@@ -494,7 +492,6 @@ export async function recordConsequence(ctx: EventContext, organizationId: strin
 // Corrective actions and required follow-up
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const ACTION_TYPES = ["CORRECTIVE", "PREVENTIVE", "COACHING", "TRAINING", "REPAIR", "REPORT", "NOTIFICATION", "INVESTIGATION", "OTHER"] as const
 
 export async function addAction(ctx: EventContext, organizationId: string, eventId: string, input: { actionType: string; title: string; description?: string | null; required?: boolean; ownerLabel?: string | null; ownerActorId?: string | null; dueDate?: string | null }) {
   await lockEvent(ctx, organizationId, eventId)
@@ -537,7 +534,6 @@ export async function updateAction(ctx: EventContext, organizationId: string, ev
 // Safety restrictions
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const RESTRICTION_KINDS = ["DRIVER_OUT_OF_SERVICE", "VEHICLE_OUT_OF_SERVICE", "TRAILER_OUT_OF_SERVICE", "EQUIPMENT_HOLD", "CARGO_HOLD", "DRIVER_STAND_DOWN", "OTHER_SAFETY"] as const
 
 export async function issueRestriction(ctx: EventContext, organizationId: string, eventId: string, input: { restrictionKind: string; authority: string; subjectType: string; subjectLabel?: string | null; sourceReference?: string | null; issuedAt?: string | null; requiredCorrection?: string | null; responseDeadline?: string | null; mandatory?: boolean }) {
   const row = await lockEvent(ctx, organizationId, eventId)

@@ -8,7 +8,11 @@ import { NextResponse } from "next/server"
 export function canonicalFailure(error: unknown, fallback: string) {
   const name = error instanceof Error ? error.constructor.name : ""
   const message = error instanceof Error ? error.message : fallback
-  if (name.endsWith("ValidationError")) return NextResponse.json({ error: message }, { status: 400 })
+  if (name.endsWith("ValidationError")) {
+    // Services that collect every problem (Driver Events) expose them as `issues` so a form can mark each field.
+    const issues = (error as { issues?: unknown }).issues
+    return NextResponse.json(Array.isArray(issues) ? { error: message, issues } : { error: message }, { status: 400 })
+  }
   if (name.endsWith("NotFoundError")) return NextResponse.json({ error: message }, { status: 404 })
   if (name.endsWith("StateError") || name.endsWith("ConflictError") || name.endsWith("CollisionError")) {
     return NextResponse.json({ error: message }, { status: 409 })

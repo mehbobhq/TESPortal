@@ -94,7 +94,8 @@ describe("Driver Event server validation (registry-driven)", () => {
     const facts = minimalFacts("SPEEDING");
     assert.throws(() => prepareEvent(minimalInput("SPEEDING", { facts, factUnits: {} }), NOW), /needs its unit/);
     assert.throws(() => prepareEvent(minimalInput("SPEEDING", { facts, factUnits: { actualSpeed: "FURLONGS" } }), NOW), /needs its unit/);
-    assert.throws(() => prepareEvent(minimalInput("SPEEDING", { facts, factUnits: { actualSpeed: "KMH", durationSeconds: "s" } }), NOW), /fixed unit/);
+    assert.throws(() => prepareEvent(minimalInput("SPEEDING", { facts, factUnits: { actualSpeed: "KMH", durationSeconds: "furlongs" } }), NOW), /fixed unit/);
+    assert.doesNotThrow(() => prepareEvent(minimalInput("SPEEDING", { facts: { ...facts, durationSeconds: 5 }, factUnits: { actualSpeed: "KMH", durationSeconds: "seconds" } }), NOW));
     const ok = prepareEvent(minimalInput("SPEEDING", { facts, factUnits: { actualSpeed: "KMH" } }), NOW);
     assert.equal(ok.record.factUnits.actualSpeed, "KMH");
     const noValue = { ...facts };

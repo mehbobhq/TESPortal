@@ -49,6 +49,8 @@ export const PERFORMANCE_EVENT_FAMILIES: readonly PerformanceEventFamily[] = [
   { key: "FOLLOWING_DISTANCE", label: "Following Distance", members: [{ eventType: "Following Distance" }] },
   { key: "DISTRACTED_DRIVING", label: "Distracted Driving", members: [{ eventType: "Distracted Driving" }] },
   { key: "IDLE_TIME", label: "Idle Time", members: [{ eventType: "Idle Time" }] },
+  { key: "SEATBELT", label: "Seatbelt", members: [{ eventType: "Seatbelt" }] },
+  { key: "OTHER_EVENT", label: "Other Event", members: [{ eventType: "Other Event" }] },
   { key: "ROUTE_DEVIATION", label: "Route Deviation", conditionalCapability: true, members: [{ eventType: "Route Deviation" }] },
 ]
 

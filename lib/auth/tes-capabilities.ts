@@ -59,6 +59,10 @@ export const TES_CAPABILITY_SCOPES = {
   DRIVER_IDENTITY_VERIFY: "SYSTEM",
   // Read the encrypted sensitive identifiers of a driver application, and record that access (migration 0041).
   DRIVER_SENSITIVE_READ: "SYSTEM",
+  // Driver Events canonical store (migration 0042). Releasing a safety restriction is its own capability: an ordinary manager cannot clear an out-of-service order.
+  DRIVER_EVENT_READ: "SYSTEM",
+  DRIVER_EVENT_MANAGE: "SYSTEM",
+  DRIVER_EVENT_SAFETY_RELEASE: "SYSTEM",
   IDENTITY_RESOLUTION_READ: "SYSTEM",
   IDENTITY_RESOLUTION_MANAGE: "SYSTEM",
   // Master Register enumeration is explicit; ordinary authorized operations may append without gaining read access.

@@ -85,4 +85,6 @@ export const KNOWN_DOCUMENT_TYPES: readonly string[] = [
   "CHANNEL_CHANGE_CONFIRMATION",
   // Evidence that verifies a driver identity (migration 0037): a reviewed licence or government-ID document.
   "DRIVER_IDENTITY_DOCUMENT",
+  // Evidence supporting a Driver Event (migration 0042): a report, photo, inspection report, repair record or release document.
+  "DRIVER_EVENT_EVIDENCE",
 ]

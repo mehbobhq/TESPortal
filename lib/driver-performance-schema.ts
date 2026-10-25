@@ -1,5 +1,6 @@
 import type { EventType, SemanticState, PerformanceSemanticCapability, PerformanceDataPointSourcePolicy, PerformanceAcquisitionType } from "@/types/drivers";
 import { JURISDICTIONS } from "@/lib/jurisdictions";
+import { CATEGORY_FIELD_EXTENSIONS, OTHER_EVENT_CATEGORY_SHELL, OTHER_EVENT_FIELDS } from "@/lib/driver-events/category-extensions";
 import { DRIVER_PERFORMANCE_PRIMITIVE_BY_ID } from "@/lib/driver-performance-primitives";
 import { CE_COMPLAINT_CATEGORIES, CE_INTAKE_CHANNELS, CE_SUBTYPES, CE_YES_NO, CE_YES_NO_UNKNOWN } from "@/lib/performance-customer-event-taxonomy";
 import { SPILL_CLEANUP_STATUSES, SPILL_RELEASE_CONDITIONS, SPILL_RELEASE_DETERMINATIONS, SPILL_RELEASE_FORMS, SPILL_RELEASE_MECHANISMS, SPILL_SOURCE_CATEGORIES, SPILL_YES_NO_UNKNOWN } from "@/lib/performance-spill-taxonomy";
@@ -745,7 +746,7 @@ export const PERFORMANCE_CATEGORY_OWNERSHIP: Readonly<Record<EventType, Performa
   "Harsh Cornering": "RECORDABLE_EVENT", "Following Distance": "RECORDABLE_EVENT", "Fatigue Indicator": "RECORDABLE_EVENT", "Device / Data Integrity": "RECORDABLE_EVENT",
   "Trip Completion / Service Performance": "LEGACY_READ_ONLY", "Lane Departure": "LEGACY_READ_ONLY", "Seatbelt": "RECORDABLE_EVENT", "Distracted Driving": "RECORDABLE_EVENT",
   "Idle Time": "RECORDABLE_EVENT", "Route Deviation": "RECORDABLE_EVENT", "Backing": "LEGACY_READ_ONLY", "Stop Sign / Red Light": "LEGACY_READ_ONLY", "Railroad Crossing": "LEGACY_READ_ONLY",
-  "Customer-Site Behavior": "LEGACY_READ_ONLY", "PPE / Safety Protocol": "LEGACY_READ_ONLY"
+  "Customer-Site Behavior": "LEGACY_READ_ONLY", "PPE / Safety Protocol": "LEGACY_READ_ONLY", "Other Event": "RECORDABLE_EVENT"
 };
 
 
@@ -1569,7 +1570,11 @@ const sourcePolicyForCategory = (value: EventType): PerformanceSourcePolicy => {
   return family || { allowedOrigins: SOURCE_ORIGINS.map((item) => item.value), defaultOrigin: "MANUAL_ENTRY", authoritativeSourceTypes: [{ value: value, label: value }], reporterApplicability: REPORTER_OPTIONS };
 };
 
-export const DRIVER_PERFORMANCE_CATEGORY_REGISTRY: readonly PerformanceCategoryDefinition[] = DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW.map((definition) => {
+const OTHER_EVENT_DEFINITION: PerformanceCategoryDefinition = { ...OTHER_EVENT_CATEGORY_SHELL, fields: [...OTHER_EVENT_FIELDS, ...base] };
+
+export const DRIVER_PERFORMANCE_CATEGORY_REGISTRY: readonly PerformanceCategoryDefinition[] = [...DRIVER_PERFORMANCE_CATEGORY_REGISTRY_RAW, OTHER_EVENT_DEFINITION].map((rawDefinition) => {
+  // Additive baseline fields (docs/driver-events/field-reconciliation.md); never replaces an existing field.
+  const definition: PerformanceCategoryDefinition = CATEGORY_FIELD_EXTENSIONS[rawDefinition.code] ? { ...rawDefinition, fields: [...rawDefinition.fields, ...CATEGORY_FIELD_EXTENSIONS[rawDefinition.code]] } : rawDefinition;
   const basePolicy = definition.policy || (definition.evidenceRequired ? DOCUMENT_POLICY : MANUAL_POLICY);
   const sourcePolicy = CATEGORY_SOURCE_POLICY_FAMILY[definition.value];
   return {

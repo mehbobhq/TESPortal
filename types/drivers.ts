@@ -846,6 +846,7 @@ export type EventType =
   | "Trip Completion / Service Performance"
   | "Lane Departure"
   | "Seatbelt"
+  | "Other Event"
   | "Distracted Driving"
   | "Idle Time"
   | "Route Deviation"

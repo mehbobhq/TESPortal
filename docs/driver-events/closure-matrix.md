@@ -8,7 +8,7 @@ Commit under review: `829a628` (delivered) → corrective commits on top (see th
 | Item | Status | Evidence |
 |---|---|---|
 | Delivered commit descends from `origin/main` `0327263`, which contains migrations 0040 and 0041 | PASS | `git merge-base --is-ancestor 0327263 HEAD`; `git log` shows 0040 `b24a92e`, 0041 `44557af` below `0327263` |
-| Self-contained review bundle | PASS | `driver-events-review-full.bundle` (complete history of HEAD, clonable with no other repository) and `driver-events-review-delta.bundle` (`0327263..HEAD`, needs `0327263`); SHA-256 in the final message |
+| Self-contained review bundle | PASS | `driver-events-review-full.bundle` (complete history of HEAD, clonable with no other repository) and `driver-events-delta-0327263.bundle` (`0327263..HEAD`, needs `0327263`); SHA-256 in the final message |
 | No new branch, no production change | PASS | detached commits only |
 
 ## 2. Architecture against the code
@@ -74,3 +74,12 @@ See [test-reconciliation.md](test-reconciliation.md).
 5. Telematics / ELD ingestion; trip, shipment and customer canonical records.
 6. Server-side re-run of the detailed-wizard cross-field validators.
 7. Approval to push, merge and apply migrations 0042 and 0043 to production.
+
+## Corrective commits (on top of delivered `829a628`)
+| Commit | Content |
+|---|---|
+| `23c2254` | direct category-to-form entry (both selection cards removed), versioned child-collection corrections, safety-restriction bypasses closed, migration 0043, confidence-aware facts, tests |
+| `6390b72` | closure matrix, test reconciliation, final verification results |
+| final | navigation check output; closure matrix corrections |
+
+Final regression on `23c2254`: unit 1074/1071/2/1; DB 1371/1328/40/3 (failing set identical to `0327263`); tsc 104; `next build --webpack` exit 0.

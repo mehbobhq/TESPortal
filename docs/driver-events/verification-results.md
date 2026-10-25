@@ -1,21 +1,26 @@
-# Driver Events — verification results
+# Driver Events — verification results (final review, tree `23c2254`)
 
-Run against the committed tree on a disposable PostgreSQL cluster (all migrations 0001–0042 applied with the repository's own runner; the application connects as the runtime role under row-level security). Nothing was pushed, deployed or run against production.
+Run on a disposable PostgreSQL cluster with all migrations 0001–0043 applied by the repository's runner; the application connects as the runtime role under row-level security. Nothing was pushed, deployed or run against production. Raw outputs: `docs/driver-events/test-results/`.
 
-| Check | Result | Baseline before this work |
+| Check | Result | Baseline `0327263` |
 |---|---|---|
-| Unit tests (all non-database `*.test.ts`) | 1066 pass, 2 fail | the same 2 known failures (`authorization layer boundaries / SYSTEM wrapper`, `driver-application/plan.test.ts`) |
-| New unit tests (`test/lib/driver-events/*.test.ts` except `.db`) | 37 pass: validation of all 21 recordable categories, units, time zones, conditional facts, BI derivation, obligations, workflows, wizard adapter, reconciliation | — |
-| Database + RLS suite (`scripts/test/run-auth-tests.sh`) | 1367 tests, 1324 pass, 40 fail | 40 failures; the failing set is a subset of the baseline set (one baseline failure now passes) |
-| New database tests (`driver-events.db.test.ts`) | 13 / 13 pass | — |
-| `tsc --noEmit` | 104 errors | 104 (same set) |
-| `next build --webpack` | compiled successfully; `/companies/[id]/record-of-events` built | passes |
-| Browser — workflow (Chromium, real app, real PostgreSQL, real evidence lifecycle with a scanner simulation) | 25 / 25 | — |
-| Browser — each of the 15 own-workflow categories created through its form | 15 / 15 (+ no page errors) | — |
+| Unit tests (non-database) | 1074 tests, 1071 pass, 2 fail, 1 skipped | same 2 pre-existing failures (`authorization layer boundaries / SYSTEM wrapper never writes tenant context`, `driver-application/plan.test.ts`) |
+| Database + RLS suite (`run-auth-tests.sh`) | 1371 tests, 1328 pass, 40 fail, 3 skipped | 1320 / 1277 / 40 / 3; failing-name sets identical, no new failure |
+| New database scenarios (`driver-events.db.test.ts`) | 17 / 17 pass | — |
+| `tsc --noEmit` | 104 errors | 104 (unchanged) |
+| `next build --webpack` | exit 0 | passes |
+| Browser — workflow (Chromium, real app, real PostgreSQL, evidence lifecycle with simulated scanner) | 25 / 25 | — |
+| Browser — each of the 15 own-workflow categories | 15 / 15 | — |
 | Browser — each of the 6 detailed wizards saved to the server | 6 / 6 | — |
+| Browser — child-collection correction versions | 5 / 5 | — |
+| Direct category → form navigation, all categories incl. Others, no selection cards | verified (`navigation-check.txt` in the review pack) | — |
 
-What the database tests prove (`driver-events.db.test.ts`): create / reload / version / correct with reason / stale-write refusal; immutable history and no deletion; **every recordable category** through create → correct → evidence link → verify → close → fact, invisible to another company; roadside out-of-service creates a mandatory restriction that status change, correction and company clearance cannot clear, release only by the dedicated capability with verified, stored, same-company release evidence; evidence lifecycle (quarantined cannot be linked, stored can, other company's file refused); duplicate exclusion and one-owner downstream records; consequence de-duplication, supersession, missing-is-not-zero and mixed-currency handling; read-only / no-capability / cross-company denial and row-level security with no context; every documented BI example query.
+## Not verified
+- Real GCS buckets, credentials and malware scanner (absent here): the evidence lifecycle is proven against an in-memory storage with a simulated scanner only.
+- Driver transfer safety enforcement: implemented, no automated test.
+- Cross-company disclosure of a driver's out-of-service status: not implemented; owner decision needed.
+- Server-side re-run of the wizard cross-field validators.
+- Regulatory applicability and deadlines (49 CFR 390.15, 396.9): no conclusion computed.
+- Dispatch, trip, assignment, movement and HOS enforcement: no canonical workflow exists, so system-wide enforcement is not claimed (see `safety-enforcement.md`).
 
-What the browser run proves: the Record of Events page works only through the server API (no TES key ever in localStorage / sessionStorage / IndexedDB); required facts and units are enforced by the server and shown; a quarantined upload is not linked until it is stored; a person verifies evidence; a correction needs a reason and creates version 2 with the earlier version in the history; an unsafe-vehicle answer holds the vehicle; closing is refused while the hold is active and, after release, while required follow-up is open; release is refused without the dedicated capability; a read-only member cannot write; another company sees nothing.
-
-Not covered by an automated check: the visual design of the screens was reviewed from screenshots only; regulatory applicability (see architecture, "Not verified or not done").
+Development-complete: yes, for the scope above. Production-ready: no — needs the NOT VERIFIED items resolved, production migrations 0042–0043 approved and run by the owner.

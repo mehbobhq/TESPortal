@@ -1,0 +1,2 @@
+next build --webpack: exit 0
+tsc --noEmit error count: 104 (same as base)

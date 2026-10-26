@@ -1,0 +1,96 @@
+TES baseline-0039 read-only verifier: test report
+tested commit:        5b403283f319d221d4eab833792744b4def095dd
+executed (UTC):       2026-10-26T14:38:31Z
+PostgreSQL:           PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+disposable database:  YES. Local cluster only (host 127.0.0.1, port 55441, data directory /tmp/ci-sim-pg/data), throwaway databases t_base, t_full, t_rls, t_inv, t_neg created by the test and dropped at its end (left over: 0). No production host, credential or workflow was used.
+
+commands executed:
+  1. PGHOST=127.0.0.1 PGPORT=55441 PGUSER=postgres bash scripts/database/test/verify-baseline-0039.test.sh
+  2. node --experimental-strip-types --import ./test/helpers/register-alias-loader.mjs --test test/lib/production-verification/baseline-0039.test.ts
+
+RESULTS
+  database tests (verify-baseline-0039.test.sh): passed=60 failed=0 exit=0
+  static tests (baseline-0039.test.ts):          passed=7 failed=0 exit=0
+  OVERALL: PASS
+
+---- database test output ----
+== A. clean 0039 baseline
+ok   - all items PASS
+ok   - exit 0
+ok   - ledger_count PASS
+ok   - ledger_latest PASS
+ok   - ledger_sequence PASS
+ok   - ledger_filenames PASS
+ok   - ledger_checksums PASS
+ok   - live_invitations PASS
+ok   - read_only_enforcement PASS
+ok   - invitations zero
+ok   - pending files reported, not touched
+== B. invitation counting: PENDING, SENT and OPENED unexpired are counted; expired and other statuses are not; aggregate only
+ok   - 9 fixture rows (inserted by the test as superuser, disposable)
+ok   - counts exactly the 3 usable, unexpired invitations
+ok   - output contains no email, token or other applicant data
+ok   - no invitations -> 0
+== C. ledger tampering
+ok   - checksum mismatch named
+ok   - checksums FAIL
+ok   - exit 1
+ok   - C2 checksum swapped with another row's: exit 1 and NOT CLEAR
+ok   - C2 checksum swapped with another row's: reported as FAIL
+== D. malformed ledgers: every one is a FAIL with exit 1
+ok   - D1 0000 replaces 0001: exit 1 and NOT CLEAR
+ok   - D1 0000 replaces 0001: reported as FAIL
+ok   - D1b 0000 replaces 0001 (filename untouched => version/filename mismatch): exit 1 and NOT CLEAR
+ok   - D1b 0000 replaces 0001 (filename untouched => version/filename mismatch): reported as FAIL
+ok   - D2 versions swapped between two files (sequence still 0001..0039, prefixes no longer match): exit 1 and NOT CLEAR
+ok   - D2 versions swapped between two files (sequence still 0001..0039, prefixes no longer match): reported as FAIL
+ok   - D2b the same swap is a filenames FAIL: exit 1 and NOT CLEAR
+ok   - D2b the same swap is a filenames FAIL: reported as FAIL
+ok   - D3 a version missing: exit 1 and NOT CLEAR
+ok   - D3 a version missing: reported as FAIL
+ok   - D3b a version missing: count FAIL: exit 1 and NOT CLEAR
+ok   - D3b a version missing: count FAIL: reported as FAIL
+ok   - D4 duplicated version (constraint dropped in the disposable copy to build it): exit 1 and NOT CLEAR
+ok   - D4 duplicated version (constraint dropped in the disposable copy to build it): reported as FAIL
+ok   - D4b duplicate replacing another version (count stays 39): exit 1 and NOT CLEAR
+ok   - D4b duplicate replacing another version (count stays 39): reported as FAIL
+ok   - D5 an unexpected version 0040 beyond the baseline: exit 1 and NOT CLEAR
+ok   - D5 an unexpected version 0040 beyond the baseline: reported as FAIL
+ok   - D6 substitution: 0040 in place of 0039: exit 1 and NOT CLEAR
+ok   - D6 substitution: 0040 in place of 0039: reported as FAIL
+ok   - D7 a non-numeric version: exit 1 and NOT CLEAR
+ok   - D7 a non-numeric version: reported as FAIL
+ok   - D8 an unknown file in the ledger: exit 1 and NOT CLEAR
+ok   - D8 an unknown file in the ledger: reported as FAIL
+ok   - D9 an empty ledger: exit 1 and NOT CLEAR
+ok   - D9 an empty ledger: reported as FAIL
+ok   - D10 no ledger table: FAIL
+ok   - D10 exit 1
+ok   - D11 full 0043 chain: count FAIL
+ok   - D11 unexpected versions listed
+ok   - D11 exit 1
+ok   - D12 incomplete repository directory is UNVERIFIED, not PASS
+ok   - D12 exit 1
+== E. row-level security that applies to the identity makes the count UNVERIFIED
+ok   - forced RLS -> UNVERIFIED
+ok   - exit 1
+== F. read-only enforcement is unchanged
+ok   - a caller PGOPTIONS cannot switch the session to read-write
+ok   - the same session options refuse a write
+ok   - nothing was created
+ok   - ledger, invitations and actors unchanged by verification (39/9/1)
+ok   - unreachable database is UNVERIFIED and blocks
+
+SUMMARY passed=60 failed=0
+ALL CHECKS PASSED
+---- static test summary ----
+    ok 1 - keeps the three earlier phases and adds baseline-0039
+    ok 2 - keeps the same trigger, environment, branch restriction, authentication path and variables (no new credential or permission)
+    ok 3 - can never invoke the migration runner
+    ok 4 - contains no mutating SQL: the only DDL is the refused write probe, and every query is in a READ ONLY transaction
+    ok 5 - counts every usable invitation status of migration 0039 (PENDING, SENT, OPENED), matching the live-invitation unique index
+    ok 6 - validates the ledger as an exact sequence in the script, not by a SQL contiguity expression
+    ok 7 - prints no applicant data: invitations are only counted
+# tests 7
+# pass 7
+# fail 0

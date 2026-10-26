@@ -53,11 +53,15 @@ jobs:
           psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "tes-database-migrator@tes-production-510007.iam";'
       - name: Apply complete migration history
         run: bash scripts/database/migrate.sh
-      - name: Ledger and RLS catalogue (complete chain 0001-0041)
+      # A ratchet, not a snapshot: ledger = number of migration files; RLS tables = public tables with row-level security enabled; policies = rows in pg_policy for public tables.
+      # A change to any of the three must be a deliberate, explained edit here. History: 0001-0039 = 39 / 91 / 172; 0040-0041 (driver operating scope, hiring application) = 41 / 108 / 188;
+      # 0042-0043 (Driver Events) add exactly 8 RLS tables (driver_events, driver_event_history, driver_event_evidence, driver_event_relationships, driver_event_consequences,
+      # driver_event_actions, driver_event_restrictions, driver_event_bi_facts) and 10 policies (one per table, three on driver_event_restrictions) = 43 / 116 / 198.
+      - name: Ledger and RLS catalogue (complete chain 0001-0043)
         run: |
-          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "41"
-          test "$(psql -Atc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")" = "108"
-          test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "188"
+          test "$(psql -Atc 'select count(*) from tes_system.schema_migrations')" = "43"
+          test "$(psql -Atc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity")" = "116"
+          test "$(psql -Atc "select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public'")" = "198"
       - name: Build production-shaped databases (migrator-owned; complete chain, 0001-0031, 0001-0030, 0001-0029, 0001-0028 and 0001-0024)
         env:
           CI_MIGRATOR: "tes-database-migrator@tes-production-510007.iam"
@@ -100,7 +104,7 @@ jobs:
           test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_0029 psql -Atc 'select count(*) from tes_system.schema_migrations')" = "29"
           test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_0030 psql -Atc 'select count(*) from tes_system.schema_migrations')" = "30"
           test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_0031 psql -Atc 'select count(*) from tes_system.schema_migrations')" = "31"
-          test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_chain psql -Atc 'select count(*) from tes_system.schema_migrations')" = "41"
+          test "$(PGUSER="$CI_MIGRATOR" PGPASSWORD="$CI_MIGRATOR_PASSWORD" PGDATABASE=tes_ci_chain psql -Atc 'select count(*) from tes_system.schema_migrations')" = "43"
       - name: Frozen 0024 closure verifier on a 0001-0024 database against PostgreSQL 17
         env:
           PGUSER: "tes-database-migrator@tes-production-510007.iam"

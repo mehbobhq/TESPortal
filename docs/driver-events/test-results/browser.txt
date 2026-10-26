@@ -1,2 +1,2 @@
-Chromium against the real app and a real PostgreSQL (simulated scanner), tree 350c012:
-flow 25/25; forms 16/16; wizards (Collision, Near Miss, Cargo, Spill, Customer, Roadside) saved to server 6/6; child-collection correction 5/5.
+Chromium against the real app and a real PostgreSQL (simulated scanner), tree f4cf3bc:
+flow 26/26 (+1: closing refused until required evidence is linked); forms 16/16; wizards (Collision, Near Miss, Cargo, Spill, Customer, Roadside) saved to server 6/6; child-collection correction 5/5.

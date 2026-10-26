@@ -50,3 +50,11 @@ Activation and transfer call `tes_security.driver_event_person_restricted`. Wher
 | neither the Driver Events tables nor the function exist (Driver Events not installed) | nothing to consult; not refused |
 
 Test: `driver-events.db.test.ts`, "safety lookup fails closed" (activation and transfer; missing, NULL and raising lookup; a clean driver, so the lookup alone decides; relationship counts unchanged). The test fails against the previous fail-open code.
+
+## Denied safety-release audit (closure)
+A refused release is recorded **outside** the rolled-back business transaction (`lib/driver-events/service.ts`, `releaseEventRestriction`). No migration: it reuses the Master Register and its registered event type `RESOURCE_ACCESS_ATTEMPTED`.
+- A separate transaction appends one event: outcome `FAILURE`, a **fixed reason code** (`CAPABILITY_DENIED`, `RELEASE_DOCUMENT_REQUIRED`, `RELEASE_DOCUMENT_NOT_LINKED`, `RELEASE_DOCUMENT_UNVERIFIED`, `COMPANY_CLEARANCE_REFUSED`, `ALREADY_RELEASED`, `RELEASE_NOT_APPLIED`, `NOT_FOUND`, `INVALID_REQUEST`, `STATE_REFUSED`), the actor, timestamp, and a request identifier (`x-request-id` when supplied, else generated). It is written as the strongest SYSTEM capability the actor holds (release, then manage, then read); an actor holding none cannot write the register and is covered by the structured log line only.
+- Identifiers are recorded exactly as submitted and never looked up; the caller sees only the original refusal (a nonexistent event and another company's event give the same message). No evidence document id, free text or secret is recorded or logged.
+- The register is append-only (the application role has SELECT and INSERT only) and readable only with `MASTER_REGISTER_READ`; event staff read zero rows.
+- A failure to write the audit is logged and swallowed; the original refusal is rethrown, so it can never become a release, and the restriction stays `ACTIVE`.
+Tests: `driver-events.db.test.ts`, "a denied safety release is recorded durably…" (capability and evidence denials, forged ids, simulated audit failure, actor with no capability, unreadable/immutable history). It fails when the recording is disabled.

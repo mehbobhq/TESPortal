@@ -1,15 +1,15 @@
-# Driver Events — verification results (production gate, tree `350c012` plus documents)
+# Driver Events — verification results (closure, tree `f4cf3bc` plus documents)
 
 Run on a disposable PostgreSQL cluster with all migrations 0001–0043 applied by the repository's runner; the application connects as the runtime role under row-level security. Nothing was pushed, deployed or run against production. Raw outputs: `docs/driver-events/test-results/`.
 
 | Check | Result | Baseline `0327263` |
 |---|---|---|
 | Unit tests (non-database) | 1082 tests, 1079 pass, 2 fail, 1 skipped (+8 new: workflow rules) | same 2 pre-existing failures (`authorization layer boundaries / SYSTEM wrapper never writes tenant context`, `driver-application/plan.test.ts`) |
-| Database + RLS suite (`run-auth-tests.sh`) | 1373 tests, 1330 pass, 40 fail, 3 skipped | 1320 / 1277 / 40 / 3; failing-name sets identical, no new failure |
-| Driver Events database scenarios (`driver-events.db.test.ts`) | 19 / 19 pass (+2: fail-closed safety lookup; server workflow rules on create and correction) | — |
+| Database + RLS suite (`run-auth-tests.sh`) | 1375 tests, 1332 pass, 40 fail, 3 skipped | 1320 / 1277 / 40 / 3; failing-name sets identical, no new failure |
+| Driver Events database scenarios (`driver-events.db.test.ts`) | 21 / 21 pass (+2 in closure: evidence requirements through the lifecycle; durable denied-release audit) | — |
 | `tsc --noEmit` | 104 errors | 104 (unchanged) |
 | `next build --webpack` | exit 0 | passes |
-| Browser — workflow (Chromium, real app, real PostgreSQL, evidence lifecycle with simulated scanner) | 25 / 25 | — |
+| Browser — workflow (Chromium, real app, real PostgreSQL, evidence lifecycle with simulated scanner) | 26 / 26 | — |
 | Browser — each own-workflow category through its form | 16 / 16 | — |
 | Browser — each of the 6 detailed wizards saved to the server | 6 / 6 | — |
 | Browser — child-collection correction versions | 5 / 5 | — |

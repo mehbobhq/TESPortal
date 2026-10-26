@@ -18,6 +18,7 @@ The same command (`bash scripts/test/run-auth-tests.sh`, disposable cluster, all
 | `0327263` (`origin/main`, before any Driver Events work) | 1320 | 1277 | 40 | 3 |
 | Driver Events tree `23c2254` (previous review) | 1371 | 1328 | 40 | 3 |
 | Driver Events tree `350c012` (production gate) | 1373 | 1330 | 40 | 3 |
+| Driver Events tree `f4cf3bc` (closure) | 1375 | 1332 | 40 | 3 |
 
 The failing set is compared by test name with the numeric prefix removed (`test-results/db-fail-diff.txt`); a failure present in the second run and absent from the first would be NEW. Result: the failing-name sets are identical (69 lines each including nested subtests; `NEW-ONLY` and `BASE-ONLY` both empty). +53 tests (1320 → 1373) all pass; the 40 failures are pre-existing. The unit suite is compared the same way: 2 failures on both sides (`authorization layer boundaries / SYSTEM wrapper never writes tenant context`, `driver-application/plan.test.ts`).
 

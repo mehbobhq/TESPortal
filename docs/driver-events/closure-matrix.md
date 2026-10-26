@@ -90,3 +90,6 @@ Final regression on `23c2254`: unit 1074/1071/2/1; DB 1371/1328/40/3 (failing se
 ## Production gate (second review)
 See [production-gate-corrections.md](production-gate-corrections.md). Final regression on `350c012`: unit 1082/1079/2/1; DB 1373/1330/40/3 (failing-name set identical to `0327263`); tsc 104; `next build --webpack` exit 0; browser flow 25/25, forms 16/16, wizards 6/6, child corrections 5/5.
 Items 6 (cross-field) and the driver-transfer test are no longer open. Still NOT VERIFIED: real GCS and scanner, regulatory applicability; still not built: dispatch/trip/assignment/HOS workflows, cross-company disclosure decision.
+
+## Final closure
+See [final-closure-report.md](final-closure-report.md). Evidence enforcement at closure/unlink, validated item evidence references and the durable denied-release audit were added in the closure assignment; final regression: unit 1082/1079/2/1, DB 1375/1332/40/3 (failing set identical to `0327263`), tsc 104, build exit 0, browser 26/26, 16/16, 6/6, 5/5.

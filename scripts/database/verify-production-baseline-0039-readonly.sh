@@ -9,10 +9,11 @@
 # What it checks, each reported as PASS / FAIL / UNVERIFIED:
 #   read_only_enforcement  the session is read-only and the database itself refuses a write attempt (otherwise it stops before reading anything)
 #   ledger_count           exactly 39 applied migrations
-#   ledger_latest          latest version is 0039 and the sequence is contiguous from 0001
-#   ledger_filenames       the ledger and the repository files 0001-0039 name exactly the same files
+#   ledger_latest          latest version is 0039
+#   ledger_sequence        the versions are EXACTLY 0001..0039: no gap, duplicate, substitution (e.g. 0000) or unexpected version
+#   ledger_filenames       the ledger and the repository files 0001-0039 name exactly the same files, and every version equals the four-digit prefix of its file name
 #   ledger_checksums       every ledger SHA-256 equals the SHA-256 of the repository file of that name
-#   live_invitations       count of driver application invitations with status SENT/OPENED and expires_at in the future (a number only)
+#   live_invitations       count of driver application invitations that are usable and unexpired: status PENDING, SENT or OPENED (the live statuses of migration 0039) and expires_at in the future (a number only)
 # Exit status 0 only if every item is PASS. It never runs the migration runner, never writes, and never "fixes" anything.
 set -uo pipefail
 MIG_DIR="${MIGRATIONS_DIR:-database/migrations}"
@@ -39,12 +40,28 @@ echo "identity: current_user=$(ro 'SELECT current_user') superuser=$(ro "SELECT 
 
 echo "== ledger"
 if ! [ "$(ro "SELECT to_regclass('tes_system.schema_migrations') IS NOT NULL")" = t ]; then
-  for i in ledger_count ledger_latest ledger_filenames ledger_checksums; do record $i FAIL "tes_system.schema_migrations does not exist"; done
+  for i in ledger_count ledger_latest ledger_sequence ledger_filenames ledger_checksums; do record $i FAIL "tes_system.schema_migrations does not exist"; done
 else
-  read -r applied latest contiguous <<<"$(ro "SELECT count(*), coalesce(max(version), 'none'), (count(*) = coalesce(max(version::int), 0) AND count(DISTINCT version) = count(*)) FROM tes_system.schema_migrations" -F ' ')"
-  echo "applied=$applied latest=$latest contiguous_from_0001=$contiguous"
-  [ "$applied" = "$EXPECTED_COUNT" ] && record ledger_count PASS "applied=$applied" || record ledger_count FAIL "applied=$applied, expected $EXPECTED_COUNT"
-  if [ "$latest" = "$BASELINE" ] && [ "$contiguous" = t ]; then record ledger_latest PASS "latest=$latest, contiguous"; else record ledger_latest FAIL "latest=$latest contiguous=$contiguous, expected $BASELINE contiguous"; fi
+  # The whole ledger is read once (version, filename, checksum: file names and hashes only) and judged here, so no SQL expression decides what "contiguous" means.
+  ledger="$(ro "SELECT version, filename, sha256 FROM tes_system.schema_migrations ORDER BY version, filename" -F '|')"
+  applied=0; [ -n "$ledger" ] && applied="$(printf '%s\n' "$ledger" | wc -l)"
+  actual_versions="$(printf '%s\n' "$ledger" | cut -d'|' -f1 | LC_ALL=C sort)"; [ -n "$ledger" ] || actual_versions=""
+  expected_versions="$(printf '%04d\n' $(seq 1 "$EXPECTED_COUNT"))"
+  latest="$(printf '%s\n' "$actual_versions" | tail -1)"; [ -n "$latest" ] || latest=none
+  echo "applied=$applied latest=$latest"
+
+  [ "$applied" = "$EXPECTED_COUNT" ] && record ledger_count PASS "applied=$applied" || record ledger_count FAIL "applied=$applied, expected exactly $EXPECTED_COUNT"
+  [ "$latest" = "$BASELINE" ] && record ledger_latest PASS "latest=$latest" || record ledger_latest FAIL "latest=$latest, expected $BASELINE"
+
+  # exact version sequence 0001..0039: no gap, duplicate, substitution (such as 0000 for 0001) or unexpected version
+  unexpected="$(comm -13 <(printf '%s\n' "$expected_versions") <(printf '%s\n' "$actual_versions" | LC_ALL=C sort -u) | grep -v '^$' || true)"
+  absent="$(comm -23 <(printf '%s\n' "$expected_versions") <(printf '%s\n' "$actual_versions" | LC_ALL=C sort -u) | grep -v '^$' || true)"
+  dupes="$(printf '%s\n' "$actual_versions" | LC_ALL=C uniq -d | grep -v '^$' || true)"
+  if [ "$actual_versions" = "$expected_versions" ]; then record ledger_sequence PASS "versions are exactly 0001..$BASELINE"
+  else
+    [ -z "$unexpected" ] || echo "unexpected ledger version(s): $(echo $unexpected)"; [ -z "$absent" ] || echo "version(s) missing from the ledger: $(echo $absent)"; [ -z "$dupes" ] || echo "duplicated ledger version(s): $(echo $dupes)"
+    record ledger_sequence FAIL "unexpected=$(echo $unexpected | wc -w) missing=$(echo $absent | wc -w) duplicated=$(echo $dupes | wc -w)"
+  fi
 
   mapfile -t repo_files < <(cd "$MIG_DIR" 2>/dev/null && ls -1 [0-9][0-9][0-9][0-9]_*.sql 2>/dev/null | LC_ALL=C sort | awk -v b="$BASELINE" 'substr($0,1,4) <= b')
   pending="$(cd "$MIG_DIR" 2>/dev/null && ls -1 [0-9][0-9][0-9][0-9]_*.sql 2>/dev/null | awk -v b="$BASELINE" 'substr($0,1,4) > b' | wc -l)"
@@ -53,19 +70,24 @@ else
     record ledger_filenames UNVERIFIED "the repository holds ${#repo_files[@]} files up to $BASELINE, expected $EXPECTED_COUNT; cannot compare"
     record ledger_checksums UNVERIFIED "repository files incomplete"
   else
-    missing=0; extra=0; mismatch=0
+    missing=0; extra=0; badprefix=0; mismatch=0
     declare -A in_ledger=()
-    while IFS='|' read -r filename checksum; do
+    while IFS='|' read -r version filename checksum; do
+      [ -n "$version$filename" ] || continue
       in_ledger["$filename"]=1
-      if [ -f "$MIG_DIR/$filename" ] && [ "${filename:0:4}" \< "0040" ]; then
+      # the version column must equal the four-digit prefix of the file name
+      [ "$version" = "${filename:0:4}" ] || { echo "version/filename mismatch: version=$version filename=$filename"; badprefix=$((badprefix + 1)); }
+      if [ -f "$MIG_DIR/$filename" ] && [[ "${filename:0:4}" =~ ^[0-9]{4}$ ]] && [[ ! "${filename:0:4}" > "$BASELINE" ]]; then
         [ "$(sha256sum "$MIG_DIR/$filename" | awk '{print $1}')" = "$checksum" ] || { echo "checksum differs from the repository: $filename"; mismatch=$((mismatch + 1)); }
       else
         echo "ledger names a file that is not a repository migration up to $BASELINE: $filename"; extra=$((extra + 1))
       fi
-    done < <(ro "SELECT filename, sha256 FROM tes_system.schema_migrations ORDER BY version" -F '|')
+    done <<<"$ledger"
     for f in "${repo_files[@]}"; do [ -n "${in_ledger[$f]:-}" ] || { echo "repository file not in the ledger: $f"; missing=$((missing + 1)); }; done
-    [ "$missing" = 0 ] && [ "$extra" = 0 ] && record ledger_filenames PASS "ledger and repository name the same $EXPECTED_COUNT files" || record ledger_filenames FAIL "missing_from_ledger=$missing not_in_repository=$extra"
-    [ "$mismatch" = 0 ] && [ "$extra" = 0 ] && record ledger_checksums PASS "all ledger SHA-256 values equal the repository files" || record ledger_checksums FAIL "checksum_mismatches=$mismatch unmatched_entries=$extra"
+    if [ "$missing" = 0 ] && [ "$extra" = 0 ] && [ "$badprefix" = 0 ]; then record ledger_filenames PASS "ledger and repository name the same $EXPECTED_COUNT files, each version equals its file name prefix"
+    else record ledger_filenames FAIL "missing_from_ledger=$missing not_in_repository=$extra version_filename_mismatches=$badprefix"; fi
+    if [ "$mismatch" = 0 ] && [ "$extra" = 0 ]; then record ledger_checksums PASS "all ledger SHA-256 values equal the repository files"
+    else record ledger_checksums FAIL "checksum_mismatches=$mismatch unmatched_entries=$extra"; fi
   fi
 fi
 
@@ -80,8 +102,8 @@ else
   if [ "$rls_applies" != f ]; then
     record live_invitations UNVERIFIED "row-level security applies to this identity (or could not be determined); a count would be unreliable"
   else
-    n="$(ro "SELECT count(*) FROM public.driver_application_invitations WHERE status IN ('SENT', 'OPENED') AND expires_at > now()")"
-    if [[ "$n" =~ ^[0-9]+$ ]]; then record live_invitations PASS "live_invitations=$n"; [ "$n" -gt 0 ] && echo "NOTE: $n live invitation link(s) would be affected by migration 0041 until the new application is serving"; else record live_invitations UNVERIFIED "unexpected result"; fi
+    n="$(ro "SELECT count(*) FROM public.driver_application_invitations WHERE status IN ('PENDING', 'SENT', 'OPENED') AND expires_at > now()")"
+    if [[ "$n" =~ ^[0-9]+$ ]]; then record live_invitations PASS "live_invitations=$n"; [ "$n" -gt 0 ] && echo "NOTE: $n usable invitation link(s) would be affected by migration 0041 until the new application is serving"; else record live_invitations UNVERIFIED "unexpected result"; fi
   fi
 fi
 

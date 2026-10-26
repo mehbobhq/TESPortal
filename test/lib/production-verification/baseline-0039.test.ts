@@ -40,9 +40,23 @@ describe("production read-only verification: baseline 0039 mode", () => {
     assert.equal([...script.matchAll(/psql -X/g)].length, [...script.matchAll(/psql -X -At -q --no-password/g)].length, "every psql call is non-interactive and uses the same flags");
   });
 
+  it("counts every usable invitation status of migration 0039 (PENDING, SENT, OPENED), matching the live-invitation unique index", () => {
+    const migration = readFileSync("database/migrations/0039_driver_prospects_and_application_invitations.sql", "utf8");
+    assert.match(migration, /driver_application_invitations_live_uq[\s\S]*?WHERE status IN \('PENDING', 'SENT', 'OPENED'\)/);
+    assert.match(script, /status IN \('PENDING', 'SENT', 'OPENED'\) AND expires_at > now\(\)/);
+  });
+
+  it("validates the ledger as an exact sequence in the script, not by a SQL contiguity expression", () => {
+    const code = executable(script);
+    assert.match(code, /printf '%04d\\n' \$\(seq 1 "\$EXPECTED_COUNT"\)/, "expected versions 0001..0039");
+    assert.match(code, /RESULT|record ledger_sequence/);
+    assert.doesNotMatch(code, /version::int/, "no integer cast that would accept 0000 or hide a gap");
+    assert.match(code, /version\/filename mismatch/);
+  });
+
   it("prints no applicant data: invitations are only counted", () => {
     const query = script.match(/SELECT count\(\*\) FROM public\.driver_application_invitations[^"]*/)?.[0] ?? "";
-    assert.match(query, /status IN \('SENT', 'OPENED'\) AND expires_at > now\(\)/);
+    assert.match(query, /status IN \('PENDING', 'SENT', 'OPENED'\) AND expires_at > now\(\)/);
     assert.doesNotMatch(executable(script), /SELECT[^;"]*\b(recipient_email|token_hash|given_name|family_name)\b[^;"]*FROM public\.driver_application_invitations/i);
   });
 });

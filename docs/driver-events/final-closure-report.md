@@ -1,6 +1,6 @@
 # TES Driver Events — final closure report
 
-Reviewed release `23b90b0` (migrations 0042, 0043). Corrected tree: code commit `f4cf3bc`, plus this documentation commit. `origin/main` was `0327263` when checked (read-only `git ls-remote`); the release is `0327263` plus a linear history, with migrations 0040/0041 below it and 0042/0043 after. Nothing was pushed, merged, deployed or migrated; no branch was created; no cloud resource was touched; the unidentified `CLOUDSDK_AUTH_ACCESS_TOKEN` was not used.
+Reviewed release `23b90b0` (Driver Events migrations 0042, 0043; the release as pushed carries migrations 0040–0043, see `production-cutover-checklist.md`). Corrected tree: code commit `f4cf3bc`, plus this documentation commit. `origin/main` was `0327263` when checked (read-only `git ls-remote`); the release is `0327263` plus a linear history. **`0327263` ends at migration 0039**: migrations 0040/0041 (driver operating scope and hiring application) are part of the same unpushed history as 0042/0043. Nothing was pushed, merged, deployed or migrated; no branch was created; no cloud resource was touched; the unidentified `CLOUDSDK_AUTH_ACCESS_TOKEN` was not used.
 
 ## Decisions
 | Gate | Result | Consequence if not PASS |

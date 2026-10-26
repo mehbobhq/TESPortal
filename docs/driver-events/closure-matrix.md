@@ -7,7 +7,7 @@ Commit under review: `829a628` (delivered) → corrective commits on top (see th
 ## 1. Review baseline
 | Item | Status | Evidence |
 |---|---|---|
-| Delivered commit descends from `origin/main` `0327263`, which contains migrations 0040 and 0041 | PASS | `git merge-base --is-ancestor 0327263 HEAD`; `git log` shows 0040 `b24a92e`, 0041 `44557af` below `0327263` |
+| Delivered commit descends from `origin/main` `0327263` (fast-forward). **`0327263` ends at migration 0039; migrations 0040 and 0041 are NOT in it.** The release adds four migrations, 0040–0043, in 24 commits: 0040 (`b24a92e`) and 0041 (`44557af`) with their driver-application work are part of the same unpushed history as Driver Events (0042, 0043) | PASS | `git merge-base --is-ancestor 0327263 HEAD`; `git ls-tree 0327263 database/migrations/` ends at `0039_…`; `git log 0327263..HEAD` includes `b24a92e` and `44557af`. An earlier version of this row said the opposite; that was wrong and is corrected here |
 | Self-contained review bundle | PASS | `driver-events-review-full.bundle` (complete history of HEAD, clonable with no other repository) and `driver-events-delta-0327263.bundle` (`0327263..HEAD`, needs `0327263`); SHA-256 in the final message |
 | No new branch, no production change | PASS | detached commits only |
 

@@ -312,12 +312,13 @@ export async function changeStatus(ctx: EventContext, organizationId: string, ev
   if (to === "Closed" && record_state !== "RECORDED") throw new DriverEventStateError("A draft cannot be closed; record it first.")
   const reopening = from === "Closed"
   const reason = text(input.reason, "reason", 1000, to === "Closed" || reopening)
-  if (to === "Closed") await assertClosureEvidence(ctx, organizationId, eventId, row)
   if (to === "Closed") {
     await sql(ctx, `UPDATE public.driver_events SET status = 'Closed', closed_at = clock_timestamp(), closed_by_actor_id = $3, closure_reason = $4 WHERE id = $1 AND organization_id = $2`, [eventId, organizationId, ctx.actor.id, reason])
   } else {
     await sql(ctx, `UPDATE public.driver_events SET status = $3, closed_at = NULL, closed_by_actor_id = NULL, closure_reason = NULL WHERE id = $1 AND organization_id = $2`, [eventId, organizationId, to])
   }
+  // after the update, so a refusal by the database guards (an active restriction, open required follow-up) is reported first; a refusal here rolls the whole change back
+  if (to === "Closed") await assertClosureEvidence(ctx, organizationId, eventId, row)
   await addHistory(ctx, eventId, organizationId, to === "Closed" ? "CLOSED" : reopening ? "REOPENED" : "STATUS_CHANGED", { changes: [{ field: "status", before: from, after: to }], reason })
   await refreshFact(ctx, organizationId, eventId)
   await mr(ctx, "RECORD_STATUS_CHANGED", "driver-event-status", eventId, organizationId, [`driver_event:${eventId}`], { field: "status", value: to })

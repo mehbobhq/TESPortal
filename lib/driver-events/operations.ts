@@ -8,6 +8,8 @@ import { BI_CONTRACT_VERSION, deriveFact, type FactAction, type FactConsequence,
 import { DriverEventConflictError, DriverEventNotFoundError, DriverEventStateError, DriverEventValidationError } from "./errors"
 import { ACTION_TYPES, CONSEQUENCE_KINDS, EVENT_RELATIONSHIPS, EVENT_STATUSES, EVIDENCE_ROLES, RESTRICTION_KINDS } from "./operations-constants"
 import { deriveObligations, type Obligations } from "./obligations"
+import { DRIVER_PERFORMANCE_CATEGORY_REGISTRY } from "@/lib/driver-performance-schema"
+import { closureEvidenceIssues, referencedEvidenceIds } from "./child-collections"
 import { diffPrepared, prepareEvent, type EventInput, type PreparedEvent } from "./validation"
 
 export { ACTION_TYPES, CONSEQUENCE_KINDS, EVENT_RELATIONSHIPS, EVENT_STATUSES, EVIDENCE_ROLES, RESTRICTION_KINDS }
@@ -244,7 +246,8 @@ export async function reviseEvent(ctx: EventContext, organizationId: string, eve
   if (!input.event || input.event.category !== row.category) throw new DriverEventValidationError("category", "The category of an event cannot be changed; record a new event instead.")
   const wasRecorded = (row as unknown as { record_state: string }).record_state === "RECORDED"
   const reason = text(input.reason, "reason", 1000, wasRecorded)
-  const prepared = prepareEvent(input.event)
+  const linkedEvidence = new Set((await sql<{ d: string }>(ctx, `SELECT evidence_document_id::text AS d FROM public.driver_event_evidence WHERE event_id = $1 AND link_status = 'active'`, [eventId])).map((r) => r.d))
+  const prepared = prepareEvent(input.event, new Date(), linkedEvidence)
   if (wasRecorded && prepared.recordState === "DRAFT") throw new DriverEventStateError("A recorded event cannot return to draft.")
   const links = {
     driverPerson: await resolveLink(ctx, organizationId, "driver", prepared.driverRelationshipId, "driverRelationshipId"),
@@ -285,6 +288,21 @@ export async function reviseEvent(ctx: EventContext, organizationId: string, eve
 // Status / closure / reopening
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 
+/**
+ * Closing is the point where "the approved workflow requires evidence" can be enforced on the canonical store: evidence is linked to the SAVED event, so it cannot exist at
+ * creation. A category whose policy requires evidence cannot be closed without at least one active linked document (stored and scanned: linking guarantees it), and an obtained
+ * uploaded-document Driver Statement must reference its linked evidence. Categories whose policy does not require evidence are not affected.
+ */
+async function assertClosureEvidence(ctx: EventContext, organizationId: string, eventId: string, row: EventRow) {
+  const definition = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.find((d) => d.code === row.category_code)
+  if (definition?.evidenceRequired) {
+    const links = await sql<{ n: string }>(ctx, `SELECT count(*)::text AS n FROM public.driver_event_evidence l WHERE l.event_id = $1 AND l.organization_id = $2 AND l.link_status = 'active' AND tes_security.driver_event_evidence_state(l.organization_id, l.evidence_document_id) = 'stored'`, [eventId, organizationId])
+    if (Number(links[0]?.n ?? 0) < 1) throw new DriverEventStateError("This category requires supporting evidence. Link at least one stored document to the event before closing it.")
+  }
+  const missing = closureEvidenceIssues(((row.record as { childCollections?: unknown } | undefined)?.childCollections ?? {}) as Record<string, unknown>)
+  if (missing.length) throw new DriverEventStateError(missing[0])
+}
+
 export async function changeStatus(ctx: EventContext, organizationId: string, eventId: string, input: { to: string; reason?: string | null }) {
   const row = await lockEvent(ctx, organizationId, eventId)
   const to = oneOf(input.to, EVENT_STATUSES, "to")
@@ -294,6 +312,7 @@ export async function changeStatus(ctx: EventContext, organizationId: string, ev
   if (to === "Closed" && record_state !== "RECORDED") throw new DriverEventStateError("A draft cannot be closed; record it first.")
   const reopening = from === "Closed"
   const reason = text(input.reason, "reason", 1000, to === "Closed" || reopening)
+  if (to === "Closed") await assertClosureEvidence(ctx, organizationId, eventId, row)
   if (to === "Closed") {
     await sql(ctx, `UPDATE public.driver_events SET status = 'Closed', closed_at = clock_timestamp(), closed_by_actor_id = $3, closure_reason = $4 WHERE id = $1 AND organization_id = $2`, [eventId, organizationId, ctx.actor.id, reason])
   } else {
@@ -358,6 +377,13 @@ export async function unlinkEvidence(ctx: EventContext, organizationId: string, 
   if (link.link_status !== "active") throw new DriverEventStateError("That evidence is already unlinked.")
   const used = await sql(ctx, `SELECT 1 FROM public.driver_event_restrictions WHERE event_id = $1 AND release_evidence_document_id = $2`, [eventId, link.evidence_document_id])
   if (used.length) throw new DriverEventStateError("That evidence documents a restriction release and cannot be unlinked.")
+  const event = await lockEvent(ctx, organizationId, eventId)
+  if (referencedEvidenceIds(((event.record as { childCollections?: unknown } | undefined)?.childCollections ?? {}) as Record<string, unknown>).has(link.evidence_document_id)) throw new DriverEventStateError("A detail item of this event references that evidence. Remove the reference with a correction first.")
+  const definition = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.find((d) => d.code === event.category_code)
+  if (event.status === "Closed" && definition?.evidenceRequired) {
+    const rest = await sql<{ n: string }>(ctx, `SELECT count(*)::text AS n FROM public.driver_event_evidence WHERE event_id = $1 AND link_status = 'active' AND id <> $2`, [eventId, link.id])
+    if (Number(rest[0]?.n ?? 0) < 1) throw new DriverEventStateError("This closed event needs its supporting evidence. Reopen it with a reason before unlinking its last document.")
+  }
   await sql(ctx, `UPDATE public.driver_event_evidence SET link_status = 'unlinked', unlinked_at = clock_timestamp(), unlinked_by_actor_id = $2, unlink_reason = $3 WHERE id = $1`, [link.id, ctx.actor.id, reason])
   await addHistory(ctx, eventId, organizationId, "EVIDENCE_UNLINKED", { changes: [{ field: "evidence", before: link.evidence_document_id }], reason })
   await refreshFact(ctx, organizationId, eventId)
@@ -565,18 +591,18 @@ export async function releaseRestriction(ctx: EventContext, organizationId: stri
   await lockEvent(ctx, organizationId, eventId)
   const [restriction] = await sql<{ id: string; state: string; authority: string; restriction_kind: string }>(ctx, `SELECT id, state, authority, restriction_kind FROM public.driver_event_restrictions WHERE id = $1 AND event_id = $2 AND organization_id = $3`, [uuid(restrictionId, "restrictionId"), eventId, organizationId]) // the event row lock serialises releases; FOR UPDATE here would need the release policy
   if (!restriction) throw new DriverEventNotFoundError("Restriction not found.")
-  if (restriction.state !== "ACTIVE") throw new DriverEventStateError("That restriction is already released.")
+  if (restriction.state !== "ACTIVE") throw new DriverEventStateError("That restriction is already released.", "ALREADY_RELEASED")
   const basis = oneOf(input.releaseBasis, ["AUTHORITY_RELEASE_DOCUMENTED", "CORRECTED_AND_AUTHORITY_CONFIRMED", "COMPANY_CLEARANCE"] as const, "releaseBasis")
   const correctionSummary = text(input.correctionSummary, "correctionSummary", 2000, true)!
   const evidenceId = input.evidenceDocumentId ? uuid(input.evidenceDocumentId, "evidenceDocumentId") : null
   const authoritative = restriction.authority === "ENFORCEMENT" || restriction.authority === "REGULATOR"
   if (authoritative) {
-    if (basis === "COMPANY_CLEARANCE") throw new DriverEventStateError("An enforcement or regulator restriction cannot be cleared by the company. It needs the documented authoritative release.")
+    if (basis === "COMPANY_CLEARANCE") throw new DriverEventStateError("An enforcement or regulator restriction cannot be cleared by the company. It needs the documented authoritative release.", "COMPANY_CLEARANCE_REFUSED")
     if (!evidenceId) throw new DriverEventValidationError("evidenceDocumentId", "The release document is required for an enforcement restriction.")
     const ok = await sql(ctx, `SELECT 1 FROM public.driver_event_evidence l WHERE l.event_id = $1 AND l.evidence_document_id = $2 AND l.role = 'RELEASE_EVIDENCE' AND l.link_status = 'active'`, [eventId, evidenceId])
-    if (!ok.length) throw new DriverEventStateError("Link the release document to this event with the role Release Evidence first.")
+    if (!ok.length) throw new DriverEventStateError("Link the release document to this event with the role Release Evidence first.", "RELEASE_DOCUMENT_NOT_LINKED")
     const verified = await sql(ctx, `SELECT 1 FROM public.driver_event_evidence l WHERE l.event_id = $1 AND l.evidence_document_id = $2 AND l.role = 'RELEASE_EVIDENCE' AND l.link_status = 'active' AND l.verification_state = 'VERIFIED'`, [eventId, evidenceId])
-    if (!verified.length) throw new DriverEventStateError("A person must verify the release document before it can release the restriction.")
+    if (!verified.length) throw new DriverEventStateError("A person must verify the release document before it can release the restriction.", "RELEASE_DOCUMENT_UNVERIFIED")
   }
   await steps.enterRelease()
   let released: number | null = 0
@@ -586,7 +612,7 @@ export async function releaseRestriction(ctx: EventContext, organizationId: stri
     return database(error)
   }
   // Row-level security filters silently: a release that touched nothing must never be reported as done.
-  if (released !== 1) throw new DriverEventStateError("The restriction could not be released.")
+  if (released !== 1) throw new DriverEventStateError("The restriction could not be released.", "RELEASE_NOT_APPLIED")
   await steps.enterManage()
   await addHistory(ctx, eventId, organizationId, "RESTRICTION_RELEASED", { changes: [{ field: "restriction", before: restriction.restriction_kind, after: "RELEASED", basis }], reason: correctionSummary })
   await refreshFact(ctx, organizationId, eventId)

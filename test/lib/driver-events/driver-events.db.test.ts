@@ -584,6 +584,116 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     assert.equal(snap1.snapshot.record.childCollections[PARTIES].items[0].facts.damageStatus, before.record.childCollections[PARTIES].items[0].facts.damageStatus, "version 1 still holds the original value");
   });
 
+  scenario("required evidence cannot be bypassed by recording, correcting, verifying, unlinking or closing", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    // a category whose policy requires evidence cannot be closed without a linked, stored document; one that does not require it is unaffected
+    const created = await create(o, speeding({ sourceReference: "EV-REQ-1" }));
+    await rejects(() => K.svc.changeEventStatus(o, created.id, { to: "Closed", reason: "done" }), "StateError");
+    const otherEvent = await create(o, other({ sourceReference: "EV-NOREQ-1" }));
+    await K.svc.changeEventStatus(o, otherEvent.id, { to: "Closed", reason: "no evidence needed for this category" });
+    const doc = await storedDocument(o);
+    const link = await K.svc.linkEventEvidence(o, created.id, { documentId: doc, role: "SOURCE_REPORT" });
+    await K.svc.changeEventStatus(o, created.id, { to: "Closed", reason: "evidence on file" }); // linked, stored evidence is what the workflow requires; verification is a separate act
+    // the last document cannot be unlinked from a closed event; reopened, it can, and closing again is refused
+    await rejects(() => K.svc.unlinkEventEvidence(o, created.id, link.id, { reason: "oops" }), "StateError");
+    await K.svc.changeEventStatus(o, created.id, { to: "Open", reason: "reopen to replace evidence" });
+    await K.svc.unlinkEventEvidence(o, created.id, link.id, { reason: "wrong file" });
+    await rejects(() => K.svc.changeEventStatus(o, created.id, { to: "Closed", reason: "again" }), "StateError");
+
+    // detail items can reference only evidence that is actively linked to THIS event
+    const { rel } = await vehicleRel(o);
+    const driver = await driverRel(o);
+    const PARTIES = "DRV.PERF.COLLISION.INVOLVED_PARTIES", STATEMENTS = "DRV.PERF.COLLISION.DRIVER_STATEMENTS";
+    const collision = (mutate?: (e: any) => void) => {
+      const e: any = K.fill.wizardRecord("COLLISION", { driverRelationshipId: driver, vehicleRelationshipId: rel } as never);
+      mutate?.(e);
+      return e;
+    };
+    const foreignDoc = await storedDocument(await org("Other"));
+    await rejects(() => create(o, collision((e) => { e.childCollections[PARTIES].items[0].evidenceIds = [doc]; })), "ValidationError"); // nothing can be linked at creation
+    const col = await create(o, collision((e) => { e.childCollections[STATEMENTS].items[0].facts.method = "UPLOADED_DOCUMENT"; }));
+    // an obtained uploaded-document statement with no reference cannot be closed over
+    await rejects(() => K.svc.changeEventStatus(o, col.id, { to: "Closed", reason: "x" }), "StateError");
+    const colEv = (await K.svc.getEvent(o, col.id)).event as any;
+    const revise = (mutate: (e: any) => void) => K.svc.reviseEvent(o, col.id, { expectedVersion: colEv.current_version ?? 1, event: collision((e) => { e.sourceReference = colEv.source_reference; e.childCollections[STATEMENTS].items[0].facts.method = "UPLOADED_DOCUMENT"; mutate(e); }) as never, reason: "attach statement evidence" });
+    const unlinkedDoc = await storedDocument(o);
+    await rejects(() => revise((e) => { e.childCollections[STATEMENTS].items[0].evidenceIds = [unlinkedDoc]; }), "ValidationError"); // stored but not linked to this event
+    await rejects(() => revise((e) => { e.childCollections[STATEMENTS].items[0].evidenceIds = [foreignDoc]; }), "ValidationError"); // another company's document
+    const colLink = await K.svc.linkEventEvidence(o, col.id, { documentId: unlinkedDoc, role: "SOURCE_REPORT" });
+    await revise((e) => { e.childCollections[STATEMENTS].items[0].evidenceIds = [unlinkedDoc]; });
+    await rejects(() => K.svc.unlinkEventEvidence(o, col.id, colLink.id, { reason: "x" }), "StateError"); // a detail item references it
+    await K.svc.verifyEventEvidence(o, col.id, colLink.id, { decision: "VERIFIED", note: "matches" });
+    await K.svc.changeEventStatus(o, col.id, { to: "Closed", reason: "statement evidence referenced and verified" });
+  });
+
+  scenario("a denied safety release is recorded durably, outside the rolled-back transaction, without changing the restriction or disclosing anything", async () => {
+    await signIn(...MANAGE); // manage-only: no release capability
+    const o = await org();
+    const { rel } = await vehicleRel(o);
+    const created = await create(o, roadside({ vehicleRelationshipId: rel }));
+    const restriction = (await K.svc.getEvent(o, created.id)).restrictions[0] as Record<string, any>;
+    const attempts = async (reason: string) => Number((await q<{ n: string }>(`SELECT count(*) AS n FROM public.master_register_events WHERE event_type = 'RESOURCE_ACCESS_ATTEMPTED' AND target ->> 'resourceId' = $1 AND outcome ->> 'reasonCode' = $2`, [restriction.id, reason]))[0].n);
+    const state = async () => (await q<{ state: string }>(`SELECT state FROM public.driver_event_restrictions WHERE id = $1`, [restriction.id]))[0].state;
+    const release = (extra: Record<string, unknown> = {}) => K.svc.releaseEventRestriction(o, created.id, restriction.id, { releaseBasis: "AUTHORITY_RELEASE_DOCUMENTED", correctionSummary: "Brake adjusted.", evidenceDocumentId: randomUUID(), ...extra } as never, "req-test-1");
+
+    // 1. capability denied
+    await assert.rejects(release, (e: Error) => /AuthorizationDenied/.test(e.constructor.name));
+    assert.equal(await attempts("CAPABILITY_DENIED"), 1, "the denial survived the rolled-back transaction");
+    assert.equal(await state(), "ACTIVE");
+    const [row] = await q<Record<string, any>>(`SELECT * FROM public.master_register_events WHERE event_type = 'RESOURCE_ACCESS_ATTEMPTED' AND target ->> 'resourceId' = $1`, [restriction.id]);
+    assert.equal(row.outcome.result, "FAILURE");
+    assert.equal(row.source.requestId, "req-test-1");
+    assert.ok(row.actor_id && row.recorded_at, "actor and time are attributable");
+    assert.doesNotMatch(JSON.stringify(row), /evidenceDocumentId|correctionSummary|Brake adjusted/, "no evidence or free text in the record");
+
+    // 2. evidence denial (a releaser, but the document was never linked/verified) is recorded with a fixed code
+    await signIn(...RELEASE);
+    await rejects(release, "StateError");
+    assert.equal(await attempts("RELEASE_DOCUMENT_NOT_LINKED"), 1);
+    assert.equal(await state(), "ACTIVE");
+
+    // 3. forged identifiers: the caller sees the same refusal for a nonexistent and for another company's event, and the attempt is still recorded
+    const otherOrg = await org("Other");
+    const foreign = await create(otherOrg, roadside({ vehicleRelationshipId: (await vehicleRel(otherOrg)).rel }));
+    const messages = new Set<string>();
+    for (const eventId of [randomUUID(), foreign.id]) {
+      await assert.rejects(() => K.svc.releaseEventRestriction(o, eventId, restriction.id, { releaseBasis: "AUTHORITY_RELEASE_DOCUMENTED", correctionSummary: "x", evidenceDocumentId: randomUUID() } as never), (e: Error) => { messages.add(`${e.constructor.name}:${e.message}`); return true; });
+    }
+    assert.equal(messages.size, 1, "a nonexistent event and another company's event are indistinguishable to the caller");
+    assert.equal(await attempts("NOT_FOUND"), 2);
+
+    // 4. an audit failure can never turn a denial into a release
+    await signIn(...MANAGE);
+    await pools.admin.query(`CREATE OR REPLACE FUNCTION public.tmp_block_denial_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'RESOURCE_ACCESS_ATTEMPTED' THEN RAISE EXCEPTION 'simulated audit failure'; END IF; RETURN NEW; END $$`);
+    await pools.admin.query(`CREATE TRIGGER tmp_block_denial_audit BEFORE INSERT ON public.master_register_events FOR EACH ROW EXECUTE FUNCTION public.tmp_block_denial_audit()`);
+    try {
+      await assert.rejects(release, (e: Error) => /AuthorizationDenied/.test(e.constructor.name), "the original denial is still what the caller gets");
+      assert.equal(await attempts("CAPABILITY_DENIED"), 1, "nothing was recorded while the audit write was failing");
+      assert.equal(await state(), "ACTIVE");
+    } finally {
+      await pools.admin.query(`DROP TRIGGER tmp_block_denial_audit ON public.master_register_events`);
+      await pools.admin.query(`DROP FUNCTION public.tmp_block_denial_audit()`);
+    }
+
+    // 5. an actor with no event capability: still refused, nothing written (it cannot write the register), no crash
+    await signIn("EVIDENCE_READ");
+    const before = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM public.master_register_events WHERE event_type = 'RESOURCE_ACCESS_ATTEMPTED'`))[0].n);
+    await assert.rejects(release, (e: Error) => /AuthorizationDenied/.test(e.constructor.name));
+    assert.equal(Number((await q<{ n: string }>(`SELECT count(*) AS n FROM public.master_register_events WHERE event_type = 'RESOURCE_ACCESS_ATTEMPTED'`))[0].n), before);
+
+    // 6. the audit history cannot be read by event staff or modified by anyone using the application role
+    await signIn(...MANAGE);
+    await K.sysdb.withAuthorizedSystem("DRIVER_EVENT_MANAGE", async (client: any) => {
+      assert.equal(Number((await client.query(`SELECT count(*) AS n FROM public.master_register_events WHERE event_type = 'RESOURCE_ACCESS_ATTEMPTED'`)).rows[0].n), 0, "no Master Register read capability, no rows");
+      for (const sql of [`UPDATE public.master_register_events SET outcome = '{}'::jsonb`, `DELETE FROM public.master_register_events`]) {
+        await client.query("SAVEPOINT s");
+        await assert.rejects(() => client.query(sql), /permission denied|row-level security|immutable|cannot/i);
+        await client.query("ROLLBACK TO SAVEPOINT s");
+      }
+    });
+  });
+
   scenario("safety lookup fails closed: a missing function, an unauthorized (NULL) answer or a database error refuses activation and transfer", async () => {
     await signIn(...MANAGE, "DRIVER_MANAGE", "DRIVER_READ", "PERSON_IDENTITY_MANAGE");
     const o = await org();

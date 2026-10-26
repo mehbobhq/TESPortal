@@ -14,7 +14,7 @@ export async function POST(request: NextRequest, context: Context) {
     const body = await readJsonBody(request)
     if (body.action === "release") {
       return NextResponse.json(
-        await releaseEventRestriction(id, eventId, body.restrictionId as string, { releaseBasis: body.releaseBasis as string, evidenceDocumentId: (body.evidenceDocumentId as string) ?? null, correctionSummary: body.correctionSummary as string, releaseNote: (body.releaseNote as string) ?? null }),
+        await releaseEventRestriction(id, eventId, body.restrictionId as string, { releaseBasis: body.releaseBasis as string, evidenceDocumentId: (body.evidenceDocumentId as string) ?? null, correctionSummary: body.correctionSummary as string, releaseNote: (body.releaseNote as string) ?? null }, request.headers.get("x-request-id")),
         { status: 200 },
       )
     }

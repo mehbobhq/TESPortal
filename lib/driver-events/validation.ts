@@ -9,7 +9,7 @@ import {
   type PerformanceFieldDefinition,
 } from "@/lib/driver-performance-schema"
 import type { EventType } from "@/types/drivers"
-import { diffChildCollections, validateChildCollections } from "./child-collections"
+import { diffChildCollections, validateChildCollections, validateItemEvidenceReferences } from "./child-collections"
 import { validateDetailedWorkflow } from "./workflow-rules"
 import { DriverEventValidationError } from "./errors"
 
@@ -180,7 +180,8 @@ function validateFact(field: PerformanceFieldDefinition, value: unknown, issues:
 }
 
 /** Validates and normalises an event. `now` is injected so tests are deterministic. Throws one DriverEventValidationError carrying every issue. */
-export function prepareEvent(input: EventInput, now: Date = new Date()): PreparedEvent {
+/** `linkedEvidenceIds`: the documents actively linked to the event being corrected; omitted at creation, when none can be linked yet. */
+export function prepareEvent(input: EventInput, now: Date = new Date(), linkedEvidenceIds: ReadonlySet<string> = new Set()): PreparedEvent {
   if (!input || typeof input !== "object") throw new DriverEventValidationError("body", "An event is required.")
   const definition = recordableCategory(input.category)
   const issues: Issue[] = []
@@ -329,6 +330,7 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
   else if (JSON.stringify(children).length > MAX_CHILD_BYTES) issues.push({ field: "childCollections", message: "Child collections are too large." })
   else if (recordState === "RECORDED") {
     issues.push(...validateChildCollections(definition.code, facts, children as Record<string, unknown>))
+    issues.push(...validateItemEvidenceReferences(children as Record<string, unknown>, linkedEvidenceIds))
     // the detailed workflows' own rules (controlled values, party/equipment/material consistency) run here too, not only in the browser
     const original = (children as Record<string, { sourceType?: unknown } | undefined>)["DRV.PERF.ADAPTER.ORIGINAL_WORDING"]?.sourceType
     issues.push(...validateDetailedWorkflow({

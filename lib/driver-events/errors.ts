@@ -10,6 +10,13 @@ export class DriverEventValidationError extends Error {
 }
 export class DriverEventNotFoundError extends Error {}
 /** The action is not allowed in the current state (closed event, unreleased restriction, evidence not stored ...). */
-export class DriverEventStateError extends Error {}
+export class DriverEventStateError extends Error {
+  /** A fixed, non-descriptive reason code for audit (never free text). */
+  readonly code: string | undefined
+  constructor(message: string, code?: string) {
+    super(message)
+    this.code = code
+  }
+}
 /** The request lost a race or repeats something that already exists (stale version, already-counted downstream record). */
 export class DriverEventConflictError extends Error {}

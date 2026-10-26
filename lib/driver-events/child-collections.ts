@@ -53,6 +53,46 @@ export function validateChildCollections(categoryCode: string, facts: Record<str
   return issues
 }
 
+/**
+ * Evidence references inside detail items. A reference is valid only to a document that is ACTIVELY LINKED to this event (stored, scanned, same company: linking
+ * guarantees that). At creation nothing can be linked yet, so no item may carry one; on a correction the linked set is the event's active links.
+ * This closes a forged-reference path (an item naming a document that was never linked, or another company's) without requiring evidence anywhere it is not required.
+ */
+export function referencedEvidenceIds(collections: Record<string, unknown>): Set<string> {
+  const out = new Set<string>()
+  for (const c of Object.values(collections)) {
+    const items = isObject(c) && Array.isArray(c.items) ? c.items : []
+    for (const item of items) if (isObject(item) && Array.isArray(item.evidenceIds)) for (const id of item.evidenceIds) if (typeof id === "string") out.add(id)
+  }
+  return out
+}
+
+export function validateItemEvidenceReferences(collections: Record<string, unknown>, linked: ReadonlySet<string>): Issue[] {
+  const issues: Issue[] = []
+  for (const [key, c] of Object.entries(collections)) {
+    const items = isObject(c) && Array.isArray(c.items) ? c.items : []
+    items.forEach((item, i) => {
+      if (!isObject(item) || item.evidenceIds === undefined) return
+      if (!Array.isArray(item.evidenceIds) || item.evidenceIds.some((id) => typeof id !== "string")) { issues.push({ field: `childCollections.${key}.items[${i}]`, message: "An item's evidence references must be a list of document ids." }); return }
+      for (const id of item.evidenceIds as string[]) if (!linked.has(id)) issues.push({ field: `childCollections.${key}.items[${i}]`, message: "An item can reference evidence only after that document is linked to this event." })
+    })
+  }
+  return issues
+}
+
+/** An obtained Driver Statement whose method is an uploaded document must reference its evidence before the event is closed. */
+export function closureEvidenceIssues(collections: Record<string, unknown>): string[] {
+  const out: string[] = []
+  for (const c of Object.values(collections)) {
+    const items = isObject(c) && Array.isArray(c.items) ? c.items : []
+    for (const item of items) {
+      if (!isObject(item) || !isObject(item.facts)) continue
+      if (item.facts.method === "UPLOADED_DOCUMENT" && item.facts.status === "OBTAINED" && !(Array.isArray(item.evidenceIds) && item.evidenceIds.length > 0)) out.push(`The uploaded-document Driver Statement ${String(item.itemId)} must reference its linked evidence before the event is closed.`)
+    }
+  }
+  return out
+}
+
 export type ChildChange = { field: string; before: unknown; after: unknown; change: "ADDED" | "REMOVED" | "CHANGED"; itemId: string; facts?: string[] }
 
 /** Item-level differences between two versions of the collections, for the immutable history ("what changed in which item"). */
@@ -61,7 +101,8 @@ export function diffChildCollections(before: Record<string, unknown> | undefined
   const a = before ?? {}
   const b = after ?? {}
   for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    const itemsOf = (c: unknown) => new Map((((c as { items?: { itemId: string; facts: Record<string, unknown> }[] })?.items) ?? []).map((i) => [i.itemId, i]))
+    // an item's evidence references are part of the record: a correction that only adds or removes one is a change and appears in the history as the pseudo-fact "evidenceIds"
+    const itemsOf = (c: unknown) => new Map((((c as { items?: { itemId: string; facts: Record<string, unknown>; evidenceIds?: unknown }[] })?.items) ?? []).map((i) => [i.itemId, { ...i, facts: { ...i.facts, ...(Array.isArray(i.evidenceIds) && i.evidenceIds.length ? { evidenceIds: [...(i.evidenceIds as string[])].sort().join(",") } : {}) } }]))
     const x = itemsOf(a[id]), y = itemsOf(b[id])
     for (const itemId of new Set([...x.keys(), ...y.keys()])) {
       const p = x.get(itemId), q = y.get(itemId)

@@ -5,12 +5,16 @@ name: Production 0037/0038 Read-only Verification
 # production check: GitHub OIDC -> Google Workload Identity Federation -> Cloud SQL Auth Proxy with IAM database authentication, in the
 # `production-database` environment (whatever approval that environment requires still applies), and only from `main`.
 # It does not replace or weaken the migration workflow, and it does not deploy anything.
+#
+# Phase `baseline-0039` verifies the CURRENT production baseline (before migrations 0040-0043): the ledger holds exactly the 39 repository migrations 0001-0039 (count, latest, filenames, SHA-256),
+# and it counts live driver application invitations. It is run by scripts/database/verify-production-baseline-0039-readonly.sh, which opens every query in a READ ONLY transaction on a read-only session
+# and proves that the database refuses a write before reading anything. It never invokes the migration runner. The three earlier phases are unchanged.
 
 on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "pre-0037 = ledger must hold 36 migrations; post-0037 = 37; post-0038 = 38"
+        description: "pre-0037 = ledger must hold 36 migrations; post-0037 = 37; post-0038 = 38; baseline-0039 = 39 (the state before 0040-0043; also counts live invitations)"
         required: true
         default: pre-0037
         type: choice
@@ -18,6 +22,7 @@ on:
           - pre-0037
           - post-0037
           - post-0038
+          - baseline-0039
 
 permissions:
   contents: read
@@ -107,6 +112,7 @@ jobs:
           exit 1
 
       - name: Read-only gate verification (ledger, encoding, identity, privileges, conflict counts)
+        if: ${{ inputs.phase != 'baseline-0039' }}
         env:
           PGHOST: 127.0.0.1
           PGPORT: "5432"
@@ -114,6 +120,15 @@ jobs:
           PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
           TES_VERIFY_PHASE: ${{ inputs.phase }}
         run: bash scripts/database/verify-production-0037-0038-readonly.sh
+
+      - name: Baseline 0039 read-only verification (ledger count, latest, filenames, checksums; live invitation count)
+        if: ${{ inputs.phase == 'baseline-0039' }}
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGDATABASE: ${{ env.TES_POSTGRES_DATABASE }}
+          PGUSER: ${{ env.TES_POSTGRES_IAM_USER }}
+        run: bash scripts/database/verify-production-baseline-0039-readonly.sh
 
       - name: Stop Cloud SQL Auth Proxy
         if: always()

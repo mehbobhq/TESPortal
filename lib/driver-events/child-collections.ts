@@ -102,7 +102,7 @@ export function diffChildCollections(before: Record<string, unknown> | undefined
   const b = after ?? {}
   for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
     // an item's evidence references are part of the record: a correction that only adds or removes one is a change and appears in the history as the pseudo-fact "evidenceIds"
-    const itemsOf = (c: unknown) => new Map((((c as { items?: { itemId: string; facts: Record<string, unknown>; evidenceIds?: unknown }[] })?.items) ?? []).map((i) => [i.itemId, { ...i, facts: { ...i.facts, ...(Array.isArray(i.evidenceIds) && i.evidenceIds.length ? { evidenceIds: [...(i.evidenceIds as string[])].sort().join(",") } : {}) } }]))
+    const itemsOf = (c: unknown) => new Map((((c as { items?: { itemId: string; facts: Record<string, unknown>; evidenceIds?: unknown }[] })?.items) ?? []).map((i): [string, { itemId: string; facts: Record<string, unknown> }] => [i.itemId, { itemId: i.itemId, facts: { ...i.facts, ...(Array.isArray(i.evidenceIds) && i.evidenceIds.length ? { evidenceIds: [...(i.evidenceIds as string[])].sort().join(",") } : {}) } }]))
     const x = itemsOf(a[id]), y = itemsOf(b[id])
     for (const itemId of new Set([...x.keys(), ...y.keys()])) {
       const p = x.get(itemId), q = y.get(itemId)

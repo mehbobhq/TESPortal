@@ -1,7 +1,6 @@
 import "server-only"
 import { randomUUID } from "node:crypto"
 import type { PoolClient } from "pg"
-import { TesAuthorizationDeniedError } from "@/lib/auth/tes-authorization"
 import { recordEvent } from "@/lib/master-register/record-event"
 import { DriverEventNotFoundError, DriverEventStateError, DriverEventValidationError } from "./errors"
 import { requireAdditionalSystemCapability, withAuthorizedSystem, type SystemAuthorizationDecision } from "@/lib/auth/tes-system-context"
@@ -50,11 +49,14 @@ export async function releaseEventRestriction(organizationId: string, eventId: s
   }
 }
 
+/** Recognised by name, as the API layer does (lib/api/canonical-response.ts): only lib/auth may import the authorization modules. */
+const isAuthorizationDenied = (error: unknown) => error instanceof Error && error.name === "TesAuthorizationDeniedError"
+
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** A fixed reason code for a refusal that is a DENIAL (never a server fault, never free text). */
 export function releaseDenialCode(error: unknown): string | null {
-  if (error instanceof TesAuthorizationDeniedError) return "CAPABILITY_DENIED"
+  if (isAuthorizationDenied(error)) return "CAPABILITY_DENIED"
   if (error instanceof DriverEventStateError) return error.code ?? "STATE_REFUSED"
   if (error instanceof DriverEventValidationError) return error.field === "evidenceDocumentId" ? "RELEASE_DOCUMENT_REQUIRED" : "INVALID_REQUEST"
   if (error instanceof DriverEventNotFoundError) return "NOT_FOUND"
@@ -87,7 +89,7 @@ async function recordReleaseDenial(a: { organizationId: string; eventId: string;
       })
       return
     } catch (error) {
-      if (error instanceof TesAuthorizationDeniedError) continue // the actor does not hold this capability: try the next
+      if (isAuthorizationDenied(error)) continue // the actor does not hold this capability: try the next
       console.error(JSON.stringify({ level: "ERROR", message: "driver event safety release refusal could not be recorded", requestId: request }))
       return
     }

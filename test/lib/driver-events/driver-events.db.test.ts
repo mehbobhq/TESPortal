@@ -554,6 +554,36 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     assert.equal(got.fact?.resolution_state, "DRAFT");
   });
 
+  scenario("detailed-workflow rules are enforced by the server on create and on versioned correction, including inside child collections", async () => {
+    await signIn(...MANAGE);
+    const o = await org();
+    const { rel: vrel } = await vehicleRel(o);
+    const driver = await driverRel(o);
+    const PARTIES = "DRV.PERF.COLLISION.INVOLVED_PARTIES";
+    const collision = (mutate?: (e: any) => void) => {
+      const e: any = K.fill.wizardRecord("COLLISION", { driverRelationshipId: driver, vehicleRelationshipId: vrel } as never);
+      mutate?.(e);
+      return e;
+    };
+    // create: a request that never touched the wizard is held to its rules
+    await rejects(() => create(o, collision((e) => { e.childCollections[PARTIES].items[0].facts.damageStatus = "NOT_A_STATUS"; })), "ValidationError");
+    await rejects(() => create(o, collision((e) => { e.childCollections[PARTIES].items[0].facts.role = "OTHER_VEHICLE"; })), "ValidationError");
+    const created = await create(o, collision());
+    assert.equal(created.version, 1);
+    // correction: an invalid item value is refused and the event stays at version 1
+    const bad = collision((e) => { e.sourceReference = (e.sourceReference ?? null); e.childCollections[PARTIES].items[0].facts.impactPoint = "TOP_OF_THE_WORLD"; });
+    await rejects(() => K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: bad as never, reason: "fix" }), "ValidationError");
+    assert.equal(Number((await q<{ v: number }>(`SELECT max(record_version) AS v FROM public.driver_event_history WHERE event_id = $1`, [created.id]))[0].v), 1, "a refused correction leaves no version behind");
+    // a valid correction is versioned and the earlier version is kept in full
+    const good = collision((e) => { e.childCollections[PARTIES].items[0].facts.damageStatus = "MINOR"; });
+    const before = (await K.svc.getEvent(o, created.id)).event as any;
+    const done = await K.svc.reviseEvent(o, created.id, { expectedVersion: 1, event: good as never, reason: "Damage re-assessed" }).catch((e: Error) => e);
+    if (done instanceof Error) throw done;
+    assert.equal(done.version, 2);
+    const snap1 = (await q<{ snapshot: any }>(`SELECT snapshot FROM public.driver_event_history WHERE event_id = $1 AND record_version = 1 AND snapshot IS NOT NULL ORDER BY seq DESC LIMIT 1`, [created.id]))[0];
+    assert.equal(snap1.snapshot.record.childCollections[PARTIES].items[0].facts.damageStatus, before.record.childCollections[PARTIES].items[0].facts.damageStatus, "version 1 still holds the original value");
+  });
+
   scenario("safety lookup fails closed: a missing function, an unauthorized (NULL) answer or a database error refuses activation and transfer", async () => {
     await signIn(...MANAGE, "DRIVER_MANAGE", "DRIVER_READ", "PERSON_IDENTITY_MANAGE");
     const o = await org();
@@ -708,8 +738,10 @@ describe("Driver Events canonical store (migration 0042)", { skip: !enabled }, (
     const doc = await storedDocument(o);
     const recordable = K.schema.DRIVER_PERFORMANCE_CATEGORY_REGISTRY.filter((d) => K.schema.PERFORMANCE_CATEGORY_OWNERSHIP[d.value] === "RECORDABLE_EVENT");
     assert.ok(recordable.length >= 19);
+    const { rel: loopVehicle } = await vehicleRel(o);
     for (const d of recordable) {
-      const base = K.fill.minimalInput(d.code, { occurrence: { date: day(-2), time: "09:00", timeZone: "America/Toronto" }, sourceReference: `LC-${d.code}` });
+      // the five detailed workflows are held to their own rules, so they are exercised with a wizard-produced record pointed at this company's vehicle
+      const base = K.fill.minimalInput(d.code, { occurrence: { date: day(-2), time: "09:00", timeZone: "America/Toronto" }, sourceReference: `LC-${d.code}`, ...(K.fill.DETAILED_CODES.includes(d.code) ? { vehicleRelationshipId: loopVehicle } : {}) });
       const created = await create(o, base as never);
       let got = await K.svc.getEvent(o, created.id);
       assert.equal((got.event as any).category, d.value, d.code);

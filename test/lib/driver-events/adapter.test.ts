@@ -20,7 +20,7 @@ function payloadFor(category: "Collision" | "Roadside Inspection" | "Speeding"):
       const field = definition.fields.find((f) => f.key === key)!;
       return { dataPointId: field.dataPointId, value, valueType: field.valueType, unit: field.unitOptions?.[0] };
     }),
-    childCollections: category !== "Collision" ? [] : [{ collectionId: "DRV.PERF.COLLISION.INVOLVED_PARTIES", collectionVersion: "1.0", itemType: "COLLISION_INVOLVED_PARTY", completeness: "COMPLETE", items: [] }],
+    childCollections: category !== "Collision" ? [] : [{ collectionId: "DRV.PERF.COLLISION.INVOLVED_PARTIES", collectionVersion: "1.0", itemType: "COLLISION_INVOLVED_PARTY", completeness: "COMPLETE", items: [{ itemId: "PARTY-1", facts: { role: "CARRIER_POWER_UNIT", linkedVehicleId: VEHICLE, damageStatus: "NONE", drivability: "DRIVABLE", towStatus: "NOT_TOWED", impactPoint: "FRONT" } }] }],
   } as unknown as WizardPayload;
 }
 

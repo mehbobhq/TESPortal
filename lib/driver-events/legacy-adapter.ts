@@ -23,6 +23,14 @@ const SOURCE_SYNONYM: Record<string, string> = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const SEVERITY = new Set(["Low", "Moderate", "High", "Critical", "Not Applicable"])
 
+/** The workflows hold the country by name ("Canada", "United States"); the record holds the two-letter code. A name that is not recognised is not guessed. */
+const COUNTRY_BY_NAME: Record<string, string> = { CANADA: "CA", "UNITED STATES": "US", "UNITED STATES OF AMERICA": "US", USA: "US", MEXICO: "MX" }
+export function countryCode(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim()
+  if (/^[A-Za-z]{2}$/.test(v)) return v.toUpperCase()
+  return COUNTRY_BY_NAME[v.toUpperCase()] ?? null
+}
+
 export type AdaptContext = { driverRelationshipId: string; timeZone: string }
 export type AdaptedEvent = { input: EventInput; followUp: { title: string; dueDate: string | null } | null }
 
@@ -64,7 +72,7 @@ export function wizardPayloadToEventInput(payload: WizardPayload, context: Adapt
   const sourceType = sourceFact && (definition.sources as readonly string[]).includes(sourceFact) ? sourceFact : definition.sources[0]
   const sourceRecord = typeof facts.sourceRecordId === "string" && facts.sourceRecordId.trim() ? facts.sourceRecordId.trim() : null
   const zone = typeof facts.eventTimeZone === "string" && facts.eventTimeZone ? facts.eventTimeZone : context.timeZone
-  const country = payload.country && /^[A-Za-z]{2}$/.test(payload.country) ? payload.country.toUpperCase() : null
+  const country = countryCode(payload.country)
   const region = payload.stateProvince && /^[A-Za-z]{2,3}$/.test(payload.stateProvince) ? payload.stateProvince.toUpperCase() : null
   const collections: Record<string, unknown> = {}
   for (const c of payload.childCollections ?? []) collections[c.collectionId] = c

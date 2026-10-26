@@ -10,6 +10,7 @@ import {
 } from "@/lib/driver-performance-schema"
 import type { EventType } from "@/types/drivers"
 import { diffChildCollections, validateChildCollections } from "./child-collections"
+import { validateDetailedWorkflow } from "./workflow-rules"
 import { DriverEventValidationError } from "./errors"
 
 /**
@@ -326,7 +327,18 @@ export function prepareEvent(input: EventInput, now: Date = new Date()): Prepare
   const children = input.childCollections ?? {}
   if (typeof children !== "object" || Array.isArray(children)) issues.push({ field: "childCollections", message: "Child collections must be an object." })
   else if (JSON.stringify(children).length > MAX_CHILD_BYTES) issues.push({ field: "childCollections", message: "Child collections are too large." })
-  else if (recordState === "RECORDED") issues.push(...validateChildCollections(definition.code, facts, children as Record<string, unknown>))
+  else if (recordState === "RECORDED") {
+    issues.push(...validateChildCollections(definition.code, facts, children as Record<string, unknown>))
+    // the detailed workflows' own rules (controlled values, party/equipment/material consistency) run here too, not only in the browser
+    const original = (children as Record<string, { sourceType?: unknown } | undefined>)["DRV.PERF.ADAPTER.ORIGINAL_WORDING"]?.sourceType
+    issues.push(...validateDetailedWorkflow({
+      category: definition.code, sourceType: typeof input.sourceType === "string" ? input.sourceType : null, date, time, reportedDate: typeof input.reportedDate === "string" ? input.reportedDate : null, occurrencePrecision: precision,
+      locationText: typeof input.location?.text === "string" ? input.location.text : null, city: typeof input.location?.city === "string" ? input.location.city : null,
+      stateProvince: typeof input.location?.stateProvince === "string" ? input.location.stateProvince : null, country: typeof input.location?.country === "string" ? input.location.country : null,
+      vehicleRelationshipId: typeof input.vehicleRelationshipId === "string" ? input.vehicleRelationshipId : null, trailerRelationshipId: typeof input.trailerRelationshipId === "string" ? input.trailerRelationshipId : null,
+      facts, factUnits, childCollections: children as Record<string, unknown>, originalSourceType: typeof original === "string" ? original : null,
+    }))
+  }
 
   // ---- canonical links ----
   const driverRelationshipId = uuidOrNull(input.driverRelationshipId, "driverRelationshipId", issues)

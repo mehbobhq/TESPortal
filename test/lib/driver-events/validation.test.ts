@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { DRIVER_PERFORMANCE_CATEGORY_BY_VALUE, DRIVER_PERFORMANCE_CATEGORY_REGISTRY, PERFORMANCE_CATEGORY_OWNERSHIP } from "@/lib/driver-performance-schema";
 import { DriverEventValidationError } from "@/lib/driver-events/errors";
 import { prepareEvent, recordableCategory, type Scalar } from "@/lib/driver-events/validation";
-import { minimalFacts, minimalInput } from "../../helpers/driver-event-fill";
+import { DETAILED_CODES, minimalFacts, minimalInput } from "../../helpers/driver-event-fill";
 
 const NOW = new Date("2026-03-10T15:00:00Z");
 const RECORDABLE = DRIVER_PERFORMANCE_CATEGORY_REGISTRY.filter((d) => PERFORMANCE_CATEGORY_OWNERSHIP[d.value] === "RECORDABLE_EVENT");
@@ -16,7 +16,8 @@ describe("Driver Event server validation (registry-driven)", () => {
       assert.equal(prepared.categoryCode, d.code);
       assert.equal(prepared.quality.requiredMissing, 0, `${d.code} has no missing required facts`);
       assert.equal(prepared.occurrencePrecision, "EXACT_DATETIME");
-      assert.equal(prepared.occurredAt, "2026-03-09T12:30:00.000Z", "08:30 in Toronto on 9 March 2026 is EDT (UTC-4)");
+      // the five detailed workflows use a wizard-produced record in its own zone; the others use 08:30 in Toronto (EDT, UTC-4)
+      if (!DETAILED_CODES.includes(d.code)) assert.equal(prepared.occurredAt, "2026-03-09T12:30:00.000Z", "08:30 in Toronto on 9 March 2026 is EDT (UTC-4)");
     }
   });
 

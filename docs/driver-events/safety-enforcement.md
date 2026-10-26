@@ -14,7 +14,7 @@ A *safety restriction* is created by an event (roadside driver / vehicle out-of-
 | Company clearance of an enforcement order | refused; release needs the dedicated capability **and** a stored, scanned, person-verified `RELEASE_EVIDENCE` document linked to that event | service + DB trigger | roadside test, "evidence lifecycle failure cases" |
 | Non-mandatory enforcement order | refused | service + DB check (0043) | bypass test |
 | Activating a driver as a company driver (`establishOrganizationDriver`, status ACTIVE) | refused while the person has an active mandatory DRIVER restriction **in that company** (boolean lookup `tes_security.driver_event_person_restricted`, no event detail disclosed) | service | bypass test (refused for the stated reason) |
-| Transferring a driver to another company (`transferOrganizationDriver`) | same check in the company that holds the restriction, so a transfer cannot shed it | service | **implemented, not exercised by an automated test** (needs a verified-identity fixture) |
+| Transferring a driver to another company (`transferOrganizationDriver`) | same check in the company that holds the restriction, so a transfer cannot shed it | service | tests: a restricted driver is refused for the stated reason; with the lookup missing, NULL or raising, a transfer is refused and nothing is moved (see fail-closed below). A fully *successful* transfer of a released, verified driver is covered by the existing driver-identity suite; the combination "released, then transferred" was not added. |
 | Any workflow, for any driver or vehicle | `driver_event_active_restrictions_v1` and `GET /api/companies/{id}/driver-events/restrictions/active?personId=|driverRelationshipId=|vehicleId=` return the active restrictions by person, relationship or vehicle | view + API | bypass test |
 
 ## Not enforced because the workflow does not exist canonically
@@ -35,3 +35,18 @@ The repository has **no PostgreSQL dispatch, trip, load assignment, movement, dr
 * **Vehicle merges:** restrictions follow the vehicle id; the effect of merging two vehicle records on an active restriction was not verified.
 * **Unknown is not Yes:** an OOS answer of *Unknown* creates no restriction; it must be resolved by correction.
 * The regulatory meaning of an order (who may release it, deadlines) is not computed; see the architecture note on regulatory text.
+
+## Fail-closed behaviour of the lookup (production gate)
+
+Activation and transfer call `tes_security.driver_event_person_restricted`. Where Driver Events exists (the event tables or the function are present) the lookup **must answer**:
+
+| Situation | Result |
+|---|---|
+| function missing while the Driver Events tables exist | refused: "safety-restriction status could not be confirmed" |
+| function answers NULL (the caller was not authorized to ask) | refused, same message |
+| function raises a database error | refused; the error propagates and the transaction rolls back; no relationship row is created |
+| function answers `true` | refused: active safety restriction |
+| function answers `false` | not refused for a safety reason |
+| neither the Driver Events tables nor the function exist (Driver Events not installed) | nothing to consult; not refused |
+
+Test: `driver-events.db.test.ts`, "safety lookup fails closed" (activation and transfer; missing, NULL and raising lookup; a clean driver, so the lookup alone decides; relationship counts unchanged). The test fails against the previous fail-open code.

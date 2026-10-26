@@ -1,0 +1,28 @@
+# Driver Events — production gate corrections
+
+Reviewed tree: `7da62d6`. Corrective commits: `f741eb8` (fail-closed safety lookup), `350c012` (server workflow rules), plus this document set. Nothing was pushed, merged, deployed or migrated.
+
+## 1. Fail-closed safety enforcement
+`assertDriverNotSafetyRestricted` (`lib/operational-identity/operations.ts`) used to skip the check when the lookup function was absent and treated NULL as "not restricted". It now refuses unless the lookup answers exactly `true`/`false`. A missing function (while the Driver Events tables exist), a NULL answer and a database error all refuse activation and transfer; nothing is written. Only a database with no Driver Events store at all has nothing to consult. Details and the situation table: [safety-enforcement.md](safety-enforcement.md). Test: "safety lookup fails closed" (activation and transfer, missing/NULL/raising lookup, relationship counts unchanged); it fails on the old code.
+Limit: the combination "released, verified, then transferred" was not added as a new test.
+
+## 2. Server validation
+`lib/driver-events/workflow-rules.ts` rebuilds the wizard's candidate record from the canonical record and runs the same pure validators the wizards use (Collision, Cargo, Spill, Customer Event, Near Miss), at creation and on every versioned correction (the corrected record is validated, then versioned as before; history is untouched). Covered: controlled values (top level and inside child-collection items), duplicate item ids, party/power-unit consistency, injury/statement consistency, windows, discovery/report order, financial values. A structure the validators cannot read becomes a validation refusal, not a server fault. Drafts stay unvalidated for completion; a RECORDED record is held to the rules. Roadside keeps its own rules.
+Deliberate exception: messages saying a child item must reference evidence already linked to the event are dropped at creation, because evidence is stored, scanned and linked to the saved event afterwards. That requirement is enforced by the evidence lifecycle (stored + scanned + verified before it can be linked) rather than at creation.
+A defect found on the way: the adapter dropped the country when a workflow held its name ("Canada"), leaving `country` NULL in the database; it now maps names to ISO codes (unrecognised names are not guessed).
+Test fixtures are records produced by the real wizards (`test/fixtures/driver-events/wizard-valid-records.json`).
+Tests: `workflow-rules.test.ts` (8), database scenario "detailed-workflow rules are enforced by the server…", browser wizards 6/6 and child corrections 5/5 on the stricter server.
+
+## 3. Bundle integrity: `git fsck` versus `git bundle verify`
+Cause: the working repository is a **shallow clone**. `.git/shallow` lists two boundary commits, `176e636` and `b159dcc` (`git rev-parse --is-shallow-repository` = true); their parents (`6f52eea…`, `b14a9442…`) are not in the object store. Inside that repository both tools are satisfied by the shallow boundary. A bundle made from it records those boundary commits as ordinary commits with parents the bundle does not contain, so a fresh clone of the bundle reports `fsck`: "broken link … missing commit" for exactly those two parents, while `git bundle verify` passes (it checks the bundle's own prerequisites, not ancestry beyond them). I reproduced this on the previously delivered full bundle.
+Impact: these are pre-existing history below `0327263`, unrelated to Driver Events; the Driver Events commits and the tree were never affected. It still made the previous artifact not fully verifiable, so it is replaced.
+Fix: the missing history was fetched (`git fetch --unshallow origin`, a read; nothing pushed) into a separate bare repository, the Driver Events commits were added to it, and the bundle was created from there. Verified by cloning the bundle alone and running `git fsck --full` (no missing objects) and `git bundle verify`. Checksums are in `SHA256SUMS.txt` delivered with the bundles (a file cannot contain its own bundle's hash).
+
+## 4. Evidence: real GCS and scanner
+Availability check: no credentialed gcloud account (`gcloud auth list`: "No credentialed accounts"), no bucket, project, credential or scanner variables in the environment, no configuration files in the repository naming a non-production environment I may use. I did not point anything at production resources. **NOT VERIFIED** remains. The in-memory storage with a simulated scanner proves the application's state machine (quarantine → scan result → hash re-verification → stored → linked → person-verified; failed, tampered, wrong-company, unverified and wrong-role cases refused). It does not prove the real bucket permissions, retention/lifecycle rules, signed-URL behaviour, scanner latency, scanner verdict mapping or error handling. Acceptance needs an authorized non-production environment and the procedure in `docs/evidence-lifecycle-production-acceptance.md`.
+
+## 5. Regression
+Unit 1082 tests / 1079 pass / 2 fail / 1 skipped; DB 1373 / 1330 / 40 / 3; `tsc` 104; `next build --webpack` exit 0; browser flow 25/25, forms 16/16, wizards 6/6, child corrections 5/5. The 2 unit and 40 DB failures are pre-existing: the failing-test-name sets equal those of `0327263` (`test-results/db-fail-diff.txt`: NEW-ONLY and BASE-ONLY empty; `unit-failing-names.txt`). Raw outputs in `test-results/`.
+
+## Still open (unchanged)
+Real GCS/scanner; regulatory applicability review; owner decision on cross-company disclosure of a driver's out-of-service status; canonical dispatch/trip/assignment/HOS workflows must consult the active-restriction lookup when built; approval to push, merge and apply migrations 0042–0043.

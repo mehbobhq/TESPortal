@@ -14,13 +14,14 @@ on:
         options:
           - supabase-dev
       action:
-        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic (no migration)"
+        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic; data-check = read-only row counts (no migration)"
         type: choice
         required: true
         options:
           - verify
           - migrate
           - diagnose-auth
+          - data-check
       backend_port:
         description: "verify only: runtime endpoint for the backend role (5432 = session pooler, 6543 = transaction pooler)"
         type: choice
@@ -100,3 +101,11 @@ jobs:
           TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
           TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
         run: bash scripts/database/supabase-dev/diagnose-backend-auth.sh
+      - name: Row counts for authorisation (read-only; counts only)
+        if: inputs.action == 'data-check'
+        env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
+          TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
+          TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
+        run: bash scripts/database/supabase-dev/data-check.sh

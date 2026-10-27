@@ -31,4 +31,10 @@ t refuse              1 malformed_credential u $'p\r'
 # no raw driver text, user name or address is ever printed by the probes
 n=$((n+1)); export FAKE_MODE=auth; out="$(probe_write tes-backend@x pw 5432 2>&1; echo "$PROBE_CATEGORY")"
 if grep -Eq 'tes-backend|10\.1\.2\.3|password authentication|abcdefghij' <<<"$out"; then echo "FAIL probe printed raw driver text"; fail=$((fail+1)); else echo "ok   probes print nothing from the driver"; fi
+# redacted message: no user, password, host, address or quoted string survives; the template does
+n=$((n+1)); export FAKE_MODE=auth; SANITIZE_VALUES=(tes-backend@tes-production-510007.iam.abcdefghijklmnopqrst S3cretPw db.example.supabase.com)
+probe_connect tes-backend@tes-production-510007.iam.abcdefghijklmnopqrst S3cretPw 5432
+if grep -Eq 'tes-backend|abcdefghij|S3cretPw|10\.1\.2\.3|example' <<<"$PROBE_DETAIL" || ! grep -q 'password authentication failed for user "<q>"' <<<"$PROBE_DETAIL"; then echo "FAIL sanitized message: $PROBE_DETAIL"; fail=$((fail+1)); else echo "ok   sanitized message keeps only the template: $PROBE_DETAIL"; fi
+n=$((n+1)); out="$(sanitize_error $'line one S3cretPw at 10.1.2.3 host.supabase.com "quoted" \x01weird\nsecond line')"
+if grep -Eq 'S3cretPw|10\.1\.2\.3|supabase|quoted|second' <<<"$out"; then echo "FAIL sanitize leaks: $out"; fail=$((fail+1)); else echo "ok   sanitize drops values, hosts, quotes and later lines"; fi
 echo "== $((n-fail))/$n passed"; [ "$fail" = 0 ]

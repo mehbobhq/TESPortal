@@ -14,12 +14,13 @@ on:
         options:
           - supabase-dev
       action:
-        description: "migrate = apply pending migrations; verify = read-only verification"
+        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic (no migration)"
         type: choice
         required: true
         options:
           - verify
           - migrate
+          - diagnose-auth
       confirm:
         description: "Type: supabase-dev"
         type: string
@@ -81,3 +82,13 @@ jobs:
           # set to 6543 to prove the transaction pooler the application will use
           TES_BACKEND_PORT: ${{ vars.SUPABASE_DEV_BACKEND_PORT || '5432' }}
         run: bash scripts/database/supabase-dev/verify-readonly.sh
+      - name: Backend authentication diagnostic (read-only; yes/no properties and redacted messages only)
+        if: inputs.action == 'diagnose-auth'
+        env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
+          TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
+          TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
+          TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
+          TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
+        run: bash scripts/database/supabase-dev/diagnose-backend-auth.sh

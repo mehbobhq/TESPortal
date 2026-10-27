@@ -42,12 +42,13 @@ yn() { [ -n "$1" ] && echo yes || echo no; }
 set_mu=$(yn "$TES_MIGRATOR_USER"); set_mp=$(yn "${TES_MIGRATOR_PASSWORD:-}"); set_bu=$(yn "$TES_BACKEND_USER"); set_bp=$(yn "${TES_BACKEND_PASSWORD:-}")
 tenant_suffix() { [[ "$1" =~ \.[a-z0-9]{20}$ ]] && echo yes || echo no; }
 echo "endpoints: migrator port=$PGPORT, backend port=$BPORT ($([ "$BPORT" = 6543 ] && echo transaction-pooler || echo session-mode)); credentials present (yes/no only): migrator_user=$set_mu migrator_secret=$set_mp backend_user=$set_bu backend_secret=$set_bp; user_has_pooler_tenant_suffix: migrator=$(tenant_suffix "$TES_MIGRATOR_USER") backend=$(tenant_suffix "$TES_BACKEND_USER")"
+SANITIZE_VALUES=("$TES_MIGRATOR_USER" "$TES_BACKEND_USER" "${TES_MIGRATOR_PASSWORD:-}" "${TES_BACKEND_PASSWORD:-}" "$PGHOST" "$PGDATABASE")
 blocked=0
 for who in migrator backend; do
   port="$PGPORT"; user="$TES_MIGRATOR_USER"; pass="${TES_MIGRATOR_PASSWORD:-}"
   [ "$who" = backend ] && { port="$BPORT"; user="$TES_BACKEND_USER"; pass="${TES_BACKEND_PASSWORD:-}"; }
   if probe_connect "$user" "$pass" "$port"; then record "connect_$who" PASS "a session was established and answered SELECT 1"
-  else record "connect_$who" FAIL "no session; category=$PROBE_CATEGORY"; record "read_only_$who" FAIL "not attempted: no connection; nothing was read for this identity"; blocked=1; continue; fi
+  else record "connect_$who" FAIL "no session; category=$PROBE_CATEGORY; redacted message: $PROBE_DETAIL"; record "read_only_$who" FAIL "not attempted: no connection; nothing was read for this identity"; blocked=1; continue; fi
   if probe_write "$user" "$pass" "$port"; then record "read_only_$who" PASS "the server refused a probe write with SQLSTATE 25006 (nothing was written)"
   else record "read_only_$who" FAIL "the probe did not prove a server-side refusal; category=$PROBE_CATEGORY"; blocked=1; fi
 done

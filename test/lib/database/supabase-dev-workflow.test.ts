@@ -7,6 +7,7 @@ const code = (t: string) => t.split("\n").filter((l) => !/^\s*#/.test(l)).join("
 const bootstrap = readFileSync("scripts/database/supabase-dev/bootstrap.sql", "utf8")
 const guard = readFileSync("scripts/database/supabase-dev/guard-target.sh", "utf8")
 const migrateDev = readFileSync("scripts/database/supabase-dev/migrate-dev.sh", "utf8")
+const diagnose = readFileSync("scripts/database/supabase-dev/diagnose-backend-auth.sh", "utf8")
 const verify = readFileSync("scripts/database/supabase-dev/verify-readonly.sh", "utf8")
 
 describe("Supabase development workflow", () => {
@@ -50,10 +51,19 @@ describe("Supabase development workflow", () => {
     assert.match(storage, /FORBIDDEN_ENV = \["GOOGLE_APPLICATION_CREDENTIALS_JSON", "GOOGLE_PRIVATE_KEY", "GOOGLE_CLIENT_SECRET", "GCS_KEY", "GCS_SERVICE_ACCOUNT_KEY", "PGPASSWORD"\]/)
     assert.doesNotMatch(wf, /verify-evidence-storage-config/)
     for (const f of readdirSync(".github/workflows")) {
-      if (f === "supabase-dev-database.yml" || f === "supabase-dev-credential-equivalence.yml") continue
+      if (f === "supabase-dev-database.yml") continue
       assert.doesNotMatch(readFileSync(`.github/workflows/${f}`, "utf8"), /secrets\.SUPABASE_DEV|vars\.SUPABASE_DEV|TES_SUPABASE_DEV|environment: supabase-dev/, `${f} must not reference the Supabase development secrets`)
     }
     const adapter = readFileSync("lib/database/postgres-config.ts", "utf8")
     assert.match(adapter, /VERCEL_ENV === "production"/)
+  })
+
+  it("the auth diagnostic is read-only, secret-safe and offered only as a workflow action", () => {
+    assert.match(wf, /- diagnose-auth/)
+    assert.match(wf, /if: inputs\.action == 'diagnose-auth'/)
+    const d = code(diagnose)
+    assert.doesNotMatch(d, /set -x|printenv|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bCREATE\b|\bALTER\b|\bDROP\b|\bGRANT\b|migrate\.sh/i)
+    assert.match(d, /BEGIN TRANSACTION READ ONLY/)
+    assert.doesNotMatch(d, /echo[^\n]*\$\{?(BU|BP|MU|MP|PGHOST|PGDATABASE|TES_[A-Z_]*PASSWORD|TES_[A-Z_]*USER)\b/)
   })
 })

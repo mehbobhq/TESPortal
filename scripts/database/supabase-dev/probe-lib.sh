@@ -6,6 +6,10 @@
 # Categories: ok | missing_credential | malformed_credential | auth | pooler_identity | role | database | login_privilege | tls |
 #             startup_parameter | network | sql_error:<SQLSTATE> | unclassified
 
+SANITIZE_VALUES=()   # callers add secrets/identifiers that must never appear in a message
+PROBE_ENV=()         # extra VAR=VALUE for the probe's psql (diagnostics only)
+PROBE_DETAIL=""
+
 # classify_connection_error <captured stderr text> -> category word (no echo of the text)
 classify_connection_error() {
   local t="${1,,}"
@@ -22,9 +26,19 @@ classify_connection_error() {
   esac
 }
 
+# sanitize_error <captured text> -> ONE redacted line: first line only; every quoted string, host name, IP address and any
+# value listed in SANITIZE_VALUES (user names, password, host, database) is replaced by a placeholder; only a safe character
+# set survives; at most 160 characters. What remains is the message template (e.g. `FATAL: password authentication failed for user "<q>"`).
+sanitize_error() {
+  local line v
+  line="$(printf '%s\n' "$1" | head -n1)"
+  for v in "${SANITIZE_VALUES[@]:-}"; do [ -n "$v" ] && line="${line//"$v"/<s>}"; done
+  printf '%s' "$line" | sed -E "s/\"[^\"]*\"/\"<q>\"/g; s/'[^']*'/'<q>'/g; s/[A-Za-z0-9._-]+\.(com|co|net|org|io|internal|local)\b/<host>/g; s/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/<ip>/g; s/[0-9a-fA-F]*:[0-9a-fA-F:]{4,}/<ip6>/g; s/[^A-Za-z0-9 _:;,.()<>\"'\/-]/?/g" | cut -c1-160
+}
+
 # psql_run <user> <password> <port>   (SQL on stdin; stderr -> stdout, stdout discarded). No PGOPTIONS: poolers may reject startup parameters.
 psql_run() {
-  env -u PGOPTIONS PGUSER="$1" PGPASSWORD="$2" PGPORT="$3" "${PSQL_BIN:-psql}" -X -At -q --no-password -v ON_ERROR_STOP=1 2>&1 >/dev/null
+  env -u PGOPTIONS "${PROBE_ENV[@]}" PGUSER="$1" PGPASSWORD="$2" PGPORT="$3" "${PSQL_BIN:-psql}" -X -At -q --no-password -v ON_ERROR_STOP=1 2>&1 >/dev/null
 }
 
 # probe_connect <user> <password> <port>  -> sets PROBE_CATEGORY (ok only when a session was established and answered SELECT 1)
@@ -36,7 +50,7 @@ probe_connect() {
   local out rc
   out="$(printf 'SELECT 1;\n' | psql_run "$1" "$2" "$3")"; rc=$?
   if [ $rc = 0 ]; then PROBE_CATEGORY=ok; return 0; fi
-  PROBE_CATEGORY="$(classify_connection_error "$out")"; return 1
+  PROBE_CATEGORY="$(classify_connection_error "$out")"; PROBE_DETAIL="$(sanitize_error "$out")"; return 1
 }
 
 # probe_write <user> <password> <port>  -> PASS only if the connection worked AND the server itself answered the write with

@@ -56,7 +56,7 @@ TES's design rule is "no database password" (`FORBIDDEN_ENV` in `scripts/storage
 
 ## Secrets and configuration
 
-GitHub environment `supabase-dev` (add required reviewers), secrets: `SUPABASE_DEV_POOLER_HOST`, `SUPABASE_DEV_DATABASE`, `SUPABASE_DEV_CA_PEM`, `SUPABASE_DEV_MIGRATOR_USER`, `SUPABASE_DEV_MIGRATOR_PASSWORD`, `SUPABASE_DEV_BACKEND_USER`, `SUPABASE_DEV_BACKEND_PASSWORD`; optional variable `SUPABASE_DEV_BACKEND_PORT` (6543 to verify the transaction pooler). `*_USER` values are the role name plus the pooler tenant suffix `.<project-ref>`.
+GitHub environment `supabase-dev` (add required reviewers), secrets: `SUPABASE_DEV_POOLER_HOST`, `SUPABASE_DEV_DATABASE`, `SUPABASE_DEV_CA_PEM`, `SUPABASE_DEV_MIGRATOR_USER`, `SUPABASE_DEV_MIGRATOR_PASSWORD`, `SUPABASE_DEV_BACKEND_USER`, `SUPABASE_DEV_BACKEND_PASSWORD`; the `verify` action takes a `backend_port` input (6543 verifies the transaction pooler). `*_USER` values are the role name plus the pooler tenant suffix `.<project-ref>`.
 
 Bootstrap (operator machine, once): `TES_DEV_BOOTSTRAP_CONFIRM=supabase-dev TES_DEV_BACKEND_PASSWORD=… TES_DEV_MIGRATOR_PASSWORD=… psql "<admin connection>" -v ON_ERROR_STOP=1 -f scripts/database/supabase-dev/bootstrap.sql`. Passwords ≥ 24 chars and different. A `SCRAM-SHA-256$…` verifier is accepted in place of plaintext to keep plaintext out of server logs.
 
@@ -65,7 +65,7 @@ Bootstrap (operator machine, once): `TES_DEV_BOOTSTRAP_CONFIRM=supabase-dev TES_
 1. Create the `supabase-dev` GitHub environment, secrets and reviewers. Download the Supabase CA.
 2. Run the bootstrap as `postgres` (fails closed if `postgres` is not the database owner — see compatibility issues).
 3. Dispatch `Supabase Development Database` with action `migrate`.
-4. Dispatch with action `verify` (session port), then again with `SUPABASE_DEV_BACKEND_PORT=6543`. Expected: 43 ledger entries, RLS 116, policies 198, no FAIL.
+4. Dispatch with action `verify` (session port), then again with `backend_port` = 6543. Expected: 43 ledger entries, RLS 116, policies 198, no FAIL.
 5. Run the adversarial matrix (`test/database/system-wide-authorization-rls.sql`) against the dev database only if an owner-approved superuser path exists; otherwise rely on CI.
 6. Configure a Vercel **Preview** environment (never Production) with the three adapter variables.
 

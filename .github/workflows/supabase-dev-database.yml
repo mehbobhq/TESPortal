@@ -21,6 +21,14 @@ on:
           - verify
           - migrate
           - diagnose-auth
+      backend_port:
+        description: "verify only: runtime endpoint for the backend role (5432 = session pooler, 6543 = transaction pooler)"
+        type: choice
+        required: false
+        default: "5432"
+        options:
+          - "5432"
+          - "6543"
       confirm:
         description: "Type: supabase-dev"
         type: string
@@ -79,8 +87,8 @@ jobs:
           TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
           TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
           TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
-          # set to 6543 to prove the transaction pooler the application will use
-          TES_BACKEND_PORT: ${{ vars.SUPABASE_DEV_BACKEND_PORT || '5432' }}
+          # 6543 proves the transaction pooler the application will use
+          TES_BACKEND_PORT: ${{ inputs.backend_port || '5432' }}
         run: bash scripts/database/supabase-dev/verify-readonly.sh
       - name: Backend authentication diagnostic (read-only; yes/no properties and redacted messages only)
         if: inputs.action == 'diagnose-auth'

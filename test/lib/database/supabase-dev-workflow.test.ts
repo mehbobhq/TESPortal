@@ -23,7 +23,7 @@ describe("Supabase development workflow", () => {
     assert.doesNotMatch(code(wf), /id-token|google-github-actions|cloud-sql|TES_CLOUD_SQL|TES_POSTGRES_IAM|GCP_|production-database/i)
     assert.deepEqual([...new Set([...wf.matchAll(/\$\{\{\s*(secrets|vars)\.([A-Z_]+)/g)].map((m) => `${m[1]}.${m[2]}`))].sort(), [
       "secrets.SUPABASE_DEV_BACKEND_PASSWORD", "secrets.SUPABASE_DEV_BACKEND_USER", "secrets.SUPABASE_DEV_CA_PEM", "secrets.SUPABASE_DEV_DATABASE",
-      "secrets.SUPABASE_DEV_MIGRATOR_PASSWORD", "secrets.SUPABASE_DEV_MIGRATOR_USER", "secrets.SUPABASE_DEV_POOLER_HOST", "vars.SUPABASE_DEV_BACKEND_PORT",
+      "secrets.SUPABASE_DEV_MIGRATOR_PASSWORD", "secrets.SUPABASE_DEV_MIGRATOR_USER", "secrets.SUPABASE_DEV_POOLER_HOST"
     ])
   })
   it("uses the session pooler port, verified TLS and the existing runner", () => {

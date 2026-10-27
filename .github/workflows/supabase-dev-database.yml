@@ -1,0 +1,80 @@
+name: Supabase Development Database
+
+# Manual only. Targets the Supabase DEVELOPMENT project (tes-portal-dev) and nothing else: the job runs in the
+# `supabase-dev` GitHub environment, whose secrets are the only credentials it can read, and the scripts refuse any
+# host that is not *.supabase.com / *.supabase.co. It has no Google credentials (no id-token permission), so it cannot
+# reach Cloud SQL. Production uses the separate production-* workflows.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (the only accepted value is supabase-dev)"
+        type: choice
+        required: true
+        options:
+          - supabase-dev
+      action:
+        description: "migrate = apply pending migrations; verify = read-only verification"
+        type: choice
+        required: true
+        options:
+          - verify
+          - migrate
+      confirm:
+        description: "Type: supabase-dev"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-dev-database
+  cancel-in-progress: false
+
+jobs:
+  supabase-dev:
+    if: github.ref == 'refs/heads/main' && inputs.environment == 'supabase-dev' && inputs.confirm == 'supabase-dev'
+    runs-on: ubuntu-24.04
+    environment: supabase-dev
+    timeout-minutes: 30
+    env:
+      TES_DATABASE_TARGET: supabase-dev
+      # Supavisor SESSION mode (port 5432): migrations hold a session advisory lock and need one stable connection.
+      PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+      PGPORT: "5432"
+      PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
+      PGSSLMODE: verify-full
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install a PostgreSQL 17 client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - name: Write the CA certificate
+        env:
+          CA_PEM: ${{ secrets.SUPABASE_DEV_CA_PEM }}
+        run: |
+          umask 077
+          printf '%s\n' "$CA_PEM" > "$RUNNER_TEMP/supabase-ca.pem"
+          grep -q 'BEGIN CERTIFICATE' "$RUNNER_TEMP/supabase-ca.pem"
+          echo "PGSSLROOTCERT=$RUNNER_TEMP/supabase-ca.pem" >> "$GITHUB_ENV"
+      - name: Apply migrations (migrator, session mode)
+        if: inputs.action == 'migrate'
+        env:
+          PGUSER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
+          PGPASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
+        run: bash scripts/database/supabase-dev/migrate-dev.sh
+      - name: Read-only verification
+        if: inputs.action == 'verify'
+        env:
+          TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
+          TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
+          TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
+          TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
+          # set to 6543 to prove the transaction pooler the application will use
+          TES_BACKEND_PORT: ${{ vars.SUPABASE_DEV_BACKEND_PORT || '5432' }}
+        run: bash scripts/database/supabase-dev/verify-readonly.sh

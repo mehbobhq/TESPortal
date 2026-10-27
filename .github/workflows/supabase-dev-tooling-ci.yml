@@ -1,0 +1,50 @@
+name: Supabase Development Tooling CI
+
+# Proves the Supabase development bootstrap, guarded migration runner and read-only verifier against a DISPOSABLE
+# local PostgreSQL 17 shaped like a Supabase project. It uses no secret and never contacts Supabase.
+on:
+  pull_request:
+    paths:
+      - "scripts/database/supabase-dev/**"
+      - "scripts/database/migrate.sh"
+      - "database/migrations/**"
+      - "lib/database/postgres-config.ts"
+      - "test/lib/database/**"
+      - ".github/workflows/supabase-dev-tooling-ci.yml"
+      - ".github/workflows/supabase-dev-database.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulated-supabase:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: supabase_admin
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U supabase_admin"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      MIN_SERVER_VERSION_NUM: "170000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.9.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Adapter and workflow unit tests
+        run: node --experimental-strip-types --import ./test/helpers/register-alias-loader.mjs --test test/lib/database/*.test.ts
+      - name: Bootstrap, guarded migration, read-only verifier, negative cases, adversarial matrix
+        run: bash scripts/database/supabase-dev/test/run-local.sh

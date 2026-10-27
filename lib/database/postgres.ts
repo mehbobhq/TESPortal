@@ -3,6 +3,7 @@ import "server-only"
 import { AuthTypes, Connector, IpAddressTypes } from "@google-cloud/cloud-sql-connector"
 import pg from "pg"
 import { getGoogleAuthClient } from "@/lib/google/auth"
+import { resolveDatabaseTarget } from "@/lib/database/postgres-config"
 import {
   cloudSqlInstanceConnectionName,
   postgresDatabaseName,
@@ -20,18 +21,57 @@ const { Pool } = pg
  *
  * No database password, service-account key, static access token, or direct
  * public-IP credential is stored here.
+ *
+ * Development alternative (TES_DATABASE_PROVIDER=supabase-dev): the Supabase
+ * development database, password authentication through a server-side secret
+ * connection string, TLS with certificate verification. Selected only by that
+ * explicit variable; see postgres-config.ts and docs/database/supabase-development.md.
+ * The Cloud SQL branch below is unchanged.
  */
 
 type PostgresPool = InstanceType<typeof Pool>
 
 type DatabaseState = {
-  connector: Connector
+  connector: Connector | null
   pool: PostgresPool
 }
 
 let statePromise: Promise<DatabaseState> | null = null
 
+async function createSupabaseDevState(
+  connection: Extract<ReturnType<typeof resolveDatabaseTarget>, { kind: "supabase-dev" }>["connection"],
+): Promise<DatabaseState> {
+  const pool = new Pool({
+    host: connection.host,
+    port: connection.port,
+    database: connection.database,
+    user: connection.user,
+    password: connection.password,
+    ssl: connection.ssl,
+
+    max: 3,
+    min: 0,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+
+    // No `statement_timeout` startup parameter: poolers may reject startup
+    // parameters. The role carries statement_timeout (bootstrap.sql) and
+    // withPostgresTransaction() re-applies it with SET LOCAL. query_timeout is
+    // client-side only.
+    query_timeout: 35_000,
+  })
+
+  pool.on("error", () => {
+    // See the Cloud SQL branch: do not log raw driver errors.
+  })
+
+  return { connector: null, pool }
+}
+
 async function createDatabaseState(): Promise<DatabaseState> {
+  const target = resolveDatabaseTarget()
+  if (target.kind === "supabase-dev") return createSupabaseDevState(target.connection)
+
   const connector = new Connector({
     // Reuse TES's existing fail-closed Google auth boundary. In Vercel
     // Production this is the WIF IdentityPoolClient; outside production it is

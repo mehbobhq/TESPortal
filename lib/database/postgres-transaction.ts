@@ -2,6 +2,7 @@ import "server-only"
 
 import type { PoolClient } from "pg"
 import { getPostgresPool } from "@/lib/database/postgres"
+import { isSupabaseDevDatabase } from "@/lib/database/postgres-config"
 
 export type PostgresTransactionWork<T> = (client: PoolClient) => Promise<T>
 
@@ -19,6 +20,11 @@ export async function withPostgresTransaction<T>(
 
   try {
     await client.query("BEGIN")
+    if (isSupabaseDevDatabase()) {
+      // Behind a pooler the startup parameter is not available; the bound is
+      // re-applied per transaction (and is transaction-local).
+      await client.query("SET LOCAL statement_timeout = '30s'")
+    }
     const result = await work(client)
     await client.query("COMMIT")
     return result

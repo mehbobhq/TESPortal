@@ -87,4 +87,17 @@ describe("Supabase development workflow", () => {
       if (f === "supabase-dev-database.yml") assert.equal(r.stdout.trim(), "workflow_dispatch")
     }
   })
+
+  it("the application-path check is read-only, gated, secret-safe and uses the real adapter", () => {
+    const run = readFileSync("scripts/database/supabase-dev/app-path/run.sh", "utf8")
+    const chk = readFileSync("scripts/database/supabase-dev/app-path/check.mjs", "utf8")
+    assert.match(wf, /- app-path-check/)
+    assert.match(wf, /if: inputs\.action == 'app-path-check'/)
+    assert.doesNotMatch(code(wf).split("\n").filter((l) => /^\s+run:/.test(l)).join("\n"), /inputs\./)
+    assert.doesNotMatch(code(run), /echo|set -x|printenv/)
+    assert.match(run, /TES_DATABASE_PROVIDER=supabase-dev/)
+    assert.match(run, /grep -E '\^app_path:'/)
+    assert.doesNotMatch(chk, /\.message|JSON\.stringify\(e\)|console\.log\([^)]*(userId|password)/)
+    assert.doesNotMatch(chk, /\b(INSERT|UPDATE|DELETE)\b/i)
+  })
 })

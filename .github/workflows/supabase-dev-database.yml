@@ -14,7 +14,7 @@ on:
         options:
           - supabase-dev
       action:
-        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic; data-check = read-only row counts; seed-first-user = one-off: create the first actor, Clerk link and Master Account (needs clerk_user_id)"
+        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic; data-check = read-only row counts; seed-first-user = one-off: create the first actor, Clerk link and Master Account (needs clerk_user_id); app-path-check = read-only run of the app's customer-list code as that user (needs clerk_user_id)"
         type: choice
         required: true
         options:
@@ -23,6 +23,7 @@ on:
           - diagnose-auth
           - data-check
           - seed-first-user
+          - app-path-check
       backend_port:
         description: "verify only: runtime endpoint for the backend role (5432 = session pooler, 6543 = transaction pooler)"
         type: choice
@@ -32,7 +33,7 @@ on:
           - "5432"
           - "6543"
       clerk_user_id:
-        description: "seed-first-user only: the Clerk user id (user_...), an identifier, not a secret"
+        description: "seed-first-user / app-path-check: the Clerk user id (user_...), an identifier, not a secret"
         type: string
         required: false
       confirm:
@@ -123,3 +124,27 @@ jobs:
           TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
           TES_BOOTSTRAP_CLERK_USER_ID: ${{ inputs.clerk_user_id }}
         run: bash scripts/database/supabase-dev/seed-first-user.sh
+      - name: Install Node and dependencies for the application-path check
+        if: inputs.action == 'app-path-check'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        if: inputs.action == 'app-path-check'
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install dependencies
+        if: inputs.action == 'app-path-check'
+        run: pnpm install --frozen-lockfile
+      - name: "Application path as the Clerk user (read-only; fixed words and counts only)"
+        if: inputs.action == 'app-path-check'
+        env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
+          TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
+          TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
+          TES_SUPABASE_DEV_CA_PEM: ${{ secrets.SUPABASE_DEV_CA_PEM }}
+          TES_APP_PATH_CLERK_USER_ID: ${{ inputs.clerk_user_id }}
+          TES_BACKEND_PORT: ${{ inputs.backend_port == '5432' && '5432' || '6543' }}
+        run: bash scripts/database/supabase-dev/app-path/run.sh

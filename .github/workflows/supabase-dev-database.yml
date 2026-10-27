@@ -14,7 +14,7 @@ on:
         options:
           - supabase-dev
       action:
-        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic; data-check = read-only row counts (no migration)"
+        description: "migrate = apply pending migrations; verify = read-only verification; diagnose-auth = read-only backend authentication diagnostic; data-check = read-only row counts; seed-first-user = one-off: create the first actor, Clerk link and Master Account (needs clerk_user_id)"
         type: choice
         required: true
         options:
@@ -22,6 +22,7 @@ on:
           - migrate
           - diagnose-auth
           - data-check
+          - seed-first-user
       backend_port:
         description: "verify only: runtime endpoint for the backend role (5432 = session pooler, 6543 = transaction pooler)"
         type: choice
@@ -30,6 +31,10 @@ on:
         options:
           - "5432"
           - "6543"
+      clerk_user_id:
+        description: "seed-first-user only: the Clerk user id (user_...), an identifier, not a secret"
+        type: string
+        required: false
       confirm:
         description: "Type: supabase-dev"
         type: string
@@ -109,3 +114,12 @@ jobs:
           TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
           TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
         run: bash scripts/database/supabase-dev/data-check.sh
+      - name: Seed the first user (one-off write: actor, Clerk link, Master Account; no business data)
+        if: inputs.action == 'seed-first-user'
+        env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
+          TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
+          TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
+          TES_BOOTSTRAP_CLERK_USER_ID: ${{ inputs.clerk_user_id }}
+        run: bash scripts/database/supabase-dev/seed-first-user.sh

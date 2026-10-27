@@ -66,4 +66,15 @@ describe("Supabase development workflow", () => {
     assert.match(d, /BEGIN TRANSACTION READ ONLY/)
     assert.doesNotMatch(d, /echo[^\n]*\$\{?(BU|BP|MU|MP|PGHOST|PGDATABASE|TES_[A-Z_]*PASSWORD|TES_[A-Z_]*USER)\b/)
   })
+
+  it("seeding is a gated one-off that validates the id, passes it only through env and never creates business data", () => {
+    const seed = readFileSync("scripts/database/supabase-dev/seed-first-user.sh", "utf8")
+    assert.match(wf, /- seed-first-user/)
+    assert.match(wf, /if: inputs\.action == 'seed-first-user'/)
+    assert.match(wf, /TES_BOOTSTRAP_CLERK_USER_ID: \$\{\{ inputs\.clerk_user_id \}\}/)
+    assert.doesNotMatch(code(wf).split("\n").filter((l) => /^\s+run:/.test(l)).join("\n"), /inputs\./)
+    assert.match(seed, /\^user_\[A-Za-z0-9\]\+\$/)
+    assert.match(seed, /bootstrap-first-actor\.sh/); assert.match(seed, /bootstrap-first-master-account\.sh/)
+    assert.doesNotMatch(code(seed), /INSERT INTO public\.(organizations|customers)|set -x/)
+  })
 })

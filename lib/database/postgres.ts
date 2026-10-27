@@ -4,6 +4,7 @@ import { AuthTypes, Connector, IpAddressTypes } from "@google-cloud/cloud-sql-co
 import pg from "pg"
 import { getGoogleAuthClient } from "@/lib/google/auth"
 import { resolveDatabaseTarget } from "@/lib/database/postgres-config"
+import { logSafeError } from "@/lib/database/safe-error"
 import {
   cloudSqlInstanceConnectionName,
   postgresDatabaseName,
@@ -147,7 +148,8 @@ export class PostgresConnectionError extends Error {
 export async function getPostgresPool(): Promise<PostgresPool> {
   try {
     return (await databaseState()).pool
-  } catch {
+  } catch (error) {
+    logSafeError("database pool", error)
     throw new PostgresConnectionError()
   }
 }

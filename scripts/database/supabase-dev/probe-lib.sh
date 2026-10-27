@@ -3,7 +3,7 @@
 # pointing at a stub. Output is limited to a fixed category word and a five-character SQLSTATE: raw psql/libpq text
 # (which can name users, hosts or addresses) is never printed.
 #
-# Categories: ok | missing_credential | malformed_credential | auth | pooler_identity | role | database | login_privilege | tls |
+# Categories: ok | missing_credential | non_ascii_credential | malformed_credential | auth | pooler_identity | role | database | login_privilege | tls |
 #             startup_parameter | network | sql_error:<SQLSTATE> | unclassified
 
 SANITIZE_VALUES=()   # callers add secrets/identifiers that must never appear in a message
@@ -45,6 +45,8 @@ psql_run() {
 probe_connect() {
   PROBE_CATEGORY=""
   if [ -z "$1" ] || [ -z "$2" ]; then PROBE_CATEGORY=missing_credential; return 1; fi
+  # the stored SCRAM verifier depends on the exact bytes the setting client sent; non-ASCII passwords/users are encoding-dependent
+  if [ "${PROBE_ALLOW_NON_ASCII:-}" != 1 ] && LC_ALL=C grep -qP '[\x80-\xFF]' <<<"$1$2"; then PROBE_CATEGORY=non_ascii_credential; return 1; fi
   # a pasted secret with a leading/trailing blank or a newline/CR inside can never authenticate; name it instead of guessing
   if [[ "$1" =~ ^[[:space:]]|[[:space:]]$|[[:cntrl:]] ]] || [[ "$2" =~ ^[[:space:]]|[[:space:]]$|[[:cntrl:]] ]]; then PROBE_CATEGORY=malformed_credential; return 1; fi
   local out rc

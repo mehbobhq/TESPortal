@@ -106,6 +106,10 @@ export function resolveDatabaseTarget(env: Env = process.env): DatabaseTarget {
     throw new DatabaseConfigurationError("the connection must authenticate as the tes-backend role")
   }
   const password = decodeURIComponent(url.password)
+  if (/[^\x20-\x7e]/.test(password) || /[^\x20-\x7e]/.test(user)) {
+    // A non-ASCII password authenticates only if the client that set it sent the same bytes as this one.
+    throw new DatabaseConfigurationError("the connection string user and password must be printable ASCII")
+  }
   if (password === "") throw new DatabaseConfigurationError("the connection string carries no password")
 
   const database = decodeURIComponent(url.pathname.replace(/^\//, ""))

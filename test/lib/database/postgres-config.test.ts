@@ -74,6 +74,10 @@ describe("database target selection", () => {
     assert.equal(resolveDatabaseTarget(dev({ TES_SUPABASE_DEV_DATABASE_URL: url(undefined, undefined, 6543, "?sslmode=verify-full") })).kind, "supabase-dev")
   })
 
+  it("rejects a non-ASCII password or user (the verifier depends on the client encoding)", () => {
+    rejects(dev({ TES_SUPABASE_DEV_DATABASE_URL: `postgresql://${encodeURIComponent(ROLE)}:p%C3%A9ssword-with-accent@aws-0.pooler.supabase.com:6543/postgres` }), /printable ASCII/)
+  })
+
   it("never puts a secret value in an error", () => {
     for (const env of [dev({ TES_CLOUD_SQL_INSTANCE: "x" }), dev({ TES_SUPABASE_DEV_DATABASE_URL: url(undefined, "db.example.com") }), dev({ TES_SUPABASE_DEV_CA_PEM: "bad" })]) {
       try { resolveDatabaseTarget(env) } catch (e) { assert.doesNotMatch(String((e as Error).message), /s3cret|BEGIN CERT|db\.example\.com/) }

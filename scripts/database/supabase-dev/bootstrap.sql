@@ -12,8 +12,8 @@
 --
 -- Required environment (read with \getenv; never written on a command line):
 --   TES_DEV_BOOTSTRAP_CONFIRM   must equal: supabase-dev
---   TES_DEV_BACKEND_PASSWORD    >= 24 characters
---   TES_DEV_MIGRATOR_PASSWORD   >= 24 characters, different from the backend's
+--   TES_DEV_BACKEND_PASSWORD    >= 24 printable ASCII characters
+--   TES_DEV_MIGRATOR_PASSWORD   >= 24 printable ASCII characters, different from the backend's
 --
 -- The role names are the production names, hard-coded in migrations
 -- 0001-0043, and are preserved exactly. Passwords replace IAM authentication.
@@ -49,7 +49,9 @@
 SELECT :'tes_confirm' = 'supabase-dev'                          AS confirm_ok,
        length(:'tes_backend_password') >= 24
          AND length(:'tes_migrator_password') >= 24
-         AND :'tes_backend_password' <> :'tes_migrator_password' AS passwords_ok
+         AND :'tes_backend_password' <> :'tes_migrator_password'
+         AND :'tes_backend_password' ~ '^[!-~]([ -~]*[!-~])?$'
+         AND :'tes_migrator_password' ~ '^[!-~]([ -~]*[!-~])?$' AS passwords_ok
 \gset
 
 \if :confirm_ok
@@ -59,7 +61,7 @@ SELECT :'tes_confirm' = 'supabase-dev'                          AS confirm_ok,
 \endif
 \if :passwords_ok
 \else
-  \echo 'ERROR: passwords must be >= 24 characters and different from each other.'
+  \echo 'ERROR: passwords must be >= 24 printable ASCII characters (no other characters: the stored hash depends on the client encoding), without leading/trailing blanks, and different from each other.'
   DO $$ BEGIN RAISE EXCEPTION 'bootstrap refused: see the preceding message' USING ERRCODE = 'P0001'; END $$;
 \endif
 

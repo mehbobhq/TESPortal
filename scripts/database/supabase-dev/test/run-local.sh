@@ -26,6 +26,7 @@ reset postgres
 CONF=nope expect "wrong confirmation refused" nz bootstrap
 BP=short expect "short password refused" nz bootstrap
 MP=aaaaaaaaaaaaaaaaaaaaaaaa1 expect "identical passwords refused" nz bootstrap
+BP=$'caf\xc3\xa9-caf\xc3\xa9-caf\xc3\xa9-12345' expect "non-ASCII password refused" nz bootstrap
 BUSER=supabase_admin expect "superuser refused" nz bootstrap
 env -u TES_DEV_BOOTSTRAP_CONFIRM bash -c "PGUSER=postgres PGDATABASE=tes_dev TES_DEV_BACKEND_PASSWORD=x psql -X -q -f $D/bootstrap.sql" >/dev/null 2>&1; [ $? != 0 ] && ok "missing confirmation refused" || bad "missing confirmation refused"
 [ "$(admin -d tes_dev -c "select count(*) from pg_roles where rolname in ('$M','$B')")" = 0 ] && ok "refused runs created no role" || bad "refused runs created roles"

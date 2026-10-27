@@ -28,6 +28,8 @@ t refuse              1 missing_credential "" p
 t refuse              1 malformed_credential u $'p\n'
 t refuse              1 malformed_credential "u " p
 t refuse              1 malformed_credential u $'p\r'
+t refuse              1 non_ascii_credential u $'p\xc3\xa9ss'
+t refuse              1 non_ascii_credential $'\xc3\xa9' p
 # no raw driver text, user name or address is ever printed by the probes
 n=$((n+1)); export FAKE_MODE=auth; out="$(probe_write tes-backend@x pw 5432 2>&1; echo "$PROBE_CATEGORY")"
 if grep -Eq 'tes-backend|10\.1\.2\.3|password authentication|abcdefghij' <<<"$out"; then echo "FAIL probe printed raw driver text"; fail=$((fail+1)); else echo "ok   probes print nothing from the driver"; fi

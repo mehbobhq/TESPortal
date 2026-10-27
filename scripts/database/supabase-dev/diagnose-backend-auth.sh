@@ -10,6 +10,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/probe-lib.sh"
 tes_dev_guard "" || exit 2
 unset PGOPTIONS
+PROBE_ALLOW_NON_ASCII=1   # diagnostics only: try the credentials as given (verify-readonly.sh rejects non-ASCII)
 export PGCONNECT_TIMEOUT=20
 BACKEND_ROLE='tes-backend@tes-production-510007.iam'; MIGRATOR_ROLE='tes-database-migrator@tes-production-510007.iam'
 MU="${TES_MIGRATOR_USER:-}"; MP="${TES_MIGRATOR_PASSWORD:-}"; BU="${TES_BACKEND_USER:-}"; BP="${TES_BACKEND_PASSWORD:-}"
@@ -58,6 +59,13 @@ attempt "backend_channel_binding_disabled(port $PGPORT)" "$BU" "$BP" "$PGPORT" P
 attempt "backend_transaction_pooler(port 6543)" "$BU" "$BP" 6543
 # password supplied through a password file instead of PGPASSWORD (rules out environment-variable handling)
 pf="$(mktemp)"; chmod 600 "$pf"; trap 'rm -f "$pf"' EXIT
+# the same password re-encoded as a Windows/legacy client would have sent it (decides whether the stored verifier was made from non-UTF-8 bytes)
+for enc in ISO-8859-1 CP1252 CP850 CP437; do
+  if conv="$(printf '%s' "$BP" | iconv -f UTF-8 -t "$enc" 2>/dev/null; printf x)" && conv="${conv%x}" && [ -n "$conv" ] && [ "$conv" != "$BP" ]; then
+    if probe_connect "$BU" "$conv" "$PGPORT"; then echo "backend_password_reencoded_as_$enc: PASS"; else echo "backend_password_reencoded_as_$enc: FAIL category=$PROBE_CATEGORY"; fi
+  else echo "backend_password_reencoded_as_$enc: not_applicable"; fi
+done
+unset conv
 esc() { local x="${1//\\/\\\\}"; printf '%s' "${x//:/\\:}"; }
 printf '%s:%s:%s:%s:%s\n' "$(esc "$PGHOST")" "$PGPORT" "$(esc "$PGDATABASE")" "$(esc "$BU")" "$(esc "$BP")" > "$pf"
 out="$(printf 'SELECT 1;\n' | env -u PGOPTIONS -u PGPASSWORD PGPASSFILE="$pf" PGUSER="$BU" PGPORT="$PGPORT" "${PSQL_BIN:-psql}" -X -At -q --no-password -v ON_ERROR_STOP=1 2>&1 >/dev/null)" \

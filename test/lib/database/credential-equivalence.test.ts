@@ -20,8 +20,8 @@ exit 0
   chmodSync(bin, 0o755)
   return { dir, bin }
 }
-const run = (mode: string, env: Record<string, string>, input?: string) =>
-  spawnSync("python3", ["-I", SCRIPT, mode], { env: { PATH: process.env.PATH ?? "", ...env }, input, encoding: "utf8" })
+const run = (mode: string, env: Record<string, string>, input = "") =>
+  spawnSync("python3", ["-I", SCRIPT, mode], { env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv, input, encoding: "utf8" as const })
 const stored = (dir: string) => ({
   SUPABASE_DEV_CMP_KEY: readFileSync(join(dir, "SUPABASE_DEV_CMP_KEY.val"), "utf8"),
   SUPABASE_DEV_CMP_EXPECTED: readFileSync(join(dir, "SUPABASE_DEV_CMP_EXPECTED.val"), "utf8"),

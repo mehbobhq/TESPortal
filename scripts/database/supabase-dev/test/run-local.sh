@@ -56,11 +56,17 @@ expect "migrate-dev re-run is a no-op" 0 env TES_DEV_SESSION_PORT="$PGPORT" bash
 [ "$(admin -d tes_dev -c "select count(*) from tes_system.schema_migrations where applied_by='$M'")" = 43 ] && ok "all applied by the migrator" || bad "applied_by differs"
 
 echo "== verifier"
+# the local cluster uses trust authentication, so the passwords are placeholders; the verifier still requires them to be present
+export TES_MIGRATOR_PASSWORD=local-placeholder TES_BACKEND_PASSWORD=local-placeholder
 export TES_MIGRATOR_USER="$M" TES_BACKEND_USER="$B" MIN_SERVER_VERSION_NUM="${MIN_SERVER_VERSION_NUM:-160000}"
 unset PGUSER
 verify() { bash $D/verify-readonly.sh; }
 verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT .*: FAIL' /tmp/sbv.$$ && { bad "verifier on a correct database has FAIL items"; grep FAIL /tmp/sbv.$$; } || ok "verifier: no FAIL on a correct database"
 grep -Eq 'RESULT synthetic_identity_isolation: (PASS - an unknown identity sees 0 of [1-9][0-9]* rows|UNVERIFIED - no rows)' /tmp/sbv.$$ && ok "isolation is PASS only when rows exist (else UNVERIFIED, never a vacuous PASS)" || bad "isolation result unexpected"
+grep -q '^RESULT connect_backend: PASS' /tmp/sbv.$$ && grep -q '^RESULT read_only_backend: PASS - the server refused a probe write with SQLSTATE 25006' /tmp/sbv.$$ && ok "real server: backend connect + SQLSTATE 25006 refusal both PASS" || bad "backend probe did not PASS against the real server"
+TES_BACKEND_PORT=5439 verify >/tmp/sbv2.$$ 2>&1; grep -q '^RESULT connect_backend: FAIL - no session; category=network' /tmp/sbv2.$$ && grep -q 'RESULT: BLOCKED' /tmp/sbv2.$$ && ! grep -q 'read_only_backend: PASS' /tmp/sbv2.$$ && ok "unreachable backend endpoint: FAIL category=network, never PASS" || bad "unreachable backend endpoint not reported as network failure"
+TES_BACKEND_PASSWORD= verify >/tmp/sbv2.$$ 2>&1; grep -q "RESULT connect_backend: FAIL - no session; category=missing_credential" /tmp/sbv2.$$ && grep -q "RESULT: BLOCKED" /tmp/sbv2.$$ && ok "missing backend secret: FAIL category=missing_credential" || bad "missing backend secret not reported"
+echo "stub CA" > /tmp/sbca.$$; TES_DEV_LOCAL_TEST= PGHOST=aws-0-us-east-1.pooler.supabase.com PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/sbca.$$ TES_BACKEND_PORT=7000 verify >/tmp/sbv2.$$ 2>&1; [ $? = 2 ] && grep -q "must be 5432 or 6543" /tmp/sbv2.$$ && ok "invalid backend port refused before any connection" || bad "invalid backend port accepted"; rm -f /tmp/sbca.$$
 mut() { # mut <label> <check> <mutate-sql> <undo-sql>
   admin -d tes_dev -c "$3" >/dev/null
   verify >/tmp/sbv.$$ 2>&1; grep -q "^RESULT $2: FAIL" /tmp/sbv.$$ && ok "verifier detects: $1" || { bad "verifier misses: $1"; }
@@ -88,6 +94,7 @@ admin -d tes_dev -c "UPDATE tes_system.schema_migrations SET sha256 = repeat('0'
 verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT ledger_checksums: FAIL' /tmp/sbv.$$ && ok "verifier detects a ledger checksum mismatch" || bad "verifier misses a checksum mismatch"
 expect "migrate-dev refuses to proceed over a checksum mismatch" nz env PGUSER="$M" PGPORT="$PGPORT" TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
 admin -d tes_dev -c "UPDATE tes_system.schema_migrations SET sha256 = '$SHA7' WHERE version='0007'" >/dev/null
+expect "probe-lib synthetic tests" 0 bash $D/test/probe-lib.test.sh
 echo "== function privileges after hardening"
 [ "$(admin -d tes_dev -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','tes_security','tes_system') and not exists(select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and (has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE') or has_function_privilege('service_role',p.oid,'EXECUTE'))")" = 0 ] && ok "no TES function is executable by a Data API role (0 of the 20 remain)" || bad "Data API roles can still execute TES functions"
 [ "$(admin -d tes_dev -c "select count(*) from pg_proc p where pronamespace='tes_security'::regnamespace and prorettype<>'trigger'::regtype and has_function_privilege('$B',p.oid,'EXECUTE')")" = 44 ] && ok "backend keeps EXECUTE on all 44 non-trigger tes_security functions" || bad "backend lost EXECUTE on a tes_security function"
@@ -109,6 +116,6 @@ admin -d tes_dev -c "SET ROLE \"$B\"; CREATE TABLE public.zz (x int)" >/dev/null
 echo "== adversarial cross-tenant matrix (existing CI script) on the Supabase-shaped database"
 expect "system-wide-authorization-rls.sql" 0 env PGUSER=supabase_admin PGDATABASE=tes_dev psql -X -q -v ON_ERROR_STOP=1 -f test/database/system-wide-authorization-rls.sql
 
-rm -f /tmp/sbt.$$ /tmp/sbv.$$
+rm -f /tmp/sbt.$$ /tmp/sbv.$$ /tmp/sbv2.$$
 echo "== $((n-fail))/$n passed"
 [ "$fail" = 0 ]

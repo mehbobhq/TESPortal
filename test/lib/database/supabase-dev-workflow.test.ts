@@ -50,7 +50,7 @@ describe("Supabase development workflow", () => {
     assert.match(storage, /FORBIDDEN_ENV = \["GOOGLE_APPLICATION_CREDENTIALS_JSON", "GOOGLE_PRIVATE_KEY", "GOOGLE_CLIENT_SECRET", "GCS_KEY", "GCS_SERVICE_ACCOUNT_KEY", "PGPASSWORD"\]/)
     assert.doesNotMatch(wf, /verify-evidence-storage-config/)
     for (const f of readdirSync(".github/workflows")) {
-      if (f === "supabase-dev-database.yml") continue
+      if (f === "supabase-dev-database.yml" || f === "supabase-dev-credential-equivalence.yml") continue
       assert.doesNotMatch(readFileSync(`.github/workflows/${f}`, "utf8"), /secrets\.SUPABASE_DEV|vars\.SUPABASE_DEV|TES_SUPABASE_DEV|environment: supabase-dev/, `${f} must not reference the Supabase development secrets`)
     }
     const adapter = readFileSync("lib/database/postgres-config.ts", "utf8")

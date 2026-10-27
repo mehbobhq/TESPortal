@@ -41,9 +41,8 @@ jobs:
     env:
       TES_DATABASE_TARGET: supabase-dev
       # Supavisor SESSION mode (port 5432): migrations hold a session advisory lock and need one stable connection.
-      PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+      # Host and database name are secrets, so they are set only on the steps that connect (not for the apt step).
       PGPORT: "5432"
-      PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
       PGSSLMODE: verify-full
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -65,12 +64,16 @@ jobs:
       - name: Apply migrations (migrator, session mode)
         if: inputs.action == 'migrate'
         env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
           PGUSER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
           PGPASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
         run: bash scripts/database/supabase-dev/migrate-dev.sh
       - name: Read-only verification
         if: inputs.action == 'verify'
         env:
+          PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
+          PGDATABASE: ${{ secrets.SUPABASE_DEV_DATABASE }}
           TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
           TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
           TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}

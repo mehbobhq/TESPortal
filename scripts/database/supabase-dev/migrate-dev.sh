@@ -12,5 +12,8 @@ case "$PGUSER" in
   "tes-database-migrator@tes-production-510007.iam"|"tes-database-migrator@tes-production-510007.iam".*) ;;
   *) echo "REFUSED: migrations must run as the tes-database-migrator role." >&2; exit 1;;
 esac
+[ -z "${PGOPTIONS:-}" ] || { echo "REFUSED: PGOPTIONS must not be set." >&2; exit 1; }
 export PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-20}"
-exec bash "$here/../migrate.sh"
+bash "$here/../migrate.sh"
+# Narrow, idempotent hardening of function privileges (does not touch any migration).
+psql -X -q --no-password -v ON_ERROR_STOP=1 -f "$here/harden.sql"

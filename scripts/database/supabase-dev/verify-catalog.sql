@@ -74,14 +74,15 @@ UNION ALL SELECT 11, 'dataapi_schema_privileges',
         AND NOT has_schema_privilege('tes-backend@tes-production-510007.iam', 'tes_security', 'CREATE')
        THEN 'PASS' ELSE 'FAIL' END,
   'Data API roles: no USAGE on tes_system/tes_security, no CREATE on public; backend: no CREATE anywhere, no tes_system access'
-UNION ALL SELECT 12, 'dataapi_reachable_functions',
+UNION ALL SELECT 12, 'dataapi_function_execute',
   CASE WHEN NOT EXISTS (
          SELECT 1 FROM pg_proc p JOIN tes_ns n ON n.oid = p.pronamespace CROSS JOIN dapi d
           WHERE NOT EXISTS (SELECT 1 FROM pg_depend x WHERE x.objid = p.oid AND x.deptype = 'e')
-            AND has_function_privilege(d.rolname, p.oid, 'EXECUTE') AND has_schema_privilege(d.rolname, n.oid, 'USAGE'))
+            AND has_function_privilege(d.rolname, p.oid, 'EXECUTE'))
        THEN 'PASS' ELSE 'FAIL' END,
-  'no TES function is both executable and name-resolvable by a Data API role (executable-but-unreachable trigger functions='||
-  (SELECT count(*) FROM pg_proc p JOIN tes_ns n ON n.oid = p.pronamespace WHERE has_function_privilege('anon', p.oid, 'EXECUTE') AND NOT has_schema_privilege('anon', n.oid, 'USAGE'))||')'
+  'no TES function (any schema) is executable by anon/authenticated/service_role, directly, via PUBLIC or by inheritance; offending functions='||
+  (SELECT count(*) FROM pg_proc p JOIN tes_ns n ON n.oid = p.pronamespace WHERE NOT EXISTS (SELECT 1 FROM pg_depend x WHERE x.objid = p.oid AND x.deptype = 'e')
+     AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('service_role', p.oid, 'EXECUTE')))
 UNION ALL SELECT 13, 'default_acl_no_dataapi',
   CASE WHEN NOT EXISTS (
          SELECT 1 FROM pg_default_acl da CROSS JOIN LATERAL aclexplode(da.defaclacl) a

@@ -8,7 +8,8 @@ Target: Supabase Free project `tes-portal-dev` (PostgreSQL 17.11), branch `main`
 |---|---|
 | Role/privilege bootstrap (run once as Supabase `postgres`, idempotent) | `scripts/database/supabase-dev/bootstrap.sql` |
 | Target guard shared by the scripts | `scripts/database/supabase-dev/guard-target.sh` |
-| Guarded migration entry point (wraps the unchanged `scripts/database/migrate.sh`) | `scripts/database/supabase-dev/migrate-dev.sh` |
+| Guarded migration entry point (wraps the unchanged `scripts/database/migrate.sh`, then runs the hardening step) | `scripts/database/supabase-dev/migrate-dev.sh` |
+| Post-migration function-privilege hardening (idempotent, run as migrator) | `scripts/database/supabase-dev/harden.sql` |
 | Read-only verification | `scripts/database/supabase-dev/verify-readonly.sh`, `verify-catalog.sql`, `verify-runtime.sql` |
 | Application adapter | `lib/database/postgres-config.ts`, `lib/database/postgres.ts` |
 | Manual workflow (not run automatically) | `.github/workflows/supabase-dev-database.yml` |
@@ -25,6 +26,12 @@ The hard-coded production role names are kept exactly: `tes-backend@tes-producti
 * Nothing is granted to `anon`, `authenticated` or `service_role`. Objects created by the migrator receive none of Supabase's default grants (those are defined per creator role, `postgres` / `supabase_admin`). The verifier proves this by `has_*_privilege` sweeps, which include PUBLIC and inheritance.
 * Tenant isolation is unchanged: no policy was added or relaxed. The Data API is not used by TES; the browser never talks to the database and Supabase Auth is not used.
 
+## Function execute privileges (security closure)
+
+PostgreSQL grants EXECUTE on new functions to PUBLIC. Migrations 0001–0043 revoke it from most functions, but 20 SECURITY INVOKER **trigger** functions in `tes_security` keep the default (e.g. `guard_contract_line_item()`, `prevent_evidence_payload_ledger_mutation()`). `anon`, `authenticated` and `service_role` held EXECUTE on them **only through PUBLIC** (no direct grant, no role inheritance). They could not reach them: the Data API roles have no USAGE on `tes_security`, and a trigger function cannot be called directly. Exposure was defence-in-depth only, and is identical in production Cloud SQL (same migrations; not changed there).
+
+`harden.sql` revokes PUBLIC EXECUTE from trigger-returning functions owned by the migrator in the TES schemas, after every migration run. Triggers do not need the firing user to hold EXECUTE (it is checked at CREATE TRIGGER), so the backend is unaffected (verified: all 44 explicitly granted non-trigger `tes_security` functions stay executable by the backend; the full database suite and the adversarial matrix pass). The verifier check `dataapi_function_execute` is strict: any TES function executable by a Data API role, directly, via PUBLIC or by inheritance, is a FAIL, so a future function with default privileges forces an explicit decision. Extension helper functions in Supabase's `extensions` schema are Supabase-managed and not exposed by the Data API.
+
 ## Connection adapter
 
 `TES_DATABASE_PROVIDER` selects the target. Unset or `cloud-sql` is the production path, unchanged. `supabase-dev` uses a password connection string and requires:
@@ -38,6 +45,10 @@ The hard-coded production role names are kept exactly: `tes-backend@tes-producti
 It fails closed (`DatabaseConfigurationError`, messages never contain values) when: a Supabase variable is set while the provider is Cloud SQL; Cloud SQL variables are set with `supabase-dev`; `VERCEL_ENV` or `TES_ENVIRONMENT` is `production`; the host is not `*.supabase.com/.co` or looks like Cloud SQL; the user is not the backend role; the password, database, CA or port (5432/6543) is missing or wrong; or the URL carries any option other than `sslmode=verify-full`. TLS is always on with `rejectUnauthorized: true` and the CA pinned.
 
 Transaction-pooler (port 6543) safety: the application uses only `BEGIN … COMMIT` on one client, `set_config(…, true)` (transaction-local) for authorization context, `pg_advisory_xact_lock`, and unnamed statements. It uses no `LISTEN`, session `SET`, temp tables, cursors, named prepared statements or session advisory locks. No startup parameters are sent in this mode; `withPostgresTransaction` issues `SET LOCAL statement_timeout` per transaction. The migration runner needs a **session** advisory lock and one stable connection, so migrations use the session pooler (5432) and the guard rejects other ports.
+
+## Guard hardening
+
+The scripts additionally refuse `PGHOSTADDR`, `PGSERVICE(FILE)`, `PGSSLCERT/KEY/CRL/SNI`, `PGREQUIRESSL`, `PGSYSCONFDIR`, Kerberos/GSS variables (any could redirect or weaken the connection after the host-name check) and `PGOPTIONS` for migrations. Local test mode (loopback only) accepts only the database `tes_dev`, so a loopback port-forward to another database cannot pass as a test.
 
 ## Development-secret exception (narrow)
 

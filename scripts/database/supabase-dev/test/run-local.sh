@@ -77,13 +77,27 @@ mut "table owned by another role" object_ownership "ALTER TABLE public.driver_ev
 mut "default privilege toward anon by the migrator" default_acl_no_dataapi "ALTER DEFAULT PRIVILEGES FOR ROLE \"$M\" IN SCHEMA public GRANT SELECT ON TABLES TO anon" "ALTER DEFAULT PRIVILEGES FOR ROLE \"$M\" IN SCHEMA public REVOKE SELECT ON TABLES FROM anon"
 mut "policy that is a literal true" policy_roles_and_quals "CREATE POLICY zz_open ON public.driver_events FOR SELECT USING (true)" "DROP POLICY zz_open ON public.driver_events"
 admin -d tes_dev -c "CREATE FUNCTION public.zz_probe() RETURNS int LANGUAGE sql AS 'select 1'; GRANT EXECUTE ON FUNCTION public.zz_probe() TO anon" >/dev/null
-verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT dataapi_reachable_functions: FAIL' /tmp/sbv.$$ && ok "verifier detects: function in public executable by anon" || bad "verifier misses reachable function"
+verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT dataapi_function_execute: FAIL' /tmp/sbv.$$ && ok "verifier detects: function in public executable by anon (direct grant)" || bad "verifier misses direct function grant"
 admin -d tes_dev -c "DROP FUNCTION public.zz_probe()" >/dev/null
+TRG="tes_security.guard_contract_line_item()"
+mut "PUBLIC EXECUTE restored on a trigger function" dataapi_function_execute "GRANT EXECUTE ON FUNCTION $TRG TO PUBLIC" "REVOKE EXECUTE ON FUNCTION $TRG FROM PUBLIC"
+mut "EXECUTE inherited through a role anon belongs to" dataapi_function_execute "CREATE ROLE zz_exec NOLOGIN; GRANT EXECUTE ON FUNCTION $TRG TO zz_exec; GRANT zz_exec TO anon WITH INHERIT TRUE" "DROP OWNED BY zz_exec; DROP ROLE zz_exec"
 verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT .*: FAIL' /tmp/sbv.$$ && bad "verifier not clean after undo" || ok "verifier clean again after undoing every mutation"
+SHA7="$(admin -d tes_dev -c "select sha256 from tes_system.schema_migrations where version='0007'")"
 admin -d tes_dev -c "UPDATE tes_system.schema_migrations SET sha256 = repeat('0',64) WHERE version='0007'" >/dev/null
 verify >/tmp/sbv.$$ 2>&1; grep -q '^RESULT ledger_checksums: FAIL' /tmp/sbv.$$ && ok "verifier detects a ledger checksum mismatch" || bad "verifier misses a checksum mismatch"
 expect "migrate-dev refuses to proceed over a checksum mismatch" nz env PGUSER="$M" PGPORT="$PGPORT" TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
-admin -d tes_dev -c "UPDATE tes_system.schema_migrations SET sha256 = (SELECT sha256 FROM tes_system.schema_migrations WHERE version='0006') WHERE version='0007'" >/dev/null
+admin -d tes_dev -c "UPDATE tes_system.schema_migrations SET sha256 = '$SHA7' WHERE version='0007'" >/dev/null
+echo "== function privileges after hardening"
+[ "$(admin -d tes_dev -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','tes_security','tes_system') and not exists(select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and (has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE') or has_function_privilege('service_role',p.oid,'EXECUTE'))")" = 0 ] && ok "no TES function is executable by a Data API role (0 of the 20 remain)" || bad "Data API roles can still execute TES functions"
+[ "$(admin -d tes_dev -c "select count(*) from pg_proc p where pronamespace='tes_security'::regnamespace and prorettype<>'trigger'::regtype and has_function_privilege('$B',p.oid,'EXECUTE')")" = 44 ] && ok "backend keeps EXECUTE on all 44 non-trigger tes_security functions" || bad "backend lost EXECUTE on a tes_security function"
+[ "$(admin -d tes_dev -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','tes_security') and not exists(select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and p.prorettype='trigger'::regtype and has_function_privilege('$M',p.oid,'EXECUTE')")" -gt 0 ] && ok "migrator (owner) keeps EXECUTE on trigger functions" || bad "owner lost EXECUTE"
+expect "hardening refuses a non-migrator" nz env PGUSER=postgres PGDATABASE=tes_dev psql -X -q -v ON_ERROR_STOP=1 -f $D/harden.sql
+expect "hardening is idempotent (migrate-dev re-run)" 0 env PGUSER="$M" TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
+expect "migrate-dev refuses PGHOSTADDR" nz env PGUSER="$M" PGHOSTADDR=10.0.0.1 TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
+expect "migrate-dev refuses PGSERVICE" nz env PGUSER="$M" PGSERVICE=x TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
+expect "migrate-dev refuses PGOPTIONS" nz env PGUSER="$M" PGOPTIONS="-c role=postgres" TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
+expect "local test mode refuses a database other than tes_dev" nz env PGUSER="$M" PGDATABASE=tes_prod TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
 echo "== Data API roles and the application role against the live schema"
 for r in anon authenticated service_role; do
   admin -d tes_dev -c "SET ROLE $r; SELECT count(*) FROM public.driver_events" >/dev/null 2>&1 && bad "$r can read a TES table" || ok "$r cannot read a TES table"

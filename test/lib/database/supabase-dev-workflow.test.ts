@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { readdirSync, readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
@@ -76,5 +77,14 @@ describe("Supabase development workflow", () => {
     assert.match(seed, /\^user_\[A-Za-z0-9\]\+\$/)
     assert.match(seed, /bootstrap-first-actor\.sh/); assert.match(seed, /bootstrap-first-master-account\.sh/)
     assert.doesNotMatch(code(seed), /INSERT INTO public\.(organizations|customers)|set -x/)
+  })
+
+  it("the workflow files are valid YAML and keep their manual trigger (a syntax error silently removes workflow_dispatch)", () => {
+    for (const f of ["supabase-dev-database.yml", "supabase-dev-tooling-ci.yml"]) {
+      const r = spawnSync("python3", ["-I", "-c", "import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); on=d.get('on', d.get(True)); print(','.join(sorted(on)))", `.github/workflows/${f}`], { encoding: "utf8" })
+      if (r.error || /No module named/.test(r.stderr)) return // PyYAML unavailable on this machine
+      assert.equal(r.status, 0, `${f}: ${r.stderr.slice(-200)}`)
+      if (f === "supabase-dev-database.yml") assert.equal(r.stdout.trim(), "workflow_dispatch")
+    }
   })
 })

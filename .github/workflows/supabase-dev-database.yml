@@ -96,7 +96,7 @@ jobs:
           # 6543 proves the transaction pooler the application will use
           TES_BACKEND_PORT: ${{ inputs.backend_port || '5432' }}
         run: bash scripts/database/supabase-dev/verify-readonly.sh
-      - name: Backend authentication diagnostic (read-only; yes/no properties and redacted messages only)
+      - name: "Backend authentication diagnostic (read-only; yes/no properties and redacted messages only)"
         if: inputs.action == 'diagnose-auth'
         env:
           PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
@@ -106,7 +106,7 @@ jobs:
           TES_BACKEND_USER: ${{ secrets.SUPABASE_DEV_BACKEND_USER }}
           TES_BACKEND_PASSWORD: ${{ secrets.SUPABASE_DEV_BACKEND_PASSWORD }}
         run: bash scripts/database/supabase-dev/diagnose-backend-auth.sh
-      - name: Row counts for authorisation (read-only; counts only)
+      - name: "Row counts for authorisation (read-only; counts only)"
         if: inputs.action == 'data-check'
         env:
           PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}
@@ -114,7 +114,7 @@ jobs:
           TES_MIGRATOR_USER: ${{ secrets.SUPABASE_DEV_MIGRATOR_USER }}
           TES_MIGRATOR_PASSWORD: ${{ secrets.SUPABASE_DEV_MIGRATOR_PASSWORD }}
         run: bash scripts/database/supabase-dev/data-check.sh
-      - name: Seed the first user (one-off write: actor, Clerk link, Master Account; no business data)
+      - name: "Seed the first user (one-off write: actor, Clerk link, Master Account; no business data)"
         if: inputs.action == 'seed-first-user'
         env:
           PGHOST: ${{ secrets.SUPABASE_DEV_POOLER_HOST }}

@@ -68,3 +68,18 @@ probe_write() {
   if [ -n "$state" ]; then PROBE_CATEGORY="sql_error:$state"; return 1; fi
   PROBE_CATEGORY="$(classify_connection_error "$out")"; return 1   # connection dropped mid-probe
 }
+
+# tls_verdict <server-side status PASS|UNVERIFIED|FAIL> <PGSSLMODE> <TES_DEV_LOCAL_TEST>  -> prints "STATUS|detail"
+# pg_stat_ssl describes only the pooler->database hop when a pooler is in the path, so the server may be unable to confirm the
+# client's session. For a non-local target the guard already requires PGSSLMODE=verify-full with a pinned CA, and the probes
+# only reach this point on a connection libpq accepted, so the client leg is verified by the client itself. A local test
+# (no TLS) is never promoted.
+tls_verdict() {
+  local status="$1" mode="$2" local_test="$3"
+  if [ "$status" = PASS ] || [ "$status" = FAIL ]; then printf '%s|server reports the session encrypted' "$status"; return; fi
+  if [ "$mode" = verify-full ] && [ "$local_test" != 1 ]; then
+    printf 'PASS|client-to-pooler TLS verified by the client (sslmode=verify-full, pinned CA); the pooler-to-database hop is not observable from the session'
+  else
+    printf 'UNVERIFIED|no TLS verification is in effect for this target'
+  fi
+}

@@ -39,4 +39,11 @@ probe_connect tes-backend@tes-production-510007.iam.abcdefghijklmnopqrst S3cretP
 if grep -Eq 'tes-backend|abcdefghij|S3cretPw|10\.1\.2\.3|example' <<<"$PROBE_DETAIL" || ! grep -q 'password authentication failed for user "<q>"' <<<"$PROBE_DETAIL"; then echo "FAIL sanitized message: $PROBE_DETAIL"; fail=$((fail+1)); else echo "ok   sanitized message keeps only the template: $PROBE_DETAIL"; fi
 n=$((n+1)); out="$(sanitize_error $'line one S3cretPw at 10.1.2.3 host.supabase.com "quoted" \x01weird\nsecond line')"
 if grep -Eq 'S3cretPw|10\.1\.2\.3|supabase|quoted|second' <<<"$out"; then echo "FAIL sanitize leaks: $out"; fail=$((fail+1)); else echo "ok   sanitize drops values, hosts, quotes and later lines"; fi
+tv() { n=$((n+1)); local got; got="$(tls_verdict "$1" "$2" "$3")"; if [ "${got%%|*}" = "$4" ]; then echo "ok   tls_verdict $1/$2/local=$3 -> $4"; else echo "FAIL tls_verdict $1/$2/local=$3 -> ${got%%|*} (wanted $4)"; fail=$((fail+1)); fi; }
+tv UNVERIFIED verify-full "" PASS        # remote, client verified the pooler certificate
+tv UNVERIFIED require ""     UNVERIFIED  # weaker mode is never promoted
+tv UNVERIFIED verify-full 1  UNVERIFIED  # local test (no TLS) is never promoted
+tv UNVERIFIED ""  ""         UNVERIFIED
+tv PASS       require ""     PASS
+tv FAIL       verify-full "" FAIL
 echo "== $((n-fail))/$n passed"; [ "$fail" = 0 ]

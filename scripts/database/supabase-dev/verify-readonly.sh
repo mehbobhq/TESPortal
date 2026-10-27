@@ -77,7 +77,11 @@ while IFS='|' read -r name status detail; do [ -n "$name" ] && record "$name" "$
 
 echo "== runtime (as backend, port $BPORT)"
 rt_out="$(as backend "$BPORT" < "$here/verify-runtime.sql")" || { record runtime FAIL "the runtime query failed"; rt_out=""; }
-while IFS='|' read -r name status detail; do [ -n "$name" ] && record "$name" "$status" "$detail"; done <<<"$rt_out"
+while IFS='|' read -r name status detail; do
+  [ -n "$name" ] || continue
+  if [ "$name" = tls ]; then v="$(tls_verdict "$status" "${PGSSLMODE:-}" "${TES_DEV_LOCAL_TEST:-}")"; status="${v%%|*}"; detail="${v#*|}"; fi
+  record "$name" "$status" "$detail"
+done <<<"$rt_out"
 # Transaction-local context must not leak to the next transaction or the next pooled client.
 leak="$(printf "BEGIN TRANSACTION READ ONLY;\nSELECT set_config('tes.system_actor_id','00000000-0000-4000-8000-0000000000aa',true);\nCOMMIT;\nBEGIN TRANSACTION READ ONLY;\nSELECT coalesce(current_setting('tes.system_actor_id',true),'');\nCOMMIT;\n" | PGUSER="$TES_BACKEND_USER" PGPASSWORD="${TES_BACKEND_PASSWORD:-}" PGPORT="$BPORT" psql -X -At -q --no-password -v ON_ERROR_STOP=1 2>&1 | tail -n 1)"
 if [ -z "$leak" ]; then record txn_context_isolation PASS "a setting made with set_config(...,true) is gone in the next transaction"

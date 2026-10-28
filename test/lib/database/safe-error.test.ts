@@ -22,6 +22,12 @@ describe("describeError (log-safe error summary)", () => {
     const s = describeError(new DatabaseConfigurationError("Cloud SQL variables are set (TES_CLOUD_SQL_INSTANCE) together with supabase-dev"))
     assert.match(s.detail ?? "", /TES_CLOUD_SQL_INSTANCE/)
   })
+  it("keeps schema object names from a PostgreSQL error but never its message or data", () => {
+    const e = Object.assign(new Error('null value in column "legal_name" of relation "organizations" violates not-null constraint; Failing row contains (secret-row-data)'), { name: "error", code: "23502", table: "organizations", column: "legal_name", constraint: "organizations_legal_name_key", detail: "Failing row contains (secret-row-data)" })
+    const s = JSON.stringify(describeError(e))
+    assert.equal(s, '{"name":"error","code":"23502","table":"organizations","constraint":"organizations_legal_name_key","column":"legal_name"}')
+    assert.doesNotMatch(s, /secret-row-data|violates/)
+  })
   it("handles non-errors", () => {
     assert.deepEqual(describeError(null), { name: "Error" })
     assert.deepEqual(describeError("boom"), { name: "Error" })

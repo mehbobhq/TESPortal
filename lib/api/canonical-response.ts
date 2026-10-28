@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { logSafeError } from "@/lib/database/safe-error"
 
 /**
  * Maps a canonical service error to a non-destructive JSON response. The canonical modules share one naming convention for
@@ -20,6 +21,8 @@ export function canonicalFailure(error: unknown, fallback: string) {
   if (name === "TesAuthorizationDeniedError" || name === "TesIdentityRequiredError") {
     return NextResponse.json({ error: "Not authorized." }, { status: 403 })
   }
+  // Unexpected failure: keep the generic response for the caller, but leave a log-safe trace (class name, short code, schema object names).
+  logSafeError("API request", error)
   return NextResponse.json({ error: fallback }, { status: 500 })
 }
 

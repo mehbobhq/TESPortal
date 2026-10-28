@@ -39,7 +39,11 @@ PostgreSQL grants EXECUTE on new functions to PUBLIC. Migrations 0001–0043 rev
 | Variable | Content |
 |---|---|
 | `TES_DATABASE_PROVIDER` | `supabase-dev` |
-| `TES_SUPABASE_DEV_DATABASE_URL` | `postgresql://<backend role>[.<project-ref>]:<password>@<pooler host>:6543/postgres` (server-side secret) |
+| `TES_SUPABASE_DEV_DB_HOST` | bare pooler host name, for example `aws-0-us-east-1.pooler.supabase.com` |
+| `TES_SUPABASE_DEV_DB_USER` | `tes-backend@tes-production-510007.iam.<project-ref>` |
+| `TES_SUPABASE_DEV_DB_PASSWORD` | the backend password, used exactly as typed (no encoding); mark Sensitive |
+| `TES_SUPABASE_DEV_DB_PORT` / `TES_SUPABASE_DEV_DB_NAME` | optional; default 6543 and `postgres` |
+| `TES_SUPABASE_DEV_DATABASE_URL` | alternative to the four variables above (`postgresql://...`, optional `?sslmode=verify-full` only); never set both forms |
 | `TES_SUPABASE_DEV_CA_PEM` | Supabase CA certificate, PEM (`\n` escapes accepted) |
 
 It fails closed (`DatabaseConfigurationError`, messages never contain values) when: a Supabase variable is set while the provider is Cloud SQL; Cloud SQL variables are set with `supabase-dev`; `VERCEL_ENV` or `TES_ENVIRONMENT` is `production`; the host is not `*.supabase.com/.co` or looks like Cloud SQL; the user is not the backend role; the password, database, CA or port (5432/6543) is missing or wrong; or the URL carries any option other than `sslmode=verify-full`. TLS is always on with `rejectUnauthorized: true` and the CA pinned.

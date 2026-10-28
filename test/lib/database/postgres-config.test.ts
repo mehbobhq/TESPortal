@@ -47,7 +47,7 @@ describe("database target selection", () => {
   })
 
   it("fails closed on missing pieces", () => {
-    rejects(dev({ TES_SUPABASE_DEV_DATABASE_URL: undefined }), /TES_SUPABASE_DEV_DATABASE_URL is required/)
+    rejects(dev({ TES_SUPABASE_DEV_DATABASE_URL: undefined }), /TES_SUPABASE_DEV_DB_HOST is required .*or set TES_SUPABASE_DEV_DATABASE_URL/)
     rejects(dev({ TES_SUPABASE_DEV_CA_PEM: undefined }), /TES_SUPABASE_DEV_CA_PEM is required/)
     rejects(dev({ TES_SUPABASE_DEV_CA_PEM: "not a certificate" }), /PEM certificate/)
     rejects(dev({ TES_SUPABASE_DEV_DATABASE_URL: "not a url" }), /not a valid URL/)
@@ -76,6 +76,54 @@ describe("database target selection", () => {
 
   it("rejects a non-ASCII password or user (the verifier depends on the client encoding)", () => {
     rejects(dev({ TES_SUPABASE_DEV_DATABASE_URL: `postgresql://${encodeURIComponent(ROLE)}:p%C3%A9ssword-with-accent@aws-0.pooler.supabase.com:6543/postgres` }), /printable ASCII/)
+  })
+
+  describe("separate connection variables (no URL to build or encode)", () => {
+    const parts = (over: Record<string, string | undefined> = {}) => ({
+      TES_DATABASE_PROVIDER: "supabase-dev",
+      TES_SUPABASE_DEV_DB_HOST: "aws-0-us-east-1.pooler.supabase.com",
+      TES_SUPABASE_DEV_DB_USER: `${ROLE}.${REF}`,
+      TES_SUPABASE_DEV_DB_PASSWORD: "p@ss/w#rd?with:specials%40",
+      TES_SUPABASE_DEV_CA_PEM: CA,
+      ...over,
+    })
+    it("accepts host, user and password as separate values and defaults to the transaction pooler and database postgres", () => {
+      const t = resolveDatabaseTarget(parts())
+      assert.equal(t.kind, "supabase-dev")
+      if (t.kind !== "supabase-dev") return
+      assert.equal(t.connection.host, "aws-0-us-east-1.pooler.supabase.com")
+      assert.equal(t.connection.user, `${ROLE}.${REF}`)
+      assert.equal(t.connection.password, "p@ss/w#rd?with:specials%40")
+      assert.equal(t.connection.port, 6543)
+      assert.equal(t.connection.database, "postgres")
+    })
+    it("honours port and database name, trims blanks, and still verifies TLS", () => {
+      const t = resolveDatabaseTarget(parts({ TES_SUPABASE_DEV_DB_PORT: " 5432 ", TES_SUPABASE_DEV_DB_NAME: "postgres", TES_SUPABASE_DEV_DB_HOST: "  AWS-0-us-east-1.pooler.supabase.com " }))
+      assert.equal(t.kind === "supabase-dev" && t.connection.port, 5432)
+      assert.equal(t.kind === "supabase-dev" && t.connection.ssl.rejectUnauthorized, true)
+    })
+    it("rejects a host that is not a bare Supabase host name", () => {
+      for (const h of ["https://aws-0-us-east-1.pooler.supabase.com", "aws-0-us-east-1.pooler.supabase.com:6543", "aws-0-us-east-1.pooler.supabase.com/postgres", "has space.supabase.com"]) {
+        rejects(parts({ TES_SUPABASE_DEV_DB_HOST: h }), /bare host name/)
+      }
+      rejects(parts({ TES_SUPABASE_DEV_DB_HOST: "db.example.com" }), /Supabase host/)
+    })
+    it("requires every part, the backend role, a valid port and ASCII", () => {
+      rejects(parts({ TES_SUPABASE_DEV_DB_PASSWORD: undefined }), /TES_SUPABASE_DEV_DB_PASSWORD is required/)
+      rejects(parts({ TES_SUPABASE_DEV_DB_USER: undefined }), /TES_SUPABASE_DEV_DB_USER is required/)
+      rejects(parts({ TES_SUPABASE_DEV_DB_USER: "postgres." + REF }), /tes-backend role/)
+      rejects(parts({ TES_SUPABASE_DEV_DB_PORT: "5433" }), /5432 or 6543/)
+      rejects(parts({ TES_SUPABASE_DEV_DB_PASSWORD: "pássword-with-accent-12345" }), /printable ASCII/)
+    })
+    it("fails closed when both forms are set, or when Cloud SQL / production settings accompany them", () => {
+      rejects(parts({ TES_SUPABASE_DEV_DATABASE_URL: url() }), /both set; use only one form/)
+      rejects(parts({ TES_CLOUD_SQL_INSTANCE: "x" }), /Cloud SQL variables are set/)
+      rejects(parts({ VERCEL_ENV: "production" }), /not permitted in a production deployment/)
+      rejects({ TES_SUPABASE_DEV_DB_PASSWORD: "x" }, /Supabase development variables are set/)
+    })
+    it("never puts the password in an error", () => {
+      try { resolveDatabaseTarget(parts({ TES_SUPABASE_DEV_DB_HOST: "db.example.com" })) } catch (e) { assert.doesNotMatch(String((e as Error).message), /p@ss|specials|example/) }
+    })
   })
 
   it("never puts a secret value in an error", () => {

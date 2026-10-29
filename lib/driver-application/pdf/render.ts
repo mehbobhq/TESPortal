@@ -5,6 +5,7 @@ import { LineCapStyle, PDFDocument, PDFImage, PDFPage, StandardFonts, rgb, type 
 import type { ApplicationPlan, PlanConsent, PlanField } from "../plan"
 import type { ApplicationSnapshot } from "../snapshot"
 import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
+import { INTENDED_OPERATION_LABEL } from "@/lib/driver-prospects/company-operating-facts"
 import { ICONS, type IconName } from "./icons"
 import { HIRING_STAGES, requirementsAttention, stageOfRequirement, type Attention } from "../hiring-stages"
 import { TextEngine, type Weight } from "./text"
@@ -711,8 +712,10 @@ function itemDisplay(item: ItemField, raw: unknown): string {
 }
 
 const stageLabel = (s: string) => (s === "PRE_OFFER" ? "Initial application" : s === "CONDITIONAL_OFFER" ? "Conditional-offer supplement" : "Post-offer supplement")
-const scopeLabel = (c: ApplicationPlan["context"]) => {
-  const label = (SCOPE_LABEL as Record<string, string>)[c.scopeKind] ?? c.scopeKind.replace(/_/g, " ").toLowerCase()
+// Plans frozen under scope rules before 2026-10-v2 keep their original wording; later plans use the intended-operation names.
+const scopeLabel = (c: ApplicationPlan["context"], rulesVersion?: string) => {
+  const modern = typeof rulesVersion === "string" && rulesVersion >= "2026-10-v2"
+  const label = (modern ? (INTENDED_OPERATION_LABEL as Record<string, string>)[c.scopeKind] : undefined) ?? (SCOPE_LABEL as Record<string, string>)[c.scopeKind] ?? c.scopeKind.replace(/_/g, " ").toLowerCase()
   return `${label}${c.involvesUS && c.involvesCA ? " — United States and Canada" : c.involvesUS ? " — United States" : c.involvesCA ? " — Canada" : ""}`
 }
 const fmtUtc = (iso: string) => {
@@ -869,7 +872,7 @@ async function build(input: PdfInput, contentsPages: Map<string, number> | null)
     { icon: "fileText", label: "RECEIPT NUMBER", value: input.receiptId },
     { icon: "calendar", label: "RECEIVED", value: fmtUtc(input.submittedAt) },
     { icon: "clipboard", label: "APPLICATION", value: stageLabel(snapshot.collectionStage) },
-    { icon: "truck", label: "OPERATING SCOPE", value: scopeLabel(plan.context) },
+    { icon: "truck", label: "OPERATING SCOPE", value: scopeLabel(plan.context, plan.scopeRulesVersion) },
   ]
   const cellH = cells.map((c) => 18 + L.textHeight(c.value, "s", 10.5, colW - 46, 14))
   const rowHs = [0, 1, 2].map((r) => Math.max(cellH[r * 2], cellH[r * 2 + 1]) + 14)

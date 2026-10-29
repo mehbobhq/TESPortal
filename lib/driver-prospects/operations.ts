@@ -23,6 +23,7 @@ import { assertQualifiedForApproval } from "@/lib/driver-application/approval-ga
 import { approvedSensitiveFields, vaultReady } from "@/lib/driver-application/sensitive"
 import type { Stage } from "@/lib/driver-application/catalogue/types"
 import type { PresentationContext, PresentationCountry } from "@/lib/jurisdiction-context"
+import { applyCompanyFacts, deriveHazmat, UNKNOWN_FACTS, type CompanyOperatingFacts, type CompanyOperatingScope } from "./company-operating-facts"
 import { hasAdditionalSystemCapability } from "@/lib/auth/tes-system-context"
 import {
   PROSPECT_STATUS_LABEL,
@@ -159,7 +160,7 @@ export async function createProspect(ctx: ProspectContext, decision: SystemAutho
   const name = prepareName(given, family)
   const email = input.email && input.email.trim() !== "" ? prepareChannel("EMAIL", input.email, undefined, "email") : null
   const phone = input.phone && input.phone.trim() !== "" ? prepareChannel("PHONE", input.phone, undefined, "phone") : null
-  if (!email && !phone) throw new DriverProspectValidationError("contact", "Enter an email address or a phone number.")
+  // Email and phone are both optional for SAVING a driver; an application cannot be issued until a usable contact exists (see prepareInvitation).
   const scope = input.scope ? requireValidScope(input.scope) : null
   const recordScope = scope !== null && scope.kind !== "UNDETERMINED"
   if (recordScope && !(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Recording the operating scope"))
@@ -232,7 +233,7 @@ export async function addProspectEmail(ctx: ProspectContext, input: { organizati
   return { prospectId: prospect.id }
 }
 
-export async function listProspects(ctx: ProspectContext, organizationIdInput: string): Promise<ProspectView[]> {
+export async function listProspects(ctx: ProspectContext, decision: SystemAuthorizationDecision, organizationIdInput: string): Promise<ProspectView[]> {
   await requireSchema(ctx, "The prospect list")
   const organizationId = uuid(organizationIdInput, "organizationId")
   const r = await ctx.client.query(
@@ -259,6 +260,8 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
     list.push({ eventType: e.event_type, toStatus: e.to_status, occurredAt: new Date(e.occurred_at).toISOString() })
     eventsByProspect.set(e.prospect_id, list)
   }
+  // The application the driver would receive follows from the intended operation AND the company's recorded facts, exactly as at issuance.
+  const facts = await readProfileFacts(ctx, decision, organizationId, { country: null, basis: "UNRESOLVED", reason: null }, "DRIVER_READ")
   const scopeAvailable = await scopeSchemaAvailable(ctx.client)
   const scopeByProspect = new Map<string, ScopeRow>()
   if (scopeAvailable) {
@@ -271,7 +274,7 @@ export async function listProspects(ctx: ProspectContext, organizationIdInput: s
   return r.rows.map((row) => {
     const scopeRow = scopeByProspect.get(row.id) ?? null
     const normalized = scopeRow ? scopeFromRow(scopeRow) : null
-    const scopeEvaluation = evaluateScope(normalized)
+    const scopeEvaluation = evaluateScope(normalized ? applyCompanyFacts(normalized, facts).scope : null)
     const live = LIVE_STATUSES.slice(0, 2).includes(row.status)
     const blocked = !live
       ? "Applications can be sent only while the prospect is a prospect or has an invitation out."
@@ -324,19 +327,28 @@ export async function prepareInvitation(ctx: ProspectContext, decision: SystemAu
       WHERE c.person_id = $1 AND c.channel_type = 'EMAIL' AND c.record_status = 'active' AND c.effective_to IS NULL ORDER BY c.is_preferred DESC, c.created_at LIMIT 1`,
     [prospect.person_id],
   )
-  if (!recipient.rows[0]) throw new DriverProspectStateError("This prospect has no email address. Add one before sending an application. Nothing was sent.")
+  if (!recipient.rows[0]) {
+    const phone = await ctx.client.query(`SELECT 1 FROM public.person_channels WHERE person_id = $1 AND channel_type = 'PHONE' AND record_status = 'active' AND effective_to IS NULL LIMIT 1`, [prospect.person_id])
+    throw new DriverProspectStateError(
+      phone.rowCount
+        ? "This prospect has a phone number but no email address. Applications are delivered by email only (SMS delivery is not available), so add an email address before sending. Nothing was sent."
+        : "This prospect has no email address or phone number. Add contact information before sending an application. Nothing was sent.",
+    )
+  }
   // The application is issued only for the driver's established, supported operating scope, and freezes the requirements that follow from it.
   if (!(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Sending an application").replace("Nothing was changed.", "Nothing was sent."))
   const scopeRow = await currentScopeRow(ctx, prospect.id, organizationId)
-  const evaluation = evaluateScope(scopeRow ? scopeFromRow(scopeRow) : null)
-  if (!evaluation.issuable || !scopeRow) throw new DriverProspectStateError(`${evaluation.reason ?? "The operating scope is not established."} Nothing was sent.`)
+  const facts = await readCompanyOperatingFacts(ctx, decision, organizationId)
+  const effective = scopeRow && scopeFromRow(scopeRow) ? applyCompanyFacts(scopeFromRow(scopeRow)!, facts) : null
+  const evaluation = evaluateScope(effective ? effective.scope : null)
+  if (!evaluation.issuable || !scopeRow || !effective) throw new DriverProspectStateError(`${evaluation.reason ?? "The operating scope is not established."} Nothing was sent.`)
   // The complete application plan is resolved HERE, on the server, from the scope, the carrier's HR configuration and the collection stage, and frozen with the invitation.
-  const normalizedScope = scopeFromRow(scopeRow)!
   const hrRow = await ctx.client.query<{ selections: HrSelections }>(`SELECT selections FROM public.organization_hr_screening_profiles WHERE organization_id = $1 AND superseded_at IS NULL`, [organizationId])
-  const presentation = await getPresentationContext(ctx, decision, organizationId)
+  const presentation = facts.registration
   const stage: Stage = input.stage ?? "PRE_OFFER"
   const plan = resolvePlan({
-    scope: normalizedScope,
+    scope: effective.scope,
+    needsAttention: effective.needsAttention,
     profile: evaluation.profile,
     carrierCountry: presentation.country,
     hrSelections: hrRow.rows[0]?.selections ?? {},
@@ -556,4 +568,44 @@ export async function establishPresentationJurisdiction(ctx: ProspectContext, de
   await enterSystemCapability(ctx.client, "DRIVER_MANAGE")
   await mr(ctx, previous.rows[0] ? "RECORD_UPDATED" : "RECORD_CREATED", "ORGANIZATION_PRESENTATION_JURISDICTION_ESTABLISH", "organization_presentation_jurisdictions", id, organizationId, [], { field: "presentationJurisdiction", value: country })
   return { country, changed: true as const }
+}
+
+/**
+ * The company's recorded operating facts, read from the canonical Profile tables through the existing row-level-security boundary (nothing is copied
+ * or stored for onboarding). Missing or unreadable data is UNKNOWN, never "No". COMPANY_PROFILE_READ is an additional capability; without it the
+ * profile facts are reported unreadable rather than guessed.
+ */
+export async function readCompanyOperatingFacts(ctx: ProspectContext, decision: SystemAuthorizationDecision, organizationIdInput: string): Promise<CompanyOperatingFacts> {
+  const organizationId = uuid(organizationIdInput, "organizationId")
+  const registration = await getPresentationContext(ctx, decision, organizationId)
+  return readProfileFacts(ctx, decision, organizationId, registration, "DRIVER_MANAGE")
+}
+
+/** The Profile part of the facts. `restore` is the capability the surrounding transaction was opened with; it is re-entered afterwards. */
+async function readProfileFacts(ctx: ProspectContext, decision: SystemAuthorizationDecision, organizationId: string, registration: PresentationContext, restore: "DRIVER_MANAGE" | "DRIVER_READ"): Promise<CompanyOperatingFacts> {
+  if (!(await hasAdditionalSystemCapability(ctx.client, decision, "COMPANY_PROFILE_READ"))) return UNKNOWN_FACTS(registration)
+  await enterSystemCapability(ctx.client, "COMPANY_PROFILE_READ")
+  try {
+    const scope = await ctx.client.query<{ operating_scope: CompanyOperatingScope }>(
+      `SELECT operating_scope FROM public.company_operating_scope_periods WHERE organization_id = $1 AND record_status = 'active' AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1`, [organizationId])
+    const cargo = await ctx.client.query<{ cargo_category_code: string }>(
+      `SELECT cargo_category_code FROM public.company_cargo_category_periods WHERE organization_id = $1 AND record_status = 'active' AND effective_to IS NULL`, [organizationId])
+    const rules = await ctx.client.query<{ rule_code: string; applicability: "APPLIES" | "DOES_NOT_APPLY" }>(
+      `SELECT rule_code, applicability FROM public.company_rule_applicability_periods WHERE organization_id = $1 AND record_status = 'active' AND effective_to IS NULL AND rule_code = ANY($2::text[])`, [organizationId, ["DG_US", "DG_CANADA", "PSP"]])
+    const psp = rules.rows.find((r) => r.rule_code === "PSP")
+    return {
+      registration,
+      operatingScope: scope.rows[0]?.operating_scope ?? null,
+      hazmat: deriveHazmat({
+        readable: true,
+        cargoCodes: cargo.rows.map((r) => r.cargo_category_code),
+        dgRules: rules.rows.filter((r) => r.rule_code !== "PSP").map((r) => ({ rule: r.rule_code, applicability: r.applicability })),
+      }),
+      psp: { value: psp ? (psp.applicability === "APPLIES" ? "YES" : "NO") : "UNKNOWN" },
+      passengerCarrying: { value: "UNKNOWN", basis: "NO_CANONICAL_SOURCE" },
+      profileReadable: true,
+    }
+  } finally {
+    await enterSystemCapability(ctx.client, restore)
+  }
 }

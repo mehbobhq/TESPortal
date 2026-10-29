@@ -10,7 +10,7 @@ import { JURISDICTIONS } from "@/lib/jurisdictions"
  *  - The rules below are an application-content baseline, not a legal rules engine. `limitations` lists what is NOT evaluated.
  */
 
-export const SCOPE_RULES_VERSION = "2026-10-v1"
+export const SCOPE_RULES_VERSION = "2026-10-v2"
 
 export const BASE_SCOPE_KINDS = ["US_INTRASTATE", "US_INTERSTATE", "CA_INTRAPROVINCIAL", "CA_INTERPROVINCIAL", "CROSS_BORDER"] as const
 export const SCOPE_KINDS = [...BASE_SCOPE_KINDS, "MIXED", "UNDETERMINED"] as const
@@ -106,13 +106,16 @@ export function validateScopeInput(input: ScopeInput): { ok: true; value: Normal
     passengerCarrying: c.passengerCarrying === true,
   }
   const n = { kind, components: kind === "MIXED" ? components : [], usJurisdictions: us, caJurisdictions: ca }
+  // Jurisdictions are OPTIONAL: onboarding no longer asks which states or provinces the driver will visit (the intended operation decides the
+  // regulatory scope). When earlier records or other callers supply them, they must still be consistent with the kind.
   switch (kind) {
-    case "US_INTRASTATE": if (us.length !== 1 || ca.length) errors.push("U.S. intrastate means exactly one state and no Canadian jurisdiction."); break
-    case "US_INTERSTATE": if (us.length < 2 || ca.length) errors.push("U.S. interstate means two or more states and no Canadian jurisdiction."); break
-    case "CA_INTRAPROVINCIAL": if (ca.length !== 1 || us.length) errors.push("Canadian intraprovincial means exactly one province or territory and no U.S. jurisdiction."); break
-    case "CA_INTERPROVINCIAL": if (ca.length < 2 || us.length) errors.push("Canadian interprovincial means two or more provinces or territories and no U.S. jurisdiction."); break
-    case "CROSS_BORDER": if (!ca.length || !us.length) errors.push("Cross-border needs at least one Canadian jurisdiction and at least one U.S. state."); break
+    case "US_INTRASTATE": if (us.length > 1 || ca.length) errors.push("U.S. intrastate means at most one state and no Canadian jurisdiction."); break
+    case "US_INTERSTATE": if (ca.length) errors.push("U.S. wide operation has no Canadian jurisdiction."); break
+    case "CA_INTRAPROVINCIAL": if (ca.length > 1 || us.length) errors.push("Canadian intraprovincial means at most one province or territory and no U.S. jurisdiction."); break
+    case "CA_INTERPROVINCIAL": if (us.length) errors.push("Canada wide operation has no U.S. jurisdiction."); break
+    case "CROSS_BORDER": break
     case "MIXED":
+      // Kept for earlier records only; no longer offered.
       if (components.length < 2) errors.push("Mixed or changing assignments needs at least two operation types.")
       if (!errors.length) {
         const needUS = components.some((x) => x !== "CA_INTRAPROVINCIAL" && x !== "CA_INTERPROVINCIAL")
@@ -130,13 +133,13 @@ export function validateScopeInput(input: ScopeInput): { ok: true; value: Normal
 const LIMITATIONS = [
   "Selecting an operating scope does not establish that the driver is eligible or qualified; it decides which application sections and consents are issued.",
   "State, provincial and territorial rules (including intrastate adoption of federal rules, exemptions, age and medical requirements, and Alberta's carrier history rule) are not evaluated by TES; staff must verify them.",
-  "Vehicle thresholds, hazardous-materials and passenger-carrier endorsements, and other operation-specific requirements are recorded but not evaluated.",
+  "Vehicle thresholds, endorsement eligibility and other operation-specific requirements are collected or flagged for staff but not evaluated. Company capabilities (for example hazardous materials) decide which application content is relevant; they never mark a driver qualified, endorsed or authorized.",
 ]
 
 /** Decides whether an application can be issued for this scope and, if so, exactly what it contains. */
 export function evaluateScope(scope: NormalizedScope | null): ScopeEvaluation {
   if (!scope || scope.kind === "UNDETERMINED") {
-    return { issuable: false, reason: "The driver's intended operating scope is not established. Choose the scope (and its states or provinces) before sending an application.", profile: null, limitations: LIMITATIONS }
+    return { issuable: false, reason: "The driver's intended operation is not decided. Choose the intended operation before sending an application.", profile: null, limitations: LIMITATIONS }
   }
   const us = involvesUS(scope)
   const ca = involvesCanada(scope)
@@ -157,8 +160,8 @@ export function evaluateScope(scope: NormalizedScope | null): ScopeEvaluation {
   if (scope.kind === "US_INTRASTATE" || scope.components.includes("US_INTRASTATE")) manual.push(`Intrastate requirements of ${scope.usJurisdictions.join(", ") || "the state"} (adoption of federal rules, exemptions, age and medical standards) must be verified.`)
   if (us && ch.cmvOperation === "NO") manual.push("The driver is not expected to operate a commercial motor vehicle in the United States; FMCSA driver-qualification and testing requirements are not applied. Verify this remains true.")
   if (ca) manual.push("Provincial or territorial driver and carrier requirements are not evaluated; TES applies a three-year employment-history baseline.")
-  if (ch.hazmat) manual.push("Hazardous-materials requirements (endorsement, training, security) are not collected by this application.")
-  if (ch.passengerCarrying) manual.push("Passenger-carrying requirements (endorsement, medical and other standards) are not collected by this application.")
+  if (ch.hazmat) manual.push("Hazardous-materials qualification is collected as a self-declaration with supporting evidence; its validity and the driver's eligibility are not evaluated by TES and must be verified.")
+  if (ch.passengerCarrying) manual.push("Passenger-carrying qualification is collected as a self-declaration with supporting evidence; its validity and the driver's eligibility are not evaluated by TES and must be verified.")
   const profile: RequirementsProfile = {
     version: SCOPE_RULES_VERSION,
     scopeKind: scope.kind,

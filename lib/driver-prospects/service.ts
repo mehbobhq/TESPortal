@@ -16,7 +16,7 @@ export const createProspect = (input: CreateProspectInput) =>
 export const addProspectEmail = (input: { organizationId: string; prospectId: string; email: string }) =>
   withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.addProspectEmail(context(c, d), input))
 export const listProspects = (organizationId: string) =>
-  withAuthorizedSystem("DRIVER_READ", (c, d) => operations.listProspects(context(c, d), organizationId))
+  withAuthorizedSystem("DRIVER_READ", (c, d) => operations.listProspects(context(c, d), d, organizationId))
 export const reviewProspect = (input: { organizationId: string; prospectId: string; to: ReviewTarget }) =>
   withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.reviewProspect(context(c, d), input))
 export const convertProspectToCompanyDriver = (input: ConvertProspectInput) =>
@@ -55,5 +55,7 @@ export const establishOperatingScope = (input: { organizationId: string; prospec
   withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.establishOperatingScope(context(c, d), input))
 export const getPresentationContext = (organizationId: string) =>
   withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.getPresentationContext(context(c, d), d, organizationId))
+export const readCompanyOperatingFacts = (organizationId: string) =>
+  withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.readCompanyOperatingFacts(context(c, d), d, organizationId))
 export const establishPresentationJurisdiction = (input: { organizationId: string; country: unknown }) =>
   withAuthorizedSystem("DRIVER_MANAGE", (c, d) => operations.establishPresentationJurisdiction(context(c, d), d, input))

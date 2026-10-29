@@ -14,9 +14,8 @@ import type { ProspectView } from "@/lib/driver-prospects/types"
 import { OnboardingChronology } from "./onboarding-chronology"
 import { ApplicationReview } from "./application-review"
 import * as api from "./prospect-api"
-import { OperatingScopeFields, previewScope, scopeFormFrom, toScopeInput, type ScopeFormState } from "./operating-scope-fields"
-import { SCOPE_LABEL } from "@/lib/driver-prospects/operating-scope"
-import type { PresentationContext } from "@/lib/jurisdiction-context"
+import { OperatingScopeFields, operationLabel, previewScope, scopeFormFrom, toScopeInput, type ScopeFormState } from "./operating-scope-fields"
+import type { CompanyOperatingFacts } from "@/lib/driver-prospects/company-operating-facts"
 
 type Company = { id: string; name: string; kind: string; status: string }
 const blankOnboard = { relationshipType: "EMPLOYEE", relationshipStartDate: "", dateOfBirth: "", licenceCountry: "CA", licenceRegion: "", licenceNumber: "", licenceEffectiveFrom: "", driverNumber: "" }
@@ -38,7 +37,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
   const [onboarding, setOnboarding] = useState<typeof blankOnboard | null>(null)
   const [email, setEmail] = useState("")
   const [scopeForm, setScopeForm] = useState<ScopeFormState | null>(null)
-  const [presentation, setPresentation] = useState<PresentationContext | null>(null)
+  const [facts, setFacts] = useState<CompanyOperatingFacts | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -54,7 +53,7 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
 
   useEffect(() => {
     void load()
-    api.getOnboardingContext(companyId).then(setPresentation).catch(() => setPresentation(null))
+    api.getCompanyOperatingFacts(companyId).then(setFacts).catch(() => setFacts(null))
     fetch(`/api/companies/${encodeURIComponent(companyId)}/profile`, { cache: "no-store" })
       .then((r) => readCompanyLookup<Company>(r))
       .then((l) => {
@@ -160,10 +159,10 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
           <CardContent className="space-y-3 pt-4 text-sm">
             {scopeForm ? (
               <>
-                <OperatingScopeFields value={scopeForm} onChange={setScopeForm} presentation={presentation?.country ?? null} idPrefix="detail-scope" />
+                <OperatingScopeFields value={scopeForm} onChange={setScopeForm} facts={facts} idPrefix="detail-scope" />
                 {s === "INVITED" ? <p className="rounded border border-yellow-400 bg-yellow-50 px-2 py-1 text-xs text-yellow-900">Changing the scope cancels the application already sent. Send a new application afterwards.</p> : null}
                 <div className="flex gap-2">
-                  <Button size="sm" disabled={busy || previewScope(scopeForm).errors.length > 0} onClick={() => run(() => api.setOperatingScope(companyId, prospectId, toScopeInput(scopeForm)), "Operating scope saved.")}>Save operating scope</Button>
+                  <Button size="sm" disabled={busy || previewScope(scopeForm, facts).errors.length > 0} onClick={() => run(() => api.setOperatingScope(companyId, prospectId, toScopeInput(scopeForm)), "Operating scope saved.")}>Save operating scope</Button>
                   <Button size="sm" variant="ghost" onClick={() => setScopeForm(null)}>Cancel</Button>
                 </div>
               </>
@@ -171,8 +170,8 @@ export function ProspectDriverDetail({ companyId, prospectId }: { companyId: str
               <>
                 {prospect.operatingScope ? (
                   <div data-testid="scope-summary">
-                    <p className="font-medium">{SCOPE_LABEL[prospect.operatingScope.kind]}</p>
-                    <p className="text-xs text-muted-foreground">{[...prospect.operatingScope.usJurisdictions, ...prospect.operatingScope.caJurisdictions].join(", ") || "No jurisdictions listed"}</p>
+                    <p className="font-medium">{operationLabel(prospect.operatingScope.kind)}</p>
+                    <p className="text-xs text-muted-foreground">{[...prospect.operatingScope.usJurisdictions, ...prospect.operatingScope.caJurisdictions].join(", ") || "Jurisdiction details follow from the intended operation"}</p>
                   </div>
                 ) : (
                   <p data-testid="scope-summary" className="text-muted-foreground">Not yet determined. An application cannot be sent until the driver&apos;s operating scope is established.</p>

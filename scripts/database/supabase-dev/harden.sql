@@ -1,7 +1,7 @@
 -- Post-migration security hardening for the Supabase DEVELOPMENT database. Run as the migrator by migrate-dev.sh after
 -- every successful migration run. Idempotent. It does not modify any migration.
 --
--- Why: PostgreSQL grants EXECUTE on new functions to PUBLIC unless revoked. Migrations 0001-0043 revoke it from most
+-- Why: PostgreSQL grants EXECUTE on new functions to PUBLIC unless revoked. Migrations 0001-0044 revoke it from most
 -- functions, but 20 SECURITY INVOKER trigger functions in tes_security keep the default. Anon/authenticated/service_role
 -- receive that through PUBLIC. They cannot name the schema today (no USAGE) and trigger functions cannot be called
 -- directly, so the exposure is defence-in-depth only, but nothing in a Data API-enabled project should depend on that.

@@ -66,7 +66,7 @@ describe("operating scope -> application requirements (rules " + SCOPE_RULES_VER
     for (const s of [null, validateScopeInput({ kind: "UNDETERMINED" })]) {
       const e = evaluateScope(s === null ? null : s.ok ? s.value : null);
       assert.equal(e.issuable, false);
-      assert.match(e.reason ?? "", /not established/);
+      assert.match(e.reason ?? "", /intended operation is not decided/);
     }
   });
   it("blocks U.S. operations when CMV or CDL status is unknown, rather than sending a possibly wrong form", () => {
@@ -86,11 +86,14 @@ describe("operating scope -> application requirements (rules " + SCOPE_RULES_VER
     const v = validateScopeInput({ kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["AB"], characteristics: { pspIntended: true } });
     assert.equal(v.ok, false);
   });
-  it("shape rules: intrastate is one state, interstate two or more, codes belong to their country", () => {
+  it("shape rules (2026-10-v2): jurisdiction lists are optional; an intrastate list never exceeds one; countries never mix; unknown kinds are rejected", () => {
     assert.equal(validateScopeInput({ kind: "US_INTRASTATE", usJurisdictions: ["TX", "OK"] }).ok, false);
-    assert.equal(validateScopeInput({ kind: "US_INTERSTATE", usJurisdictions: ["TX"] }).ok, false);
+    assert.equal(validateScopeInput({ kind: "US_INTRASTATE" }).ok, true);
+    assert.equal(validateScopeInput({ kind: "US_INTERSTATE" }).ok, true);
+    assert.equal(validateScopeInput({ kind: "US_INTERSTATE", caJurisdictions: ["ON"] }).ok, false);
+    assert.equal(validateScopeInput({ kind: "CA_INTERPROVINCIAL" }).ok, true);
     assert.equal(validateScopeInput({ kind: "CA_INTRAPROVINCIAL", caJurisdictions: ["TX"] }).ok, false);
-    assert.equal(validateScopeInput({ kind: "CROSS_BORDER", usJurisdictions: ["TX"] }).ok, false);
+    assert.equal(validateScopeInput({ kind: "CROSS_BORDER" }).ok, true);
     assert.equal(validateScopeInput({ kind: "NOPE" }).ok, false);
   });
   it("hazmat and passenger operations are recorded and flagged for manual verification, not silently ignored", () => {

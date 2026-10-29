@@ -21,9 +21,11 @@ export const getSubmission = (companyId: string, prospectId: string) => call<{ r
 export const prospectRoute = (companyId: string, prospectId: string) => `/companies/${companyId}/drivers/prospect-${prospectId}`
 
 import type { PresentationContext } from "@/lib/jurisdiction-context"
+import type { CompanyOperatingFacts } from "@/lib/driver-prospects/company-operating-facts"
 import type { ScopeInput } from "@/lib/driver-prospects/operating-scope"
 
 const ctxBase = (companyId: string) => `/api/companies/${encodeURIComponent(companyId)}/driver-onboarding-context`
+export const getCompanyOperatingFacts = async (companyId: string) => (await call<{ facts: CompanyOperatingFacts }>(ctxBase(companyId))).facts
 export const getOnboardingContext = async (companyId: string) => (await call<{ presentation: PresentationContext }>(ctxBase(companyId))).presentation
 export const setPresentationCountry = async (companyId: string, country: "US" | "CA") => (await post(ctxBase(companyId), { country })).presentation as PresentationContext
 export const setOperatingScope = (companyId: string, prospectId: string, scope: ScopeInput) => post(`${base(companyId)}/${encodeURIComponent(prospectId)}/scope`, { scope })

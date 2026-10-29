@@ -114,6 +114,8 @@ export interface ResolveInput {
   /** Sensitive-identifier gates, decided by deployment configuration. Absent gates keep those fields OFF. */
   gates: { vaultReady: boolean; approvedSensitiveFields: string[] }
   catalogueVersion?: string
+  /** Open items derived from the company's recorded facts (for example an unknown Cargo Information). They are added to the plan's review requirements; they never remove content. */
+  needsAttention?: Array<{ id: string; text: string }>
 }
 
 export function resolvePlan(input: ResolveInput): ApplicationPlan {
@@ -173,6 +175,8 @@ export function resolvePlan(input: ResolveInput): ApplicationPlan {
   if (us && ca) reviews.push({ id: "cross_border_applicability", text: "Cross-border operations: which U.S. and Canadian requirements apply to this driver and carrier combination needs jurisdiction-specific legal confirmation.", legalSource: ["US_391_21", "CA_PROV_CARRIER_RULES"] })
   if (input.scope.kind === "US_INTRASTATE" || input.scope.components.includes("US_INTRASTATE")) reviews.push({ id: "us_intrastate_state_rules", text: `Intrastate rules of ${input.scope.usJurisdictions.join(", ") || "the state"} (adoption of federal rules, exemptions, age and medical standards) are not evaluated by TES and need verification.`, legalSource: ["US_391_21"] })
   if (ca) reviews.push({ id: "canada_provincial_rules", text: "Provincial or territorial driver-file, employment-history and screening rules are not evaluated by TES beyond the 3-year baseline and need verification.", legalSource: ["CA_PROV_CARRIER_RULES"] })
+
+  for (const n of input.needsAttention ?? []) reviews.push({ id: n.id, text: n.text, legalSource: [] })
 
   const requirements = catalogue.requirements.filter((r) => r.stage === stage && evalCond(r.appliesWhen, scope) !== "F")
 

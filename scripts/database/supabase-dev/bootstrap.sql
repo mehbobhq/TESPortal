@@ -16,7 +16,7 @@
 --   TES_DEV_MIGRATOR_PASSWORD   >= 24 printable ASCII characters, different from the backend's
 --
 -- The role names are the production names, hard-coded in migrations
--- 0001-0043, and are preserved exactly. Passwords replace IAM authentication.
+-- 0001-0044, and are preserved exactly. Passwords replace IAM authentication.
 -- A plaintext password in ALTER ROLE can appear in server statement logs when
 -- logging captures DDL; a precomputed 'SCRAM-SHA-256$...' verifier is also
 -- accepted by PostgreSQL and avoids that. Rotate by re-running this script.

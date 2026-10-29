@@ -57,7 +57,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     assert.ok(/@(127\.0\.0\.1|localhost|\[::1\])[:/]|[?&]host=\//.test(adminUrl) || !/@/.test(adminUrl), "cleanup refuses to run against a non-loopback database");
     const tables = [
       "driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers",
-      "organization_driver_relationships", "driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates", "persons",
+      "company_cargo_category_periods", "company_operating_scope_periods", "organization_driver_relationships", "driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates", "persons",
     ];
     const client = await pools.admin.connect();
     try {
@@ -79,7 +79,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
       for (const t of appTables) await client.query(`ALTER TABLE public.${t} DISABLE TRIGGER USER`);
       const people = (await client.query<{ person_id: string }>(`SELECT DISTINCT person_id FROM public.driver_prospects WHERE organization_id = ANY($1::uuid[])`, [organizations])).rows.map((r) => r.person_id);
       for (const t of appTables) await client.query(`DELETE FROM public.${t} WHERE organization_id = ANY($1::uuid[])`, [organizations]);
-      for (const t of ["driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers", "organization_driver_relationships"]) {
+      for (const t of ["driver_prospect_events", "driver_application_submissions", "driver_application_invitations", "driver_prospect_operating_scopes", "organization_presentation_jurisdictions", "driver_prospects", "organization_identifiers", "company_cargo_category_periods", "company_operating_scope_periods", "organization_driver_relationships"]) {
         await client.query(`DELETE FROM public.${t} WHERE organization_id = ANY($1::uuid[])`, [organizations]);
       }
       for (const t of ["driver_licences", "driver_profiles", "person_channels", "person_name_versions", "person_birth_dates"]) await client.query(`DELETE FROM public.${t} WHERE person_id = ANY($1::uuid[])`, [people]);
@@ -228,13 +228,14 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     assert.equal((await K.svc.listProspects(o))[0].canInvite, true);
   });
 
-  scenario("3. a prospect without a usable contact method is rejected (and a single word is not a full name)", async () => {
+  scenario("3. email and phone are both optional for saving; a malformed value is still rejected (and a single word is not a full name)", async () => {
     const o = await org();
     await only(...FULL);
-    await rejects(() => K.svc.createProspect({ organizationId: o, fullName: name() }), "ValidationError");
+    const bare = await K.svc.createProspect({ organizationId: o, fullName: name() });
+    assert.equal(bare.status, "PROSPECT");
     await rejects(() => K.svc.createProspect({ organizationId: o, fullName: name(), email: "not-an-email", phone: "abc" }), "ValidationError");
     await rejects(() => K.svc.createProspect({ organizationId: o, fullName: "Cher", email: email() }), "ValidationError");
-    assert.equal((await q(`SELECT 1 FROM public.driver_prospects WHERE organization_id = $1`, [o])).length, 0);
+    assert.equal((await q(`SELECT 1 FROM public.driver_prospects WHERE organization_id = $1`, [o])).length, 1, "only the contact-less prospect was saved");
   });
 
   scenario("4. saving needs no date of birth, address, start date, effective dates or licence", async () => {
@@ -555,14 +556,15 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const [row] = await K.svc.listProspects(o);
     assert.equal(row.operatingScope, null);
     assert.equal(row.canInvite, false);
-    assert.match(row.inviteBlockedReason ?? "", /operating scope is not established/);
+    assert.match(row.inviteBlockedReason ?? "", /intended operation is not decided/);
     const calls: string[] = [];
     await rejects(() => K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), "StateError");
     assert.equal(calls.length, 0, "nothing is sent");
     assert.equal((await q(`SELECT 1 FROM public.driver_application_invitations WHERE prospect_id = $1`, [created.prospectId])).length, 0);
     // US operations with unknown CMV/CDL status are also blocked rather than sent a possibly wrong form.
     await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "US_INTERSTATE", usJurisdictions: ["OH", "PA"] } as never });
-    assert.match((await K.svc.listProspects(o))[0].inviteBlockedReason ?? "", /commercial motor vehicle/);
+    // (2026-10-v2) U.S. CMV/CDL applicability is derived from the intended operation and flagged for staff, so it no longer blocks issuance.
+    assert.equal((await K.svc.listProspects(o))[0].canInvite, true);
     // The database refuses an invitation row that names no current, determined scope, whatever writes it.
     await assert.rejects(
       () => pools.admin.query(`INSERT INTO public.driver_application_invitations (prospect_id, organization_id, token_hash, recipient_email_normalized, expires_at, created_by_actor_id)
@@ -664,5 +666,81 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const r = await issue(us, { kind: "US_INTRASTATE", usJurisdictions: ["TX"], characteristics: CDL });
     assert.equal(r.claims.operatingRegion, "United States");
     assert.ok((await q(`SELECT 1 FROM public.master_register_events WHERE action->>'operation' = 'ORGANIZATION_PRESENTATION_JURISDICTION_ESTABLISH'`)).length >= 2);
+  });
+
+  // ---- Add Driver: company facts and contact rules ----
+
+  async function issuedPlan(o: string, scope: Record<string, unknown>) {
+    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: scope as never });
+    await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery([]));
+    const [inv] = await q<{ requirements_profile: { plan: { fields: Array<{ id: string }>; requirements: Array<{ key: string }>; regulatoryReviewRequirements: Array<{ id: string }>; catalogueVersion: string } } }>(
+      `SELECT requirements_profile FROM public.driver_application_invitations WHERE prospect_id = $1 ORDER BY created_at DESC LIMIT 1`, [created.prospectId]);
+    return inv.requirements_profile.plan;
+  }
+  const ids = (plan: { fields: Array<{ id: string }> }, prefix: string) => plan.fields.filter((f) => f.id.startsWith(prefix)).map((f) => f.id);
+
+  scenario("23. the company's recorded Cargo Information decides hazmat content: YES adds it, a recorded non-hazmat cargo does not, nothing recorded is flagged (never 'No')", async () => {
+    const withHaz = await org("HAZ", "US");
+    const without = await org("NOHAZ", "US");
+    const blank = await org("BLANK", "US");
+    await q(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'HAZARDOUS_MATERIALS', now() - interval '1 day')`, [withHaz]);
+    await q(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) SELECT $1, code, now() - interval '1 day' FROM public.cargo_categories WHERE code <> 'HAZARDOUS_MATERIALS' ORDER BY sort_order LIMIT 1`, [without]);
+    await only(...FULL, "COMPANY_PROFILE_READ");
+    const facts = await K.svc.readCompanyOperatingFacts(withHaz);
+    assert.equal(facts.hazmat.value, "YES");
+    assert.equal(facts.registration.country, "US");
+    assert.equal(facts.passengerCarrying.value, "UNKNOWN", "no canonical passenger source exists");
+    assert.equal((await K.svc.readCompanyOperatingFacts(without)).hazmat.value, "NO");
+    assert.equal((await K.svc.readCompanyOperatingFacts(blank)).hazmat.value, "UNKNOWN");
+    const a = await issuedPlan(withHaz, { kind: "US_INTERSTATE" });
+    assert.ok(ids(a, "hazmat.").length >= 3 && a.requirements.some((r) => r.key === "hazmat_qualification"));
+    assert.equal(a.catalogueVersion, "driver-application/2");
+    const b = await issuedPlan(without, { kind: "US_INTERSTATE" });
+    assert.deepEqual(ids(b, "hazmat."), []);
+    const c = await issuedPlan(blank, { kind: "US_INTERSTATE" });
+    assert.ok(ids(c, "hazmat.").length >= 3, "unknown Cargo Information never silently drops hazmat content");
+    assert.ok(c.regulatoryReviewRequirements.some((r) => r.id === "company_fact.hazmat_unknown"));
+    assert.ok(a.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_not_recorded"));
+  });
+
+  scenario("24. without Profile read authority the facts are unknown (not 'No') and hazmat content is kept and flagged", async () => {
+    const o = await org("NOREAD", "CA");
+    await q(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) SELECT $1, code, now() - interval '1 day' FROM public.cargo_categories WHERE code <> 'HAZARDOUS_MATERIALS' ORDER BY sort_order LIMIT 1`, [o]);
+    await only(...FULL);
+    const facts = await K.svc.readCompanyOperatingFacts(o);
+    assert.equal(facts.profileReadable, false);
+    assert.equal(facts.hazmat.value, "UNKNOWN");
+    const plan = await issuedPlan(o, { kind: "CA_INTERPROVINCIAL" });
+    assert.ok(ids(plan, "hazmat.").length >= 3);
+    assert.ok(plan.regulatoryReviewRequirements.some((r) => r.id === "company_fact.hazmat_unknown"));
+  });
+
+  scenario("25. intended operations without state/province lists save and issue; a cross-border company hires an intraprovincial driver", async () => {
+    const o = await org("XB", "CA");
+    await only(...FULL, "COMPANY_PROFILE_READ");
+    await q(`INSERT INTO public.company_operating_scope_periods (organization_id, operating_scope, effective_from) VALUES ($1, 'CANADA_AND_UNITED_STATES', now() - interval '1 day')`, [o]);
+    assert.equal((await K.svc.readCompanyOperatingFacts(o)).operatingScope, "CANADA_AND_UNITED_STATES");
+    for (const kind of ["CA_INTRAPROVINCIAL", "US_INTRASTATE", "CA_INTERPROVINCIAL", "US_INTERSTATE", "CROSS_BORDER"]) {
+      const plan = await issuedPlan(o, { kind }).catch((e: unknown) => { throw new Error(`${kind}: ${e instanceof Error ? e.message : e}`); });
+      assert.ok(plan.fields.length > 0, kind);
+    }
+    const rows = await q<{ scope_kind: string; us_jurisdictions: string[]; ca_jurisdictions: string[] }>(`SELECT scope_kind, us_jurisdictions, ca_jurisdictions FROM public.driver_prospect_operating_scopes WHERE organization_id = $1`, [o]);
+    assert.equal(rows.length, 5);
+    assert.ok(rows.every((r) => r.us_jurisdictions.length === 0 && r.ca_jurisdictions.length === 0), "no jurisdiction lists are stored");
+  });
+
+  scenario("26. a driver saved without contact information cannot be issued an application (server-side), and a phone alone does not enable SMS delivery", async () => {
+    const o = await org("NOCONTACT", "CA");
+    await only(...FULL);
+    const bare = await K.svc.createProspect({ organizationId: o, fullName: name(), scope: { kind: "CA_INTERPROVINCIAL" } as never });
+    const [row] = await K.svc.listProspects(o);
+    assert.equal(row.canInvite, false);
+    const calls: string[] = [];
+    await rejects(() => K.svc.sendInvitation({ organizationId: o, prospectId: bare.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), "StateError");
+    assert.equal(calls.length, 0);
+    assert.equal((await q(`SELECT 1 FROM public.driver_application_invitations WHERE prospect_id = $1`, [bare.prospectId])).length, 0, "no invitation row exists");
+    const phoneOnly = await K.svc.createProspect({ organizationId: o, fullName: name(), phone: "(416) 555-0177", scope: { kind: "CA_INTERPROVINCIAL" } as never });
+    await assert.rejects(() => K.svc.sendInvitation({ organizationId: o, prospectId: phoneOnly.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), /SMS delivery is not available/);
+    assert.equal(calls.length, 0);
   });
 });

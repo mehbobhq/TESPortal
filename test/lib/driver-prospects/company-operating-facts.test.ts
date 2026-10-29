@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  applyCompanyFacts, deriveHazmat, INTENDED_OPERATION_LABEL, orderIntendedOperations, UNKNOWN_FACTS, DEFAULT_INTENDED_OPERATION,
+  applyCompanyFacts, deriveHazmat, derivePassenger, INTENDED_OPERATION_LABEL, orderIntendedOperations, UNKNOWN_FACTS, DEFAULT_INTENDED_OPERATION,
   type CompanyOperatingFacts,
 } from "@/lib/driver-prospects/company-operating-facts";
 import { evaluateScope, mergeScopeInput, validateScopeInput, type ScopeKind } from "@/lib/driver-prospects/operating-scope";
@@ -11,10 +11,10 @@ import { validAnswers } from "../../helpers/driver-application-fill";
 import { validateAnswers } from "@/lib/driver-application/validate";
 
 const reg = (country: "US" | "CA" | null) => ({ country, basis: country ? ("REGISTRATION" as const) : ("UNRESOLVED" as const), reason: country ? null : "The company's registered country is not recorded as the United States or Canada." });
-const facts = (o: { country?: "US" | "CA" | null; hazmat?: "YES" | "NO" | "UNKNOWN"; psp?: "YES" | "NO" | "UNKNOWN" } = {}): CompanyOperatingFacts => ({
+const facts = (o: { country?: "US" | "CA" | null; hazmat?: "YES" | "NO" | "UNKNOWN"; psp?: "YES" | "NO" | "UNKNOWN"; pax?: "YES" | "NO" | "UNKNOWN" } = {}): CompanyOperatingFacts => ({
   registration: reg(o.country === undefined ? "CA" : o.country), operatingScope: null,
   hazmat: { value: o.hazmat ?? "NO", basis: "CARGO_RECORDED_WITHOUT_HAZMAT" }, psp: { value: o.psp ?? "UNKNOWN" },
-  passengerCarrying: { value: "UNKNOWN", basis: "NO_CANONICAL_SOURCE" }, profileReadable: true,
+  passengerCarrying: { value: o.pax ?? "NO", basis: o.pax === "YES" ? "CARGO_CATEGORY" : o.pax === "UNKNOWN" ? "NOT_RECORDED" : "CARGO_RECORDED_WITHOUT_PASSENGER" }, profileReadable: true,
 });
 const planFor = (kind: ScopeKind, f: CompanyOperatingFacts, extra: { stateOrProvince?: boolean } = {}): { plan: ApplicationPlan; needs: string[] } => {
   const v = validateScopeInput({ kind });
@@ -57,15 +57,13 @@ describe("Add Driver: company facts decide application content (enter once, reus
     assert.equal(req.requiredForQualification, false);
     assert.ok(plan.fields.find((f) => f.id === "hazmat.qualification")!.options!.some((o) => o.value === "none"), "'none yet' is an allowed answer");
   });
-  it("4. passenger company: passenger content exists in the catalogue and is included when the characteristic is established", () => {
-    const f = facts();
-    f.passengerCarrying = { value: "YES", basis: "NO_CANONICAL_SOURCE" };
-    const { plan } = planFor("US_INTERSTATE", f);
+  it("4. passenger company (Passenger selected in Cargo Information): passenger questions, evidence and requirement are included; the operation still decides U.S./Canada", () => {
+    const { plan } = planFor("US_INTERSTATE", facts({ pax: "YES" }));
     assert.deepEqual(paxIds(plan).sort(), ["docs.passenger_qualification", "passenger.qualification"]);
     assert.ok(plan.requirements.some((r) => r.key === "passenger_qualification" && !r.requiredForQualification));
   });
   it("5. company without hazmat or passenger operations: those sections are NOT added by company configuration", () => {
-    const { plan, needs } = planFor("US_INTERSTATE", facts({ hazmat: "NO" }));
+    const { plan, needs } = planFor("US_INTERSTATE", facts({ hazmat: "NO", pax: "NO" }));
     assert.deepEqual(hazIds(plan), []);
     assert.deepEqual(paxIds(plan), []);
     assert.ok(!needs.includes("company_fact.hazmat_unknown"));
@@ -81,11 +79,15 @@ describe("Add Driver: company facts decide application content (enter once, reus
     assert.ok(hazIds(plan).length > 0, "unknown hazmat keeps the hazmat sections");
     assert.ok(needs.includes("company_fact.hazmat_unknown"));
     const unread = planFor("CA_INTERPROVINCIAL", UNKNOWN_FACTS(reg(null)));
-    assert.ok(unread.needs.includes("company_fact.hazmat_unknown") && unread.needs.includes("company_fact.registration_country_unresolved") && unread.needs.includes("company_fact.passenger_not_recorded"));
+    assert.ok(unread.needs.includes("company_fact.hazmat_unknown") && unread.needs.includes("company_fact.registration_country_unresolved") && unread.needs.includes("company_fact.passenger_unknown"));
   });
-  it("6b. passenger carrying has no canonical source: it is flagged, never assumed to be 'No' and never silently added", () => {
-    const { plan, needs } = planFor("US_INTERSTATE", facts());
-    assert.ok(needs.includes("company_fact.passenger_not_recorded"));
+  it("6b. passenger carrying unknown (Cargo Information not recorded or unreadable): flagged, never assumed 'No', never silently added", () => {
+    assert.equal(derivePassenger({ readable: true, cargoCodes: [] }).value, "UNKNOWN");
+    assert.equal(derivePassenger({ readable: false, cargoCodes: null }).value, "UNKNOWN");
+    assert.equal(derivePassenger({ readable: true, cargoCodes: ["GENERAL_FREIGHT"] }).value, "NO");
+    assert.equal(derivePassenger({ readable: true, cargoCodes: ["GENERAL_FREIGHT", "PASSENGER"] }).value, "YES");
+    const { plan, needs } = planFor("US_INTERSTATE", facts({ pax: "UNKNOWN" }));
+    assert.ok(needs.includes("company_fact.passenger_unknown"));
     assert.deepEqual(paxIds(plan), []);
   });
   it("7. a cross-border company can hire an intraprovincial or intrastate driver", () => {
@@ -105,6 +107,8 @@ describe("Add Driver: company facts decide application content (enter once, reus
   });
   it("10. existing personalization still works: Canada-only gets no U.S. federal sections; cross border gets both; PSP follows the company rule", () => {
     const ca = planFor("CA_INTERPROVINCIAL", facts({ hazmat: "NO" })).plan;
+    const paxCa = planFor("CA_INTERPROVINCIAL", facts({ pax: "YES" })).plan;
+    assert.equal(paxCa.context.involvesUS, false, "passenger operations do not change the Canadian/U.S. scope");
     assert.equal(ca.context.involvesUS, false);
     assert.equal(ca.context.cmv, "UNKNOWN");
     assert.equal(ca.requirements.some((r) => r.key === "clearinghouse"), false);

@@ -10,10 +10,9 @@
  *   hazardous materials    company_cargo_category_periods: an active HAZARDOUS_MATERIALS category (the Profile "Cargo Information"), and
  *                          company_rule_applicability_periods for DG_US / DG_CANADA (explicit APPLIES / DOES_NOT_APPLY)
  *   PSP screening          company_rule_applicability_periods, rule PSP
- *   passenger carrying     NO canonical source exists today. The missing piece is one Cargo Information catalogue value (a passenger code in
- *                          cargo_categories, recorded through company_cargo_category_periods) or one company_profile_rules entry with its
- *                          company_rule_applicability_periods. Until then automatic activation is INCOMPLETE: reported as a data-model gap
- *                          (see PASSENGER_GAP), never inferred and never guessed to be "No". A passenger flag already stored on a driver is kept.
+ *   passenger carrying     company_cargo_category_periods: an active PASSENGER category (Cargo Information catalogue, migration 0045). Recorded
+ *                          without Passenger = NO; nothing recorded or unreadable = UNKNOWN (flagged, never assumed to be "No"). A passenger flag
+ *                          already stored on a driver is kept.
  *
  * Principles:
  *  - Missing data is UNKNOWN, never NO. "NO" requires a positive record (cargo information was recorded and does not include hazardous materials,
@@ -31,6 +30,8 @@ export type CompanyOperatingScope = "CANADA" | "UNITED_STATES" | "CANADA_AND_UNI
 
 export type HazmatBasis = "CARGO_CATEGORY" | "RULE_APPLIES" | "RULE_DOES_NOT_APPLY" | "CARGO_RECORDED_WITHOUT_HAZMAT" | "NOT_RECORDED" | "NOT_READABLE"
 
+export type PassengerBasis = "CARGO_CATEGORY" | "CARGO_RECORDED_WITHOUT_PASSENGER" | "NOT_RECORDED" | "NOT_READABLE"
+
 export interface CompanyOperatingFacts {
   /** Registration country (or explicit presentation override); null with a reason when it cannot be established. */
   registration: PresentationContext
@@ -39,14 +40,20 @@ export interface CompanyOperatingFacts {
   hazmat: { value: FactTri; basis: HazmatBasis }
   /** Whether the company's PSP-screening rule applies (company_rule_applicability_periods, rule PSP). */
   psp: { value: FactTri }
-  /** Always UNKNOWN today: no canonical record of passenger-carrying operations exists. */
-  passengerCarrying: { value: FactTri; basis: "NO_CANONICAL_SOURCE" }
+  /** From the company's Cargo Information (PASSENGER category), the same canonical record as hazardous materials. */
+  passengerCarrying: { value: FactTri; basis: PassengerBasis }
   /** True only when the profile tables could be read for this user. A false value means the facts above are UNKNOWN because of access, not because they are absent. */
   profileReadable: boolean
 }
 
-export const PASSENGER_GAP =
-  "Passenger-carrying operations are not recorded in the company's canonical profile: public.cargo_categories (the Cargo Information catalogue) has no passenger code, public.company_profile_rules has no passenger rule, and company_operating_scope_periods only records geography. TES therefore cannot tell whether this company carries passengers."
+/** Passenger carrying is read from the same Cargo Information as hazardous materials. Missing or unreadable is UNKNOWN, never "No". */
+export function derivePassenger(i: { readable: boolean; cargoCodes: string[] | null }): CompanyOperatingFacts["passengerCarrying"] {
+  if (!i.readable) return { value: "UNKNOWN", basis: "NOT_READABLE" }
+  const codes = i.cargoCodes ?? []
+  if (codes.includes("PASSENGER")) return { value: "YES", basis: "CARGO_CATEGORY" }
+  if (codes.length > 0) return { value: "NO", basis: "CARGO_RECORDED_WITHOUT_PASSENGER" }
+  return { value: "UNKNOWN", basis: "NOT_RECORDED" }
+}
 
 export interface HazmatInputs {
   readable: boolean
@@ -71,7 +78,7 @@ export const UNKNOWN_FACTS = (registration: PresentationContext): CompanyOperati
   operatingScope: null,
   hazmat: { value: "UNKNOWN", basis: "NOT_READABLE" },
   psp: { value: "UNKNOWN" },
-  passengerCarrying: { value: "UNKNOWN", basis: "NO_CANONICAL_SOURCE" },
+  passengerCarrying: { value: "UNKNOWN", basis: "NOT_READABLE" },
   profileReadable: false,
 })
 
@@ -133,7 +140,8 @@ const usKinds = (s: NormalizedScope) => s.kind === "US_INTRASTATE" || s.kind ===
  *    staff member already recorded explicitly for this driver (earlier records) is kept.
  *  - Hazardous materials: YES -> hazmat content is included; UNKNOWN -> included and flagged (never silently excluded); NO -> not added.
  *  - PSP: included when the company's PSP rule applies (or the earlier per-driver choice was made).
- *  - Passenger carrying: no canonical source -> not added, and the gap is flagged (never assumed to be "No").
+ *  - Passenger carrying: YES -> passenger content is included; UNKNOWN -> not added solely by company configuration, and flagged (never "No");
+ *    NO -> nothing added. A passenger flag already stored on the driver is kept.
  */
 export function applyCompanyFacts(scope: NormalizedScope, facts: CompanyOperatingFacts): EffectiveScope {
   const needsAttention: NeedsAttention[] = []
@@ -161,9 +169,15 @@ export function applyCompanyFacts(scope: NormalizedScope, facts: CompanyOperatin
 
   if (facts.psp.value === "YES" && c.cmvOperation === "YES") c.pspIntended = true
 
-  if (facts.passengerCarrying.value === "UNKNOWN") {
-    needsAttention.push({ id: "company_fact.passenger_not_recorded", text: `${PASSENGER_GAP} Passenger-related questions are not added automatically; confirm whether they apply to this driver.` })
-  } else if (facts.passengerCarrying.value === "YES") c.passengerCarrying = true
+  if (facts.passengerCarrying.value === "YES") c.passengerCarrying = true
+  else if (facts.passengerCarrying.value === "UNKNOWN") {
+    needsAttention.push({
+      id: "company_fact.passenger_unknown",
+      text: facts.passengerCarrying.basis === "NOT_READABLE"
+        ? "The company's Cargo Information could not be read for this user, so whether the company carries passengers is unknown. Confirm whether passenger-related questions apply to this driver."
+        : "The company has not recorded its Cargo Information, so whether it carries passengers is unknown. Passenger questions are not added until the Profile is completed; confirm whether they apply to this driver.",
+    })
+  }
 
   if (facts.registration.country === null) {
     needsAttention.push({ id: "company_fact.registration_country_unresolved", text: `${facts.registration.reason ?? "The company's registration country is not established."} The application is not tailored to the company's country.` })

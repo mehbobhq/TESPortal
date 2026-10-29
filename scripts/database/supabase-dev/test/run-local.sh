@@ -53,8 +53,8 @@ expect "migrate-dev refuses TES_DEV_LOCAL_TEST on a remote host" nz env PGHOST=d
 PGPORT_SAVE="$PGPORT"
 expect "migrate-dev applies 0001-0043 as the migrator" 0 env TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
 expect "migrate-dev re-run is a no-op" 0 env TES_DEV_SESSION_PORT="$PGPORT" bash $D/migrate-dev.sh
-[ "$(admin -d tes_dev -c "select count(*) from tes_system.schema_migrations")" = 44 ] && ok "ledger = 44" || bad "ledger != 44"
-[ "$(admin -d tes_dev -c "select count(*) from tes_system.schema_migrations where applied_by='$M'")" = 44 ] && ok "all applied by the migrator" || bad "applied_by differs"
+[ "$(admin -d tes_dev -c "select count(*) from tes_system.schema_migrations")" = 45 ] && ok "ledger = 45" || bad "ledger != 45"
+[ "$(admin -d tes_dev -c "select count(*) from tes_system.schema_migrations where applied_by='$M'")" = 45 ] && ok "all applied by the migrator" || bad "applied_by differs"
 
 echo "== verifier"
 # the local cluster uses trust authentication, so the passwords are placeholders; the verifier still requires them to be present

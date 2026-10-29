@@ -151,6 +151,7 @@ export const CARGO_CATEGORY_DEFINITIONS = [
   { code: "TEMPERATURE_CONTROLLED_FOOD", displayName: "Temperature-Controlled & Food" },
   { code: "HAZARDOUS_MATERIALS", displayName: "Hazardous Materials" },
   { code: "BULK_OTHER", displayName: "Bulk & Other" },
+  { code: "PASSENGER", displayName: "Passenger" },
 ] as const
 export type CargoCategoryCode = (typeof CARGO_CATEGORY_DEFINITIONS)[number]["code"]
 

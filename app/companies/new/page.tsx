@@ -83,6 +83,7 @@ const CARGO_OPTIONS = [
   "Temperature-Controlled & Food",
   "Hazardous Materials",
   "Bulk & Other",
+  "Passenger",
 ]
 
 /**

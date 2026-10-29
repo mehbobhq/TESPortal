@@ -673,7 +673,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
   async function issuedPlan(o: string, scope: Record<string, unknown>) {
     const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: scope as never });
     await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery([]));
-    const [inv] = await q<{ requirements_profile: { plan: { fields: Array<{ id: string }>; requirements: Array<{ key: string }>; regulatoryReviewRequirements: Array<{ id: string }>; catalogueVersion: string } } }>(
+    const [inv] = await q<{ requirements_profile: { plan: { fields: Array<{ id: string }>; requirements: Array<{ key: string; requiredForQualification: boolean }>; regulatoryReviewRequirements: Array<{ id: string }>; catalogueVersion: string } } }>(
       `SELECT requirements_profile FROM public.driver_application_invitations WHERE prospect_id = $1 ORDER BY created_at DESC LIMIT 1`, [created.prospectId]);
     return inv.requirements_profile.plan;
   }
@@ -689,7 +689,7 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const facts = await K.svc.readCompanyOperatingFacts(withHaz);
     assert.equal(facts.hazmat.value, "YES");
     assert.equal(facts.registration.country, "US");
-    assert.equal(facts.passengerCarrying.value, "UNKNOWN", "no canonical passenger source exists");
+    assert.equal(facts.passengerCarrying.value, "NO", "Cargo Information recorded without Passenger");
     assert.equal((await K.svc.readCompanyOperatingFacts(without)).hazmat.value, "NO");
     assert.equal((await K.svc.readCompanyOperatingFacts(blank)).hazmat.value, "UNKNOWN");
     const a = await issuedPlan(withHaz, { kind: "US_INTERSTATE" });
@@ -700,7 +700,8 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     const c = await issuedPlan(blank, { kind: "US_INTERSTATE" });
     assert.ok(ids(c, "hazmat.").length >= 3, "unknown Cargo Information never silently drops hazmat content");
     assert.ok(c.regulatoryReviewRequirements.some((r) => r.id === "company_fact.hazmat_unknown"));
-    assert.ok(a.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_not_recorded"));
+    assert.ok(!a.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_unknown"), "a recorded profile without Passenger is not 'unknown'");
+    assert.ok(c.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_unknown"), "an unrecorded profile is flagged");
   });
 
   scenario("24. without Profile read authority the facts are unknown (not 'No') and hazmat content is kept and flagged", async () => {
@@ -810,14 +811,28 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     assert.equal(revoked.status, "REVOKED");
   });
 
-  scenario("29. a stored passenger flag keeps passenger content active; without it the company gap is only flagged", async () => {
-    const o = await org("PAX", "US");
+  scenario("29. Passenger in the company's Cargo Information activates passenger content; absent from a recorded profile adds nothing; unrecorded is flagged; a stored driver flag is kept", async () => {
+    const pax = await org("PAX", "US");
+    const plain = await org("NOPAX", "US");
+    const blank = await org("PAXBLANK", "US");
+    await q(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'PASSENGER', now() - interval '1 day'), ($1, 'HAZARDOUS_MATERIALS', now() - interval '1 day')`, [pax]);
+    await q(`INSERT INTO public.company_cargo_category_periods (organization_id, cargo_category_code, effective_from) VALUES ($1, 'GENERAL_FREIGHT', now() - interval '1 day')`, [plain]);
     await only(...FULL, "COMPANY_PROFILE_READ");
-    const withFlag = await issuedPlan(o, { kind: "US_INTERSTATE", characteristics: { passengerCarrying: true } });
-    assert.deepEqual(ids(withFlag, "passenger.").length > 0, true);
-    const without = await issuedPlan(o, { kind: "US_INTERSTATE" });
-    assert.deepEqual(ids(without, "passenger."), []);
-    assert.ok(without.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_not_recorded"));
+    assert.equal((await K.svc.readCompanyOperatingFacts(pax)).passengerCarrying.value, "YES");
+    assert.equal((await K.svc.readCompanyOperatingFacts(pax)).hazmat.value, "YES", "hazmat personalization is unaffected");
+    const a = await issuedPlan(pax, { kind: "CA_INTERPROVINCIAL" });
+    assert.deepEqual(ids(a, "passenger.").sort(), ["passenger.qualification"]);
+    assert.ok(a.fields.some((f) => f.id === "docs.passenger_qualification"));
+    assert.ok(a.requirements.some((r) => r.key === "passenger_qualification" && r.requiredForQualification === false));
+    assert.ok(ids(a, "hazmat.").length >= 3);
+    const b = await issuedPlan(plain, { kind: "US_INTERSTATE" });
+    assert.deepEqual(ids(b, "passenger."), []);
+    assert.ok(!b.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_unknown"));
+    const c = await issuedPlan(blank, { kind: "US_INTERSTATE" });
+    assert.deepEqual(ids(c, "passenger."), []);
+    assert.ok(c.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_unknown"));
+    const d = await issuedPlan(plain, { kind: "US_INTERSTATE", characteristics: { passengerCarrying: true } });
+    assert.ok(ids(d, "passenger.").length > 0, "a passenger flag already stored on the driver is kept");
   });
 
   scenario("30. migration 0044: the relaxed shape keeps every country/assignment rule, accepts every earlier valid row, and changes no access boundary", async () => {

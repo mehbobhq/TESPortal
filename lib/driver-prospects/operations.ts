@@ -23,7 +23,7 @@ import { assertQualifiedForApproval } from "@/lib/driver-application/approval-ga
 import { approvedSensitiveFields, vaultReady } from "@/lib/driver-application/sensitive"
 import type { Stage } from "@/lib/driver-application/catalogue/types"
 import type { PresentationContext, PresentationCountry } from "@/lib/jurisdiction-context"
-import { applyCompanyFacts, deriveHazmat, UNKNOWN_FACTS, type CompanyOperatingFacts, type CompanyOperatingScope } from "./company-operating-facts"
+import { applyCompanyFacts, deriveHazmat, derivePassenger, UNKNOWN_FACTS, type CompanyOperatingFacts, type CompanyOperatingScope } from "./company-operating-facts"
 import { hasAdditionalSystemCapability } from "@/lib/auth/tes-system-context"
 import {
   PROSPECT_STATUS_LABEL,
@@ -603,7 +603,7 @@ async function readProfileFacts(ctx: ProspectContext, decision: SystemAuthorizat
         dgRules: rules.rows.filter((r) => r.rule_code !== "PSP").map((r) => ({ rule: r.rule_code, applicability: r.applicability })),
       }),
       psp: { value: psp ? (psp.applicability === "APPLIES" ? "YES" : "NO") : "UNKNOWN" },
-      passengerCarrying: { value: "UNKNOWN", basis: "NO_CANONICAL_SOURCE" },
+      passengerCarrying: derivePassenger({ readable: true, cargoCodes: cargo.rows.map((r) => r.cargo_category_code) }),
       profileReadable: true,
     }
   } finally {

@@ -19,13 +19,8 @@ export type ScopeFormState = { kind: ScopeKind }
 
 export const emptyScopeForm = (): ScopeFormState => ({ kind: DEFAULT_INTENDED_OPERATION })
 
-export const toScopeInput = (f: ScopeFormState): ScopeInput => ({
-  kind: f.kind,
-  components: [],
-  usJurisdictions: [],
-  caJurisdictions: [],
-  characteristics: { cmvOperation: "UNKNOWN", cdlRequired: "UNKNOWN", pspIntended: false, hazmat: false, passengerCarrying: false },
-})
+/** Only the intended operation is sent. Everything else already stored for the driver is kept by the server (mergeScopeInput). */
+export const toScopeInput = (f: ScopeFormState): ScopeInput => ({ kind: f.kind })
 
 export const scopeFormFrom = (scope: { kind: ScopeKind } | null): ScopeFormState => (scope ? { kind: scope.kind } : emptyScopeForm())
 

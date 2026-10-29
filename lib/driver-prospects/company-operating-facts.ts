@@ -10,8 +10,10 @@
  *   hazardous materials    company_cargo_category_periods: an active HAZARDOUS_MATERIALS category (the Profile "Cargo Information"), and
  *                          company_rule_applicability_periods for DG_US / DG_CANADA (explicit APPLIES / DOES_NOT_APPLY)
  *   PSP screening          company_rule_applicability_periods, rule PSP
- *   passenger carrying     NO canonical source exists today (no table, column, catalogue code or rule records it). It is reported as a data-model
- *                          gap (see PASSENGER_GAP), never inferred and never guessed to be "No".
+ *   passenger carrying     NO canonical source exists today. The missing piece is one Cargo Information catalogue value (a passenger code in
+ *                          cargo_categories, recorded through company_cargo_category_periods) or one company_profile_rules entry with its
+ *                          company_rule_applicability_periods. Until then automatic activation is INCOMPLETE: reported as a data-model gap
+ *                          (see PASSENGER_GAP), never inferred and never guessed to be "No". A passenger flag already stored on a driver is kept.
  *
  * Principles:
  *  - Missing data is UNKNOWN, never NO. "NO" requires a positive record (cargo information was recorded and does not include hazardous materials,
@@ -44,7 +46,7 @@ export interface CompanyOperatingFacts {
 }
 
 export const PASSENGER_GAP =
-  "Passenger-carrying operations are not recorded anywhere in the company's canonical profile (no cargo category, rule, scope value or field exists for them), so TES cannot tell whether this company carries passengers."
+  "Passenger-carrying operations are not recorded in the company's canonical profile: public.cargo_categories (the Cargo Information catalogue) has no passenger code, public.company_profile_rules has no passenger rule, and company_operating_scope_periods only records geography. TES therefore cannot tell whether this company carries passengers."
 
 export interface HazmatInputs {
   readable: boolean

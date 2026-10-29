@@ -16,7 +16,7 @@ import {
   DriverProspectStateError,
   DriverProspectValidationError,
 } from "./errors"
-import { evaluateScope, scopeFromRow, validateScopeInput, SCOPE_RULES_VERSION, type NormalizedScope, type ScopeInput } from "./operating-scope"
+import { evaluateScope, mergeScopeInput, scopeFromRow, validateScopeInput, SCOPE_RULES_VERSION, type NormalizedScope, type ScopeInput } from "./operating-scope"
 import { prospectSchemaMessage, prospectSchemaState, scopeSchemaAvailable, scopeSchemaMessage } from "./schema-state"
 import { planSha256, resolvePlan, type HrSelections } from "@/lib/driver-application/plan"
 import { assertQualifiedForApproval } from "@/lib/driver-application/approval-gate"
@@ -495,13 +495,14 @@ export async function establishOperatingScope(ctx: ProspectContext, input: { org
   await requireSchema(ctx, "Setting the operating scope")
   if (!(await scopeSchemaAvailable(ctx.client))) throw new DriverProspectStateError(scopeSchemaMessage("Setting the operating scope"))
   const organizationId = uuid(input.organizationId, "organizationId")
-  const scope = requireValidScope(input.scope)
   await activeOrganization(ctx, organizationId)
   const prospect = await lockProspect(ctx, organizationId, uuid(input.prospectId, "prospectId"))
   if (prospect.status !== "PROSPECT" && prospect.status !== "INVITED") {
     throw new DriverProspectStateError(`The operating scope can no longer be changed: the prospect is ${PROSPECT_STATUS_LABEL[prospect.status]}. Nothing was changed.`)
   }
   const current = await currentScopeRow(ctx, prospect.id, organizationId)
+  // Omitted fields keep the stored values (see mergeScopeInput): re-saving never erases earlier information.
+  const scope = requireValidScope(mergeScopeInput(input.scope, current ? scopeFromRow(current) : null))
   const same = current && scopeFromRow(current) && JSON.stringify(scopeFromRow(current)) === JSON.stringify(scope)
   if (same) return { changed: false as const, scopeId: current.id, revokedInvitations: 0 }
   if (!current && scope.kind === "UNDETERMINED") return { changed: false as const, scopeId: null, revokedInvitations: 0 }

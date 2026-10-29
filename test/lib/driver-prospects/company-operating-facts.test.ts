@@ -4,7 +4,7 @@ import {
   applyCompanyFacts, deriveHazmat, INTENDED_OPERATION_LABEL, orderIntendedOperations, UNKNOWN_FACTS, DEFAULT_INTENDED_OPERATION,
   type CompanyOperatingFacts,
 } from "@/lib/driver-prospects/company-operating-facts";
-import { evaluateScope, validateScopeInput, type ScopeKind } from "@/lib/driver-prospects/operating-scope";
+import { evaluateScope, mergeScopeInput, validateScopeInput, type ScopeKind } from "@/lib/driver-prospects/operating-scope";
 import { resolvePlan, type ApplicationPlan } from "@/lib/driver-application/plan";
 import { CURRENT_CATALOGUE_VERSION } from "@/lib/driver-application/catalogue";
 import { validAnswers } from "../../helpers/driver-application-fill";
@@ -135,5 +135,36 @@ describe("Add Driver: company facts decide application content (enter once, reus
     const eff = applyCompanyFacts(v.value, facts({ hazmat: "NO" }));
     assert.equal(eff.scope.characteristics.hazmat, false);
     assert.equal(eff.scope.characteristics.passengerCarrying, false);
+  });
+});
+
+describe("re-saving keeps what is stored (mergeScopeInput)", () => {
+  const stored = () => {
+    const v = validateScopeInput({ kind: "US_INTERSTATE", usJurisdictions: ["OH", "PA"], characteristics: { cmvOperation: "YES", cdlRequired: "YES", hazmat: true, passengerCarrying: true, pspIntended: true } });
+    assert.ok(v.ok);
+    return v.value;
+  };
+  it("omitted fields keep the stored values; supplied fields win, even when empty", () => {
+    const m = validateScopeInput(mergeScopeInput({ kind: "US_INTERSTATE" }, stored()));
+    assert.ok(m.ok);
+    assert.deepEqual(m.value.usJurisdictions, ["OH", "PA"]);
+    assert.equal(m.value.characteristics.hazmat, true);
+    assert.equal(m.value.characteristics.passengerCarrying, true);
+    const cleared = validateScopeInput(mergeScopeInput({ kind: "US_INTERSTATE", usJurisdictions: [], characteristics: { hazmat: false } }, stored()));
+    assert.ok(cleared.ok);
+    assert.deepEqual(cleared.value.usJurisdictions, []);
+    assert.equal(cleared.value.characteristics.hazmat, false);
+    assert.equal(cleared.value.characteristics.passengerCarrying, true);
+  });
+  it("an incompatible kind drops only what cannot coexist; flags survive where valid; no stored scope means the input is used as is", () => {
+    const intrastate = validateScopeInput(mergeScopeInput({ kind: "US_INTRASTATE" }, stored()));
+    assert.ok(intrastate.ok);
+    assert.deepEqual(intrastate.value.usJurisdictions, []);
+    assert.equal(intrastate.value.characteristics.hazmat, true);
+    const canada = validateScopeInput(mergeScopeInput({ kind: "CA_INTERPROVINCIAL" }, stored()));
+    assert.ok(canada.ok, "stored PSP intent cannot apply to a Canada-only kind and is not carried there");
+    assert.equal(canada.value.characteristics.pspIntended, false);
+    assert.equal(canada.value.characteristics.hazmat, true, "other stored flags are kept");
+    assert.deepEqual(mergeScopeInput({ kind: "CROSS_BORDER" }, null), { kind: "CROSS_BORDER" });
   });
 });

@@ -130,6 +130,30 @@ export function validateScopeInput(input: ScopeInput): { ok: true; value: Normal
   return errors.length ? { ok: false, errors } : { ok: true, value: { ...n, characteristics } }
 }
 
+/**
+ * Re-saving an existing driver's scope must never drop what is already recorded. A field the caller OMITS (undefined) keeps its stored value; a field the
+ * caller supplies, even as an empty list, is honoured. The new onboarding form sends only the intended operation, so earlier states, provinces,
+ * assignments and hazmat / passenger / CMV / CDL / PSP flags survive. If the stored values cannot coexist with a changed kind (for example two stored
+ * states and a new "US Intrastate"), the incompatible part is not carried; the earlier version remains stored, unchanged, in the scope history.
+ */
+export function mergeScopeInput(input: ScopeInput, current: NormalizedScope | null): ScopeInput {
+  if (!current) return input
+  const characteristics = { ...current.characteristics, ...Object.fromEntries(Object.entries(input.characteristics ?? {}).filter(([, v]) => v !== undefined)) }
+  const full: ScopeInput = {
+    ...input,
+    components: input.components ?? current.components,
+    usJurisdictions: input.usJurisdictions ?? current.usJurisdictions,
+    caJurisdictions: input.caJurisdictions ?? current.caJurisdictions,
+    characteristics,
+  }
+  if (validateScopeInput(full).ok) return full
+  const characteristicsOnly: ScopeInput = { ...input, characteristics }
+  if (validateScopeInput(characteristicsOnly).ok) return characteristicsOnly
+  // A PSP request cannot follow the driver into a kind with no U.S. operation; every other stored flag still does.
+  const withoutPsp: ScopeInput = { ...input, characteristics: { ...characteristics, pspIntended: false } }
+  return validateScopeInput(withoutPsp).ok ? withoutPsp : input
+}
+
 const LIMITATIONS = [
   "Selecting an operating scope does not establish that the driver is eligible or qualified; it decides which application sections and consents are issued.",
   "State, provincial and territorial rules (including intrastate adoption of federal rules, exemptions, age and medical requirements, and Alberta's carrier history rule) are not evaluated by TES; staff must verify them.",

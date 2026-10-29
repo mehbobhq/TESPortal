@@ -743,4 +743,116 @@ describe("Driver prospects and application invitations (migrations 0039, 0040)",
     await assert.rejects(() => K.svc.sendInvitation({ organizationId: o, prospectId: phoneOnly.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls)), /SMS delivery is not available/);
     assert.equal(calls.length, 0);
   });
+
+  // ---- Final correction pass: preservation and migration 0044 integrity ----
+
+  const currentScope = async (prospectId: string) =>
+    (await q<{ scope_kind: string; components: string[]; us_jurisdictions: string[]; ca_jurisdictions: string[]; characteristics: Record<string, unknown> }>(
+      `SELECT scope_kind, components, us_jurisdictions, ca_jurisdictions, characteristics FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1 AND superseded_at IS NULL`, [prospectId]))[0];
+
+  scenario("27. re-saving an existing prospect keeps its stored states, provinces, assignments and hazmat / passenger / CMV flags", async () => {
+    const o = await org("KEEP", "US");
+    await only(...FULL);
+    const flags = { cmvOperation: "YES", cdlRequired: "YES", pspIntended: true, hazmat: true, passengerCarrying: true };
+    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: { kind: "US_INTERSTATE", usJurisdictions: ["OH", "PA"], characteristics: flags } as never });
+    // The new form sends only the kind. Same kind: nothing changes, no new version.
+    const same = await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "US_INTERSTATE" } as never });
+    assert.equal(same.changed, false);
+    let row = await currentScope(created.prospectId);
+    assert.deepEqual(row.us_jurisdictions, ["OH", "PA"]);
+    assert.deepEqual(row.characteristics, flags);
+    // A different kind compatible with the stored data keeps jurisdictions and flags.
+    await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "CROSS_BORDER" } as never });
+    row = await currentScope(created.prospectId);
+    assert.equal(row.scope_kind, "CROSS_BORDER");
+    assert.deepEqual(row.us_jurisdictions, ["OH", "PA"]);
+    assert.deepEqual(row.characteristics, flags);
+    // A kind that cannot hold the stored states drops them from the NEW version only; the earlier versions remain, unchanged, in the history. Flags still survive.
+    await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "US_INTRASTATE" } as never });
+    row = await currentScope(created.prospectId);
+    assert.equal(row.scope_kind, "US_INTRASTATE");
+    assert.deepEqual(row.characteristics, flags);
+    const history = await q<{ scope_kind: string; us_jurisdictions: string[]; superseded_at: Date | null }>(`SELECT scope_kind, us_jurisdictions, superseded_at FROM public.driver_prospect_operating_scopes WHERE prospect_id = $1 ORDER BY established_at`, [created.prospectId]);
+    assert.equal(history.length, 3);
+    assert.deepEqual(history[0].us_jurisdictions, ["OH", "PA"]);
+    assert.deepEqual(history[1].us_jurisdictions, ["OH", "PA"]);
+    assert.ok(history[0].superseded_at && history[1].superseded_at);
+    // Values the caller supplies explicitly are still honoured (an explicit empty list clears it).
+    await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "US_INTERSTATE", usJurisdictions: [], characteristics: { hazmat: false } } as never });
+    row = await currentScope(created.prospectId);
+    assert.equal(row.characteristics.hazmat, false);
+    assert.equal(row.characteristics.passengerCarrying, true, "unspecified flags are kept");
+  });
+
+  scenario("28. a legacy MIXED record with states and provinces survives a re-save and still issues; earlier invitations are not rewritten", async () => {
+    const o = await org("LEGACY", "CA");
+    await only(...FULL);
+    const mixed = { kind: "MIXED", components: ["CA_INTERPROVINCIAL", "US_INTERSTATE"], caJurisdictions: ["ON", "QC"], usJurisdictions: ["NY", "OH"], characteristics: { cmvOperation: "YES", cdlRequired: "YES", hazmat: true } };
+    const created = await K.svc.createProspect({ organizationId: o, fullName: name(), email: email(), scope: mixed as never });
+    const calls: string[] = [];
+    await K.svc.sendInvitation({ organizationId: o, prospectId: created.prospectId, baseUrl: "https://tes.test" }, okDelivery(calls));
+    const [before] = await q<{ id: string; requirements_profile: unknown; status: string }>(`SELECT id, requirements_profile, status FROM public.driver_application_invitations WHERE prospect_id = $1`, [created.prospectId]);
+    const resave = await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "MIXED" } as never });
+    assert.equal(resave.changed, false);
+    assert.equal(resave.revokedInvitations, 0, "an identical re-save does not revoke the issued application");
+    const [after] = await q<{ requirements_profile: unknown; status: string }>(`SELECT requirements_profile, status FROM public.driver_application_invitations WHERE id = $1`, [before.id]);
+    assert.deepEqual(after.requirements_profile, before.requirements_profile);
+    assert.equal(after.status, before.status);
+    const row = await currentScope(created.prospectId);
+    assert.deepEqual(row.us_jurisdictions, ["NY", "OH"]);
+    assert.deepEqual(row.ca_jurisdictions, ["ON", "QC"]);
+    assert.deepEqual(row.components, ["CA_INTERPROVINCIAL", "US_INTERSTATE"]);
+    assert.equal(row.characteristics.hazmat, true);
+    // A changed scope revokes the OLD invitation's status only; its frozen plan is never edited.
+    await K.svc.establishOperatingScope({ organizationId: o, prospectId: created.prospectId, scope: { kind: "CROSS_BORDER" } as never });
+    const [revoked] = await q<{ requirements_profile: unknown; status: string }>(`SELECT requirements_profile, status FROM public.driver_application_invitations WHERE id = $1`, [before.id]);
+    assert.deepEqual(revoked.requirements_profile, before.requirements_profile);
+    assert.equal(revoked.status, "REVOKED");
+  });
+
+  scenario("29. a stored passenger flag keeps passenger content active; without it the company gap is only flagged", async () => {
+    const o = await org("PAX", "US");
+    await only(...FULL, "COMPANY_PROFILE_READ");
+    const withFlag = await issuedPlan(o, { kind: "US_INTERSTATE", characteristics: { passengerCarrying: true } });
+    assert.deepEqual(ids(withFlag, "passenger.").length > 0, true);
+    const without = await issuedPlan(o, { kind: "US_INTERSTATE" });
+    assert.deepEqual(ids(without, "passenger."), []);
+    assert.ok(without.regulatoryReviewRequirements.some((r) => r.id === "company_fact.passenger_not_recorded"));
+  });
+
+  scenario("30. migration 0044: the relaxed shape keeps every country/assignment rule, accepts every earlier valid row, and changes no access boundary", async () => {
+    const o = await org("M44", "US");
+    await only(...FULL);
+    const mk1 = async () => (await K.svc.createProspect({ organizationId: o, fullName: name(), email: email() })).prospectId;
+    const insert = async (kind: string, comps: string[], us: string[], ca: string[]) => {
+      const pid = await mk1();
+      const [pr] = await q<{ created_by_actor_id: string }>(`SELECT created_by_actor_id FROM public.driver_prospects WHERE id = $1`, [pid]);
+      return pools.admin.query(
+        `INSERT INTO public.driver_prospect_operating_scopes (prospect_id, organization_id, scope_kind, components, us_jurisdictions, ca_jurisdictions, rules_version, established_by_actor_id) VALUES ($1,$2,$3,$4,$5,$6,'t',$7)`,
+        [pid, o, kind, comps, us, ca, pr.created_by_actor_id]);
+    };
+    // Rows shaped exactly as migration 0040 required them remain valid.
+    for (const legacy of [["US_INTRASTATE", [], ["TX"], []], ["US_INTERSTATE", [], ["OH", "PA"], []], ["CA_INTRAPROVINCIAL", [], [], ["AB"]], ["CA_INTERPROVINCIAL", [], [], ["ON", "QC"]], ["CROSS_BORDER", [], ["MI"], ["ON"]], ["MIXED", ["US_INTERSTATE", "CA_INTERPROVINCIAL"], ["NY"], ["ON"]], ["UNDETERMINED", [], [], []]] as const) {
+      await insert(legacy[0], [...legacy[1]], [...legacy[2]], [...legacy[3]]);
+    }
+    // Newly allowed: no list for the wide kinds, none or one for the intra kinds.
+    for (const relaxed of [["US_INTRASTATE", [], [], []], ["US_INTERSTATE", [], [], []], ["CA_INTRAPROVINCIAL", [], [], []], ["CA_INTERPROVINCIAL", [], [], []], ["CROSS_BORDER", [], [], []]] as const) {
+      await insert(relaxed[0], [...relaxed[1]], [...relaxed[2]], [...relaxed[3]]);
+    }
+    // Still refused by the database, whatever writes it.
+    for (const bad of [["US_INTRASTATE", [], ["TX", "OK"], []], ["US_INTRASTATE", [], [], ["ON"]], ["US_INTERSTATE", [], ["OH"], ["ON"]], ["CA_INTRAPROVINCIAL", [], [], ["AB", "ON"]], ["CA_INTRAPROVINCIAL", [], ["TX"], []], ["CA_INTERPROVINCIAL", [], ["TX"], ["ON"]], ["CROSS_BORDER", ["US_INTERSTATE"], [], []], ["MIXED", ["US_INTERSTATE"], ["OH"], []], ["MIXED", ["US_INTERSTATE", "CA_INTERPROVINCIAL"], [], []], ["UNDETERMINED", [], ["TX"], []]] as const) {
+      await assert.rejects(() => insert(bad[0], [...bad[1]], [...bad[2]], [...bad[3]]), /driver_prospect_operating_scopes_shape|violates check constraint/, JSON.stringify(bad));
+    }
+    await assert.rejects(() => insert("NOT_A_KIND", [], [], []), /violates check constraint/);
+    // The constraint is validated, its sibling constraints still exist, and RLS / append-only boundaries are untouched.
+    const [c] = await q<{ n: string; validated: boolean }>(`SELECT count(*)::text AS n, bool_and(convalidated) AS validated FROM pg_constraint WHERE conrelid = 'public.driver_prospect_operating_scopes'::regclass AND contype = 'c' AND conname LIKE 'driver_prospect_operating_scopes_%'`);
+    assert.equal(c.n, "5");
+    assert.equal(c.validated, true);
+    const [rls] = await q<{ on: boolean; policies: string }>(`SELECT relrowsecurity AS on, (SELECT count(*)::text FROM pg_policies WHERE schemaname='public' AND tablename='driver_prospect_operating_scopes') AS policies FROM pg_class WHERE oid = 'public.driver_prospect_operating_scopes'::regclass`);
+    assert.equal(rls.on, true);
+    assert.ok(Number(rls.policies) >= 1);
+    assert.equal((await pools.runtime.query(`SELECT 1 FROM public.driver_prospect_operating_scopes`)).rowCount, 0, "no rows without an authorized system context");
+    const ledger = await q<{ version: string }>(`SELECT version FROM tes_system.schema_migrations WHERE version LIKE '0044%'`);
+    assert.equal(ledger.length, 1);
+  });
 });
